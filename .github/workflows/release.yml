@@ -46,6 +46,19 @@ jobs:
           key: "rust-deps"
           cache-bin: false
 
+      - name: Test sccache connectivity
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Try to run sccache --show-stats to check if it can connect
+          $result = sccache --show-stats 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "sccache connectivity test failed, disabling RUSTC_WRAPPER"
+            echo "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "sccache is working, keeping RUSTC_WRAPPER=sccache"
+          }
+
       - name: Build the application
         run: cargo xtask build --release
 
@@ -216,6 +229,17 @@ jobs:
           save-if: true
           key: "rust-deps"
           cache-bin: false
+
+      - name: Test sccache connectivity
+        continue-on-error: true
+        run: |
+          # Try to run sccache --show-stats to check if it can connect
+          if ! sccache --show-stats >/dev/null 2>&1; then
+            echo "sccache connectivity test failed, disabling RUSTC_WRAPPER"
+            echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
+          else
+            echo "sccache is working, keeping RUSTC_WRAPPER=sccache"
+          fi
 
       - name: Fetch dependencies
         run: cargo fetch
