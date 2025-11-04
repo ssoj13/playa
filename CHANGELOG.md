@@ -1,3 +1,14 @@
+## [0.1.27] - 2025-11-04
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove sccache and revert to cargo install for cargo-packager
+- Revert to baptiste0928/cargo-install with proper caching order
+- Invalidate rust-cache to fix OpenEXR build issues
+- WIP Tue 11/04/2025 - 15:06:32.28
+- Build workflow triggers only on tags, not every commit
+- WIP Tue 11/04/2025 - 15:09:37.16
+- Update GitHub Actions versions and invalidate cache keys
 ## [0.1.26] - 2025-11-04
 
 ### 🚜 Refactor
