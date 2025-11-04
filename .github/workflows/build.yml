@@ -23,11 +23,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install cargo-packager
-        run: cargo binstall cargo-packager@0.11.7 --no-confirm
+        run: cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -105,30 +102,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.3
-        continue-on-error: true
-
-      - name: Test and configure sccache
-        continue-on-error: true
-        run: |
-          # Test sccache connectivity before enabling it
-          echo "Testing sccache connectivity..."
-          if sccache --show-stats >/dev/null 2>&1; then
-            echo "✓ sccache is working, enabling RUSTC_WRAPPER"
-            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-          else
-            echo "✗ sccache connectivity test failed, proceeding without cache"
-            # Explicitly ensure RUSTC_WRAPPER is not set
-            echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
-          fi
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install cargo-packager
-        run: cargo binstall cargo-packager@0.11.7 --no-confirm
+        run: cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2

@@ -21,47 +21,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      # DISABLED: sccache unstable on Windows - GitHub Cache API returns 400 errors intermittently
-      # Keeping Linux-only for now. If GitHub Cache API stabilizes, uncomment these steps.
-      # - name: Install sccache
-      #   uses: mozilla-actions/sccache-action@v0.0.3
-      #   continue-on-error: true
-
-      # - name: Test and configure sccache
-      #   shell: pwsh
-      #   continue-on-error: true
-      #   run: |
-      #     # Test sccache connectivity before enabling it
-      #     Write-Host "Testing sccache connectivity..."
-      #     $result = sccache --show-stats 2>&1
-      #     if ($LASTEXITCODE -eq 0) {
-      #       Write-Host "✓ sccache is working, enabling RUSTC_WRAPPER"
-      #       echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
-      #       echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
-      #     } else {
-      #       Write-Host "✗ sccache connectivity test failed, proceeding without cache"
-      #       Write-Host "Error output: $result"
-      #       # Explicitly ensure RUSTC_WRAPPER is not set
-      #       echo "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
-      #     }
-
-      # REPLACED: baptiste0928/cargo-install with cargo-binstall
-      # Why: GitHub Cache API is unstable - cache randomly fails to restore even when it exists,
-      # causing cargo-packager to rebuild from source (~3-5 min) on every run.
-      # cargo-binstall downloads precompiled binaries (~5-10 sec) instead of relying on cache.
-      # Old approach (kept for reference):
-      # - name: Install cargo-packager
-      #   uses: baptiste0928/cargo-install@v3
-      #   with:
-      #     crate: cargo-packager
-      #     version: "0.11.7"
-      #     cache-key: ${{ runner.os }}-v1
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install cargo-packager
-        run: cargo binstall cargo-packager@0.11.7 --no-confirm
+        run: cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -218,42 +179,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.3
-        continue-on-error: true
-
-      - name: Test and configure sccache
-        continue-on-error: true
-        run: |
-          # Test sccache connectivity before enabling it
-          echo "Testing sccache connectivity..."
-          if sccache --show-stats >/dev/null 2>&1; then
-            echo "✓ sccache is working, enabling RUSTC_WRAPPER"
-            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-          else
-            echo "✗ sccache connectivity test failed, proceeding without cache"
-            # Explicitly ensure RUSTC_WRAPPER is not set
-            echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
-          fi
-
-      # REPLACED: baptiste0928/cargo-install with cargo-binstall
-      # Why: GitHub Cache API is unstable - cache randomly fails to restore even when it exists,
-      # causing cargo-packager to rebuild from source (~3-5 min) on every run.
-      # cargo-binstall downloads precompiled binaries (~5-10 sec) instead of relying on cache.
-      # Old approach (kept for reference):
-      # - name: Install cargo-packager
-      #   uses: baptiste0928/cargo-install@v3
-      #   with:
-      #     crate: cargo-packager
-      #     version: "0.11.7"
-      #     cache-key: ${{ runner.os }}-v1
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
       - name: Install cargo-packager
-        run: cargo binstall cargo-packager@0.11.7 --no-confirm
+        run: cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
