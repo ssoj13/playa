@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Performance: faster placeholder initialization
+  - Optimized `Frame::new()` to fill the placeholder RGBA pattern using chunked writes instead of repeated `extend_from_slice` calls.
+
+- Sequence patterns: support for `%0Nd`
+  - `Sequence::new()` now accepts printf-style patterns (e.g., `render.%04d.exr`) by internally globbing with `*` for discovery while retaining the original pattern for formatting.
+
 - Centralized processing of loaded frames
   - Removed `Cache::get_frame()` internal call to `process_loaded_frames()`; processing now occurs in the UI loop only to reduce lock contention and duplicate polling.
 

@@ -86,6 +86,18 @@ impl Sequence {
         if pattern.contains('*') {
             let pattern_clone = pattern.clone();
             seq.init_from_glob(&pattern_clone)?;
+        } else if pattern.contains('%') {
+            // Support printf-style pattern: frame.%04d.exr
+            let re = Regex::new(r"%0(\d+)d")
+                .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
+            if let Some(caps) = re.captures(&pattern) {
+                if let Some(m) = caps.get(1) {
+                    seq.padding = m.as_str().parse::<usize>().unwrap_or(4);
+                }
+            }
+            // Convert to a glob pattern for discovery
+            let glob_pattern = re.replace_all(&pattern, "*").to_string();
+            seq.init_from_glob(&glob_pattern)?;
         } else {
             // Single file or auto-detect sequence
             seq.init_from_file(&pattern)?;

@@ -98,10 +98,10 @@ impl std::error::Error for FrameError {}
 impl Frame {
     /// Create new frame with green placeholder
     pub fn new(width: usize, height: usize) -> Self {
-        let mut buffer_u8 = Vec::new();
-        buffer_u8.reserve(width * height * 4);
-        for _ in 0..width * height {
-            buffer_u8.extend_from_slice(&[0, 100, 0, 255]); // Dark green RGBA
+        // Efficiently create repeated RGBA pattern [0,100,0,255]
+        let mut buffer_u8 = vec![0u8; width * height * 4];
+        for px in buffer_u8.chunks_mut(4) {
+            px.copy_from_slice(&[0, 100, 0, 255]); // Dark green RGBA
         }
 
         let data = FrameData {
