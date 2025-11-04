@@ -159,29 +159,40 @@ The pipeline uses three complementary caching layers:
 - **Configuration**: `cache-bin: false` to avoid deleting cargo-packager
 - **Why**: Standard rust-cache deletes `~/.cargo/bin` contents at cleanup if they appeared after its initialization
 
-**3. `mozilla-actions/sccache-action` - C/C++ Compilation Cache**
+**3. `mozilla-actions/sccache-action` - C/C++ Compilation Cache (Linux only)**
 - **Purpose**: Cache C++ object files from `openexr-sys` build.rs
 - **Why needed**: openexr-sys compiles the entire OpenEXR C++ library (~30 min), which rust-cache can't help with
 - **Requires**: `CARGO_INCREMENTAL=0` (set automatically by `dtolnay/rust-toolchain`) - incremental compilation conflicts with sccache
-- **Fallback**: `continue-on-error: true` ensures builds succeed even if GitHub Cache API is down
-- **Trade-off**: When GitHub Cache API is unavailable (rare), build takes full ~35 min but doesn't fail
+- **Platform**: Linux only - disabled on Windows due to GitHub Cache API instability
+- **Fallback**: Automatic connectivity test; disables if GitHub Cache API is down
 
 **Note on CARGO_INCREMENTAL**: sccache works at the rustc compilation unit level, while incremental compilation caches at a different granularity. Having both enabled causes cache conflicts and negates sccache benefits. `dtolnay/rust-toolchain` automatically disables incremental compilation in CI environments for this reason.
 
 #### Why This Order Matters
 
+**Windows:**
 ```yaml
-1. Install sccache             # C++ compilation cache (optional, fails gracefully)
+1. Install Rust toolchain
 2. Install cargo-packager      # Binary tool (must install before rust-cache)
 3. Cache cargo dependencies    # Rust deps (with cache-bin: false)
-4. Build application           # Actual compilation
+4. Build application
+```
+
+**Linux:**
+```yaml
+1. Install Rust toolchain      # Sets CARGO_INCREMENTAL=0
+2. Install sccache            # C++ compilation cache (with fallback)
+3. Install cargo-packager     # Binary tool (must install before rust-cache)
+4. Cache cargo dependencies   # Rust deps (with cache-bin: false)
+5. Test sccache connectivity  # Disable if fails
+6. Build application
 ```
 
 **Critical insight**: `Swatinem/rust-cache` tracks which files were in `~/.cargo/bin` at startup and deletes any new ones during cleanup. Installing cargo-packager *before* rust-cache ensures it's already present and won't be deleted.
 
 **Design decisions**:
-- **Stability over speed**: sccache is optional (continue-on-error) so builds don't fail when GitHub Cache API has issues
-- **Incremental compilation disabled**: `CARGO_INCREMENTAL=0` (automatic via dtolnay/rust-toolchain) prevents conflicts with sccache
+- **Platform-specific caching**: sccache Linux-only due to GitHub Cache API instability on Windows
+- **Incremental compilation disabled** (Linux): `CARGO_INCREMENTAL=0` (automatic via dtolnay/rust-toolchain) prevents conflicts with sccache
 - **Cache key versioning**: Manual `-v1` suffix allows force-invalidation by bumping to `-v2`
 - **No Cargo.lock in cache key**: Avoids cache invalidation on every dependency update (relies on rust-cache's smart detection instead)
 
@@ -189,12 +200,16 @@ The pipeline uses three complementary caching layers:
 
 **First run after code push**: ~35 minutes (builds everything, populates all caches)
 
-**Subsequent runs**:
+**Subsequent runs (Linux with sccache)**:
 - Same code: ~2-3 minutes (all caches hit)
 - Dependency update: ~5-10 minutes (rust-cache partial hit, sccache still helps with openexr-sys)
 - cargo-packager version bump: ~7-8 minutes (recompile packager once, then cached)
 
-**When GitHub Cache API is down**: ~35 minutes but build succeeds (sccache fails gracefully, falls back to normal compilation)
+**Subsequent runs (Windows without sccache)**:
+- Same code: ~5-8 minutes (cargo-install + rust-cache)
+- openexr-sys rebuild: ~30 minutes (no C++ cache)
+
+**When GitHub Cache API is down (Linux)**: sccache disabled automatically, build time increases but succeeds
 
 ### Development Commands
 

@@ -19,27 +19,29 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.3
-        continue-on-error: true
+      # DISABLED: sccache unstable on Windows - GitHub Cache API returns 400 errors intermittently
+      # Keeping Linux-only for now. If GitHub Cache API stabilizes, uncomment these steps.
+      # - name: Install sccache
+      #   uses: mozilla-actions/sccache-action@v0.0.3
+      #   continue-on-error: true
 
-      - name: Test and configure sccache
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          # Test sccache connectivity before enabling it
-          Write-Host "Testing sccache connectivity..."
-          $result = sccache --show-stats 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "✓ sccache is working, enabling RUSTC_WRAPPER"
-            echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
-            echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
-          } else {
-            Write-Host "✗ sccache connectivity test failed, proceeding without cache"
-            Write-Host "Error output: $result"
-            # Explicitly ensure RUSTC_WRAPPER is not set
-            echo "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
-          }
+      # - name: Test and configure sccache
+      #   shell: pwsh
+      #   continue-on-error: true
+      #   run: |
+      #     # Test sccache connectivity before enabling it
+      #     Write-Host "Testing sccache connectivity..."
+      #     $result = sccache --show-stats 2>&1
+      #     if ($LASTEXITCODE -eq 0) {
+      #       Write-Host "✓ sccache is working, enabling RUSTC_WRAPPER"
+      #       echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
+      #       echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
+      #     } else {
+      #       Write-Host "✗ sccache connectivity test failed, proceeding without cache"
+      #       Write-Host "Error output: $result"
+      #       # Explicitly ensure RUSTC_WRAPPER is not set
+      #       echo "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
+      #     }
 
       - name: Install cargo-packager
         uses: baptiste0928/cargo-install@v3

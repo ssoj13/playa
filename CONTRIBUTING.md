@@ -169,8 +169,9 @@ publish = false  # Don't publish to crates.io
 - Configuration: `cache-bin: false` to avoid binary conflicts
 - **Why**: Standard rust-cache deletes `~/.cargo/bin` contents
 
-#### 3. C++ Compilation Cache (`sccache`)
+#### 3. C++ Compilation Cache (`sccache` - Linux only)
 - Caches C++ object files from `openexr-sys` build (~30 min → ~2 min)
+- **Platform**: Linux only - disabled on Windows due to GitHub Cache API instability
 - **Requires**: `CARGO_INCREMENTAL=0` (auto-set by `dtolnay/rust-toolchain`)
 - **Why**: Incremental compilation conflicts with sccache
 - **Fallback**: Automatic connectivity test; disables if GitHub Cache API is down
@@ -181,6 +182,15 @@ sccache works at the rustc compilation unit level, while incremental compilation
 
 ### Caching Order Matters
 
+**Windows:**
+```yaml
+1. Install Rust toolchain
+2. Install cargo-packager (before rust-cache!)
+3. Cache rust dependencies (with cache-bin: false)
+4. Build application
+```
+
+**Linux:**
 ```yaml
 1. Install Rust toolchain (sets CARGO_INCREMENTAL=0)
 2. Install sccache (with fallback)
@@ -191,6 +201,8 @@ sccache works at the rustc compilation unit level, while incremental compilation
 ```
 
 **Critical**: cargo-packager must be installed **before** rust-cache, otherwise rust-cache's cleanup deletes it.
+
+**Why no sccache on Windows?** GitHub Cache API returns intermittent 400 errors on Windows runners, causing build failures even with fallback logic. Linux remains stable.
 
 ### Manual Workflow Trigger
 
