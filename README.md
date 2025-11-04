@@ -1,4 +1,4 @@
-# Playa - High-Performance Image Sequence Player
+# Playa - Image Sequence Player
 
 [![Build Status](https://github.com/ssoj13/playa/actions/workflows/release.yml/badge.svg)](https://github.com/ssoj13/playa/actions/workflows/release.yml)
 [![Release](https://img.shields.io/github/v/release/ssoj13/playa)](https://github.com/ssoj13/playa/releases/latest)
@@ -6,15 +6,15 @@
 [![License](https://img.shields.io/github/license/ssoj13/playa)](LICENSE)
 [![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
 
-Professional image sequence player optimized for VFX workflows with async loading, intelligent caching, and OpenGL rendering.
+Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rendering.
 
 ## Features
 
 - **Multi-format support**: EXR, PNG, JPEG, TIFF, TGA
-- **Async multi-threaded loading**: Utilizes 75% of CPU cores for parallel frame loading
-- **Smart LRU caching**: Automatic memory management (50% of system RAM by default)
-- **Epoch-based request cancellation**: Stale frame requests cancelled automatically during scrubbing
-- **Spiral preloading**: Intelligent frame preloading from current position
+- **Async multi-threaded loading**: 75% of CPU cores for parallel frame loading
+- **LRU caching**: Automatic memory management (50% of system RAM by default)
+- **Epoch-based request cancellation**: Stale frame requests cancelled during scrubbing
+- **Spiral preloading**: Frame preloading from current position
 - **Load indicator**: Visual timeline bar showing frame load status (Header/Loading/Loaded/Error)
 - **Interactive scrubbing**: Timeline navigation with mouse
 - **Color-coded time slider**: Visual sequence boundaries with unique colors and dividers
@@ -23,7 +23,7 @@ Professional image sequence player optimized for VFX workflows with async loadin
 - **Custom shaders**: OpenGL shader support for display transformations
 - **Resizable panels**: Playlist panel width persists across sessions (min 20px)
 - **Playlist support**: Load and manage multiple sequences
-- **JKL transport controls**: Industry-standard playback controls
+- **JKL transport controls**: Playback controls
 - **Cinema mode**: Fullscreen playback with hidden UI
 - **Persistent settings**: Window state, playlists, panel sizes, and preferences saved across sessions
 
