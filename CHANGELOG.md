@@ -1,3 +1,8 @@
+## [0.1.25] - 2025-11-04
+
+### ⚙️ Miscellaneous Tasks
+
+- Disable sccache on Windows due to GitHub Cache API instability
 ## [0.1.24] - 2025-11-04
 
 ### ⚙️ Miscellaneous Tasks
