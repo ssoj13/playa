@@ -1,3 +1,19 @@
+## [0.1.26] - 2025-11-04
+
+### 🚜 Refactor
+
+- Redesign release process with two-stage dev/main workflow
+
+### ⚡ Performance
+
+- Replace cargo-install with cargo-binstall for faster builds
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Tue 11/04/2025 - 13:40:38.93
+- WIP Tue 11/04/2025 - 13:41:05.84
+- Separate build and release workflows for dev/main branches
+- WIP Tue 11/04/2025 - 14:23:54.75
 ## [0.1.25] - 2025-11-04
 
 ### ⚙️ Miscellaneous Tasks
