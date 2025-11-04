@@ -16,7 +16,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -35,7 +35,7 @@ jobs:
         with:
           crate: cargo-packager
           version: "0.11.7"
-          cache-key: ${{ runner.os }}-v1
+          cache-key: ${{ runner.os }}-v2
 
       - name: Build the application
         run: cargo xtask build --release
@@ -82,7 +82,7 @@ jobs:
           Get-ChildItem "portable" | Format-Table Name, Length
 
       - name: Upload Windows artifacts (installer + portable)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-artifacts
           path: |
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ steps.find_installer.outputs.path }}
@@ -173,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies
         run: |
@@ -186,9 +186,9 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "stable"
+          shared-key: "stable-v2"
           save-if: true
-          key: "rust-deps"
+          key: "rust-deps-v2"
           cache-bin: false
 
       - name: Install cargo-packager
@@ -196,7 +196,7 @@ jobs:
         with:
           crate: cargo-packager
           version: "0.11.7"
-          cache-key: ${{ runner.os }}-v1
+          cache-key: ${{ runner.os }}-v2
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -252,7 +252,7 @@ jobs:
 
       - name: Upload Linux AppImage artifact
         if: steps.find_appimage.outputs.path != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: linux-appimage
           path: ${{ steps.find_appimage.outputs.path }}
@@ -261,7 +261,7 @@ jobs:
 
       - name: Upload Linux DEB artifact
         if: steps.find_deb.outputs.path != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: linux-deb
           path: ${{ steps.find_deb.outputs.path }}
@@ -270,7 +270,7 @@ jobs:
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             ${{ steps.find_appimage.outputs.path }}
