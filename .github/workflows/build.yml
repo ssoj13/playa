@@ -1,0 +1,77 @@
+name: Build and Release
+
+on:
+  # Trigger on push to build branch for testing builds
+  push:
+    branches: [ "build" ]
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Cache cargo dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "stable"
+        save-if: true
+        # Don't include Cargo.lock hash in cache key to avoid invalidation on version changes
+        key: "rust-deps"
+
+    - name: Install cargo-packager
+      uses: baptiste0928/cargo-install@v3
+      with:
+        crate: cargo-packager
+        version: "0.11.7"
+        cache-key: ${{ runner.os }}
+
+    - name: Build the application
+      run: cargo xtask build --release
+
+    - name: Package the application
+      run: cargo packager --release
+
+    - name: Upload Installer Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: playa-windows-installer
+        path: target/release/playa_*-setup.*
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libopenexr-dev pkg-config
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Cache cargo dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: "stable"
+        save-if: true
+        key: "rust-deps"
+
+    - name: Build the application (with xtask)
+      run: cargo xtask build --release
+
+    - name: Upload Linux Binary
+      uses: actions/upload-artifact@v4
+      with:
+        name: playa-linux-binary
+        path: target/release/playa

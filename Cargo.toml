@@ -1,0 +1,66 @@
+[workspace]
+members = ["xtask"]
+
+[package]
+name = "playa"
+version = "0.1.14"
+edition = "2024"
+authors = ["joss13@gmail.com"]
+description = "Image sequence player (EXR, PNG, JPEG, TIFF)"
+homepage = "https://github.com/ssoj13/playa"
+license-file = "LICENSE"
+
+[dependencies]
+anyhow = "1.0"
+bytemuck = "1.24"
+clap = { version = "4.5", features = ["derive"] }
+crossbeam-channel = "0.5"
+dirs-next = "2.0"
+eframe = { version = "0.33", features = ["persistence"] }
+egui_glow = "0.33"
+egui_ltreeview = { version = "0.6.0", features = ["persistence"] }
+env_logger = "0.11"
+glob = "0.3"
+half = "1.8"
+image = { version = "0.25", features = ["exr", "png", "jpeg", "tiff", "tga", "hdr"] }
+indicatif = "0.18"
+log = "0.4"
+lru = "0.16"
+num_cpus = "1.16"
+once_cell = "1.19"
+openexr = "0.11"
+rayon = "1.10"
+regex = "1.12"
+rfd = "0.15"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sysinfo = "0.37"
+
+# Build dependencies moved to xtask/
+# Use `cargo xtask build` to build with automatic dependency management
+
+# Set RPATH on Linux to search for .so files in executable directory
+# (configured in .cargo/config.toml)
+[profile.release]
+strip = false
+
+[package.metadata.packager]
+product-name = "Playa"
+identifier = "com.playa.exr-player"
+icons = ["icon.png"]
+resources = [
+    "target/release/*.dll",
+    "target/release/*.so*",
+    "shaders"
+]
+
+[[package.metadata.packager.file-associations]]
+extensions = ["exr", "png", "jpg", "jpeg", "tif", "tiff"]
+description = "Image Sequence Files"
+role = "editor"
+
+[package.metadata.packager.windows]
+allow-downgrades = true
+
+[package.metadata.packager.nsis]
+installer-mode = "perMachine"
