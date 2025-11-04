@@ -10,8 +10,33 @@ permissions:
   contents: read  # No release creation needed, just build artifacts
 
 jobs:
+  # Check if the tag is NOT on main branch (we only want dev builds here)
+  check-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      not-on-main: ${{ steps.check.outputs.not-on-main }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history to check branches
+
+      - name: Check if tag is NOT on main branch
+        id: check
+        run: |
+          # Check if the current tag is NOT reachable from main branch
+          if git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+            echo "not-on-main=false" >> $GITHUB_OUTPUT
+            echo "✗ Tag is on main branch - skipping build (will use Release workflow)"
+          else
+            echo "not-on-main=true" >> $GITHUB_OUTPUT
+            echo "✓ Tag is NOT on main branch - proceeding with dev build"
+          fi
+
   build-windows:
     runs-on: windows-latest
+    needs: check-branch
+    if: needs.check-branch.outputs.not-on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -90,6 +115,8 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
+    needs: check-branch
+    if: needs.check-branch.outputs.not-on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

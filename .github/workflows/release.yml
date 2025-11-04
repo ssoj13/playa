@@ -5,15 +5,43 @@ on:
     tags:
       - 'v*'  # Triggers on tags like v0.4.7, v1.0.0, etc.
     branches:
-      - main  # Only allow releases from main branch
+      - main  # Also trigger on direct pushes to main (for merge commits)
   workflow_dispatch:  # Allow manual trigger
+
+# Only run release builds for tags on main branch
+# This prevents dev branch tags from creating releases
 
 permissions:
   contents: write  # Required for creating releases and uploading artifacts
 
 jobs:
+  # Check if the tag is on main branch before building
+  check-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      on-main: ${{ steps.check.outputs.on-main }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Fetch all history to check branches
+
+      - name: Check if tag is on main branch
+        id: check
+        run: |
+          # Check if the current tag is reachable from main branch
+          if git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+            echo "on-main=true" >> $GITHUB_OUTPUT
+            echo "✓ Tag is on main branch - proceeding with release"
+          else
+            echo "on-main=false" >> $GITHUB_OUTPUT
+            echo "✗ Tag is NOT on main branch - skipping release"
+          fi
+
   build-windows:
     runs-on: windows-latest
+    needs: check-branch
+    if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -171,6 +199,8 @@ jobs:
   # TODO: Re-enable Linux build after fixing dependencies issues
   build-linux:
     runs-on: ubuntu-latest
+    needs: check-branch
+    if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
