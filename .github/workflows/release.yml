@@ -24,10 +24,10 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "stable"
+          shared-key: "stable-v2"
           save-if: true
           # Don't include Cargo.lock hash in cache key to avoid invalidation on version changes
-          key: "rust-deps"
+          key: "rust-deps-v2"
           cache-bin: false
 
       - name: Install cargo-packager
