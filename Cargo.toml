@@ -63,5 +63,3 @@ allow-downgrades = true
 
 [package.metadata.packager.nsis]
 installer-mode = "perMachine"
-
- 
