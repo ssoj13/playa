@@ -107,8 +107,11 @@ The pipeline uses three complementary caching layers:
 **3. `mozilla-actions/sccache-action` - C/C++ Compilation Cache**
 - **Purpose**: Cache C++ object files from `openexr-sys` build.rs
 - **Why needed**: openexr-sys compiles the entire OpenEXR C++ library (~30 min), which rust-cache can't help with
+- **Requires**: `CARGO_INCREMENTAL=0` (set automatically by `dtolnay/rust-toolchain`) - incremental compilation conflicts with sccache
 - **Fallback**: `continue-on-error: true` ensures builds succeed even if GitHub Cache API is down
 - **Trade-off**: When GitHub Cache API is unavailable (rare), build takes full ~35 min but doesn't fail
+
+**Note on CARGO_INCREMENTAL**: sccache works at the rustc compilation unit level, while incremental compilation caches at a different granularity. Having both enabled causes cache conflicts and negates sccache benefits. `dtolnay/rust-toolchain` automatically disables incremental compilation in CI environments for this reason.
 
 #### Why This Order Matters
 
@@ -123,6 +126,7 @@ The pipeline uses three complementary caching layers:
 
 **Design decisions**:
 - **Stability over speed**: sccache is optional (continue-on-error) so builds don't fail when GitHub Cache API has issues
+- **Incremental compilation disabled**: `CARGO_INCREMENTAL=0` (automatic via dtolnay/rust-toolchain) prevents conflicts with sccache
 - **Cache key versioning**: Manual `-v1` suffix allows force-invalidation by bumping to `-v2`
 - **No Cargo.lock in cache key**: Avoids cache invalidation on every dependency update (relies on rust-cache's smart detection instead)
 
