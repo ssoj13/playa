@@ -21,9 +21,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --version 0.11.7 --locked
-
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -32,6 +29,13 @@ jobs:
           # Don't include Cargo.lock hash in cache key to avoid invalidation on version changes
           key: "rust-deps"
           cache-bin: false
+
+      - name: Install cargo-packager
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-packager
+          version: "0.11.7"
+          cache-key: ${{ runner.os }}-v1
 
       - name: Build the application
         run: cargo xtask build --release
@@ -179,9 +183,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Install cargo-packager
-        run: cargo install cargo-packager --version 0.11.7 --locked
-
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -189,6 +190,13 @@ jobs:
           save-if: true
           key: "rust-deps"
           cache-bin: false
+
+      - name: Install cargo-packager
+        uses: baptiste0928/cargo-install@v3
+        with:
+          crate: cargo-packager
+          version: "0.11.7"
+          cache-key: ${{ runner.os }}-v1
 
       - name: Fetch dependencies
         run: cargo fetch
