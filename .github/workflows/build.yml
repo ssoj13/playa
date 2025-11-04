@@ -1,15 +1,17 @@
-name: Release
+name: Build
 
 on:
   push:
-    tags:
-      - 'v*'  # Triggers on tags like v0.4.7, v1.0.0, etc.
     branches:
-      - main  # Only allow releases from main branch
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
   workflow_dispatch:  # Allow manual trigger
 
 permissions:
-  contents: write  # Required for creating releases and uploading artifacts
+  contents: read  # No release creation needed, just build artifacts
 
 jobs:
   build-windows:
@@ -20,42 +22,6 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
-
-      # DISABLED: sccache unstable on Windows - GitHub Cache API returns 400 errors intermittently
-      # Keeping Linux-only for now. If GitHub Cache API stabilizes, uncomment these steps.
-      # - name: Install sccache
-      #   uses: mozilla-actions/sccache-action@v0.0.3
-      #   continue-on-error: true
-
-      # - name: Test and configure sccache
-      #   shell: pwsh
-      #   continue-on-error: true
-      #   run: |
-      #     # Test sccache connectivity before enabling it
-      #     Write-Host "Testing sccache connectivity..."
-      #     $result = sccache --show-stats 2>&1
-      #     if ($LASTEXITCODE -eq 0) {
-      #       Write-Host "✓ sccache is working, enabling RUSTC_WRAPPER"
-      #       echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
-      #       echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
-      #     } else {
-      #       Write-Host "✗ sccache connectivity test failed, proceeding without cache"
-      #       Write-Host "Error output: $result"
-      #       # Explicitly ensure RUSTC_WRAPPER is not set
-      #       echo "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
-      #     }
-
-      # REPLACED: baptiste0928/cargo-install with cargo-binstall
-      # Why: GitHub Cache API is unstable - cache randomly fails to restore even when it exists,
-      # causing cargo-packager to rebuild from source (~3-5 min) on every run.
-      # cargo-binstall downloads precompiled binaries (~5-10 sec) instead of relying on cache.
-      # Old approach (kept for reference):
-      # - name: Install cargo-packager
-      #   uses: baptiste0928/cargo-install@v3
-      #   with:
-      #     crate: cargo-packager
-      #     version: "0.11.7"
-      #     cache-key: ${{ runner.os }}-v1
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
@@ -68,7 +34,6 @@ jobs:
         with:
           shared-key: "stable"
           save-if: true
-          # Don't include Cargo.lock hash in cache key to avoid invalidation on version changes
           key: "rust-deps"
           cache-bin: false
 
@@ -123,87 +88,9 @@ jobs:
           path: |
             ${{ steps.find_installer.outputs.path }}
             target/release/playa-*-windows-portable.zip
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
-      - name: Upload Release Assets
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            ${{ steps.find_installer.outputs.path }}
-            target/release/playa-*-windows-portable.zip
-          fail_on_unmatched_files: false
-
-  # TODO: Re-enable macOS build after fixing cross-compilation issues
-  # build-macos:
-  #   runs-on: macos-latest
-  #   continue-on-error: true  # Don't fail the whole workflow if macOS build fails
-  #   strategy:
-  #     matrix:
-  #       target: [x86_64-apple-darwin]
-  #       # TODO: add aarch64-apple-darwin with macos-14 runner for Apple Silicon
-  #   steps:
-  #     - name: Checkout repository
-  #       uses: actions/checkout@v4
-  #
-  #     - name: Install dependencies
-  #       run: brew install cmake
-  #
-  #     - name: Install Rust toolchain
-  #       uses: dtolnay/rust-toolchain@nightly
-  #       with:
-  #         targets: ${{ matrix.target }}
-  #
-  #     - name: Cache cargo dependencies
-  #       uses: Swatinem/rust-cache@v2
-  #       with:
-  #         shared-key: "stable"
-  #         key: ${{ matrix.target }}
-  #
-  #     - name: Install cargo-packager
-  #       uses: baptiste0928/cargo-install@v3
-  #       with:
-  #         crate: cargo-packager
-  #         version: "0.11.7"
-  #         cache-key: ${{ runner.os }}
-  #
-  #     - name: Build the application
-  #       run: cargo build --release --target ${{ matrix.target }}
-  #       continue-on-error: true
-  #
-  #     - name: Package the application
-  #       run: cargo packager --release --target ${{ matrix.target }}
-  #       continue-on-error: true
-  #
-  #     - name: List bundle contents (if successful)
-  #       continue-on-error: true
-  #       run: |
-  #         if [ -d "target/release/bundle" ]; then
-  #           ls -R target/release/bundle/
-  #         else
-  #           echo "Bundle directory not found - build likely failed for ${{ matrix.target }}"
-  #           exit 0
-  #         fi
-  #
-  #     - name: Find DMG
-  #       id: find_dmg
-  #       continue-on-error: true
-  #       run: |
-  #         dmg=$(find target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
-  #         if [ -n "$dmg" ]; then
-  #           echo "path=$dmg" >> $GITHUB_OUTPUT
-  #           echo "Found DMG: $dmg"
-  #         fi
-  #
-  #     - name: Upload Release Assets
-  #       if: steps.find_dmg.outputs.path != ''
-  #       uses: softprops/action-gh-release@v1
-  #       with:
-  #         files: ${{ steps.find_dmg.outputs.path }}
-  #         fail_on_unmatched_files: false
-
-  # TODO: Re-enable Linux build after fixing dependencies issues
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -236,18 +123,6 @@ jobs:
             # Explicitly ensure RUSTC_WRAPPER is not set
             echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
           fi
-
-      # REPLACED: baptiste0928/cargo-install with cargo-binstall
-      # Why: GitHub Cache API is unstable - cache randomly fails to restore even when it exists,
-      # causing cargo-packager to rebuild from source (~3-5 min) on every run.
-      # cargo-binstall downloads precompiled binaries (~5-10 sec) instead of relying on cache.
-      # Old approach (kept for reference):
-      # - name: Install cargo-packager
-      #   uses: baptiste0928/cargo-install@v3
-      #   with:
-      #     crate: cargo-packager
-      #     version: "0.11.7"
-      #     cache-key: ${{ runner.os }}-v1
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
@@ -332,12 +207,3 @@ jobs:
           path: ${{ steps.find_deb.outputs.path }}
           retention-days: 7
           if-no-files-found: error
-
-      - name: Upload Release Assets
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            ${{ steps.find_appimage.outputs.path }}
-            ${{ steps.find_deb.outputs.path }}
-          fail_on_unmatched_files: false

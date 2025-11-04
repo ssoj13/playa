@@ -166,22 +166,40 @@ publish = false  # Don't publish to crates.io
 
 ## CI/CD Pipeline
 
+### Workflows
+
+The project uses two separate GitHub Actions workflows:
+
+#### 1. **Build Workflow** (`build.yml`) - Development & Testing
+- **Triggers**: Push to `dev` branch, PRs to `main`/`dev`
+- **Purpose**: Build and test artifacts without publishing
+- **Artifacts**: Windows installer, portable ZIP, Linux AppImage, DEB package
+- **Retention**: 7 days
+- **Use case**: Test builds before merging to main
+
+#### 2. **Release Workflow** (`release.yml`) - Production Releases
+- **Triggers**: Tags matching `v*` pattern **from main branch only**
+- **Purpose**: Build, package, and publish official releases
+- **Artifacts**: Same as build workflow + GitHub Release creation
+- **Use case**: Official versioned releases
+
 ### Build Performance
 
 - **Cold cache** (first build): ~35 minutes
 - **Warm cache** (subsequent): ~2-3 minutes (93% faster!)
+- **cargo-binstall** (cargo-packager): ~5-10 seconds
 
-### Three-Layer Caching Strategy
+### Caching Strategy
 
-#### 1. Binary Tools Cache (`cargo-install`)
-- Caches pre-compiled `cargo-packager` binary
-- Key: `${{ runner.os }}-v1`
-- **Why first**: Prevents `rust-cache` from deleting it during cleanup
+#### 1. Binary Tools (`cargo-binstall`)
+- Downloads precompiled `cargo-packager` binary instead of compiling
+- **Why**: GitHub Cache API is unstable - cache randomly fails even when it exists
+- **Speed**: ~5-10 seconds vs ~3-5 minutes compilation
+- No caching needed - downloads are fast enough
 
 #### 2. Rust Dependencies Cache (`rust-cache`)
 - Caches compiled Rust dependencies
 - Configuration: `cache-bin: false` to avoid binary conflicts
-- **Why**: Standard rust-cache deletes `~/.cargo/bin` contents
 
 #### 3. C++ Compilation Cache (`sccache` - Linux only)
 - Caches C++ object files from `openexr-sys` build (~30 min → ~2 min)
@@ -199,22 +217,22 @@ sccache works at the rustc compilation unit level, while incremental compilation
 **Windows:**
 ```yaml
 1. Install Rust toolchain
-2. Install cargo-packager (before rust-cache!)
-3. Cache rust dependencies (with cache-bin: false)
-4. Build application
+2. Install cargo-binstall
+3. Install cargo-packager (via binstall)
+4. Cache rust dependencies (with cache-bin: false)
+5. Build application
 ```
 
 **Linux:**
 ```yaml
 1. Install Rust toolchain (sets CARGO_INCREMENTAL=0)
 2. Install sccache (with fallback)
-3. Install cargo-packager (before rust-cache!)
-4. Cache rust dependencies (with cache-bin: false)
-5. Test sccache connectivity (disable if fails)
-6. Build application
+3. Test sccache connectivity (disable if fails)
+4. Install cargo-binstall
+5. Install cargo-packager (via binstall)
+6. Cache rust dependencies (with cache-bin: false)
+7. Build application
 ```
-
-**Critical**: cargo-packager must be installed **before** rust-cache, otherwise rust-cache's cleanup deletes it.
 
 **Why no sccache on Windows?** GitHub Cache API returns intermittent 400 errors on Windows runners, causing build failures even with fallback logic. Linux remains stable.
 
