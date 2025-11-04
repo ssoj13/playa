@@ -5,10 +5,12 @@ use std::process::Command;
 ///
 /// This replaces the release.sh script and performs:
 /// 1. cargo release {level} --no-publish --execute [--dry-run]
-/// 2. git push --tags (if not dry-run)
-/// 3. git push origin main (if not dry-run)
+/// 2. git push --tags (if not dry-run) - triggers build workflow in dev branch
 ///
 /// The release level should be one of: patch, minor, major
+///
+/// Note: Tags should be pushed from dev branch to trigger build workflow.
+/// Merge to main happens manually or via GitHub PR after testing the build.
 pub fn run_release(level: &str, dry_run: bool) -> Result<()> {
     println!("========================================");
     println!("Preparing release with level: {}", level);
@@ -59,9 +61,38 @@ pub fn run_release(level: &str, dry_run: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Step 2: Push tags
+    // Step 2: Get current branch
     println!();
-    println!("[2/4] Pushing tags...");
+    println!("[2/4] Detecting current branch...");
+
+    let output = Command::new("git")
+        .args(&["branch", "--show-current"])
+        .output()
+        .context("Failed to get current branch")?;
+
+    let current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    println!("Current branch: {}", current_branch);
+
+    // Step 3: Push current branch
+    println!();
+    println!("[3/4] Pushing to {} branch...", current_branch);
+
+    let status = Command::new("git")
+        .args(&["push", "origin", &current_branch])
+        .status()
+        .context("Failed to push current branch")?;
+
+    if !status.success() {
+        anyhow::bail!(
+            "Failed to push to {} branch. Exit code: {:?}",
+            current_branch,
+            status.code()
+        );
+    }
+
+    // Step 4: Push tags (triggers build workflow)
+    println!();
+    println!("[4/4] Pushing tags (this triggers the build workflow)...");
 
     let status = Command::new("git")
         .args(&["push", "--tags"])
@@ -72,30 +103,17 @@ pub fn run_release(level: &str, dry_run: bool) -> Result<()> {
         anyhow::bail!("Failed to push tags. Exit code: {:?}", status.code());
     }
 
-    // Step 3: Push to main branch
-    println!();
-    println!("[3/4] Pushing to main branch...");
-
-    let status = Command::new("git")
-        .args(&["push", "origin", "main"])
-        .status()
-        .context("Failed to push to main branch")?;
-
-    if !status.success() {
-        anyhow::bail!(
-            "Failed to push to main branch. Exit code: {:?}",
-            status.code()
-        );
-    }
-
-    // Step 4: Success message
+    // Success message
     println!();
     println!("========================================");
-    println!("SUCCESS! Release created with cargo release");
+    println!("SUCCESS! Release tag pushed from {} branch", current_branch);
     println!("========================================");
     println!();
-    println!("GitHub Actions will now build the release.");
-    println!("Monitor progress at: https://github.com/ssoj13/playa/actions");
+    println!("Next steps:");
+    println!("1. Build workflow will run at: https://github.com/ssoj13/playa/actions");
+    println!("2. Download and test the build artifacts (retained for 7 days)");
+    println!("3. If everything works, merge {} to main (manually or via PR)", current_branch);
+    println!("4. After merge to main, the release workflow will publish the release");
     println!();
 
     Ok(())

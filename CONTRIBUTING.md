@@ -121,6 +121,10 @@ cargo xtask changelog-preview
 
 ## Release Process
 
+The release process uses a two-stage workflow:
+1. **Build and tag** from `dev` branch
+2. **Publish release** after merging to `main`
+
 ### Prerequisites
 
 ```bash
@@ -128,30 +132,47 @@ cargo install cargo-release
 cargo install git-cliff  # Already installed
 ```
 
-### Creating a Release
+### Step 1: Build and Tag from Dev Branch
+
+From the `dev` branch, run:
 
 ```bash
-# Patch version (0.1.23 -> 0.1.24)
-cargo xtask release patch
+# Using convenience scripts:
+./build_dev.sh patch        # Linux/macOS - patch version (0.1.23 -> 0.1.24)
+build_dev.cmd patch         # Windows - patch version (0.1.23 -> 0.1.24)
 
-# Minor version (0.1.23 -> 0.2.0)
-cargo xtask release minor
-
-# Major version (0.1.23 -> 1.0.0)
-cargo xtask release major
+# Or use cargo xtask directly:
+cargo xtask release patch   # Patch version
+cargo xtask release minor   # Minor version (0.1.23 -> 0.2.0)
+cargo xtask release major   # Major version (0.1.23 -> 1.0.0)
 
 # Dry run (test without committing)
 cargo xtask release patch --dry-run
 ```
 
-### What Happens Automatically
+### What Happens in Step 1
 
 1. **git-cliff** updates `CHANGELOG.md` with all commits since last release
 2. **cargo-release** bumps version in `Cargo.toml`
 3. Creates commit: `"chore: Release playa v0.1.24"`
 4. Creates git tag: `v0.1.24`
-5. Pushes tag and commit to GitHub
-6. **GitHub Actions** builds installers for Windows/Linux and creates GitHub Release
+5. Pushes `dev` branch and tag to GitHub
+6. **Build workflow** runs and creates test artifacts (retained 7 days)
+
+### Step 2: Test and Merge to Main
+
+1. **Download artifacts** from GitHub Actions (https://github.com/ssoj13/playa/actions)
+2. **Test the build** on your target platforms
+3. **Merge to main**:
+   - Option A: Create PR from `dev` to `main` on GitHub
+   - Option B: Manually merge and push to `main`
+
+### Step 3: Release Workflow (Automatic)
+
+When you merge the tag to `main`:
+- **Release workflow** automatically triggers
+- Builds all artifacts again
+- **Creates GitHub Release** with installers attached
 
 ### Release Configuration
 
