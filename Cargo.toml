@@ -64,5 +64,4 @@ allow-downgrades = true
 [package.metadata.packager.nsis]
 installer-mode = "perMachine"
 
-[package.metadata.packager.appimage]
-libs = ["target/release/*.so*"]
+ 
