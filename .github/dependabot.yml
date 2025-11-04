@@ -33,6 +33,9 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # half 2.x breaks compatibility - keep on 1.x
+      - dependency-name: "half"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
