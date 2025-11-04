@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/ssoj13/playa)](https://github.com/ssoj13/playa/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/ssoj13/playa/total)](https://github.com/ssoj13/playa/releases)
 [![License](https://img.shields.io/github/license/ssoj13/playa)](LICENSE)
-[![Lines of Code](https://tokei.rs/b1/github/ssoj13/playa)](https://github.com/ssoj13/playa)
+[![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
 
 Professional image sequence player optimized for VFX workflows with async loading, intelligent caching, and OpenGL rendering.
 
