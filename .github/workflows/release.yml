@@ -21,9 +21,11 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.3
+        continue-on-error: true
 
       - name: Configure sccache
         shell: pwsh
+        continue-on-error: true
         run: |
           echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
@@ -192,8 +194,10 @@ jobs:
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.3
+        continue-on-error: true
 
       - name: Configure sccache
+        continue-on-error: true
         run: |
           echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
           echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
