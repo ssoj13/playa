@@ -182,6 +182,9 @@ jobs:
           version: "0.11.7"
           cache-key: ${{ runner.os }}
 
+      - name: Fetch dependencies
+        run: cargo fetch
+
       - name: Build the application (with xtask)
         run: cargo xtask build --release
         continue-on-error: true

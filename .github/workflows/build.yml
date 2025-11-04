@@ -67,6 +67,9 @@ jobs:
         save-if: true
         key: "rust-deps"
 
+    - name: Fetch dependencies
+      run: cargo fetch
+
     - name: Build the application (with xtask)
       run: cargo xtask build --release
 
