@@ -51,6 +51,9 @@ enum Commands {
         #[arg(long)]
         release: bool,
     },
+
+    /// Preview unreleased changelog (saves to CHANGELOG.preview.md)
+    ChangelogPreview,
 }
 
 fn main() {
@@ -69,6 +72,7 @@ fn run() -> Result<()> {
         Commands::Post { release } => cmd_post(release),
         Commands::Release { level, dry_run } => cmd_release(&level, dry_run),
         Commands::Verify { release } => cmd_verify(release),
+        Commands::ChangelogPreview => cmd_changelog_preview(),
     }
 }
 
@@ -179,6 +183,33 @@ fn cmd_verify(release: bool) -> Result<()> {
     println!("========================================");
     println!("All dependencies verified successfully!");
     println!("========================================");
+
+    Ok(())
+}
+
+/// Command: cargo xtask changelog-preview
+fn cmd_changelog_preview() -> Result<()> {
+    use anyhow::Context;
+
+    println!("========================================");
+    println!("Generating changelog preview...");
+    println!("========================================");
+    println!();
+
+    let status = Command::new("git-cliff")
+        .args(&["--unreleased", "-o", "CHANGELOG.preview.md"])
+        .status()
+        .context("Failed to run git-cliff. Is it installed?")?;
+
+    if !status.success() {
+        anyhow::bail!("git-cliff failed with exit code: {:?}", status.code());
+    }
+
+    println!("✓ Preview saved to CHANGELOG.preview.md");
+    println!();
+    println!("This file shows unreleased changes that will be added");
+    println!("to CHANGELOG.md on the next release.");
+    println!();
 
     Ok(())
 }

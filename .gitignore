@@ -23,3 +23,6 @@ Thumbs.db
 *.dll
 *.so
 *.dylib
+
+# Changelog preview (generated locally)
+CHANGELOG.preview.md

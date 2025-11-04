@@ -63,3 +63,11 @@ allow-downgrades = true
 
 [package.metadata.packager.nsis]
 installer-mode = "perMachine"
+
+[package.metadata.release]
+# Customize the release commit message
+pre-release-commit-message = "chore: Release {{crate_name}} v{{version}}"
+# Run git-cliff before creating the release commit to update CHANGELOG.md
+pre-release-hook = ["git-cliff", "--tag", "v{{version}}", "-o", "CHANGELOG.md"]
+# Don't publish to crates.io
+publish = false

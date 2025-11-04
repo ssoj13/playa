@@ -5,6 +5,7 @@
 [![Downloads](https://img.shields.io/github/downloads/ssoj13/playa/total)](https://github.com/ssoj13/playa/releases)
 [![License](https://img.shields.io/github/license/ssoj13/playa)](LICENSE)
 [![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
+[![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
 Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rendering.
 
@@ -55,6 +56,60 @@ cargo xtask build --release
 ```
 
 The compiled binary will be in `target/release/playa` (or `playa.exe` on Windows).
+
+### Development Tools
+
+For contributors and maintainers, these optional tools enhance the development workflow:
+
+#### Required Tools (for releases and changelog)
+
+```bash
+# Cargo release automation
+cargo install cargo-release
+
+# Changelog generation from git commits
+cargo install git-cliff
+```
+
+#### Optional Tools (for testing and code quality)
+
+```bash
+# Linting and formatting (usually via rustup)
+rustup component add clippy rustfmt
+
+# Security auditing
+cargo install cargo-audit
+
+# Code coverage (optional)
+cargo install cargo-llvm-cov     # Recommended - uses LLVM coverage
+cargo install cargo-tarpaulin    # Alternative - cross-platform
+```
+
+#### CI/CD Tools (auto-installed in GitHub Actions)
+
+These are automatically installed in CI pipelines, but can be useful locally:
+
+```bash
+# Packaging tool (used in release workflow)
+cargo install cargo-packager --version 0.11.7
+
+# C/C++ compilation cache (optional, for faster openexr-sys builds)
+# Installation: https://github.com/mozilla/sccache#installation
+```
+
+#### Quick Setup for Contributors
+
+```bash
+# Minimal setup for pull requests
+rustup component add clippy rustfmt
+cargo install git-cliff
+
+# Full setup for maintainers
+rustup component add clippy rustfmt llvm-tools-preview
+cargo install cargo-release git-cliff cargo-llvm-cov cargo-audit
+```
+
+**Note**: `cargo-packager` is cached in CI and rarely needed locally unless testing packaging.
 
 **About `cargo xtask`:**
 
@@ -595,9 +650,11 @@ See LICENSE file for details.
 
 ## Contributing
 
-Pull requests welcome! Please ensure:
-- Code follows Rust conventions
-- Comments explain non-obvious logic
-- No regressions in loading/playback performance
-- LRU cache invariants maintained (access_order ↔ frames sync)
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
+- Commit message conventions (Conventional Commits)
+- Development workflow and tools
+- Release process
+- CI/CD architecture
+
+See [CHANGELOG.md](CHANGELOG.md) for project history.
 

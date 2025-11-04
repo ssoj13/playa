@@ -23,12 +23,23 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
         continue-on-error: true
 
-      - name: Configure sccache
+      - name: Test and configure sccache
         shell: pwsh
         continue-on-error: true
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
+          # Test sccache connectivity before enabling it
+          Write-Host "Testing sccache connectivity..."
+          $result = sccache --show-stats 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "✓ sccache is working, enabling RUSTC_WRAPPER"
+            echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "✗ sccache connectivity test failed, proceeding without cache"
+            Write-Host "Error output: $result"
+            # Explicitly ensure RUSTC_WRAPPER is not set
+            echo "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
+          }
 
       - name: Install cargo-packager
         uses: baptiste0928/cargo-install@v3
@@ -45,19 +56,6 @@ jobs:
           # Don't include Cargo.lock hash in cache key to avoid invalidation on version changes
           key: "rust-deps"
           cache-bin: false
-
-      - name: Test sccache connectivity
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          # Try to run sccache --show-stats to check if it can connect
-          $result = sccache --show-stats 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "sccache connectivity test failed, disabling RUSTC_WRAPPER"
-            echo "RUSTC_WRAPPER=" >> $env:GITHUB_ENV
-          } else {
-            Write-Host "sccache is working, keeping RUSTC_WRAPPER=sccache"
-          }
 
       - name: Build the application
         run: cargo xtask build --release
@@ -209,11 +207,20 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
         continue-on-error: true
 
-      - name: Configure sccache
+      - name: Test and configure sccache
         continue-on-error: true
         run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          # Test sccache connectivity before enabling it
+          echo "Testing sccache connectivity..."
+          if sccache --show-stats >/dev/null 2>&1; then
+            echo "✓ sccache is working, enabling RUSTC_WRAPPER"
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          else
+            echo "✗ sccache connectivity test failed, proceeding without cache"
+            # Explicitly ensure RUSTC_WRAPPER is not set
+            echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
+          fi
 
       - name: Install cargo-packager
         uses: baptiste0928/cargo-install@v3
@@ -229,17 +236,6 @@ jobs:
           save-if: true
           key: "rust-deps"
           cache-bin: false
-
-      - name: Test sccache connectivity
-        continue-on-error: true
-        run: |
-          # Try to run sccache --show-stats to check if it can connect
-          if ! sccache --show-stats >/dev/null 2>&1; then
-            echo "sccache connectivity test failed, disabling RUSTC_WRAPPER"
-            echo "RUSTC_WRAPPER=" >> $GITHUB_ENV
-          else
-            echo "sccache is working, keeping RUSTC_WRAPPER=sccache"
-          fi
 
       - name: Fetch dependencies
         run: cargo fetch
