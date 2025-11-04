@@ -8,6 +8,10 @@
 - Sequence patterns: support for `%0Nd`
   - `Sequence::new()` now accepts printf-style patterns (e.g., `render.%04d.exr`) by internally globbing with `*` for discovery while retaining the original pattern for formatting.
 
+- Reduce per-frame cloning and allocations
+  - Avoid cloning the full pixel buffer every frame in the UI: only fetch pixel data when an upload is actually needed (frame changed or texture size changed).
+  - Reuse a scratch buffer in `ViewportRenderer` for f16→u16 conversion to avoid per-upload allocations.
+
 - Centralized processing of loaded frames
   - Removed `Cache::get_frame()` internal call to `process_loaded_frames()`; processing now occurs in the UI loop only to reduce lock contention and duplicate polling.
 

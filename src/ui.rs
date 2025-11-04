@@ -367,8 +367,6 @@ pub fn render_viewport(
         } else if let Some(img) = frame {
             let w = img.width();
             let h = img.height();
-            let pixel_buffer = img.pixel_buffer();
-            let pixel_format = img.pixel_format();
             let frame_state = img.status();
             let available_size = panel_rect.size();
 
@@ -465,10 +463,21 @@ pub fn render_viewport(
             // Measure render time
             let render_start = std::time::Instant::now();
 
-            // Render viewport using custom OpenGL
+            // Decide if we need to upload a texture this frame
             let renderer = viewport_renderer.clone();
             let state = viewport_state.clone();
-            let needs_upload = texture_needs_upload;
+            let mut needs_upload = texture_needs_upload;
+            {
+                let r = renderer.lock().unwrap();
+                if r.needs_texture_update(w, h) { needs_upload = true; }
+            }
+
+            // Only fetch pixel data when we actually need to upload
+            let upload_payload: Option<(crate::frame::PixelBuffer, crate::frame::PixelFormat)> = if needs_upload {
+                Some((img.pixel_buffer(), img.pixel_format()))
+            } else {
+                None
+            };
 
             ui.painter().add(egui::PaintCallback {
                 rect: panel_rect,
@@ -476,8 +485,8 @@ pub fn render_viewport(
                     let gl = painter.gl();
                     let mut r = renderer.lock().unwrap();
 
-                    if needs_upload || r.needs_texture_update(w, h) {
-                        r.upload_texture(gl, w, h, &pixel_buffer, pixel_format);
+                    if let Some((pixel_buffer, pixel_format)) = &upload_payload {
+                        r.upload_texture(gl, w, h, pixel_buffer, *pixel_format);
                     }
                     r.render(gl, &state);
                 })),

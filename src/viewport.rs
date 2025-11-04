@@ -271,6 +271,9 @@ pub struct ViewportRenderer {
     // HDR controls
     pub exposure: f32,  // Exposure multiplier (default 1.0)
     pub gamma: f32,     // Gamma correction (default 2.2 for sRGB)
+
+    // Scratch buffer to avoid per-frame allocations when converting f16 -> u16
+    f16_scratch: Vec<u16>,
 }
 
 impl ViewportRenderer {
@@ -297,6 +300,8 @@ impl ViewportRenderer {
             pbo_pixel_format: PixelFormat::Rgba8,  // Default format
             exposure: 1.0,   // Default exposure
             gamma: 2.2,      // Default sRGB gamma
+
+            f16_scratch: Vec::new(),
         }
     }
 
@@ -492,19 +497,19 @@ impl ViewportRenderer {
         self.current_pixel_format = pixel_format;
 
         unsafe {
-            // Convert F16 to u16 outside of match to extend lifetime
-            let f16_as_u16: Option<Vec<u16>> = match pixel_buffer {
-                PixelBuffer::F16(vec) => Some(vec.iter().map(|f: &F16| f.to_bits()).collect()),
-                _ => None,
-            };
-
             // Get bytes from pixel buffer and map to GL formats
             let (pixels_bytes, gl_internal_format, gl_format, gl_type) = match pixel_buffer {
                 PixelBuffer::U8(vec) => {
                     (vec.as_slice(), glow::RGBA as i32, glow::RGBA, glow::UNSIGNED_BYTE)
                 }
                 PixelBuffer::F16(_) => {
-                    let bytes = bytemuck::cast_slice(f16_as_u16.as_ref().unwrap().as_slice());
+                    // Reuse scratch buffer to avoid new allocation per upload
+                    if let PixelBuffer::F16(src) = pixel_buffer {
+                        self.f16_scratch.clear();
+                        self.f16_scratch.reserve(src.len());
+                        self.f16_scratch.extend(src.iter().map(|f: &F16| f.to_bits()));
+                    }
+                    let bytes = bytemuck::cast_slice(self.f16_scratch.as_slice());
                     (bytes, glow::RGBA16F as i32, glow::RGBA, glow::HALF_FLOAT)
                 }
                 PixelBuffer::F32(vec) => {
