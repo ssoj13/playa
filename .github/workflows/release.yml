@@ -19,6 +19,15 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
+      - name: Configure sccache
+        shell: pwsh
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $env:GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $env:GITHUB_ENV
+
       - name: Install cargo-packager
         uses: baptiste0928/cargo-install@v3
         with:
@@ -180,6 +189,14 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.3
+
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
 
       - name: Install cargo-packager
         uses: baptiste0928/cargo-install@v3
