@@ -494,6 +494,29 @@ pub fn render_viewport(
 
             render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
 
+            // Show shader error overlay if any
+            if let Ok(r) = viewport_renderer.lock() {
+                if let Some(err) = r.shader_error() {
+                    let overlay = egui::Color32::from_rgba_unmultiplied(50, 0, 0, 180);
+                    let text = egui::Color32::from_rgb(255, 220, 220);
+                    let margin = egui::vec2(10.0, 10.0);
+                    let galley = ui.painter().layout_no_wrap(
+                        format!("Shader Error: {}", err),
+                        egui::FontId::monospace(12.0),
+                        text,
+                    );
+                    let rect = egui::Rect::from_min_size(panel_rect.left_top() + margin, galley.size());
+                    ui.painter().rect_filled(rect.expand(6.0), 4.0, overlay);
+                    ui.painter().text(
+                        rect.min + egui::vec2(6.0, 2.0),
+                        egui::Align2::LEFT_TOP,
+                        format!("Shader Error: {}", err),
+                        egui::FontId::monospace(12.0),
+                        text,
+                    );
+                }
+            }
+
             // Draw loading/error indicator
             match frame_state {
                 FrameStatus::Loading => {

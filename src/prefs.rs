@@ -42,6 +42,10 @@ pub struct AppSettings {
     pub dark_mode: bool,
     pub font_size: f32,
 
+    // Cache/Workers
+    pub cache_mem_percent: f32,     // 5..95; applied live to cache
+    pub workers_override: u32,      // 0 = auto, N = override (applies on restart)
+
     // Internal
     pub selected_settings_category: Option<String>,
 }
@@ -56,6 +60,8 @@ impl Default for AppSettings {
             show_playlist: true,
             dark_mode: true,
             font_size: 13.0,
+            cache_mem_percent: 75.0,
+            workers_override: 0,
             selected_settings_category: Some("UI".to_string()),
         }
     }
@@ -82,6 +88,27 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add_space(16.0);
 
     ui.checkbox(&mut settings.dark_mode, "Dark Mode");
+
+    ui.add_space(16.0);
+    ui.heading("Performance");
+    ui.add_space(8.0);
+
+    ui.label("Cache Memory Budget:");
+    ui.add(
+        egui::Slider::new(&mut settings.cache_mem_percent, 5.0..=95.0)
+            .suffix(" %")
+            .step_by(1.0)
+    );
+    ui.label("Applies immediately. Controls the fraction of available RAM used by the frame cache.");
+
+    ui.add_space(8.0);
+    ui.label("Worker Threads Override (0 = Auto):");
+    ui.add(
+        egui::DragValue::new(&mut settings.workers_override)
+            .speed(1.0)
+            .range(0..=256)
+    );
+    ui.label("Takes effect on next launch. Defaults to ~75% of CPU cores.");
 }
 
 /// Render settings window

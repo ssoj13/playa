@@ -12,6 +12,18 @@
   - Avoid cloning the full pixel buffer every frame in the UI: only fetch pixel data when an upload is actually needed (frame changed or texture size changed).
   - Reuse a scratch buffer in `ViewportRenderer` for f16→u16 conversion to avoid per-upload allocations.
 
+- Shader error visibility and GL upload tuning
+  - Added on-screen overlay with the last shader compile/link error for faster debugging.
+  - Orphan PBO buffers and use `MAP_INVALIDATE_BUFFER_BIT` to reduce driver stalls during large texture uploads.
+
+- Configurable cache budget and worker threads (CLI)
+  - `--mem <PERCENT>` to set cache memory budget percentage (default 75%).
+  - `--workers <N>` to override worker threads (default 75% of CPU cores).
+
+- Settings: cache memory and workers
+  - Added UI controls (Settings → UI → Performance) for cache memory budget (applies immediately) and worker override (applies on next launch).
+  - On startup, CLI flags take precedence; otherwise settings drive the configuration.
+
 - Centralized processing of loaded frames
   - Removed `Cache::get_frame()` internal call to `process_loaded_frames()`; processing now occurs in the UI loop only to reduce lock contention and duplicate polling.
 

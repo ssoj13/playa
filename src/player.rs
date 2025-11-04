@@ -48,12 +48,17 @@ pub struct Player {
 }
 
 impl Player {
-    /// Create new player with empty cache
+    /// Create new player with empty cache and defaults
     /// Returns (Player, UI message receiver, Path sender)
     pub fn new() -> (Self, mpsc::Receiver<CacheMessage>, mpsc::Sender<PathBuf>) {
+        Self::new_with_config(0.75, None)
+    }
+
+    /// Create new player with configurable memory budget and worker count
+    pub fn new_with_config(max_mem_fraction: f64, workers: Option<usize>) -> (Self, mpsc::Receiver<CacheMessage>, mpsc::Sender<PathBuf>) {
         info!("Player initialized with new architecture");
 
-        let (cache, ui_rx, path_tx) = Cache::new(0.75); // 75% of available memory
+        let (cache, ui_rx, path_tx) = Cache::new(max_mem_fraction, workers); // configurable memory/workers
 
         let player = Self {
             cache,

@@ -146,9 +146,9 @@ impl Cache {
     ///
     /// ```rust,no_run
     /// use playa::cache::Cache;
-    /// let (cache, ui_rx, path_tx) = Cache::new(0.75); // 75% of available RAM
+    /// let (cache, ui_rx, path_tx) = Cache::new(0.75, None); // 75% of available RAM, default workers
     /// ```
-    pub fn new(max_mem: f64) -> (Self, mpsc::Receiver<CacheMessage>, mpsc::Sender<PathBuf>) {
+    pub fn new(max_mem: f64, workers_override: Option<usize>) -> (Self, mpsc::Receiver<CacheMessage>, mpsc::Sender<PathBuf>) {
         let mut sys = System::new_all();
         sys.refresh_memory();
 
@@ -164,10 +164,12 @@ impl Cache {
               max_mem * 100.0);
 
         // Calculate worker count first (needed for channel capacity)
-        let num_workers = (std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(8) * 3 / 4)
-            .max(1);
+        let num_workers = if let Some(w) = workers_override { w.max(1) } else {
+            (std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(8) * 3 / 4)
+                .max(1)
+        };
 
         info!("Using {} worker threads", num_workers);
 
@@ -687,6 +689,31 @@ impl Cache {
         (usage, self.max_memory_bytes)
     }
 
+    /// Update memory limit as a fraction of currently available system memory
+    /// and immediately enforce the new limit by evicting least-recently-used frames.
+    pub fn set_memory_fraction(&mut self, max_mem: f64) {
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+        let available_memory = sys.available_memory() as usize;
+        self.max_memory_bytes = (available_memory as f64 * max_mem) as usize;
+
+        // Evict if over the new budget
+        self.enforce_memory_limit();
+    }
+
+    /// Evict LRU frames until usage <= max_memory_bytes
+    pub fn enforce_memory_limit(&mut self) {
+        let mut lru = self.lru_cache.write().unwrap();
+        while self.memory_usage.load(Ordering::Relaxed) > self.max_memory_bytes {
+            if let Some((_key, entry)) = lru.pop_lru() {
+                let removed_size = entry.frame.mem();
+                self.memory_usage.fetch_sub(removed_size, Ordering::Relaxed);
+            } else {
+                break;
+            }
+        }
+    }
+
     /// Get count of cached frames in memory
     pub fn cached_frames_count(&self) -> usize {
         let lru = self.lru_cache.read().unwrap();
@@ -931,7 +958,7 @@ mod tests {
     /// Validates: Basic cache creation and structure
     #[test]
     fn test_cache_creation() {
-        let (cache, _ui_rx, _path_tx) = Cache::new(0.5); // 50% of RAM
+        let (cache, _ui_rx, _path_tx) = Cache::new(0.5, None); // 50% of RAM
 
         // Cache should start empty
         assert_eq!(cache.total_frames(), 0);
@@ -944,7 +971,7 @@ mod tests {
     /// Validates: RwLock allows multiple simultaneous readers
     #[test]
     fn test_concurrent_reads() {
-        let (cache, _ui_rx, _path_tx) = Cache::new(0.1);
+        let (cache, _ui_rx, _path_tx) = Cache::new(0.1, None);
         let cache = Arc::new(cache);
 
         let mut handles = vec![];

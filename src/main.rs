@@ -35,6 +35,14 @@ struct Args {
     /// Enable debug logging to file (default: playa.log)
     #[arg(short = 'l', long = "log", value_name = "LOG_FILE")]
     log_file: Option<Option<PathBuf>>,
+
+    /// Memory budget percentage for cache (e.g., 75 for 75%)
+    #[arg(long = "mem", value_name = "PERCENT")]
+    mem_percent: Option<f64>,
+
+    /// Worker threads override (default: 75% of CPU cores)
+    #[arg(long = "workers", value_name = "N")]
+    workers: Option<usize>,
 }
 
 /// Main application state
@@ -75,6 +83,10 @@ struct PlayaApp {
     cached_seq_ranges: Vec<timeslider::SequenceRange>,
     #[serde(skip)]
     last_seq_version: usize,
+    #[serde(skip)]
+    applied_mem_fraction: f64,
+    #[serde(skip)]
+    applied_workers: Option<usize>,
 }
 
 impl Default for PlayaApp {
@@ -101,6 +113,8 @@ impl Default for PlayaApp {
             is_fullscreen: false,
             cached_seq_ranges: Vec::new(),
             last_seq_version: 0,
+            applied_mem_fraction: 0.75,
+            applied_workers: None,
         }
     }
 }
@@ -285,6 +299,13 @@ impl eframe::App for PlayaApp {
         ctx.set_style(style);
 
         self.handle_keyboard_input(ctx);
+
+        // Apply live cache memory budget from settings if changed
+        let desired_mem_fraction = (self.settings.cache_mem_percent as f64 / 100.0).clamp(0.05, 0.95);
+        if (desired_mem_fraction - self.applied_mem_fraction).abs() > f64::EPSILON {
+            self.player.cache.set_memory_fraction(desired_mem_fraction);
+            self.applied_mem_fraction = desired_mem_fraction;
+        }
         self.player.update();
 
         // Process loaded frames from worker threads (updates cache and sends progress to UI)
@@ -524,6 +545,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("No persisted state found, creating default app");
                     PlayaApp::default()
                 });
+
+            // Recreate Player with CLI- or Settings-configured cache memory/worker settings
+            // and rewire status bar + path sender
+            let mem_fraction = args.mem_percent
+                .map(|p| (p / 100.0).clamp(0.05, 0.95))
+                .or_else(|| Some((app.settings.cache_mem_percent as f64 / 100.0).clamp(0.05, 0.95)))
+                .unwrap_or(0.75);
+            let workers = args.workers
+                .or_else(|| if app.settings.workers_override > 0 { Some(app.settings.workers_override as usize) } else { None });
+            let (player, ui_rx, path_tx) = Player::new_with_config(mem_fraction, workers);
+            app.player = player;
+            app.status_bar = StatusBar::new(ui_rx);
+            app.path_sender = path_tx;
+            app.applied_mem_fraction = mem_fraction;
+            app.applied_workers = workers;
 
             // Attempt to load shaders from the shaders directory
             if let Err(e) = app.shader_manager.load_shader_directory(&std::path::PathBuf::from("shaders")) {

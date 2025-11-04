@@ -274,6 +274,9 @@ pub struct ViewportRenderer {
 
     // Scratch buffer to avoid per-frame allocations when converting f16 -> u16
     f16_scratch: Vec<u16>,
+
+    // Last shader error message (if any)
+    last_error: Option<String>,
 }
 
 impl ViewportRenderer {
@@ -302,6 +305,7 @@ impl ViewportRenderer {
             gamma: 2.2,      // Default sRGB gamma
 
             f16_scratch: Vec::new(),
+            last_error: None,
         }
     }
 
@@ -329,7 +333,9 @@ impl ViewportRenderer {
             let vertex_shader = match gl.create_shader(glow::VERTEX_SHADER) {
                 Ok(shader) => shader,
                 Err(e) => {
-                    error!("Failed to create vertex shader: {}", e);
+                    let msg = format!("Failed to create vertex shader: {}", e);
+                    self.last_error = Some(msg.clone());
+                    error!("{}", msg);
                     return;
                 }
             };
@@ -337,9 +343,10 @@ impl ViewportRenderer {
             gl.compile_shader(vertex_shader);
 
             if !gl.get_shader_compile_status(vertex_shader) {
-                error!("Vertex shader compilation failed: {}", gl.get_shader_info_log(vertex_shader));
                 let log = gl.get_shader_info_log(vertex_shader);
-                error!("Vertex shader error: {}", log);
+                let msg = format!("Vertex shader compilation failed: {}", log);
+                self.last_error = Some(msg.clone());
+                error!("{}", msg);
                 gl.delete_shader(vertex_shader);
                 return;
             }
@@ -347,7 +354,9 @@ impl ViewportRenderer {
             let fragment_shader = match gl.create_shader(glow::FRAGMENT_SHADER) {
                 Ok(shader) => shader,
                 Err(e) => {
-                    error!("Failed to create fragment shader: {}", e);
+                    let msg = format!("Failed to create fragment shader: {}", e);
+                    self.last_error = Some(msg.clone());
+                    error!("{}", msg);
                     gl.delete_shader(vertex_shader);
                     return;
                 }
@@ -356,9 +365,10 @@ impl ViewportRenderer {
             gl.compile_shader(fragment_shader);
 
             if !gl.get_shader_compile_status(fragment_shader) {
-                error!("Fragment shader compilation failed: {}", gl.get_shader_info_log(fragment_shader));
                 let log = gl.get_shader_info_log(fragment_shader);
-                error!("Fragment shader error: {}", log);
+                let msg = format!("Fragment shader compilation failed: {}", log);
+                self.last_error = Some(msg.clone());
+                error!("{}", msg);
                 gl.delete_shader(vertex_shader);
                 gl.delete_shader(fragment_shader);
                 return;
@@ -368,7 +378,9 @@ impl ViewportRenderer {
             let program = match gl.create_program() {
                 Ok(p) => p,
                 Err(e) => {
-                    error!("Failed to create shader program: {}", e);
+                    let msg = format!("Failed to create shader program: {}", e);
+                    self.last_error = Some(msg.clone());
+                    error!("{}", msg);
                     gl.delete_shader(vertex_shader);
                     gl.delete_shader(fragment_shader);
                     return;
@@ -379,9 +391,10 @@ impl ViewportRenderer {
             gl.link_program(program);
 
             if !gl.get_program_link_status(program) {
-                error!("Shader program linking failed: {}", gl.get_program_info_log(program));
                 let log = gl.get_program_info_log(program);
-                error!("Program link error: {}", log);
+                let msg = format!("Shader program linking failed: {}", log);
+                self.last_error = Some(msg.clone());
+                error!("{}", msg);
                 gl.delete_shader(vertex_shader);
                 gl.delete_shader(fragment_shader);
                 gl.delete_program(program);
@@ -392,6 +405,8 @@ impl ViewportRenderer {
             gl.delete_shader(fragment_shader);
 
             self.program = Some(program);
+            // Clear last error on success
+            self.last_error = None;
 
             // Create VAO and VBO for textured quad
             if self.vao.is_none() {
@@ -497,7 +512,9 @@ impl ViewportRenderer {
         self.current_pixel_format = pixel_format;
 
         unsafe {
-            // Get bytes from pixel buffer and map to GL formats
+            // Prepare bytes from pixel buffer and map to GL formats
+            // For F16 we create an owned byte buffer to avoid borrowing self across calls
+            let mut owned_bytes: Option<Vec<u8>> = None;
             let (pixels_bytes, gl_internal_format, gl_format, gl_type) = match pixel_buffer {
                 PixelBuffer::U8(vec) => {
                     (vec.as_slice(), glow::RGBA as i32, glow::RGBA, glow::UNSIGNED_BYTE)
@@ -509,8 +526,9 @@ impl ViewportRenderer {
                         self.f16_scratch.reserve(src.len());
                         self.f16_scratch.extend(src.iter().map(|f: &F16| f.to_bits()));
                     }
-                    let bytes = bytemuck::cast_slice(self.f16_scratch.as_slice());
-                    (bytes, glow::RGBA16F as i32, glow::RGBA, glow::HALF_FLOAT)
+                    let bytes_u8: Vec<u8> = bytemuck::cast_slice(self.f16_scratch.as_slice()).to_vec();
+                    owned_bytes = Some(bytes_u8);
+                    (owned_bytes.as_ref().unwrap().as_slice(), glow::RGBA16F as i32, glow::RGBA, glow::HALF_FLOAT)
                 }
                 PixelBuffer::F32(vec) => {
                     let bytes = bytemuck::cast_slice(vec.as_slice());
@@ -553,8 +571,11 @@ impl ViewportRenderer {
             // --- Step 1: Write current frame's data to the "write" PBO ---
             if let Some(write_pbo) = self.pbos[write_pbo_index] {
                 gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(write_pbo));
+                // Orphan previous data to avoid stalls
+                gl.buffer_data_size(glow::PIXEL_UNPACK_BUFFER, pixels_bytes.len() as i32, glow::STREAM_DRAW);
                 let ptr = gl.map_buffer_range(
-                    glow::PIXEL_UNPACK_BUFFER, 0, pixels_bytes.len() as i32, glow::MAP_WRITE_BIT
+                    glow::PIXEL_UNPACK_BUFFER, 0, pixels_bytes.len() as i32,
+                    glow::MAP_WRITE_BIT | glow::MAP_INVALIDATE_BUFFER_BIT
                 );
 
                 if !ptr.is_null() {
@@ -597,6 +618,11 @@ impl ViewportRenderer {
             // Swap PBOs for the next frame
             self.pbo_index = (self.pbo_index + 1) % 2;
         }
+    }
+
+    /// Return the last shader error message, if any
+    pub fn shader_error(&self) -> Option<String> {
+        self.last_error.clone()
     }
 
     /// Render the viewport
