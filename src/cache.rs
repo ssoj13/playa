@@ -120,6 +120,9 @@ pub struct Cache {
 
     // Progress tracking
     progress: LoadProgress,
+
+    // Incremented on each successfully loaded frame (for UI invalidation)
+    loaded_events_counter: AtomicUsize,
 }
 
 impl Cache {
@@ -400,6 +403,8 @@ impl Cache {
             sequences_version: Arc::new(AtomicUsize::new(0)),
 
             progress: LoadProgress::new(0),
+
+            loaded_events_counter: AtomicUsize::new(0),
         };
 
         (cache, ui_message_receiver, path_sender)
@@ -554,9 +559,8 @@ impl Cache {
     /// }
     /// ```
     pub fn get_frame(&mut self, global_idx: usize) -> Option<&Frame> {
-        // Process loaded frames first
-        self.process_loaded_frames();
-
+        // Note: processing of loaded frames is centralized in the UI loop
+        
         let (seq_idx, frame_idx) = self.global_to_local(global_idx)?;
 
         // Check if cached (read lock - allows concurrent access from other threads)
@@ -623,6 +627,9 @@ impl Cache {
 
                             // Progress
                             self.progress.update(loaded_frame.seq_idx, loaded_frame.frame_idx);
+
+                            // Notify UI-side caches that a frame successfully loaded
+                            self.loaded_events_counter.fetch_add(1, Ordering::Relaxed);
                         }
                         Err(error_msg) => {
                             warn!("Failed to load frame ({}, {}): {}",
@@ -906,6 +913,11 @@ impl Cache {
         }
 
         stats
+    }
+
+    /// Monotonic counter incremented on each successful frame load
+    pub fn loaded_events_counter(&self) -> usize {
+        self.loaded_events_counter.load(Ordering::Relaxed)
     }
 }
 

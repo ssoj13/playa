@@ -211,7 +211,8 @@ impl Frame {
             // Already loading/loaded/error - just return current status
             return match self.status() {
                 FrameStatus::Loaded => Ok(()),
-                FrameStatus::Error => Err(FrameError::UnsupportedFormat("Previously failed".into())),
+                // Return a clearer error category instead of UnsupportedFormat
+                FrameStatus::Error => Err(FrameError::Image("Previously failed".into())),
                 _ => Ok(()),  // Loading in progress
             };
         }

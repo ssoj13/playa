@@ -16,7 +16,9 @@ const COLOR_ERROR: Color32 = Color32::from_rgb(200, 60, 60);         // Крас
 #[derive(Clone, Debug)]
 struct LoadIndicatorCache {
     statuses: Vec<FrameStatus>,
-    cached_count: usize,  // Number of cached frames (for detecting changes)
+    cached_count: usize,      // Number of cached frames (for detecting changes)
+    loaded_events: usize,     // Number of successful frame loads (monotonic)
+    sequences_version: usize, // Sequences version (changes when playlist changes)
 }
 
 /// Represents a sequence range in global frame space
@@ -68,22 +70,33 @@ pub fn time_slider(
     // Get/update cached statuses using egui persistence
     let cache_id = ui.id().with("load_indicator_cache");
     let current_cached_count = cache.cached_frames_count();
+    let current_loaded_events = cache.loaded_events_counter();
+    let current_seq_ver = cache.sequences_version();
 
     let cached_statuses = ui.ctx().memory_mut(|mem| {
         let stored: Option<LoadIndicatorCache> = mem.data.get_temp(cache_id);
 
         match stored {
-            Some(cached) if cached.cached_count == current_cached_count => {
+            Some(cached)
+                if cached.cached_count == current_cached_count
+                    && cached.loaded_events == current_loaded_events
+                    && cached.sequences_version == current_seq_ver =>
+            {
                 // Cache is up-to-date
                 cached.statuses
             }
             _ => {
-                // Rebuild cache
+                // Rebuild cache when any token changes
                 let statuses = cache.get_frame_stats();
-                mem.data.insert_temp(cache_id, LoadIndicatorCache {
-                    statuses: statuses.clone(),
-                    cached_count: current_cached_count,
-                });
+                mem.data.insert_temp(
+                    cache_id,
+                    LoadIndicatorCache {
+                        statuses: statuses.clone(),
+                        cached_count: current_cached_count,
+                        loaded_events: current_loaded_events,
+                        sequences_version: current_seq_ver,
+                    },
+                );
                 statuses
             }
         }
