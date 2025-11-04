@@ -3,6 +3,7 @@
 **/*.rs.bk
 *.pdb
 *.json
+temp_log.txt
 
 # Cargo
 Cargo.lock
