@@ -81,6 +81,26 @@ The script automatically:
 
 The project uses [git-cliff](https://git-cliff.org/) to automatically generate `CHANGELOG.md` from commit messages.
 
+### How It Works
+
+CHANGELOG.md is generated automatically by **git-cliff** during the release process:
+
+1. When you run `cargo xtask release`, the **cargo-release** tool starts the release process
+2. Before creating the release commit, it executes the `pre-release-hook` defined in `Cargo.toml`:
+   ```toml
+   pre-release-hook = ["git-cliff", "--tag", "v{{version}}", "-o", "CHANGELOG.md"]
+   ```
+3. **git-cliff** reads all git commits since the last release tag
+4. It parses commits following the [Conventional Commits](https://www.conventionalcommits.org/) format
+5. It applies filtering and grouping rules from `cliff.toml`:
+   - Filters out: release commits (`chore: Release`), checkpoints, and some dependency updates
+   - Groups commits by type: Features, Bug Fixes, Documentation, etc.
+   - Adds emoji icons for each category
+   - Links issue numbers automatically (when available)
+6. **git-cliff regenerates CHANGELOG.md from scratch** (not incremental) - it always rebuilds the entire changelog from all git history
+7. The updated CHANGELOG.md is included in the release commit: `"chore: Release playa v0.1.x"`
+8. The commit is tagged and pushed to GitHub
+
 ### Manual Commands
 
 ```bash
@@ -93,17 +113,11 @@ cargo xtask changelog-preview
 # Creates CHANGELOG.preview.md (git-ignored)
 ```
 
-### Automatic During Release
+### Configuration Files
 
-Runs via `pre-release-hook` in `Cargo.toml` when you execute `cargo xtask release`
-
-### Configuration
-
-- `cliff.toml` - git-cliff configuration
-- Filters out: release commits, checkpoints, dependency updates
-- Groups commits by type with emoji icons
-- Links issue numbers automatically (when available)
-- **Regenerates from scratch** each time (not incremental)
+- **`Cargo.toml`** (line 71): Defines when git-cliff runs via `pre-release-hook`
+- **`cliff.toml`**: Configures commit parsing, filtering, grouping, and output format
+- **`changelog.sh`** / **`changelog.cmd`**: Manual scripts for regenerating CHANGELOG outside of release process
 
 ## Release Process
 
