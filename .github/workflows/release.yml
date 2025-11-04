@@ -157,7 +157,6 @@ jobs:
   # TODO: Re-enable Linux build after fixing dependencies issues
   build-linux:
     runs-on: ubuntu-latest
-    continue-on-error: true  # Don't fail the whole workflow if Linux build fails
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -174,6 +173,8 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "stable"
+          save-if: true
+          key: "rust-deps"
 
       - name: Install cargo-packager
         uses: baptiste0928/cargo-install@v3
@@ -187,14 +188,11 @@ jobs:
 
       - name: Build the application (with xtask)
         run: cargo xtask build --release
-        continue-on-error: true
 
       - name: Package the application
         run: cargo packager --release
-        continue-on-error: true
 
       - name: List bundle contents (if successful)
-        continue-on-error: true
         run: |
           if [ -d "target/release/bundle" ]; then
             ls -R target/release/bundle/
@@ -205,7 +203,6 @@ jobs:
 
       - name: Find AppImage
         id: find_appimage
-        continue-on-error: true
         run: |
           appimage=$(find target/release/bundle/appimage -name "*.AppImage" 2>/dev/null | head -n 1)
           if [ -n "$appimage" ]; then
@@ -215,7 +212,6 @@ jobs:
 
       - name: Find DEB
         id: find_deb
-        continue-on-error: true
         run: |
           deb=$(find target/release/bundle/deb -name "*.deb" 2>/dev/null | head -n 1)
           if [ -n "$deb" ]; then
