@@ -5,13 +5,13 @@
 :: You can also call 'cargo xtask release' directly.
 ::
 :: Usage:
-::   build_dev.cmd [patch|minor|major] [--dry-run]
+::   github_deploy_dev.cmd [patch|minor|major] [--dry-run]
 ::
 :: Examples:
-::   build_dev.cmd patch          - Create patch release (0.1.13 -> 0.1.14)
-::   build_dev.cmd minor          - Create minor release (0.1.13 -> 0.2.0)
-::   build_dev.cmd major          - Create major release (0.1.13 -> 1.0.0)
-::   build_dev.cmd patch --dry-run - Test without making changes
+::   github_deploy_dev.cmd patch          - Create patch release (0.1.13 -> 0.1.14)
+::   github_deploy_dev.cmd minor          - Create minor release (0.1.13 -> 0.2.0)
+::   github_deploy_dev.cmd major          - Create major release (0.1.13 -> 1.0.0)
+::   github_deploy_dev.cmd patch --dry-run - Test without making changes
 ::
 :: What happens:
 ::   1. Updates version in Cargo.toml
