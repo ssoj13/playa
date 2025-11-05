@@ -56,7 +56,7 @@ jobs:
         run: cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Build the application
-        run: cargo xtask build --release
+        run: cargo xtask build
 
       - name: Package the application
         run: cargo packager --release
@@ -140,7 +140,7 @@ jobs:
         run: cargo fetch
 
       - name: Build the application (with xtask)
-        run: cargo xtask build --release
+        run: cargo xtask build
 
       - name: Package the application
         run: |

@@ -23,33 +23,33 @@ enum Commands {
     /// Build the project and copy dependencies automatically
     Build {
         /// Build in release mode (default: true)
-        #[arg(long)]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         release: bool,
 
-        /// Build in debug mode (default: false)
-        #[arg(long, conflicts_with = "release")]
+        /// Build in debug mode
+        #[arg(long, conflicts_with = "release", overrides_with = "release")]
         debug: bool,
     },
 
     /// Copy native dependencies and shaders after build
     Post {
         /// Use release profile (default: true)
-        #[arg(long)]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         release: bool,
 
-        /// Use debug profile (default: false)
-        #[arg(long, conflicts_with = "release")]
+        /// Use debug profile
+        #[arg(long, conflicts_with = "release", overrides_with = "release")]
         debug: bool,
     },
 
     /// Verify all dependencies are present
     Verify {
         /// Use release profile (default: true)
-        #[arg(long)]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         release: bool,
 
-        /// Use debug profile (default: false)
-        #[arg(long, conflicts_with = "release")]
+        /// Use debug profile
+        #[arg(long, conflicts_with = "release", overrides_with = "release")]
         debug: bool,
     },
 
@@ -104,9 +104,18 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Pre => cmd_pre(),
-        Commands::Build { release, debug } => cmd_build(release, debug),
-        Commands::Post { release, debug } => cmd_post(release, debug),
-        Commands::Verify { release, debug } => cmd_verify(release, debug),
+        Commands::Build { release, debug } => {
+            let is_release = if debug { false } else { release };
+            cmd_build(is_release)
+        }
+        Commands::Post { release, debug } => {
+            let is_release = if debug { false } else { release };
+            cmd_post(is_release)
+        }
+        Commands::Verify { release, debug } => {
+            let is_release = if debug { false } else { release };
+            cmd_verify(is_release)
+        }
         Commands::Changelog => cmd_changelog(),
         Commands::TagDev { level, dry_run } => cmd_tag_dev(&level, dry_run),
         Commands::TagRel { level, dry_run } => cmd_tag_rel(&level, dry_run),
@@ -120,17 +129,8 @@ fn cmd_pre() -> Result<()> {
     pre_build::patch_headers()
 }
 
-/// Command: cargo xtask build [--release|--debug]
-fn cmd_build(release_flag: bool, debug_flag: bool) -> Result<()> {
-    // Default to release if no flags specified
-    let release = if release_flag {
-        true
-    } else if debug_flag {
-        false
-    } else {
-        true  // Default: release mode
-    };
-
+/// Command: cargo xtask build [--release]
+fn cmd_build(release: bool) -> Result<()> {
     println!("========================================");
     println!("Building playa with automatic dependency management");
     println!("Profile: {}", if release { "release" } else { "debug" });
@@ -185,30 +185,14 @@ fn cmd_build(release_flag: bool, debug_flag: bool) -> Result<()> {
     Ok(())
 }
 
-/// Command: cargo xtask post [--release|--debug]
-fn cmd_post(release_flag: bool, debug_flag: bool) -> Result<()> {
-    // Default to release if no flags specified
-    let release = if release_flag {
-        true
-    } else if debug_flag {
-        false
-    } else {
-        true  // Default: release mode
-    };
+/// Command: cargo xtask post [--release]
+fn cmd_post(release: bool) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
     post_build::copy_dependencies(profile)
 }
 
-/// Command: cargo xtask verify [--release|--debug]
-fn cmd_verify(release_flag: bool, debug_flag: bool) -> Result<()> {
-    // Default to release if no flags specified
-    let release = if release_flag {
-        true
-    } else if debug_flag {
-        false
-    } else {
-        true  // Default: release mode
-    };
+/// Command: cargo xtask verify [--release]
+fn cmd_verify(release: bool) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
 
     println!("========================================");
@@ -454,7 +438,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
 
     // Build in release mode first
     println!("Building release version...");
-    cmd_build(true)?;
+    cmd_build(true)?;  // release=true
     println!();
 
     // Copy files
