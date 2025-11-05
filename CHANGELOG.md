@@ -1,3 +1,8 @@
+## [0.1.40] - 2025-11-05
+
+### ⚙️ Miscellaneous Tasks
+
+- Bug: Fix xtask to build release
 ## [0.1.39-dev] - 2025-11-05
 
 ### ⚙️ Miscellaneous Tasks
