@@ -1,3 +1,37 @@
+## [0.1.30-dev] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Use --yes instead of --no-confirm (more readable)
+- Revert to --no-confirm (correct cargo-release flag)
+## [0.1.29-dev] - 2025-11-05
+
+### 🚀 Features
+
+- Separate dev and release tagging scripts
+- Consolidate all build commands into cargo xtask
+- Add bootstrap scripts for dependency setup and xtask execution
+- Consolidate all build commands into xtask, update README
+
+### 🐛 Bug Fixes
+
+- Use pre-release version format for dev tags (cargo-packager compatibility)
+- Calculate version manually to support pre-release suffixes
+- Add --no-confirm flag to cargo-release
+
+### 🚜 Refactor
+
+- Remove obsolete release command, rename tag-release to tag-rel
+
+### 📚 Documentation
+
+- Improve xtask command descriptions - more clear and actionable
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Tue 11/04/2025 - 15:44:46.53
+- Disable dependabot - creates merge conflicts
+- WIP Tue 11/04/2025 - 16:33:44.88
 ## [0.1.28] - 2025-11-04
 
 ### ⚙️ Miscellaneous Tasks
