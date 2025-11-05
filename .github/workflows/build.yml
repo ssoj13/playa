@@ -57,9 +57,9 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: playa-${{ runner.os }}-dev-v1
+          key: playa-windows-dev-v1
           restore-keys: |
-            playa-${{ runner.os }}-dev-
+            playa-windows-dev-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -143,9 +143,9 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: playa-${{ runner.os }}-dev-v1
+          key: playa-linux-dev-v1
           restore-keys: |
-            playa-${{ runner.os }}-dev-
+            playa-linux-dev-
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked

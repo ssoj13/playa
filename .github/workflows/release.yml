@@ -55,16 +55,16 @@ jobs:
         with:
           toolchain: nightly-2025-10-15
 
-      - name: Cache cargo and build artifacts
-        uses: actions/cache@v4
+      - name: Restore cargo and build artifacts cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: playa-${{ runner.os }}-stable-v1
+          key: playa-windows-release-v1
           restore-keys: |
-            playa-${{ runner.os }}-stable-
+            playa-windows-release-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -122,6 +122,16 @@ jobs:
             target/release/playa-x86_64-pc-windows-msvc.zip
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Save cargo and build artifacts cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: playa-windows-release-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -219,16 +229,16 @@ jobs:
         with:
           toolchain: nightly-2025-10-15
 
-      - name: Cache cargo and build artifacts
-        uses: actions/cache@v4
+      - name: Restore cargo and build artifacts cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: playa-${{ runner.os }}-stable-v1
+          key: playa-linux-release-v1
           restore-keys: |
-            playa-${{ runner.os }}-stable-
+            playa-linux-release-
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
@@ -322,6 +332,16 @@ jobs:
           path: ${{ steps.find_deb.outputs.path }}
           retention-days: 7
           if-no-files-found: error
+
+      - name: Save cargo and build artifacts cache
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: playa-linux-release-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
