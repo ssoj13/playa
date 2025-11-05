@@ -57,76 +57,102 @@ cargo xtask build --release
 
 The compiled binary will be in `target/release/playa` (or `playa.exe` on Windows).
 
-### Development Tools
+### Using xtask - Project Build Automation
 
-For contributors and maintainers, these optional tools enhance the development workflow:
+**What is xtask?**
 
-#### Required Tools (for releases and changelog)
+`xtask` is an idiomatic Rust pattern for build automation using a workspace helper binary. It provides cross-platform task automation without external dependencies (no Makefiles, no Python, no shell scripts).
 
-```bash
-# Cargo release automation
-cargo install cargo-release
+**Why xtask?**
+- **Cross-platform**: Same commands work identically on Windows, Linux, and macOS
+- **No external tools**: Pure Rust, uses project's existing toolchain
+- **Type-safe**: Catch errors at compile time, not runtime
+- **Self-documenting**: Built-in `--help` with structured command definitions
+- **Integrated**: Direct access to project workspace and Cargo metadata
+- **Maintainable**: Refactor-friendly Rust code instead of brittle shell scripts
 
-# Changelog generation from git commits
-cargo install git-cliff
-```
-
-#### Optional Tools (for testing and code quality)
-
-```bash
-# Linting and formatting (usually via rustup)
-rustup component add clippy rustfmt
-
-# Security auditing
-cargo install cargo-audit
-
-# Code coverage (optional)
-cargo install cargo-llvm-cov     # Recommended - uses LLVM coverage
-cargo install cargo-tarpaulin    # Alternative - cross-platform
-```
-
-#### CI/CD Tools (auto-installed in GitHub Actions)
-
-These are automatically installed in CI pipelines, but can be useful locally:
+**Quick Start (New Contributors):**
 
 ```bash
-# Packaging tool (used in release workflow)
-cargo install cargo-packager --version 0.11.7
+# Bootstrap script handles everything
+./bootstrap.cmd        # Windows
+./bootstrap.sh         # Linux/macOS
 
-# C/C++ compilation cache (optional, for faster openexr-sys builds)
-# Installation: https://github.com/mozilla/sccache#installation
+# Shows xtask help and available commands
+# Automatically installs missing dependencies (cargo-release, cargo-packager)
+# Builds xtask binary if needed
 ```
 
-#### Quick Setup for Contributors
+**Available Commands:**
 
 ```bash
-# Minimal setup for pull requests
-rustup component add clippy rustfmt
-cargo install git-cliff
+# Build automation
+cargo xtask build [--release]      # Full build with dependency management
+cargo xtask post [--release]       # Copy native libraries and shaders
+cargo xtask verify [--release]     # Verify all dependencies present
+cargo xtask deploy [--install-dir] # Install to system (local testing)
 
-# Full setup for maintainers
-rustup component add clippy rustfmt llvm-tools-preview
-cargo install cargo-release git-cliff cargo-llvm-cov cargo-audit
+# Release management
+cargo xtask tag-dev [level]        # Create dev tag (v0.1.x-dev), trigger Build workflow
+cargo xtask tag-rel [level]        # Create release tag (v0.1.x) on main, trigger Release workflow
+cargo xtask pr [version]           # Create Pull Request from dev to main with all commits
+cargo xtask changelog              # Generate changelog preview from unreleased commits
+
+# Platform-specific (Linux only)
+cargo xtask pre                    # Patch OpenEXR headers for GCC 11+ compatibility
 ```
-
-**Note**: `cargo-packager` is cached in CI and rarely needed locally unless testing packaging.
-
-**About `cargo xtask`:**
-
-`cargo xtask` is an idiomatic Rust build automation pattern using a helper binary crate in the workspace. It's a cross-platform alternative to Makefiles/shell scripts for handling build tasks that `cargo build` alone can't do (like copying native libraries, patching headers, or creating releases).
 
 **What `cargo xtask build` does:**
-- **Linux**: Automatically patches OpenEXR headers for GCC 11+ compatibility
-- **All platforms**: Builds the project
-- **All platforms**: Copies all required native libraries (OpenEXR, Imath, zlib) to the target directory
-- **Linux**: Creates symlinks for proper library loading
+1. **Linux**: Patches OpenEXR headers for GCC 11+ compatibility
+2. **All platforms**: Runs `cargo build [--release]`
+3. **All platforms**: Copies native libraries (OpenEXR, Imath, zlib) to target directory
+4. **All platforms**: Copies shaders from project root
+5. **Linux**: Creates necessary symlinks for library loading
 
-**Alternative (manual build):**
+**Common Workflows:**
+
 ```bash
-# Manual build (requires manual library copying)
-cargo build --release
-cargo xtask post --release  # Copy native dependencies
+# Development build
+cargo xtask build
+
+# Release build and local install
+cargo xtask build --release
+cargo xtask deploy
+
+# Create dev tag and push (triggers CI Build workflow)
+cargo xtask tag-dev patch
+
+# Preview unreleased changelog
+cargo xtask changelog
+
+# Create PR from dev to main (typical release workflow)
+cargo xtask pr v0.2.0
+
+# Create release from main branch (after merging PR)
+git checkout main
+git pull
+cargo xtask tag-rel patch
 ```
+
+### Development Dependencies
+
+**Auto-installed by bootstrap script:**
+- `cargo-release` - Version bumping and tag creation
+- `cargo-packager` - Cross-platform installer generation (v0.11.7)
+
+**Standard Rust tools (usually pre-installed):**
+- `rustup` - Rust toolchain manager
+- `cargo` - Rust package manager
+- `clippy` - Linter (`rustup component add clippy`)
+- `rustfmt` - Code formatter (`rustup component add rustfmt`)
+
+**Required for PR workflow:**
+- `gh` - GitHub CLI (used by `cargo xtask pr`) - [Installation](https://cli.github.com/)
+
+**Optional tools:**
+- `git-cliff` - Changelog generation (used by `cargo xtask changelog`)
+- `cargo-audit` - Security vulnerability scanning
+- `cargo-llvm-cov` - Code coverage
 
 ### GitHub Actions CI/CD
 
@@ -211,25 +237,7 @@ The pipeline uses three complementary caching layers:
 
 **When GitHub Cache API is down (Linux)**: sccache disabled automatically, build time increases but succeeds
 
-### Development Commands
-
-**Available `cargo xtask` commands:**
-
-```bash
-# Build automation
-cargo xtask pre                      # Patch OpenEXR headers (Linux only)
-cargo xtask build [--release]        # Full build with dependency management
-cargo xtask post [--release]         # Copy native libraries and shaders
-cargo xtask verify [--release]       # Verify all dependencies present
-
-# Release management
-cargo xtask release patch            # Create patch release (0.1.13 -> 0.1.14)
-cargo xtask release minor            # Create minor release (0.1.13 -> 0.2.0)
-cargo xtask release major            # Create major release (0.1.13 -> 1.0.0)
-cargo xtask release patch --dry-run  # Test release without committing
-```
-
-**Standard Rust development:**
+### Standard Rust Development
 
 ```bash
 # Testing
@@ -241,15 +249,15 @@ cargo doc --open                     # Generate and open rustdoc documentation
 cargo doc --no-deps --open           # Only document this crate
 
 # Code quality
-cargo clippy                         # Run linter (install: cargo install clippy)
+cargo clippy                         # Run linter
 cargo clippy -- -D warnings          # Treat warnings as errors
-cargo fmt                            # Format code (install: rustup component add rustfmt)
+cargo fmt                            # Format code
 cargo fmt -- --check                 # Check formatting without modifying
 
 # Build variants
 cargo build                          # Debug build
 cargo build --release                # Release build (optimized)
-cargo clean                          # Clean build artifacts (note: requires re-patching headers on Linux)
+cargo clean                          # Clean build artifacts
 ```
 
 #### Linux-Specific Build Notes

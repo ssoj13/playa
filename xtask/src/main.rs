@@ -41,8 +41,8 @@ enum Commands {
         release: bool,
     },
 
-    /// Preview unreleased changelog (saves to CHANGELOG.preview.md)
-    ChangelogPreview,
+    /// Generate changelog preview (saves to CHANGELOG.preview.md)
+    Changelog,
 
     /// Tag dev build on GitHub, trigger Build workflow (creates v0.1.x-dev)
     TagDev {
@@ -64,6 +64,12 @@ enum Commands {
         /// Dry run - don't actually commit or push
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Create Pull Request from dev to main with all commits
+    Pr {
+        /// Optional version for PR title (e.g., v0.2.0)
+        version: Option<String>,
     },
 
     /// Install to system (Windows: %LOCALAPPDATA%\Programs, Linux: ~/.local/bin)
@@ -89,9 +95,10 @@ fn run() -> Result<()> {
         Commands::Build { release } => cmd_build(release),
         Commands::Post { release } => cmd_post(release),
         Commands::Verify { release } => cmd_verify(release),
-        Commands::ChangelogPreview => cmd_changelog_preview(),
+        Commands::Changelog => cmd_changelog(),
         Commands::TagDev { level, dry_run } => cmd_tag_dev(&level, dry_run),
         Commands::TagRel { level, dry_run } => cmd_tag_rel(&level, dry_run),
+        Commands::Pr { version } => cmd_pr(version.as_deref()),
         Commands::Deploy { install_dir } => cmd_deploy(install_dir.as_deref()),
     }
 }
@@ -202,8 +209,8 @@ fn cmd_verify(release: bool) -> Result<()> {
     Ok(())
 }
 
-/// Command: cargo xtask changelog-preview
-fn cmd_changelog_preview() -> Result<()> {
+/// Command: cargo xtask changelog
+fn cmd_changelog() -> Result<()> {
     use anyhow::Context;
 
     println!("========================================");
@@ -286,6 +293,83 @@ fn cmd_tag_rel(level: &str, dry_run: bool) -> Result<()> {
 
     // Call release command WITHOUT metadata (no -dev suffix)
     release::run_release(level, dry_run, None)
+}
+
+/// Command: cargo xtask pr [version]
+fn cmd_pr(version: Option<&str>) -> Result<()> {
+    use anyhow::Context;
+
+    println!("========================================");
+    println!("Creating Pull Request: dev → main");
+    println!("========================================");
+    println!();
+
+    // Count commits between main and dev
+    println!("Calculating changes between main and dev...");
+    let output = Command::new("git")
+        .args(&["rev-list", "--count", "origin/main..dev"])
+        .output()
+        .context("Failed to count commits")?;
+
+    let commit_count = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    // Determine version for title
+    let title = if let Some(ver) = version {
+        let ver_clean = ver.trim_start_matches('v');
+        format!("Release v{}", ver_clean)
+    } else {
+        "Release".to_string()
+    };
+
+    let body = format!("{} - {} commits from dev branch", title, commit_count);
+
+    println!("Creating Pull Request:");
+    println!("  From: dev");
+    println!("  To:   main");
+    println!("  Title: {}", title);
+    println!("  Commits: {}", commit_count);
+    println!();
+
+    // Create PR using gh CLI
+    let status = Command::new("gh")
+        .args(&[
+            "pr",
+            "create",
+            "--base",
+            "main",
+            "--head",
+            "dev",
+            "--title",
+            &title,
+            "--body",
+            &body,
+        ])
+        .status()
+        .context("Failed to run 'gh pr create'. Is GitHub CLI installed?")?;
+
+    if !status.success() {
+        println!();
+        println!("Error: Failed to create pull request");
+        println!("Make sure you have:");
+        println!("  - Pushed your dev branch to origin");
+        println!("  - Authenticated with 'gh auth login'");
+        anyhow::bail!("PR creation failed");
+    }
+
+    println!();
+    println!("✓ Pull Request created successfully!");
+    println!();
+    println!("Next steps:");
+    println!("  1. Review the PR on GitHub");
+    println!("  2. Merge when ready: gh pr merge --merge");
+    if let Some(ver) = version {
+        let ver_clean = ver.trim_start_matches('v');
+        println!("  3. Create release: cargo xtask tag-rel patch (from main)");
+        println!("     (Version will be bumped to v{})", ver_clean);
+    }
+    println!();
+
+    Ok(())
 }
 
 /// Command: cargo xtask deploy [--install-dir /path/to/install]
