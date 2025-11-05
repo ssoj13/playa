@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - 'v*'  # Triggers on tags like v0.4.7, v1.0.0, etc.
-    branches:
-      - main  # Also trigger on direct pushes to main (for merge commits)
   workflow_dispatch:  # Allow manual trigger
 
 # Only run release builds for tags on main branch
