@@ -34,21 +34,6 @@ enum Commands {
         release: bool,
     },
 
-    /// Create and publish a release (replaces release.sh)
-    Release {
-        /// Release level: patch, minor, or major
-        #[arg(default_value = "patch")]
-        level: String,
-
-        /// Dry run - don't actually commit or push
-        #[arg(long)]
-        dry_run: bool,
-
-        /// Metadata suffix for pre-release versions (e.g., "dev" creates v0.1.14-dev)
-        #[arg(long)]
-        metadata: Option<String>,
-    },
-
     /// Verify all dependencies are present
     Verify {
         /// Use release profile
@@ -71,7 +56,7 @@ enum Commands {
     },
 
     /// Create release tag on main branch (auto-bumps patch if no version specified)
-    TagRelease {
+    TagRel {
         /// Release level: patch, minor, or major (default: patch)
         #[arg(default_value = "patch")]
         level: String,
@@ -103,11 +88,10 @@ fn run() -> Result<()> {
         Commands::Pre => cmd_pre(),
         Commands::Build { release } => cmd_build(release),
         Commands::Post { release } => cmd_post(release),
-        Commands::Release { level, dry_run, metadata } => cmd_release(&level, dry_run, metadata.as_deref()),
         Commands::Verify { release } => cmd_verify(release),
         Commands::ChangelogPreview => cmd_changelog_preview(),
         Commands::TagDev { level, dry_run } => cmd_tag_dev(&level, dry_run),
-        Commands::TagRelease { level, dry_run } => cmd_tag_release(&level, dry_run),
+        Commands::TagRel { level, dry_run } => cmd_tag_rel(&level, dry_run),
         Commands::Deploy { install_dir } => cmd_deploy(install_dir.as_deref()),
     }
 }
@@ -176,11 +160,6 @@ fn cmd_build(release: bool) -> Result<()> {
 fn cmd_post(release: bool) -> Result<()> {
     let profile = if release { "release" } else { "debug" };
     post_build::copy_dependencies(profile)
-}
-
-/// Command: cargo xtask release [patch|minor|major] [--dry-run] [--metadata dev]
-fn cmd_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result<()> {
-    release::run_release(level, dry_run, metadata)
 }
 
 /// Command: cargo xtask verify [--release]
@@ -267,8 +246,8 @@ fn cmd_tag_dev(level: &str, dry_run: bool) -> Result<()> {
     release::run_release(level, dry_run, Some("dev"))
 }
 
-/// Command: cargo xtask tag-release [patch|minor|major] [--dry-run]
-fn cmd_tag_release(level: &str, dry_run: bool) -> Result<()> {
+/// Command: cargo xtask tag-rel [patch|minor|major] [--dry-run]
+fn cmd_tag_rel(level: &str, dry_run: bool) -> Result<()> {
     use anyhow::Context;
 
     // Check if on main branch
