@@ -83,36 +83,33 @@ jobs:
             exit 1
           }
 
-      - name: Create portable ZIP
+      - name: Create binstall ZIP
         shell: pwsh
         run: |
-          # Get version from Cargo.toml
-          $version = (Select-String -Path "Cargo.toml" -Pattern 'version = "([^"]+)"').Matches.Groups[1].Value
-
-          # Create directory for portable version
-          New-Item -ItemType Directory -Force -Path "portable" | Out-Null
+          # Create directory for binstall package
+          New-Item -ItemType Directory -Force -Path "binstall" | Out-Null
 
           # Copy exe
-          Copy-Item "target/release/playa.exe" -Destination "portable/"
+          Copy-Item "target/release/playa.exe" -Destination "binstall/"
 
           # Copy all dll files
-          Get-ChildItem -Path "target/release" -Filter "*.dll" | Copy-Item -Destination "portable/"
+          Get-ChildItem -Path "target/release" -Filter "*.dll" | Copy-Item -Destination "binstall/"
 
-          # Create zip
-          $zipName = "playa-${version}-windows-portable.zip"
-          Compress-Archive -Path "portable/*" -DestinationPath "target/release/$zipName" -Force
+          # Create zip with rust target name for cargo-binstall
+          $zipName = "playa-x86_64-pc-windows-msvc.zip"
+          Compress-Archive -Path "binstall/*" -DestinationPath "target/release/$zipName" -Force
 
-          echo "Created portable ZIP: $zipName"
+          echo "Created binstall ZIP: $zipName"
           echo "Contents:"
-          Get-ChildItem "portable" | Format-Table Name, Length
+          Get-ChildItem "binstall" | Format-Table Name, Length
 
-      - name: Upload Windows artifacts (installer + portable)
+      - name: Upload Windows artifacts (installer + binstall)
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
           path: |
             ${{ steps.find_installer.outputs.path }}
-            target/release/playa-*-windows-portable.zip
+            target/release/playa-x86_64-pc-windows-msvc.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -194,6 +191,26 @@ jobs:
           else
             echo "No DEB found"
           fi
+
+      - name: Create binstall ZIP
+        run: |
+          # Create directory for binstall package
+          mkdir -p binstall
+
+          # Copy binary
+          cp target/release/playa binstall/
+
+          # Copy all .so files
+          cp target/release/*.so* binstall/ 2>/dev/null || true
+
+          # Create zip with rust target name for cargo-binstall
+          cd binstall
+          zip -r ../target/release/playa-x86_64-unknown-linux-gnu.zip *
+          cd ..
+
+          echo "Created binstall ZIP: playa-x86_64-unknown-linux-gnu.zip"
+          echo "Contents:"
+          ls -lh binstall/
 
       - name: Upload Linux AppImage artifact
         if: steps.find_appimage.outputs.path != ''
