@@ -1,3 +1,8 @@
+## [0.1.34] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Remove duplicate workflow trigger from release.yml
 ## [0.1.30-dev] - 2025-11-05
 
 ### 🐛 Bug Fixes
