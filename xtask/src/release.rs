@@ -87,7 +87,8 @@ pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result
     let mut cmd = Command::new("cargo");
     cmd.arg("release")
         .arg(&next_version)  // Pass version directly instead of level
-        .arg("--no-publish");
+        .arg("--no-publish")
+        .arg("--no-confirm");  // Skip confirmation prompt
 
     if dry_run {
         cmd.arg("--dry-run");
