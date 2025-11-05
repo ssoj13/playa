@@ -1,3 +1,12 @@
+## [0.1.38] - 2025-11-05
+
+### 🚀 Features
+
+- Prepare Playa for crates.io publication
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Tue 11/04/2025 - 19:39:35.36
 ## [0.1.37] - 2025-11-05
 
 ### 🐛 Bug Fixes
