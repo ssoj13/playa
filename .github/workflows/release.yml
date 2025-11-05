@@ -48,11 +48,17 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2025-10-15
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "rust-stable-v2"
+          shared-key: "rust-v2"
+          cache-on-failure: true
+
+      - name: Fetch dependencies
+        run: cargo fetch
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
@@ -204,11 +210,14 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2025-10-15
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "rust-stable-v2"
+          shared-key: "rust-v2"
+          cache-on-failure: true
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
