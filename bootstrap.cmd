@@ -21,32 +21,54 @@ if errorlevel 1 (
 echo Checking dependencies...
 echo.
 
+:: Check if cargo-binstall is installed
+cargo binstall --version >nul 2>&1
+if errorlevel 1 (
+    echo [1/3] Installing cargo-binstall...
+    cargo install cargo-binstall
+    if errorlevel 1 (
+        echo Error: Failed to install cargo-binstall
+        exit /b 1
+    )
+    echo   ✓ cargo-binstall installed
+) else (
+    echo [1/3] ✓ cargo-binstall already installed
+)
+
 :: Check if cargo-release is installed
 cargo release --version >nul 2>&1
 if errorlevel 1 (
-    echo [1/2] Installing cargo-release...
-    cargo install cargo-release
+    echo [2/3] Installing cargo-release...
+    cargo binstall cargo-release --no-confirm
     if errorlevel 1 (
-        echo Error: Failed to install cargo-release
-        exit /b 1
+        echo   Falling back to cargo install...
+        cargo install cargo-release
+        if errorlevel 1 (
+            echo Error: Failed to install cargo-release
+            exit /b 1
+        )
     )
     echo   ✓ cargo-release installed
 ) else (
-    echo [1/2] ✓ cargo-release already installed
+    echo [2/3] ✓ cargo-release already installed
 )
 
 :: Check if cargo-packager is installed
 cargo packager --version >nul 2>&1
 if errorlevel 1 (
-    echo [2/2] Installing cargo-packager...
-    cargo install cargo-packager --version 0.11.7 --locked
+    echo [3/3] Installing cargo-packager...
+    cargo binstall cargo-packager --version 0.11.7 --no-confirm
     if errorlevel 1 (
-        echo Error: Failed to install cargo-packager
-        exit /b 1
+        echo   Falling back to cargo install...
+        cargo install cargo-packager --version 0.11.7 --locked
+        if errorlevel 1 (
+            echo Error: Failed to install cargo-packager
+            exit /b 1
+        )
     )
     echo   ✓ cargo-packager installed
 ) else (
-    echo [2/2] ✓ cargo-packager already installed
+    echo [3/3] ✓ cargo-packager already installed
 )
 
 echo.

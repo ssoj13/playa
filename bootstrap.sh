@@ -20,22 +20,37 @@ fi
 echo "Checking dependencies..."
 echo ""
 
+# Check if cargo-binstall is installed
+if ! cargo binstall --version &> /dev/null; then
+    echo "[1/3] Installing cargo-binstall..."
+    cargo install cargo-binstall
+    echo "  ✓ cargo-binstall installed"
+else
+    echo "[1/3] ✓ cargo-binstall already installed"
+fi
+
 # Check if cargo-release is installed
 if ! cargo release --version &> /dev/null; then
-    echo "[1/2] Installing cargo-release..."
-    cargo install cargo-release
+    echo "[2/3] Installing cargo-release..."
+    if ! cargo binstall cargo-release --no-confirm; then
+        echo "  Falling back to cargo install..."
+        cargo install cargo-release
+    fi
     echo "  ✓ cargo-release installed"
 else
-    echo "[1/2] ✓ cargo-release already installed"
+    echo "[2/3] ✓ cargo-release already installed"
 fi
 
 # Check if cargo-packager is installed
 if ! cargo packager --version &> /dev/null; then
-    echo "[2/2] Installing cargo-packager..."
-    cargo install cargo-packager --version 0.11.7 --locked
+    echo "[3/3] Installing cargo-packager..."
+    if ! cargo binstall cargo-packager --version 0.11.7 --no-confirm; then
+        echo "  Falling back to cargo install..."
+        cargo install cargo-packager --version 0.11.7 --locked
+    fi
     echo "  ✓ cargo-packager installed"
 else
-    echo "[2/2] ✓ cargo-packager already installed"
+    echo "[3/3] ✓ cargo-packager already installed"
 fi
 
 echo ""
