@@ -61,6 +61,7 @@ jobs:
           shared-key: "rust-stable-v2"
           add-rust-environment-hash-key: "false"
           add-job-id-key: "false"
+          cache-all-crates: "true"
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -221,6 +222,7 @@ jobs:
           shared-key: "rust-stable-v2"
           add-rust-environment-hash-key: "false"
           add-job-id-key: "false"
+          cache-all-crates: "true"
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
