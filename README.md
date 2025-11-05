@@ -30,7 +30,21 @@ Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rend
 
 ## Installation
 
-### Download Pre-built Binaries
+### Recommended: Using cargo-binstall (fastest)
+
+Install a pre-built binary with all dependencies included. This is the fastest method and works out of the box:
+
+```bash
+# Install cargo-binstall if you don't have it
+cargo install cargo-binstall
+
+# Install Playa (downloads from GitHub Releases)
+cargo binstall playa
+```
+
+Installs in seconds with all native libraries (OpenEXR, Imath, zlib) included.
+
+### Alternative: Download Pre-built Binaries
 
 Download the latest release for your platform from the [Releases page](https://github.com/ssoj13/playa/releases/latest):
 
@@ -42,7 +56,7 @@ Download the latest release for your platform from the [Releases page](https://g
 
 **Prerequisites:**
 - Rust 1.70+
-- OpenEXR libraries (for EXR support)
+- C++ compiler and CMake (for building OpenEXR)
 
 ```bash
 git clone https://github.com/ssoj13/playa.git
@@ -56,6 +70,8 @@ cargo xtask build --release
 ```
 
 The compiled binary will be in `target/release/playa` (or `playa.exe` on Windows).
+
+**Note:** Building from source using `cargo install playa` will compile OpenEXR from source, which may take 10-20 minutes. For faster installation, use `cargo binstall` instead.
 
 ### Using xtask - Project Build Automation
 
