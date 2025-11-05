@@ -1,3 +1,8 @@
+## [0.1.48] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Correct rust-cache parameter for version-independent caching
 ## [0.1.47] - 2025-11-05
 
 ### 🐛 Bug Fixes
