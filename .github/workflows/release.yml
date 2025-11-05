@@ -56,11 +56,13 @@ jobs:
           toolchain: nightly-2025-10-15
 
       - name: Restore cargo and build artifacts cache
+        id: cache-windows
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
+            ~/.cargo/bin/
             target/
           key: playa-windows-release-v1
           restore-keys: |
@@ -70,7 +72,12 @@ jobs:
         run: cargo fetch
 
       - name: Install cargo-packager
-        run: cargo install cargo-packager --version 0.11.7 --locked
+        run: |
+          if (!(Get-Command cargo-packager -ErrorAction SilentlyContinue)) {
+            cargo install cargo-packager --version 0.11.7 --locked
+          } else {
+            Write-Host "cargo-packager already installed"
+          }
 
       - name: Build the application
         run: cargo xtask build
@@ -124,12 +131,13 @@ jobs:
           retention-days: 7
 
       - name: Save cargo and build artifacts cache
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && steps.cache-windows.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
+            ~/.cargo/bin/
             target/
           key: playa-windows-release-v1
 
@@ -230,18 +238,20 @@ jobs:
           toolchain: nightly-2025-10-15
 
       - name: Restore cargo and build artifacts cache
+        id: cache-linux
         uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
+            ~/.cargo/bin/
             target/
           key: playa-linux-release-v1
           restore-keys: |
             playa-linux-release-
 
       - name: Install cargo-packager
-        run: cargo install cargo-packager --version 0.11.7 --locked
+        run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -334,12 +344,13 @@ jobs:
           if-no-files-found: error
 
       - name: Save cargo and build artifacts cache
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && steps.cache-linux.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
+            ~/.cargo/bin/
             target/
           key: playa-linux-release-v1
 
