@@ -71,7 +71,6 @@ installer-mode = "perMachine"
 
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/playa-{ target }.zip"
-bin-dir = "."
 pkg-fmt = "zip"
 
 [package.metadata.release]
