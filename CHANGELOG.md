@@ -3,6 +3,12 @@
 ### 🐛 Bug Fixes
 
 - Enable cache saving on all builds for cross-tag reuse
+- Cache all crates including build artifacts
+- Replace rust-cache with actions/cache for complete artifact preservation
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Wed 11/05/2025 -  9:33:39.87
 ## [0.1.53] - 2025-11-05
 
 ### 🐛 Bug Fixes
