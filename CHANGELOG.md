@@ -1,4 +1,4 @@
-## [0.1.29] - 2025-11-05
+## [0.1.29-dev] - 2025-11-05
 
 ### 🚀 Features
 
@@ -6,6 +6,12 @@
 - Consolidate all build commands into cargo xtask
 - Add bootstrap scripts for dependency setup and xtask execution
 - Consolidate all build commands into xtask, update README
+
+### 🐛 Bug Fixes
+
+- Use pre-release version format for dev tags (cargo-packager compatibility)
+- Calculate version manually to support pre-release suffixes
+- Add --no-confirm flag to cargo-release
 
 ### 🚜 Refactor
 

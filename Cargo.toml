@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "playa"
-version = "0.1.28"
+version = "0.1.29-dev"
 edition = "2024"
 authors = ["joss13@gmail.com"]
 description = "Image sequence player (EXR, PNG, JPEG, TIFF)"
