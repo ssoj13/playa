@@ -79,6 +79,12 @@ jobs:
       - name: Build the application
         run: cargo xtask build
 
+      - name: Clean old installers
+        run: |
+          # Remove old installer artifacts to prevent version mismatch
+          Remove-Item target/release/*.exe -ErrorAction SilentlyContinue
+          Remove-Item target/release/*.msi -ErrorAction SilentlyContinue
+
       - name: Package the application
         run: cargo packager --release
 
@@ -255,6 +261,11 @@ jobs:
 
       - name: Build the application (with xtask)
         run: cargo xtask build
+
+      - name: Clean old installers
+        run: |
+          # Remove old installer artifacts to prevent version mismatch
+          rm -f target/release/*.AppImage target/release/*.deb
 
       - name: Package the application
         run: |
