@@ -1,3 +1,8 @@
+## [0.1.53] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Save cache only from main branch to enable cross-tag reuse
 ## [0.1.52] - 2025-11-05
 
 ### 🐛 Bug Fixes
