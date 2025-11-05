@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'  # Triggers on tags like v0.4.7, v1.0.0, etc.
   workflow_dispatch:  # Allow manual trigger
@@ -51,7 +53,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "rust-stable-v2"
-          cache-on-failure: true
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
@@ -208,7 +209,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "rust-stable-v2"
-          cache-on-failure: true
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
