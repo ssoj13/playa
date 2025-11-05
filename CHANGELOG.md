@@ -1,3 +1,9 @@
+## [0.1.37] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Change status badge to Build workflow (more frequently updated)
+- Revert badge to Release workflow
 ## [0.1.35] - 2025-11-05
 
 ### 🚜 Refactor
