@@ -1,3 +1,13 @@
+## [0.1.43] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Fix rust-cache restoration in CI workflows
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Tue 11/04/2025 - 22:44:29.72
+- Bug: Fix cache
 ## [0.1.42] - 2025-11-05
 
 ### 🚀 Features
