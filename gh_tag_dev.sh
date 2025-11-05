@@ -1,26 +1,20 @@
 #!/usr/bin/env bash
-# Build and tag release from dev branch
-#
-# This script is a wrapper around 'cargo xtask release' for convenience.
-# You can also call 'cargo xtask release' directly.
+# Create dev tag with -dev suffix for testing
 #
 # Usage:
-#   ./github_deploy_dev.sh [patch|minor|major] [--dry-run]
+#   ./gh_tag_dev.sh [patch|minor|major] [--dry-run]
 #
 # Examples:
-#   ./github_deploy_dev.sh patch          # Create patch release (0.1.13 -> 0.1.14)
-#   ./github_deploy_dev.sh minor          # Create minor release (0.1.13 -> 0.2.0)
-#   ./github_deploy_dev.sh major          # Create major release (0.1.13 -> 1.0.0)
-#   ./github_deploy_dev.sh patch --dry-run # Test without making changes
+#   ./gh_tag_dev.sh patch          - Create v0.1.14-dev tag
+#   ./gh_tag_dev.sh minor          - Create v0.2.0-dev tag
+#   ./gh_tag_dev.sh --dry-run      - Test without making changes
 #
 # What happens:
 #   1. Updates version in Cargo.toml
 #   2. Generates CHANGELOG.md
-#   3. Creates commit and tag
-#   4. Pushes current branch (dev) and tags to GitHub
-#   5. Build workflow runs and creates artifacts for testing
-#   6. After testing, merge to main manually or via PR
-#   7. Release workflow publishes the official release
+#   3. Creates commit and tag with -dev suffix
+#   4. Pushes to dev branch
+#   5. Build workflow creates test artifacts (NOT release)
 
 set -e
 
@@ -47,8 +41,8 @@ LEVEL=${1:-patch}
 # Get dry-run flag from argument
 DRY_RUN=${2:-}
 
-# Build xtask command
-CMD="cargo xtask release $LEVEL"
+# Build xtask command with -dev suffix
+CMD="cargo xtask release $LEVEL --metadata dev"
 
 if [ "$DRY_RUN" == "--dry-run" ]; then
     CMD="$CMD --dry-run"
@@ -56,5 +50,8 @@ fi
 
 # Run the command
 echo "Running: $CMD"
+echo ""
+echo "This will create a tag with -dev suffix (e.g., v0.1.14-dev)"
+echo "Build workflow will create test artifacts (NOT GitHub Release)"
 echo ""
 $CMD

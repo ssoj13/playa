@@ -4,16 +4,21 @@ use std::process::Command;
 /// Run the complete release process
 ///
 /// This replaces the release.sh script and performs:
-/// 1. cargo release {level} --no-publish --execute [--dry-run]
-/// 2. git push --tags (if not dry-run) - triggers build workflow in dev branch
+/// 1. cargo release {level} --no-publish --execute [--metadata dev] [--dry-run]
+/// 2. git push --tags (if not dry-run) - triggers build workflow
 ///
 /// The release level should be one of: patch, minor, major
+/// metadata: Optional metadata suffix (e.g., "dev" creates v0.1.14-dev tags)
 ///
-/// Note: Tags should be pushed from dev branch to trigger build workflow.
-/// Merge to main happens manually or via GitHub PR after testing the build.
-pub fn run_release(level: &str, dry_run: bool) -> Result<()> {
+/// Note: Use metadata="dev" for dev branch tags, None for main branch releases.
+pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result<()> {
     println!("========================================");
-    println!("Preparing release with level: {}", level);
+    print!("Preparing release with level: {}", level);
+    if let Some(meta) = metadata {
+        println!(" (metadata: {})", meta);
+    } else {
+        println!();
+    }
     if dry_run {
         println!("DRY RUN MODE: No changes will be committed or pushed");
     }
@@ -39,6 +44,11 @@ pub fn run_release(level: &str, dry_run: bool) -> Result<()> {
     cmd.arg("release")
         .arg(level)
         .arg("--no-publish");
+
+    // Add metadata suffix if provided (e.g., -dev)
+    if let Some(meta) = metadata {
+        cmd.arg("--metadata").arg(meta);
+    }
 
     if dry_run {
         cmd.arg("--dry-run");

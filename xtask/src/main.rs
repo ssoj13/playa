@@ -43,6 +43,10 @@ enum Commands {
         /// Dry run - don't actually commit or push
         #[arg(long)]
         dry_run: bool,
+
+        /// Metadata suffix for pre-release versions (e.g., "dev" creates v0.1.14-dev)
+        #[arg(long)]
+        metadata: Option<String>,
     },
 
     /// Verify all dependencies are present
@@ -70,7 +74,7 @@ fn run() -> Result<()> {
         Commands::Pre => cmd_pre(),
         Commands::Build { release } => cmd_build(release),
         Commands::Post { release } => cmd_post(release),
-        Commands::Release { level, dry_run } => cmd_release(&level, dry_run),
+        Commands::Release { level, dry_run, metadata } => cmd_release(&level, dry_run, metadata.as_deref()),
         Commands::Verify { release } => cmd_verify(release),
         Commands::ChangelogPreview => cmd_changelog_preview(),
     }
@@ -142,9 +146,9 @@ fn cmd_post(release: bool) -> Result<()> {
     post_build::copy_dependencies(profile)
 }
 
-/// Command: cargo xtask release [patch|minor|major] [--dry-run]
-fn cmd_release(level: &str, dry_run: bool) -> Result<()> {
-    release::run_release(level, dry_run)
+/// Command: cargo xtask release [patch|minor|major] [--dry-run] [--metadata dev]
+fn cmd_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result<()> {
+    release::run_release(level, dry_run, metadata)
 }
 
 /// Command: cargo xtask verify [--release]
