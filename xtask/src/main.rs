@@ -44,7 +44,7 @@ enum Commands {
     /// Preview unreleased changelog (saves to CHANGELOG.preview.md)
     ChangelogPreview,
 
-    /// Create dev tag with -dev suffix (auto-bumps patch if no version specified)
+    /// Tag dev build on GitHub, trigger Build workflow (creates v0.1.x-dev)
     TagDev {
         /// Release level: patch, minor, or major (default: patch)
         #[arg(default_value = "patch")]
@@ -55,7 +55,7 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Create release tag on main branch (auto-bumps patch if no version specified)
+    /// Tag release on main, trigger Release workflow + GitHub Release (creates v0.1.x)
     TagRel {
         /// Release level: patch, minor, or major (default: patch)
         #[arg(default_value = "patch")]
@@ -66,9 +66,9 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Deploy locally (install to system)
+    /// Install to system (Windows: %LOCALAPPDATA%\Programs, Linux: ~/.local/bin)
     Deploy {
-        /// Install location (default: auto-detect)
+        /// Custom install directory
         #[arg(long)]
         install_dir: Option<String>,
     },
