@@ -1,3 +1,8 @@
+## [0.1.46] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Use rust target names for binstall ZIP files
 ## [0.1.44] - 2025-11-05
 
 ### ⚙️ Miscellaneous Tasks
