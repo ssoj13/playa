@@ -1,3 +1,16 @@
+## [0.1.56] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Use separate cache keys for release/dev with restore/save split
+- Cache cargo-packager binary and skip redundant cache saves
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Wed 11/05/2025 - 11:07:34.02
+- WIP Wed 11/05/2025 - 11:43:49.60
+- Bug: Fix screenshot
+- WIP Wed 11/05/2025 - 12:03:50.26
 ## [0.1.54] - 2025-11-05
 
 ### 🐛 Bug Fixes
