@@ -8,7 +8,12 @@ edition = "2024"
 authors = ["joss13@gmail.com"]
 description = "Image sequence player (EXR, PNG, JPEG, TIFF)"
 homepage = "https://github.com/ssoj13/playa"
-license-file = "LICENSE"
+repository = "https://github.com/ssoj13/playa"
+license = "MIT"
+keywords = ["image", "exr", "player", "vfx", "sequence"]
+categories = ["multimedia::images", "graphics"]
+readme = "README.md"
+exclude = [".github/*", "todo/*", "bootstrap.cmd", "bootstrap.sh", "build.rs", "cliff.toml"]
 
 [dependencies]
 anyhow = "1.0"
@@ -69,5 +74,3 @@ installer-mode = "perMachine"
 pre-release-commit-message = "chore: Release {{crate_name}} v{{version}}"
 # Run git-cliff before creating the release commit to update CHANGELOG.md
 pre-release-hook = ["git-cliff", "--tag", "v{{version}}", "-o", "CHANGELOG.md"]
-# Don't publish to crates.io
-publish = false
