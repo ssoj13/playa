@@ -57,11 +57,7 @@ jobs:
           cache-bin: false
 
       - name: Install cargo-packager
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-packager
-          version: "0.11.7"
-          cache-key: ${{ runner.os }}-v2
+        run: cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Build the application
         run: cargo xtask build --release
@@ -220,11 +216,7 @@ jobs:
           cache-bin: false
 
       - name: Install cargo-packager
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-packager
-          version: "0.11.7"
-          cache-key: ${{ runner.os }}-v2
+        run: cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Fetch dependencies
         run: cargo fetch
