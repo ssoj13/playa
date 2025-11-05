@@ -56,8 +56,8 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "rust-v2"
-          cache-on-failure: true
+          shared-key: "rust-stable-v2"
+          workspaces: false
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -215,8 +215,8 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "rust-v2"
-          cache-on-failure: true
+          shared-key: "rust-stable-v2"
+          workspaces: false
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
