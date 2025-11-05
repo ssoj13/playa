@@ -54,7 +54,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "rust-v2"
-          workspaces: false
+          add-rust-environment-hash-key: "false"
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -135,7 +135,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: "rust-v2"
-          workspaces: false
+          add-rust-environment-hash-key: "false"
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
