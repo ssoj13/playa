@@ -88,7 +88,7 @@ pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result
     cmd.arg("release")
         .arg(&next_version)  // Pass version directly instead of level
         .arg("--no-publish")
-        .arg("--yes");  // Skip confirmation prompt
+        .arg("--no-confirm");  // Skip confirmation prompt
 
     if dry_run {
         cmd.arg("--dry-run");
