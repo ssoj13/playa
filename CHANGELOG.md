@@ -1,3 +1,8 @@
+## [0.1.58] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Remove main branch trigger from Release workflow
 ## [0.1.57] - 2025-11-05
 
 ### 🐛 Bug Fixes
