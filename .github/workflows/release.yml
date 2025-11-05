@@ -59,6 +59,7 @@ jobs:
           shared-key: "rust-stable-v2"
           add-rust-environment-hash-key: "false"
           add-job-id-key: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -219,6 +220,7 @@ jobs:
           shared-key: "rust-stable-v2"
           add-rust-environment-hash-key: "false"
           add-job-id-key: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.7 --locked
