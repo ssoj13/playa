@@ -1,3 +1,8 @@
+## [0.1.57] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Remove cancel-in-progress to prevent workflow race conditions
 ## [0.1.56] - 2025-11-05
 
 ### 🐛 Bug Fixes
