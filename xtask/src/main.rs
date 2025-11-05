@@ -22,23 +22,23 @@ enum Commands {
 
     /// Build the project and copy dependencies automatically
     Build {
-        /// Build in release mode
+        /// Build in debug mode (default: release)
         #[arg(long)]
-        release: bool,
+        debug: bool,
     },
 
     /// Copy native dependencies and shaders after build
     Post {
-        /// Use release profile
+        /// Use debug profile (default: release)
         #[arg(long)]
-        release: bool,
+        debug: bool,
     },
 
     /// Verify all dependencies are present
     Verify {
-        /// Use release profile
+        /// Use debug profile (default: release)
         #[arg(long)]
-        release: bool,
+        debug: bool,
     },
 
     /// Generate changelog preview (saves to CHANGELOG.preview.md)
@@ -92,9 +92,9 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Pre => cmd_pre(),
-        Commands::Build { release } => cmd_build(release),
-        Commands::Post { release } => cmd_post(release),
-        Commands::Verify { release } => cmd_verify(release),
+        Commands::Build { debug } => cmd_build(debug),
+        Commands::Post { debug } => cmd_post(debug),
+        Commands::Verify { debug } => cmd_verify(debug),
         Commands::Changelog => cmd_changelog(),
         Commands::TagDev { level, dry_run } => cmd_tag_dev(&level, dry_run),
         Commands::TagRel { level, dry_run } => cmd_tag_rel(&level, dry_run),
@@ -108,10 +108,13 @@ fn cmd_pre() -> Result<()> {
     pre_build::patch_headers()
 }
 
-/// Command: cargo xtask build [--release]
-fn cmd_build(release: bool) -> Result<()> {
+/// Command: cargo xtask build [--debug]
+fn cmd_build(debug: bool) -> Result<()> {
+    let release = !debug;  // Invert: default is release mode
+
     println!("========================================");
     println!("Building playa with automatic dependency management");
+    println!("Profile: {}", if release { "release" } else { "debug" });
     println!("========================================");
     println!();
 
@@ -163,14 +166,16 @@ fn cmd_build(release: bool) -> Result<()> {
     Ok(())
 }
 
-/// Command: cargo xtask post [--release]
-fn cmd_post(release: bool) -> Result<()> {
+/// Command: cargo xtask post [--debug]
+fn cmd_post(debug: bool) -> Result<()> {
+    let release = !debug;  // Invert: default is release mode
     let profile = if release { "release" } else { "debug" };
     post_build::copy_dependencies(profile)
 }
 
-/// Command: cargo xtask verify [--release]
-fn cmd_verify(release: bool) -> Result<()> {
+/// Command: cargo xtask verify [--debug]
+fn cmd_verify(debug: bool) -> Result<()> {
+    let release = !debug;  // Invert: default is release mode
     let profile = if release { "release" } else { "debug" };
 
     println!("========================================");
