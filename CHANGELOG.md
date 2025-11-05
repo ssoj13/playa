@@ -1,3 +1,8 @@
+## [0.1.54] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Enable cache saving on all builds for cross-tag reuse
 ## [0.1.53] - 2025-11-05
 
 ### 🐛 Bug Fixes
