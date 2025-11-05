@@ -7,6 +7,8 @@
 [![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
+> **Experimental project**: Built to explore Rust's ecosystem and CI/CD patterns while solving real VFX workflow needs. Production-ready where tested, rough edges expected elsewhere. Open source contributions welcome.
+
 ![Screenshot](.github/screenshot.png)
 
 Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rendering.
@@ -174,39 +176,84 @@ cargo xtask tag-rel patch
 
 ### GitHub Actions CI/CD
 
-The project uses GitHub Actions for automated builds on Windows and Linux. The CI/CD pipeline uses simple, reliable caching for Rust dependencies.
+Automated builds on Windows and Linux with optimized multi-tier caching.
 
 #### Workflow Triggers
 
-- Regular commits to any branch do not start workflows.
-- Tag pushes `v*` start both workflows:
-  - `build.yml` runs only for tags not reachable from `main` (dev tags).
-  - `release.yml` runs only for tags reachable from `main` (release tags).
-- Manual dispatch remains enabled for both workflows when you need an ad‑hoc run.
-- Concurrency ensures only one active run per workflow and ref: duplicates on the same tag are canceled.
-
-#### Build Performance
-
-**Typical build times:**
-- First build (cold cache): ~35 minutes
-- Subsequent builds (warm cache): ~12-15 minutes
-- cargo-packager installation: ~5-6 minutes (every build)
-- Rust dependencies: cached via `Swatinem/rust-cache`
+- **Push to main**: Updates release cache, no artifacts
+- **Tags `v*` on main**: Triggers `release.yml` → GitHub Release
+- **Tags `v*` NOT on main**: Triggers `build.yml` → Dev artifacts only
+- **Manual dispatch**: Available for both workflows
 
 #### Caching Strategy
 
-**Simple and reliable**: Only `Swatinem/rust-cache` for Rust dependencies
+**Separate caches for release and dev builds:**
 
-- **Purpose**: Cache compiled Rust dependencies in `target/` and `~/.cargo/registry/`
-- **Benefit**: Saves ~10-15 minutes on repeated builds
-- **Trade-off**: cargo-packager installs fresh each time (~5-6 min) to avoid cache conflicts
-- **Reliability**: No complex multi-layer caching = predictable behavior
+| Cache Key | Usage | Contents |
+|-----------|-------|----------|
+| `playa-windows-release-v1` | Main branch builds/releases | Registry, git, bin, target |
+| `playa-linux-release-v1` | Main branch builds/releases | Registry, git, bin, target |
+| `playa-windows-dev-v1` | Dev tag builds | Registry, git, bin, target |
+| `playa-linux-dev-v1` | Dev tag builds | Registry, git, bin, target |
 
-**Why this approach:**
-- ✅ Eliminates cache conflicts between parallel workflow runs
-- ✅ Predictable build times without cache invalidation issues
-- ✅ Simple configuration, easy to maintain
-- ✅ Rust dependency caching provides good balance of speed vs complexity
+**Key optimizations:**
+- **cargo-packager binary cached** in `~/.cargo/bin/` - saves ~2-3 min/build
+- **Conditional install**: Checks if binary exists before `cargo install`
+- **Conditional save**: Skips cache save if successfully restored (cache-hit)
+- **Split restore/save**: Release workflow saves only from main branch
+
+#### Build Performance
+
+**Typical times:**
+- **First build (cold cache)**: ~20-25 minutes (includes OpenEXR compilation)
+- **Subsequent builds (warm cache)**: ~10-12 minutes
+- **cargo-packager**: Cached (~10 sec check) or installed fresh (~2-3 min)
+- **Cache restore/save**: ~1-2 minutes
+
+**Cache benefits:**
+- Rust dependencies: Saves ~10-15 minutes
+- cargo-packager binary: Saves ~2-3 minutes
+- Total speedup: ~13-18 minutes per build
+
+**Problem solved:**
+Previous approach compiled OpenEXR (~20 min) and cargo-packager (~2-3 min) every run. New caching brings this down to ~10-12 min for warm builds.
+
+#### GitHub Actions Cache Ref Scoping
+
+**The Problem:**
+GitHub Actions caches are scoped by ref (branch/tag). Each tag creates a unique ref:
+- Tag `v0.1.54` → ref `refs/tags/v0.1.54`
+- Tag `v0.1.55` → ref `refs/tags/v0.1.55`
+
+By default, caches created on one ref cannot be accessed by another ref. This means:
+- Each tag would rebuild from scratch (~20 minutes with OpenEXR)
+- No cache reuse between releases
+- Wasted CI time and resources
+
+**The Solution:**
+Use **parent ref inheritance** with split cache operations:
+
+1. **Main branch creates canonical cache**:
+   - `actions/cache/save@v4` with condition: `if: github.ref == 'refs/heads/main'`
+   - Creates cache with key `playa-windows-release-v1`
+   - Ref: `refs/heads/main`
+
+2. **Tags inherit from main**:
+   - `actions/cache/restore@v4` (no condition)
+   - Looks for key `playa-windows-release-v1`
+   - GitHub Actions allows reading caches from parent refs
+   - Tags on main automatically find main's cache
+
+3. **Conditional save with cache-hit check**:
+   - Skip save if cache was restored: `steps.cache.outputs.cache-hit != 'true'`
+   - Prevents redundant cache uploads
+
+**Result:**
+- First push to main: ~20 min, creates cache
+- Tags on main: ~10 min, reuse main's cache
+- Dev tags (not on main): Use separate `*-dev-v1` caches
+
+**Key insight:** GitHub Actions allows child refs (tags) to read caches from parent refs (branches they're based on), but not vice versa. Main branch is the "source of truth" for release caches.
 
 ### Standard Rust Development
 
@@ -258,7 +305,27 @@ See: https://github.com/AcademySoftwareFoundation/openexr/issues/1157
 | Zlib | Compression |
 | OpenEXR-C | C API wrapper from openexr-sys |
 
-Libraries are copied from `target/release/lib/` and `target/release/build/openexr-sys-*/out/`.
+**Library Copy Process (`cargo xtask post`):**
+
+1. **Locate libraries** compiled by `openexr-sys`:
+   - Searches `target/release/build/openexr-sys-*/out/` for versioned `.so` files
+   - Example: `libOpenEXR-3_2.so.31.0.0`, `libImath-3_1.so.29.9.0`
+
+2. **Copy to target directory**:
+   - Destination: `target/release/` (next to `playa` binary)
+   - Preserves original versioned filenames
+
+3. **Create SONAME symlinks**:
+   - `libOpenEXR-3_2.so -> libOpenEXR-3_2.so.31.0.0`
+   - `libOpenEXRCore-3_2.so -> libOpenEXRCore-3_2.so.31.0.0`
+   - `libOpenEXRUtil-3_2.so -> libOpenEXRUtil-3_2.so.31.0.0`
+   - `libImath-3_1.so -> libImath-3_1.so.29.9.0`
+   - Plus OpenEXR-C wrapper lib
+
+**Why this is needed:**
+- `openexr-sys` build creates libraries with full SONAME versions
+- Rust linker expects generic `.so` names without version suffixes
+- Without symlinks: `error while loading shared libraries: libOpenEXR-3_2.so: cannot open shared object file`
 
 **RPATH Configuration:**
 
@@ -268,7 +335,7 @@ Libraries are copied from `target/release/lib/` and `target/release/build/openex
 rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
 ```
 
-No `LD_LIBRARY_PATH` needed!
+No `LD_LIBRARY_PATH` needed! Combined with symlinks from `cargo xtask post`, the binary is fully self-contained.
 
 **Troubleshooting:**
 
@@ -288,6 +355,31 @@ After `cargo clean`:
 ```bash
 cargo xtask build --release  # Re-patches automatically
 ```
+
+#### Windows-Specific Build Notes
+
+**Native Libraries (DLL Management):**
+
+Windows requires `.dll` files alongside the executable. The same 7 OpenEXR/Imath/zlib libraries are needed, just as `.dll` instead of `.so`.
+
+**Library Copy Process (`cargo xtask post`):**
+
+1. **Locate DLLs** compiled by `openexr-sys`:
+   - Searches `target/release/build/openexr-sys-*/out/bin/` for `.dll` files
+   - Example: `OpenEXR-3_2.dll`, `Imath-3_1.dll`, `zlib.dll`
+
+2. **Copy to target directory**:
+   - Destination: `target/release/` (next to `playa.exe`)
+   - Windows DLLs don't use versioned SONAME - simpler than Linux
+
+**Why this is needed:**
+- Windows searches for DLLs in the same directory as the executable
+- Without DLLs: `The code execution cannot proceed because OpenEXR-3_2.dll was not found`
+- No PATH modification needed - self-contained binary
+
+**No RPATH equivalent:**
+- Windows automatically searches the executable's directory first
+- No special linker flags required (unlike Linux `$ORIGIN`)
 
 ## Usage
 
