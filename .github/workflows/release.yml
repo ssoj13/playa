@@ -54,7 +54,7 @@ jobs:
           toolchain: nightly-2025-10-15
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@master
         with:
           shared-key: "rust-stable-v2"
           add-rust-environment-hash-key: "false"
@@ -213,7 +213,7 @@ jobs:
           toolchain: nightly-2025-10-15
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@master
         with:
           shared-key: "rust-stable-v2"
           add-rust-environment-hash-key: "false"
