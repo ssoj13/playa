@@ -1,3 +1,8 @@
+## [0.1.41] - 2025-11-05
+
+### ⚙️ Miscellaneous Tasks
+
+- Bug: Fix release badge in README.md
 ## [0.1.40] - 2025-11-05
 
 ### ⚙️ Miscellaneous Tasks
