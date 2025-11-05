@@ -1,3 +1,9 @@
+## [0.1.30-dev] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Use --yes instead of --no-confirm (more readable)
+- Revert to --no-confirm (correct cargo-release flag)
 ## [0.1.29-dev] - 2025-11-05
 
 ### 🚀 Features
