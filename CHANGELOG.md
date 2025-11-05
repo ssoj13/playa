@@ -1,3 +1,9 @@
+## [0.1.59] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Clean old installer artifacts before packaging
+- Move installer cleanup before build to fix cached artifacts
 ## [0.1.58] - 2025-11-05
 
 ### 🐛 Bug Fixes
