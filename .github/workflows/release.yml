@@ -68,6 +68,13 @@ jobs:
       - name: Fetch dependencies
         run: cargo fetch
 
+      - name: Clean old installers
+        run: |
+          # Remove old installer artifacts from cache to prevent version mismatch
+          # Keep playa.exe binary, only remove installer packages
+          Remove-Item target/release/playa_*-setup.* -ErrorAction SilentlyContinue
+          Remove-Item target/release/*.msi -ErrorAction SilentlyContinue
+
       - name: Install cargo-packager
         run: |
           if (!(Get-Command cargo-packager -ErrorAction SilentlyContinue)) {
@@ -78,12 +85,6 @@ jobs:
 
       - name: Build the application
         run: cargo xtask build
-
-      - name: Clean old installers
-        run: |
-          # Remove old installer artifacts to prevent version mismatch
-          Remove-Item target/release/*.exe -ErrorAction SilentlyContinue
-          Remove-Item target/release/*.msi -ErrorAction SilentlyContinue
 
       - name: Package the application
         run: cargo packager --release
@@ -259,13 +260,13 @@ jobs:
       - name: Fetch dependencies
         run: cargo fetch
 
-      - name: Build the application (with xtask)
-        run: cargo xtask build
-
       - name: Clean old installers
         run: |
-          # Remove old installer artifacts to prevent version mismatch
+          # Remove old installer artifacts from cache to prevent version mismatch
           rm -f target/release/*.AppImage target/release/*.deb
+
+      - name: Build the application (with xtask)
+        run: cargo xtask build
 
       - name: Package the application
         run: |
