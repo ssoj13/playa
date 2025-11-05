@@ -1,3 +1,8 @@
+## [0.1.35] - 2025-11-05
+
+### 🚜 Refactor
+
+- Simplify CI caching - remove cargo-install, keep only rust-cache
 ## [0.1.34] - 2025-11-05
 
 ### 🐛 Bug Fixes
