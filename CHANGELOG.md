@@ -1,3 +1,8 @@
+## [0.1.44] - 2025-11-05
+
+### ⚙️ Miscellaneous Tasks
+
+- Bug: Codex Action changes
 ## [0.1.43] - 2025-11-05
 
 ### 🐛 Bug Fixes
