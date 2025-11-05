@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read  # No release creation needed, just build artifacts
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Check if the tag is NOT on main branch (we only want dev builds here)
   check-branch:

@@ -174,6 +174,15 @@ cargo xtask tag-rel patch
 
 The project uses GitHub Actions for automated builds on Windows and Linux. The CI/CD pipeline uses simple, reliable caching for Rust dependencies.
 
+#### Workflow Triggers
+
+- Regular commits to any branch do not start workflows.
+- Tag pushes `v*` start both workflows:
+  - `build.yml` runs only for tags not reachable from `main` (dev tags).
+  - `release.yml` runs only for tags reachable from `main` (release tags).
+- Manual dispatch remains enabled for both workflows when you need an ad‑hoc run.
+- Concurrency ensures only one active run per workflow and ref: duplicates on the same tag are canceled.
+
 #### Build Performance
 
 **Typical build times:**

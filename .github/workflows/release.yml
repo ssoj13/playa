@@ -2,8 +2,6 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*'  # Triggers on tags like v0.4.7, v1.0.0, etc.
   workflow_dispatch:  # Allow manual trigger
@@ -13,6 +11,10 @@ on:
 
 permissions:
   contents: write  # Required for creating releases and uploading artifacts
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Check if the tag is on main branch before building
