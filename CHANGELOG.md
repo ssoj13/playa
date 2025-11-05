@@ -1,3 +1,13 @@
+## [0.1.42] - 2025-11-05
+
+### 🚀 Features
+
+- Add cargo-binstall support and fix xtask build flags
+- Add cargo-binstall to bootstrap scripts
+
+### 🚜 Refactor
+
+- Simplify xtask build flags and update CI
 ## [0.1.41] - 2025-11-05
 
 ### ⚙️ Miscellaneous Tasks
