@@ -1,3 +1,8 @@
+## [0.1.52] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Disable job-id in rust-cache key for cross-job cache reuse
 ## [0.1.48] - 2025-11-05
 
 ### 🐛 Bug Fixes
