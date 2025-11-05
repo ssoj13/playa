@@ -45,9 +45,11 @@ pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result
         .arg(level)
         .arg("--no-publish");
 
-    // Add metadata suffix if provided (e.g., -dev)
+    // Add pre-release suffix if provided (e.g., -dev)
+    // Use --pre-release instead of --metadata to create 0.1.29-dev (not 0.1.29+dev)
+    // cargo-packager requires build metadata to be numeric-only
     if let Some(meta) = metadata {
-        cmd.arg("--metadata").arg(meta);
+        cmd.arg("--pre-release").arg(meta);
     }
 
     if dry_run {
