@@ -1,3 +1,8 @@
+## [0.1.47] - 2025-11-05
+
+### 🐛 Bug Fixes
+
+- Enable cache reuse across versions with workspaces: false
 ## [0.1.46] - 2025-11-05
 
 ### 🐛 Bug Fixes
