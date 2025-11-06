@@ -1,17 +1,31 @@
-## [0.1.74] - 2025-11-06
+## [0.1.75] - 2025-11-06
+
+### 🚜 Refactor
+
+- Remove redundant check-branch dependencies from openexr jobs
+## [0.1.73-dev] - 2025-11-06
 
 ### 🚀 Features
 
-- Change changelog command to full regeneration
 - Add restore-keys for cache sharing between dev and main
 
 ### 🚜 Refactor
 
-- Rename workflows and apply sequential build pattern to main.yml
+- Rewrite main.yml using dev.yml pattern
+## [0.1.74] - 2025-11-06
 
 ### ⚙️ Miscellaneous Tasks
 
 - WIP Thu 11/06/2025 -  1:18:12.97
+## [0.1.73] - 2025-11-06
+
+### 🚀 Features
+
+- Change changelog command to full regeneration
+
+### 🚜 Refactor
+
+- Rename workflows and apply sequential build pattern to main.yml
 ## [0.1.72-dev] - 2025-11-06
 
 ### 🚜 Refactor
