@@ -1,3 +1,8 @@
+## [0.1.65-dev] - 2025-11-06
+
+### 📚 Documentation
+
+- Add comprehensive certificate export script with instructions
 ## [0.1.64-dev] - 2025-11-06
 
 ### 🚀 Features
