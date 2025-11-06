@@ -86,7 +86,7 @@ jobs:
           key: tools-cargo-packager-0.11.7-${{ runner.os }}-${{ runner.arch }}
 
       - name: Install cargo-packager (Windows)
-        if: inputs.platform == 'windows' && inputs.cache_only != true && steps.tools-cache-restore.outputs.cache-hit != 'true'
+        if: inputs.platform == 'windows' && steps.tools-cache-restore.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           if (!(Get-Command cargo-packager -ErrorAction SilentlyContinue)) {
@@ -96,7 +96,7 @@ jobs:
           }
 
       - name: Install cargo-packager (Unix)
-        if: inputs.platform != 'windows' && inputs.cache_only != true && steps.tools-cache-restore.outputs.cache-hit != 'true'
+        if: inputs.platform != 'windows' && steps.tools-cache-restore.outputs.cache-hit != 'true'
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Import Code Signing Certificate
