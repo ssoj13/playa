@@ -15,6 +15,7 @@ Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rend
 
 ## Features
 
+- **Dual EXR backends**: Choose between pure Rust (exrs) for fast builds or OpenEXR C++ for full DWAA/DWAB compression support
 - **Multi-format support**: EXR, PNG, JPEG, TIFF, TGA with fast parallel loading
 - **HDR pixel precision**: Native support for 8-bit, 16-bit half-float, and 32-bit float images
 - **Drag-and-drop**: Drop any image file - automatically detects and loads the entire sequence
@@ -179,6 +180,42 @@ git pull
 cargo xtask tag-rel patch
 ```
 
+### Cargo Features
+
+Playa uses Cargo features to provide flexible EXR backend selection:
+
+| Feature | Default | Description | Use Case |
+|---------|---------|-------------|----------|
+| (none) | ✅ Yes | Pure Rust `exrs` backend | Fast builds, no external dependencies |
+| `openexr` | ❌ No | C++ OpenEXR backend via `openexr-rs` | Full DWAA/DWAB compression support |
+
+**Build commands:**
+```bash
+# Default (exrs backend)
+cargo build --release
+
+# OpenEXR backend (full compression support)
+cargo build --release --features openexr
+
+# Using xtask (handles dependencies automatically)
+cargo xtask build              # exrs backend
+cargo xtask build --openexr    # OpenEXR backend
+```
+
+**Backend comparison:**
+- **exrs (default)**:
+  - ✅ Pure Rust, fast compilation (~2-3 minutes)
+  - ✅ No external dependencies
+  - ❌ No DWAA/DWAB compression support
+  - Use for: Development, quick iterations
+
+- **openexr (feature flag)**:
+  - ✅ Full OpenEXR feature support (DWAA/DWAB/etc)
+  - ✅ Battle-tested C++ implementation
+  - ❌ Requires C++ compiler, CMake
+  - ❌ Slower compilation (~3-4 minutes)
+  - Use for: Production builds, full compatibility
+
 ### Development Dependencies
 
 **Auto-installed by bootstrap script:**
@@ -206,20 +243,22 @@ Automated builds on Windows and Linux with optimized multi-tier caching.
 #### Workflow Triggers
 
 - **Push to main**: Updates release cache, no artifacts
-- **Tags `v*` on main**: Triggers `release.yml` → GitHub Release
-- **Tags `v*` NOT on main**: Triggers `build.yml` → Dev artifacts only
+- **Tags `v*` on main**: Triggers `release.yml` → GitHub Release (OpenEXR backend)
+- **Tags `v*` NOT on main**: Triggers `build.yml` → Dev artifacts for both backends (exrs + OpenEXR)
 - **Manual dispatch**: Available for both workflows
 
 #### Caching Strategy
 
-**Separate caches for release and dev builds:**
+**Separate caches for release, dev, and backends:**
 
 | Cache Key | Usage | Contents |
 |-----------|-------|----------|
-| `playa-windows-release-v1` | Main branch builds/releases | Registry, git, bin, target |
-| `playa-linux-release-v1` | Main branch builds/releases | Registry, git, bin, target |
-| `playa-windows-dev-v1` | Dev tag builds | Registry, git, bin, target |
-| `playa-linux-dev-v1` | Dev tag builds | Registry, git, bin, target |
+| `playa-windows-release-v1` | Main branch builds/releases (OpenEXR) | Registry, git, bin, target |
+| `playa-linux-release-v1` | Main branch builds/releases (OpenEXR) | Registry, git, bin, target |
+| `playa-windows-dev-exrs-v1` | Dev tag builds (exrs backend) | Registry, git, bin, target |
+| `playa-windows-dev-openexr-v1` | Dev tag builds (OpenEXR backend) | Registry, git, bin, target |
+| `playa-linux-dev-exrs-v1` | Dev tag builds (exrs backend) | Registry, git, bin, target |
+| `playa-linux-dev-openexr-v1` | Dev tag builds (OpenEXR backend) | Registry, git, bin, target |
 
 **Key optimizations:**
 - **cargo-packager binary cached** in `~/.cargo/bin/` - saves ~2-3 min/build
