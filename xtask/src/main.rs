@@ -91,7 +91,7 @@ enum Commands {
         debug: bool,
     },
 
-    /// 📋 Generate changelog preview (saves to CHANGELOG.preview.md)
+    /// 📋 Regenerate full CHANGELOG.md from git history
     Changelog,
 
     /// 🧪 Tag dev build on GitHub, trigger Build workflow (creates v0.1.x-dev)
@@ -335,12 +335,12 @@ fn cmd_changelog() -> Result<()> {
     use anyhow::Context;
 
     println!("========================================");
-    println!("Generating changelog preview...");
+    println!("Regenerating full CHANGELOG.md...");
     println!("========================================");
     println!();
 
     let status = Command::new("git-cliff")
-        .args(&["--unreleased", "-o", "CHANGELOG.preview.md"])
+        .args(&["-o", "CHANGELOG.md"])
         .status()
         .context("Failed to run git-cliff. Is it installed?")?;
 
@@ -348,10 +348,7 @@ fn cmd_changelog() -> Result<()> {
         anyhow::bail!("git-cliff failed with exit code: {:?}", status.code());
     }
 
-    println!("✓ Preview saved to CHANGELOG.preview.md");
-    println!();
-    println!("This file shows unreleased changes that will be added");
-    println!("to CHANGELOG.md on the next release.");
+    println!("✓ CHANGELOG.md regenerated from full git history");
     println!();
 
     Ok(())
