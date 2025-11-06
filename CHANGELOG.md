@@ -1,3 +1,14 @@
+## [0.1.67-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Split cache restore/save in build.yml for proper tag inheritance
+
+### ⚙️ Miscellaneous Tasks
+
+- Add certificate export files to .gitignore
+- Add dev branch trigger to build.yml for cache creation
+- Only trigger build workflow on tags, save cache on dev tags
 ## [0.1.66-dev] - 2025-11-06
 
 ### 🚜 Refactor
