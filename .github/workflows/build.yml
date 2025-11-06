@@ -2,10 +2,8 @@ name: Build
 
 on:
   push:
-    branches:
-      - dev  # Build on dev branch to create/update cache
     tags:
-      - 'v*'  # Build on version tags (v0.1.26, etc.)
+      - 'v*'  # Only build on version tags (v0.1.26, etc.)
   workflow_dispatch:  # Allow manual trigger
 
 permissions:
@@ -152,7 +150,7 @@ jobs:
           retention-days: 7
 
       - name: Save cargo and build artifacts cache
-        if: github.ref == 'refs/heads/dev' && steps.cache-windows.outputs.cache-hit != 'true'
+        if: needs.check-branch.outputs.not-on-main == 'true' && steps.cache-windows.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -326,7 +324,7 @@ jobs:
           if-no-files-found: error
 
       - name: Save cargo and build artifacts cache
-        if: github.ref == 'refs/heads/dev' && steps.cache-linux.outputs.cache-hit != 'true'
+        if: needs.check-branch.outputs.not-on-main == 'true' && steps.cache-linux.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -492,7 +490,7 @@ jobs:
           if-no-files-found: error
 
       - name: Save cargo and build artifacts cache
-        if: github.ref == 'refs/heads/dev' && steps.cache-macos.outputs.cache-hit != 'true'
+        if: needs.check-branch.outputs.not-on-main == 'true' && steps.cache-macos.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
