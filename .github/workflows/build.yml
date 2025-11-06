@@ -309,3 +309,119 @@ jobs:
           path: target/release/playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip
           retention-days: 7
           if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    needs: check-branch
+    if: needs.check-branch.outputs.not-on-main == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        backend: [exrs, openexr]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install cmake
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2025-10-15
+
+      - name: Cache cargo and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            ~/.cargo/bin/
+            target/
+          key: playa-macos-dev-${{ matrix.backend }}-v1
+          restore-keys: |
+            playa-macos-dev-${{ matrix.backend }}-
+
+      - name: Install cargo-packager
+        run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
+
+      - name: Fetch dependencies
+        run: cargo fetch
+
+      - name: Clean old installers
+        run: |
+          # Remove old installer artifacts from cache to prevent version mismatch
+          rm -f target/release/*.dmg
+
+      - name: Build the application (${{ matrix.backend }} backend)
+        run: |
+          if [ "${{ matrix.backend }}" = "openexr" ]; then
+            cargo xtask build --openexr
+          else
+            cargo xtask build
+          fi
+
+      - name: Package the application
+        run: cargo packager --release
+
+      - name: Rename DMG to include backend
+        run: |
+          # Rename DMG
+          dmg=$(find target/release -maxdepth 1 -name "*.dmg" 2>/dev/null | head -n 1)
+          if [ -n "$dmg" ]; then
+            newname=$(echo "$dmg" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ matrix.backend }}/")
+            mv "$dmg" "$newname"
+            echo "Renamed DMG: $(basename $dmg) -> $(basename $newname)"
+          fi
+
+      - name: Find DMG
+        id: find_dmg
+        run: |
+          # Prefer top-level target/release output from cargo-packager
+          dmg=$(find target/release -maxdepth 1 -name "*.dmg" 2>/dev/null | head -n 1)
+          # Fallback to legacy bundle path if needed
+          if [ -z "$dmg" ]; then
+            dmg=$(find target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -n 1)
+          fi
+          if [ -n "$dmg" ]; then
+            echo "path=$dmg" >> $GITHUB_OUTPUT
+            echo "Found DMG: $dmg"
+          else
+            echo "No DMG found"
+          fi
+
+      - name: Create binstall ZIP
+        run: |
+          # Create directory for binstall package
+          mkdir -p binstall
+
+          # Copy binary
+          cp target/release/playa binstall/
+
+          # Copy all .dylib files (including symlinks)
+          cp -P target/release/*.dylib 2>/dev/null || true
+
+          # Create zip with rust target name for cargo-binstall (preserve symlinks)
+          cd binstall
+          zip -ry ../target/release/playa-${{ matrix.backend }}-aarch64-apple-darwin.zip *
+          cd ..
+
+          echo "Created binstall ZIP: playa-${{ matrix.backend }}-aarch64-apple-darwin.zip"
+          echo "Contents:"
+          ls -lh binstall/
+
+      - name: Upload macOS DMG artifact
+        if: steps.find_dmg.outputs.path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-${{ matrix.backend }}
+          path: ${{ steps.find_dmg.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload macOS binstall artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-binstall-${{ matrix.backend }}
+          path: target/release/playa-${{ matrix.backend }}-aarch64-apple-darwin.zip
+          retention-days: 7
+          if-no-files-found: error
