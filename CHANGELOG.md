@@ -1,3 +1,12 @@
+## [0.1.61] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Remove build warnings for unused imports and dead code
+
+### 📚 Documentation
+
+- Add comprehensive dual EXR backend documentation to README
 ## [0.1.60-dev] - 2025-11-06
 
 ### 🚀 Features
