@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set +H  # Disable history expansion to handle special characters (!, $, etc.) in password
 
 echo "========================================="
 echo "Export Developer ID Certificate"
@@ -38,7 +39,7 @@ if [ -z "$CERTS" ]; then
     echo "  6. Double-click the .cer file to install in Keychain"
     echo ""
     echo "Step 3: Run this script again"
-    echo "  ./export-cert.sh"
+    echo "  ./apple_cert.sh"
     echo ""
     exit 1
 fi
