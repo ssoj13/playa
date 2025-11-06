@@ -12,6 +12,7 @@ mod status_bar;
 mod progress_bar;
 mod ui;
 mod prefs;
+mod paths;
 
 use clap::Parser;
 use eframe::{egui, glow};
@@ -36,6 +37,10 @@ struct Args {
     /// Enable debug logging to file (default: playa.log)
     #[arg(short = 'l', long = "log", value_name = "LOG_FILE")]
     log_file: Option<Option<PathBuf>>,
+
+    /// Custom configuration directory (overrides default platform paths)
+    #[arg(short = 'c', long = "config-dir", value_name = "DIR")]
+    config_dir: Option<PathBuf>,
 
     /// Memory budget percentage for cache (e.g., 75 for 75%)
     #[arg(long = "mem", value_name = "PERCENT")]
@@ -88,6 +93,8 @@ struct PlayaApp {
     applied_mem_fraction: f64,
     #[serde(skip)]
     applied_workers: Option<usize>,
+    #[serde(skip)]
+    path_config: paths::PathConfig,
 }
 
 impl Default for PlayaApp {
@@ -116,6 +123,7 @@ impl Default for PlayaApp {
             last_seq_version: 0,
             applied_mem_fraction: 0.75,
             applied_workers: None,
+            path_config: paths::PathConfig::from_env_and_cli(None),
         }
     }
 }
@@ -454,9 +462,7 @@ impl eframe::App for PlayaApp {
         self.settings.show_playlist = self.show_playlist;
 
         // Save cache state separately (sequences + current frame)
-        let cache_path = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("playa_cache.json");
+        let cache_path = paths::data_file("playa_cache.json", &self.path_config);
 
         if let Err(e) = self.player.cache.to_json(&cache_path) {
             warn!("Failed to save cache state: {}", e);
@@ -485,12 +491,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments first (needed for log setup)
     let args = Args::parse();
 
+    // Create path configuration from CLI args and environment
+    let path_config = paths::PathConfig::from_env_and_cli(args.config_dir.clone());
+
+    // Ensure directories exist
+    if let Err(e) = paths::ensure_dirs(&path_config) {
+        eprintln!("Warning: Failed to create application directories: {}", e);
+    }
+
     // Initialize logger based on --log flag
     if let Some(log_path_opt) = &args.log_file {
         // File logging with debug level
         let log_path = log_path_opt.as_ref()
             .map(|p| p.clone())
-            .unwrap_or_else(|| PathBuf::from("playa.log"));
+            .unwrap_or_else(|| paths::data_file("playa.log", &path_config));
 
         let file = std::fs::File::create(&log_path)
             .expect("Failed to create log file");
@@ -511,6 +525,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Playa Image Sequence Player starting...");
     debug!("Command-line args: {:?}", args);
+
+    // Log application paths
+    info!("Config path: {}", paths::config_file("playa.json", &path_config).display());
+    info!("Data path: {}", paths::data_file("playa_cache.json", &path_config).parent().unwrap().display());
 
     if let Some(ref path) = args.file_path {
         info!("Input file: {}", path.display());
@@ -533,13 +551,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_drag_and_drop(true),
         persist_window: true,
         #[cfg(not(target_arch = "wasm32"))]
-        persistence_path: Some(std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("playa.json")),
+        persistence_path: Some(paths::config_file("playa.json", &path_config)),
         ..Default::default()
     };
 
     info!("Starting Playa with window persistence and drag-and-drop enabled");
+
+    // Clone path_config for the closure
+    let path_config_for_app = path_config.clone();
 
     // Run the app
     eframe::run_native(
@@ -569,6 +588,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.path_sender = path_tx;
             app.applied_mem_fraction = mem_fraction;
             app.applied_workers = workers;
+            app.path_config = path_config_for_app;
 
             // Attempt to load shaders from the shaders directory
             if let Err(e) = app.shader_manager.load_shader_directory(&std::path::PathBuf::from("shaders")) {
@@ -586,9 +606,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                   app.settings.current_shader, app.show_help);
 
             // Fast cache restoration (sequences + current frame)
-            let cache_path = std::env::current_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join("playa_cache.json");
+            let cache_path = paths::data_file("playa_cache.json", &path_config);
 
             // CLI argument has priority
             if let Some(file_path) = args.file_path {
