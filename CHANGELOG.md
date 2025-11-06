@@ -1,17 +1,17 @@
 ## [0.1.74] - 2025-11-06
 
-### ⚙️ Miscellaneous Tasks
-
-- WIP Thu 11/06/2025 -  1:18:12.97
-## [0.1.73] - 2025-11-06
-
 ### 🚀 Features
 
 - Change changelog command to full regeneration
+- Add restore-keys for cache sharing between dev and main
 
 ### 🚜 Refactor
 
 - Rename workflows and apply sequential build pattern to main.yml
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Thu 11/06/2025 -  1:18:12.97
 ## [0.1.72-dev] - 2025-11-06
 
 ### 🚜 Refactor
