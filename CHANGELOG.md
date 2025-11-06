@@ -1,3 +1,8 @@
+## [0.1.68-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Add set +H to workflows for certificate password handling
 ## [0.1.67-dev] - 2025-11-06
 
 ### 🐛 Bug Fixes
