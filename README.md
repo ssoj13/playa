@@ -1,6 +1,6 @@
 # Playa - Image Sequence Player
 
-[![Release Status](https://github.com/ssoj13/playa/actions/workflows/release.yml/badge.svg?branch=main&event=push)](https://github.com/ssoj13/playa/actions/workflows/release.yml)
+[![Release Status](https://github.com/ssoj13/playa/actions/workflows/main.yml/badge.svg?branch=main&event=push)](https://github.com/ssoj13/playa/actions/workflows/main.yml)
 [![Release](https://img.shields.io/github/v/release/ssoj13/playa)](https://github.com/ssoj13/playa/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/ssoj13/playa/total)](https://github.com/ssoj13/playa/releases)
 [![License](https://img.shields.io/github/license/ssoj13/playa)](LICENSE)
