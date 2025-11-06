@@ -398,7 +398,7 @@ jobs:
           cp target/release/playa binstall/
 
           # Copy all .dylib files (including symlinks)
-          cp -P target/release/*.dylib 2>/dev/null || true
+          cp -P target/release/lib*.dylib binstall/ 2>/dev/null || true
 
           # Create zip with rust target name for cargo-binstall (preserve symlinks)
           cd binstall
