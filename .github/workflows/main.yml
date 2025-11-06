@@ -164,7 +164,7 @@ jobs:
 
   build-windows-openexr:
     runs-on: windows-latest
-    needs: [check-branch, build-windows-exrs]
+    needs: build-windows-exrs
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
@@ -461,7 +461,7 @@ jobs:
 
   build-linux-openexr:
     runs-on: ubuntu-latest
-    needs: [check-branch, build-linux-exrs]
+    needs: build-linux-exrs
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
@@ -810,7 +810,7 @@ jobs:
 
   build-macos-openexr:
     runs-on: macos-latest
-    needs: [check-branch, build-macos-exrs]
+    needs: build-macos-exrs
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
