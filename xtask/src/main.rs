@@ -196,7 +196,21 @@ fn run() -> Result<()> {
 
 /// Command: cargo xtask pre
 fn cmd_pre() -> Result<()> {
-    pre_build::patch_headers()
+    #[cfg(target_os = "linux")]
+    {
+        pre_build::patch_headers()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        pre_build::patch_zlib_for_macos()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        println!("Pre-build patching not needed on this platform");
+        Ok(())
+    }
 }
 
 /// Command: cargo xtask build [--release] [--openexr]
@@ -208,16 +222,23 @@ fn cmd_build(release: bool, openexr: bool) -> Result<()> {
     println!("========================================");
     println!();
 
-    // Step 1: Pre-build (Linux header patching, only for OpenEXR)
+    // Step 1: Pre-build (platform-specific patching, only for OpenEXR)
     #[cfg(target_os = "linux")]
     if openexr {
-        println!("Step 1/3: Patching headers...");
+        println!("Step 1/3: Patching OpenEXR headers...");
         pre_build::patch_headers()?;
         println!();
     }
 
+    #[cfg(target_os = "macos")]
+    if openexr {
+        println!("Step 1/3: Patching zlib for macOS...");
+        pre_build::patch_zlib_for_macos()?;
+        println!();
+    }
+
     // Step 2: Run cargo build
-    let step_num = if cfg!(target_os = "linux") && openexr {
+    let step_num = if (cfg!(target_os = "linux") || cfg!(target_os = "macos")) && openexr {
         "2/3"
     } else {
         "1/2"
@@ -246,7 +267,7 @@ fn cmd_build(release: bool, openexr: bool) -> Result<()> {
 
     // Step 3: Post-build (copy dependencies, only for OpenEXR)
     if openexr {
-        let step_num = if cfg!(target_os = "linux") {
+        let step_num = if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
             "3/3"
         } else {
             "2/2"
@@ -289,18 +310,17 @@ fn cmd_verify(release: bool) -> Result<()> {
     println!();
     lib_discovery::verify_library_count(&libraries)?;
 
-    // Check shaders
+    // Check shaders (optional - using embedded shaders if not present)
     let shaders_dir = std::path::PathBuf::from(format!("target/{}/shaders", profile));
 
     println!();
     println!("Checking shaders directory...");
 
     if !shaders_dir.exists() {
-        println!("  ✗ shaders/ directory not found!");
-        anyhow::bail!("Missing shaders directory");
+        println!("  ⚠ shaders/ directory not found (using embedded shaders only)");
+    } else {
+        println!("  ✓ shaders/ directory present");
     }
-
-    println!("  ✓ shaders/ directory present");
 
     println!();
     println!("========================================");
@@ -554,7 +574,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
         println!("  ✓ Copied {}", file_name.to_string_lossy());
     }
 
-    // Copy shaders directory from project root
+    // Copy shaders directory from project root (optional)
     let source_shaders = PathBuf::from("shaders");
 
     if source_shaders.exists() {
@@ -565,6 +585,8 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
         )
         .context("Failed to copy shaders directory")?;
         println!("  ✓ Copied shaders/");
+    } else {
+        println!("  ⚠ shaders/ directory not found (using embedded shaders only)");
     }
 
     println!();

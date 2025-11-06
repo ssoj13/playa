@@ -47,6 +47,78 @@ void main() {
 }
 "#;
 
+/// Embedded Reinhard tonemapping fragment shader
+const FRAGMENT_SHADER_REINHARD: &str = r#"
+#version 330 core
+
+in vec2 v_uv;
+out vec4 FragColor;
+
+uniform sampler2D u_texture;
+uniform float u_exposure;  // Exposure multiplier (default 1.0)
+uniform float u_gamma;     // Gamma correction (default 2.2 for sRGB)
+uniform int u_is_hdr;      // 1 for HDR (F16/F32), 0 for LDR (U8)
+
+// Reinhard Tonemapping
+vec3 ReinhardTonemap(vec3 color) {
+    return color / (1.0 + color);
+}
+
+void main() {
+    vec4 texColor = texture(u_texture, v_uv);
+
+    if (u_is_hdr == 1) {
+        // HDR path: apply exposure, tone mapping, and gamma
+        vec3 exposed = texColor.rgb * u_exposure;
+        vec3 tonemapped = ReinhardTonemap(exposed);
+        vec3 gamma_corrected = pow(tonemapped, vec3(1.0 / u_gamma));
+        FragColor = vec4(gamma_corrected, texColor.a);
+    } else {
+        // LDR path: already in sRGB, no processing needed
+        FragColor = texColor;
+    }
+}
+"#;
+
+/// Embedded ACES Filmic tonemapping fragment shader
+const FRAGMENT_SHADER_ACES: &str = r#"
+#version 330 core
+
+in vec2 v_uv;
+out vec4 FragColor;
+
+uniform sampler2D u_texture;
+uniform float u_exposure;  // Exposure multiplier (default 1.0)
+uniform float u_gamma;     // Gamma correction (default 2.2 for sRGB)
+uniform int u_is_hdr;      // 1 for HDR (F16/F32), 0 for LDR (U8)
+
+// ACES Filmic Tone Mapping Curve
+// Function from: https://www.shadertoy.com/view/4sjXRh
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51;
+    float b = 0.03;
+    float c = 2.43;
+    float d = 0.59;
+    float e = 0.14;
+    return clamp((x*(a*x + b))/(x*(c*x + d) + e), 0.0, 1.0);
+}
+
+void main() {
+    vec4 color = texture(u_texture, v_uv);
+
+    if (u_is_hdr == 1) {
+        // HDR path: apply exposure, tone mapping, and gamma
+        vec3 exposed = color.rgb * u_exposure;
+        vec3 tone_mapped = ACESFilm(exposed);
+        vec3 gamma_corrected = pow(tone_mapped, vec3(1.0 / u_gamma));
+        FragColor = vec4(gamma_corrected, color.a);
+    } else {
+        // LDR path: already in sRGB, no processing needed
+        FragColor = color;
+    }
+}
+"#;
+
 /// Manages different GLSL shaders for the viewport
 #[derive(Clone)]
 pub struct Shaders {
@@ -61,12 +133,12 @@ impl Shaders {
             current_shader: "default".to_string(),
         };
 
-        // Always load embedded default shader first
-        manager.load_default();
+        // Always load embedded shaders first (default, reinhard, aces)
+        manager.load_embedded_shaders();
 
-        // Then try to load from directory (if default.glsl exists, it will override)
+        // Then try to load from directory (external .glsl files can override embedded ones)
         if let Err(e) = manager.load_shader_directory(Path::new("shaders")) {
-            log::info!("No shader directory found ({}), using embedded default only", e);
+            log::info!("No shader directory found ({}), using embedded shaders only", e);
         }
 
         manager
@@ -115,14 +187,28 @@ impl Shaders {
         Ok(())
     }
 
-    /// Load embedded default shader
-    fn load_default(&mut self) {
+    /// Load all embedded shaders (default, reinhard, aces)
+    fn load_embedded_shaders(&mut self) {
+        // Default shader (simple exposure + gamma)
         self.shaders.insert(
             "default".to_string(),
             (VERTEX_SHADER.to_string(), FRAGMENT_SHADER.to_string())
         );
+
+        // Reinhard tonemapping shader
+        self.shaders.insert(
+            "tonemap_reinhard".to_string(),
+            (VERTEX_SHADER.to_string(), FRAGMENT_SHADER_REINHARD.to_string())
+        );
+
+        // ACES Filmic tonemapping shader
+        self.shaders.insert(
+            "tonemap_aces".to_string(),
+            (VERTEX_SHADER.to_string(), FRAGMENT_SHADER_ACES.to_string())
+        );
+
         self.current_shader = "default".to_string();
-        log::info!("Loaded embedded default shader");
+        log::info!("Loaded 3 embedded shaders: default, tonemap_reinhard, tonemap_aces");
     }
 
     /// Get the current vertex and fragment shaders

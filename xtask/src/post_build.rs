@@ -54,11 +54,17 @@ pub fn copy_dependencies(profile: &str) -> Result<()> {
     println!();
     println!("Copied {} libraries", copied_count);
 
-    // Step 3: Create soname symlinks on Linux
+    // Step 3: Create soname symlinks on Linux/macOS
     #[cfg(target_os = "linux")]
     {
         println!();
         create_soname_symlinks(&target_dir, &libraries)?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        println!();
+        create_dylib_symlinks(&target_dir, &libraries)?;
     }
 
     // Step 4: Copy shaders directory
@@ -77,16 +83,18 @@ pub fn copy_dependencies(profile: &str) -> Result<()> {
     Ok(())
 }
 
-/// Copy shaders directory to target
+/// Copy shaders directory to target (or create empty if source doesn't exist)
 fn copy_shaders(target_dir: &Path) -> Result<()> {
     let shaders_src = PathBuf::from("shaders");
+    let shaders_dest = target_dir.join("shaders");
 
     if !shaders_src.exists() {
-        println!("Warning: shaders/ directory not found, skipping");
+        println!("Warning: shaders/ directory not found, creating empty directory for cargo-packager");
+        // Create empty shaders directory so cargo-packager doesn't fail
+        fs::create_dir_all(&shaders_dest)
+            .context("Failed to create empty shaders directory")?;
         return Ok(());
     }
-
-    let shaders_dest = target_dir.join("shaders");
 
     println!("Copying shaders/ directory...");
 
@@ -214,5 +222,138 @@ mod tests {
 
         assert_eq!(extract_soname("libfoo.so"), None);
         assert_eq!(extract_soname("libbar.dll"), None);
+    }
+}
+
+/// Create dylib symlinks for shared libraries on macOS
+///
+/// For example, libFoo.29.0.0.dylib creates:
+/// - libFoo.29.dylib -> libFoo.29.0.0.dylib
+/// - libFoo.dylib -> libFoo.29.0.0.dylib
+#[cfg(target_os = "macos")]
+fn create_dylib_symlinks(target_dir: &Path, libraries: &[PathBuf]) -> Result<()> {
+    println!("Creating dylib symlinks...");
+
+    let mut symlink_count = 0;
+
+    for lib_path in libraries {
+        if let Some(file_name) = lib_path.file_name().and_then(|n| n.to_str()) {
+            // Only process .dylib files with version numbers (like libFoo.29.0.0.dylib)
+            if !file_name.contains(".dylib") {
+                continue;
+            }
+
+            // Extract different levels of symlinks
+            if let Some(symlinks) = extract_dylib_symlinks(file_name) {
+                for symlink_name in symlinks {
+                    let link = target_dir.join(&symlink_name);
+
+                    // Skip if symlink already exists and points to the right file
+                    if link.exists() {
+                        if let Ok(target) = fs::read_link(&link) {
+                            if target == PathBuf::from(file_name) {
+                                continue;
+                            }
+                        }
+                        // Remove existing symlink if it points elsewhere
+                        let _ = fs::remove_file(&link);
+                    }
+
+                    match std::os::unix::fs::symlink(file_name, &link) {
+                        Ok(_) => {
+                            println!("  ✓ Created symlink {} -> {}", symlink_name, file_name);
+                            symlink_count += 1;
+                        }
+                        Err(e) => {
+                            println!("  ✗ Failed to create symlink {}: {}", symlink_name, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!("Created {} dylib symlinks", symlink_count);
+
+    Ok(())
+}
+
+/// Extract dylib symlink names from full library name
+///
+/// Examples:
+/// - libOpenEXR-3_0.29.0.0.dylib -> ["libOpenEXR-3_0.29.dylib", "libOpenEXR-3_0.dylib"]
+/// - libImath-3_0.28.0.2.dylib -> ["libImath-3_0.28.dylib", "libImath-3_0.dylib"]
+/// - libz.1.2.11.dylib -> ["libz.1.dylib", "libz.dylib"]
+#[cfg(target_os = "macos")]
+fn extract_dylib_symlinks(filename: &str) -> Option<Vec<String>> {
+    if !filename.ends_with(".dylib") {
+        return None;
+    }
+
+    // Remove .dylib extension
+    let base = &filename[..filename.len() - 6];
+
+    // Find version numbers (sequences of digits separated by dots)
+    // Split by . and check which parts are version numbers
+    let parts: Vec<&str> = base.split('.').collect();
+
+    if parts.len() < 2 {
+        // No version numbers (e.g., libopenexr-c-0_10-shared.dylib)
+        return None;
+    }
+
+    let mut symlinks = Vec::new();
+
+    // Find where version numbers start
+    let mut version_start = None;
+    for (i, part) in parts.iter().enumerate() {
+        if part.chars().all(|c| c.is_ascii_digit()) {
+            version_start = Some(i);
+            break;
+        }
+    }
+
+    if let Some(start) = version_start {
+        // Create major version symlink (e.g., libFoo.29.dylib from libFoo.29.0.0.dylib)
+        if start + 1 < parts.len() {
+            let major_symlink = format!("{}.{}.dylib", parts[..=start].join("."), "");
+            symlinks.push(major_symlink.replace("..", "."));
+        }
+
+        // Create base symlink (e.g., libFoo.dylib from libFoo.29.0.0.dylib)
+        let base_symlink = format!("{}.dylib", parts[..start].join("."));
+        symlinks.push(base_symlink);
+    }
+
+    if symlinks.is_empty() {
+        None
+    } else {
+        Some(symlinks)
+    }
+}
+
+#[cfg(test)]
+mod macos_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_extract_dylib_symlinks() {
+        let result = extract_dylib_symlinks("libOpenEXR-3_0.29.0.0.dylib");
+        assert!(result.is_some());
+        let symlinks = result.unwrap();
+        assert_eq!(symlinks.len(), 2);
+        assert!(symlinks.contains(&"libOpenEXR-3_0.29.dylib".to_string()));
+        assert!(symlinks.contains(&"libOpenEXR-3_0.dylib".to_string()));
+
+        let result = extract_dylib_symlinks("libz.1.2.11.dylib");
+        assert!(result.is_some());
+        let symlinks = result.unwrap();
+        assert_eq!(symlinks.len(), 2);
+        assert!(symlinks.contains(&"libz.1.dylib".to_string()));
+        assert!(symlinks.contains(&"libz.dylib".to_string()));
+
+        // No version numbers
+        assert_eq!(extract_dylib_symlinks("libopenexr-c-0_10-shared.dylib"), None);
     }
 }

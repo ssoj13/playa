@@ -27,3 +27,7 @@ Thumbs.db
 
 # Changelog preview (generated locally)
 CHANGELOG.preview.md
+
+# Certificate export files (sensitive data)
+cert.txt
+passwd.txt
