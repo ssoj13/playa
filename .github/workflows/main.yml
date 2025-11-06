@@ -27,13 +27,21 @@ jobs:
       - name: Check if tag is on main branch
         id: check
         run: |
-          # Check if the current tag is reachable from main branch
-          if git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
-            echo "on-main=true" >> $GITHUB_OUTPUT
-            echo "✓ Tag is on main branch - proceeding with release"
+          set -euo pipefail
+          # Ensure remote branches are present (tags push may not fetch branches by default)
+          git fetch --no-tags origin +refs/heads/*:refs/remotes/origin/*
+          TAG_SHA="${GITHUB_SHA}"
+          if git rev-parse --verify origin/main >/dev/null 2>&1; then
+            if git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+              echo "on-main=true" >> $GITHUB_OUTPUT
+              echo "✓ Tag commit is contained in origin/main - proceeding with release"
+            else
+              echo "on-main=false" >> $GITHUB_OUTPUT
+              echo "✗ Tag commit is NOT contained in origin/main - skipping release"
+            fi
           else
             echo "on-main=false" >> $GITHUB_OUTPUT
-            echo "✗ Tag is NOT on main branch - skipping release"
+            echo "✗ origin/main not found after fetch - skipping release"
           fi
 
   build-windows:
