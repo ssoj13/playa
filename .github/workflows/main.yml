@@ -61,7 +61,10 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-v1
+          key: playa-windows-main-v1
+          restore-keys: |
+            playa-windows-dev-v1
+            playa-windows-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -151,7 +154,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-v1
+          key: playa-windows-main-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -184,7 +187,10 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-v1
+          key: playa-windows-main-v1
+          restore-keys: |
+            playa-windows-dev-v1
+            playa-windows-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -306,7 +312,10 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-v1
+          key: playa-linux-main-v1
+          restore-keys: |
+            playa-linux-dev-v1
+            playa-linux-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -441,7 +450,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-v1
+          key: playa-linux-main-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -480,7 +489,10 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-v1
+          key: playa-linux-main-v1
+          restore-keys: |
+            playa-linux-dev-v1
+            playa-linux-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -646,7 +658,10 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-macos-v1
+          key: playa-macos-main-v1
+          restore-keys: |
+            playa-macos-dev-v1
+            playa-macos-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -785,7 +800,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-macos-v1
+          key: playa-macos-main-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -821,7 +836,10 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-macos-v1
+          key: playa-macos-main-v1
+          restore-keys: |
+            playa-macos-dev-v1
+            playa-macos-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
