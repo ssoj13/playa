@@ -1,3 +1,8 @@
+## [0.1.72-dev] - 2025-11-06
+
+### 🚜 Refactor
+
+- Sequential builds with shared cache per platform
 ## [0.1.71-dev] - 2025-11-06
 
 ### 🐛 Bug Fixes
