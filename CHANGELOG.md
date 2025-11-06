@@ -1,3 +1,8 @@
+## [0.1.78] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Add restore-keys to enable cache reuse between tags
 ## [0.1.77] - 2025-11-06
 
 ### 🐛 Bug Fixes
