@@ -1,3 +1,9 @@
+## [0.1.71-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Remove platform-specific stub functions in pre_build.rs
+- Cache save only from dev branch for tag inheritance
 ## [0.1.70-dev] - 2025-11-06
 
 ### 🚀 Features
