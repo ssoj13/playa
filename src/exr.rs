@@ -90,7 +90,7 @@ impl ExrLoader for Exr {
             }
         };
 
-        info!("Loaded EXR with exrs: {}x{} ({:?})", width, height, pixel_format);
+        debug!("Loaded EXR with exrs: {}x{} ({:?})", width, height, pixel_format);
         Ok((buffer, pixel_format, width, height))
     }
 
@@ -157,7 +157,7 @@ impl ExrLoader for OpenExr {
             Self::load_float(path, width, height)
         } else {
             // UINT pixels - load as f16 for memory efficiency
-            info!("EXR UINT pixels detected, loading as f16");
+            debug!("EXR UINT pixels detected, loading as f16");
             Self::load_half(path, width, height)
         }
     }

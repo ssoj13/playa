@@ -83,8 +83,8 @@ jobs:
             Write-Host "cargo-packager already installed"
           }
 
-      - name: Build the application
-        run: cargo xtask build
+      - name: Build the application (OpenEXR backend with DWAA/DWAB support)
+        run: cargo xtask build --openexr
 
       - name: Package the application
         run: cargo packager --release
@@ -265,8 +265,8 @@ jobs:
           # Remove old installer artifacts from cache to prevent version mismatch
           rm -f target/release/*.AppImage target/release/*.deb
 
-      - name: Build the application (with xtask)
-        run: cargo xtask build
+      - name: Build the application (OpenEXR backend with DWAA/DWAB support)
+        run: cargo xtask build --openexr
 
       - name: Package the application
         run: |
