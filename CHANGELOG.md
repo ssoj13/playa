@@ -1,3 +1,8 @@
+## [0.1.76] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Revert to unified cache keys without dev/main suffixes
 ## [0.1.75] - 2025-11-06
 
 ### 🚜 Refactor
