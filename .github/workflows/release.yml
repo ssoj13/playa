@@ -64,9 +64,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-release-${{ matrix.backend }}-v1
+          key: playa-windows-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-windows-release-${{ matrix.backend }}-
+            playa-windows-${{ matrix.backend }}-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -161,7 +161,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-release-${{ matrix.backend }}-v1
+          key: playa-windows-${{ matrix.backend }}-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -200,9 +200,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-macos-release-${{ matrix.backend }}-v1
+          key: playa-macos-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-macos-release-${{ matrix.backend }}-
+            playa-macos-${{ matrix.backend }}-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -339,7 +339,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-macos-release-${{ matrix.backend }}-v1
+          key: playa-macos-${{ matrix.backend }}-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -380,9 +380,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-release-${{ matrix.backend }}-v1
+          key: playa-linux-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-linux-release-${{ matrix.backend }}-
+            playa-linux-${{ matrix.backend }}-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -522,7 +522,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-release-${{ matrix.backend }}-v1
+          key: playa-linux-${{ matrix.backend }}-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')

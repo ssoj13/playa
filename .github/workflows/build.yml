@@ -61,9 +61,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-dev-${{ matrix.backend }}-v1
+          key: playa-windows-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-windows-dev-${{ matrix.backend }}-
+            playa-windows-${{ matrix.backend }}-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -158,7 +158,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-dev-${{ matrix.backend }}-v1
+          key: playa-windows-${{ matrix.backend }}-v1
 
   build-linux:
     runs-on: ubuntu-latest
@@ -190,9 +190,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-dev-${{ matrix.backend }}-v1
+          key: playa-linux-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-linux-dev-${{ matrix.backend }}-
+            playa-linux-${{ matrix.backend }}-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -332,7 +332,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-dev-${{ matrix.backend }}-v1
+          key: playa-linux-${{ matrix.backend }}-v1
 
   build-macos:
     runs-on: macos-latest
@@ -362,9 +362,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-macos-dev-${{ matrix.backend }}-v1
+          key: playa-macos-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-macos-dev-${{ matrix.backend }}-
+            playa-macos-${{ matrix.backend }}-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -501,4 +501,4 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-macos-dev-${{ matrix.backend }}-v1
+          key: playa-macos-${{ matrix.backend }}-v1
