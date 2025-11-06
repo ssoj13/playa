@@ -1,3 +1,12 @@
+## [0.1.66-dev] - 2025-11-06
+
+### 🚜 Refactor
+
+- Rename export-cert.sh to apple_cert.sh and add set +H
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove plan.md
 ## [0.1.65-dev] - 2025-11-06
 
 ### 📚 Documentation
