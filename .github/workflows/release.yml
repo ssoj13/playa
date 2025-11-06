@@ -251,10 +251,17 @@ jobs:
       - name: Fetch dependencies
         run: cargo fetch
 
-      - name: Clean old installers
+      - name: Clean old installers and DMG artifacts
         run: |
-          # Remove old installer artifacts from cache to prevent version mismatch
+          # Unmount any mounted DMG volumes
+          hdiutil detach /Volumes/Playa 2>/dev/null || true
+
+          # Remove old DMG files
           rm -f target/release/*.dmg
+
+          # Remove cargo-packager temporary directories
+          rm -rf target/release/.cargo-packager/dmg
+          rm -rf ~/Library/Caches/.cargo-packager/DMG
 
       - name: Build the application (${{ matrix.backend }} backend)
         run: |
