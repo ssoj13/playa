@@ -3,11 +3,8 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'  # Triggers on tags like v0.4.7, v1.0.0, etc.
+      - 'v*'  # Only build on version tags (v0.1.26, etc.)
   workflow_dispatch:  # Allow manual trigger
-
-# Only run release builds for tags on main branch
-# This prevents dev branch tags from creating releases
 
 permissions:
   contents: write  # Required for creating releases and uploading artifacts
@@ -16,14 +13,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  # Check if the tag is on main branch before building
+  # Check if the tag is on main branch (we only want release builds here)
   check-branch:
     runs-on: ubuntu-latest
     outputs:
       on-main: ${{ steps.check.outputs.on-main }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Fetch all history to check branches
 
@@ -45,7 +42,7 @@ jobs:
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -133,13 +130,13 @@ jobs:
           Get-ChildItem "binstall" | Format-Table Name, Length
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: windows-exrs
           path: |
             ${{ steps.find_installer.outputs.path }}
             target/release/playa-exrs-x86_64-pc-windows-msvc.zip
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
       - name: Save cargo and build artifacts cache
@@ -168,7 +165,7 @@ jobs:
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
@@ -261,13 +258,13 @@ jobs:
           Get-ChildItem "binstall" | Format-Table Name, Length
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: windows-openexr
           path: |
             ${{ steps.find_installer.outputs.path }}
             target/release/playa-openexr-x86_64-pc-windows-msvc.zip
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
 
       - name: Upload Release Assets
@@ -285,7 +282,7 @@ jobs:
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
@@ -408,7 +405,7 @@ jobs:
 
       - name: Upload Linux AppImage artifact
         if: steps.find_appimage.outputs.path != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: linux-appimage-exrs
           path: ${{ steps.find_appimage.outputs.path }}
@@ -417,7 +414,7 @@ jobs:
 
       - name: Upload Linux DEB artifact
         if: steps.find_deb.outputs.path != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: linux-deb-exrs
           path: ${{ steps.find_deb.outputs.path }}
@@ -425,7 +422,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Linux binstall artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: linux-binstall-exrs
           path: target/release/playa-exrs-x86_64-unknown-linux-gnu.zip
@@ -459,7 +456,7 @@ jobs:
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
@@ -587,7 +584,7 @@ jobs:
 
       - name: Upload Linux AppImage artifact
         if: steps.find_appimage.outputs.path != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: linux-appimage-openexr
           path: ${{ steps.find_appimage.outputs.path }}
@@ -596,7 +593,7 @@ jobs:
 
       - name: Upload Linux DEB artifact
         if: steps.find_deb.outputs.path != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: linux-deb-openexr
           path: ${{ steps.find_deb.outputs.path }}
@@ -604,7 +601,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Linux binstall artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: linux-binstall-openexr
           path: target/release/playa-openexr-x86_64-unknown-linux-gnu.zip
@@ -627,7 +624,7 @@ jobs:
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: brew install cmake
@@ -761,7 +758,7 @@ jobs:
 
       - name: Upload macOS DMG artifact
         if: steps.find_dmg.outputs.path != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: macos-dmg-exrs
           path: ${{ steps.find_dmg.outputs.path }}
@@ -769,7 +766,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload macOS binstall artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: macos-binstall-exrs
           path: target/release/playa-exrs-aarch64-apple-darwin.zip
@@ -802,7 +799,7 @@ jobs:
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: brew install cmake
@@ -941,7 +938,7 @@ jobs:
 
       - name: Upload macOS DMG artifact
         if: steps.find_dmg.outputs.path != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: macos-dmg-openexr
           path: ${{ steps.find_dmg.outputs.path }}
@@ -949,7 +946,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload macOS binstall artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: macos-binstall-openexr
           path: target/release/playa-openexr-aarch64-apple-darwin.zip
