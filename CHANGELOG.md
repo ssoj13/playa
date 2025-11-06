@@ -7,6 +7,11 @@
 ### 📚 Documentation
 
 - Add comprehensive dual EXR backend documentation to README
+- Update README with dual EXR backend release info
+
+### ⚙️ Miscellaneous Tasks
+
+- Add dual EXR backend support to CI/CD workflows
 ## [0.1.60-dev] - 2025-11-06
 
 ### 🚀 Features
