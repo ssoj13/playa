@@ -73,12 +73,20 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
-            ~/.cargo/bin/
             target/
           key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Restore cargo-packager cache
+        id: tools-cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-packager
+            ~/.cargo/bin/cargo-packager.exe
+          key: tools-cargo-packager-0.11.7-${{ runner.os }}-${{ runner.arch }}
+
       - name: Install cargo-packager (Windows)
-        if: inputs.platform == 'windows' && inputs.cache_only != true
+        if: inputs.platform == 'windows' && inputs.cache_only != true && steps.tools-cache-restore.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           if (!(Get-Command cargo-packager -ErrorAction SilentlyContinue)) {
@@ -88,7 +96,7 @@ jobs:
           }
 
       - name: Install cargo-packager (Unix)
-        if: inputs.platform != 'windows' && inputs.cache_only != true
+        if: inputs.platform != 'windows' && inputs.cache_only != true && steps.tools-cache-restore.outputs.cache-hit != 'true'
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Import Code Signing Certificate
@@ -288,7 +296,6 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
-            ~/.cargo/bin/
             target/
           key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
           lookup-only: true
@@ -300,9 +307,28 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
-            ~/.cargo/bin/
             target/
           key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check cargo-packager cache exists (lookup-only)
+        if: steps.tools-cache-restore.outputs.cache-hit != 'true'
+        id: tools-cache-exists
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-packager
+            ~/.cargo/bin/cargo-packager.exe
+          key: tools-cargo-packager-0.11.7-${{ runner.os }}-${{ runner.arch }}
+          lookup-only: true
+
+      - name: Save cargo-packager cache
+        if: steps.tools-cache-restore.outputs.cache-hit != 'true' && steps.tools-cache-exists.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-packager
+            ~/.cargo/bin/cargo-packager.exe
+          key: tools-cargo-packager-0.11.7-${{ runner.os }}-${{ runner.arch }}
 
       - name: Upload Release Assets (Windows)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows' && inputs.cache_only != true

@@ -275,7 +275,13 @@ Automated builds for Windows, Linux, and macOS with strict cache reuse and optio
 - Multi-source restore order: current ref → `refs/heads/main` → `refs/heads/dev`.
 - Save only if no restore hit (no duplicate uploads when a cache exists).
 - Per-platform and per-arch isolation to avoid cross-OS conflicts.
- - OpenEXR job runs first, then exrs (to ensure the heavy build creates/updates the cache before the lightweight one uses it).
+- OpenEXR job runs first, then exrs (to ensure the heavy build creates/updates the cache before the lightweight one uses it).
+
+Tooling cache (cargo-packager):
+- Separate cache for the `cargo-packager` binary, independent of `Cargo.lock` changes.
+- Key: ``tools-cargo-packager-0.11.7-${OS}-${ARCH}``
+- Paths: `~/.cargo/bin/cargo-packager[.exe]` only (no overlap with project cache).
+- Restore before install; if not found, install and then save (with a lookup-only check to avoid races).
 
 Why this works without “прогрева”:
 - If a matching cache exists on any of the refs above, it is reused and not re-saved.
