@@ -1,3 +1,96 @@
+## [0.1.73] - 2025-11-06
+
+### 🚀 Features
+
+- Change changelog command to full regeneration
+
+### 🚜 Refactor
+
+- Rename workflows and apply sequential build pattern to main.yml
+## [0.1.72-dev] - 2025-11-06
+
+### 🚜 Refactor
+
+- Sequential builds with shared cache per platform
+## [0.1.71-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Remove platform-specific stub functions in pre_build.rs
+- Cache save only from dev branch for tag inheritance
+## [0.1.70-dev] - 2025-11-06
+
+### 🚀 Features
+
+- Embed Reinhard and ACES tonemapping shaders
+- Make external shaders directory optional
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove tonemap shader files (now embedded in code)
+## [0.1.69-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Unify cache keys between dev and main workflows
+## [0.1.68-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Add set +H to workflows for certificate password handling
+## [0.1.67-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Split cache restore/save in build.yml for proper tag inheritance
+
+### ⚙️ Miscellaneous Tasks
+
+- Add certificate export files to .gitignore
+- Add dev branch trigger to build.yml for cache creation
+- Only trigger build workflow on tags, save cache on dev tags
+## [0.1.66-dev] - 2025-11-06
+
+### 🚜 Refactor
+
+- Rename export-cert.sh to apple_cert.sh and add set +H
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove plan.md
+## [0.1.65-dev] - 2025-11-06
+
+### 📚 Documentation
+
+- Add comprehensive certificate export script with instructions
+## [0.1.64-dev] - 2025-11-06
+
+### 🚀 Features
+
+- Add platform-specific path management with configurable overrides
+- Add macOS code signing support to CI/CD
+
+### 🐛 Bug Fixes
+
+- Change path priority to prefer local files when they exist
+
+### 📚 Documentation
+
+- Add configuration path management documentation
+## [0.1.63-dev] - 2025-11-06
+
+### 🚀 Features
+
+- Add macOS support for OpenEXR backend
+
+### 🐛 Bug Fixes
+
+- Add dylib symlinks creation for macOS
+- Correct dylib copy pattern for macOS binstall ZIP
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version to 0.1.62-dev
 ## [0.1.62] - 2025-11-06
 
 ### 📚 Documentation
