@@ -1,3 +1,17 @@
+## [0.1.64-dev] - 2025-11-06
+
+### 🚀 Features
+
+- Add platform-specific path management with configurable overrides
+- Add macOS code signing support to CI/CD
+
+### 🐛 Bug Fixes
+
+- Change path priority to prefer local files when they exist
+
+### 📚 Documentation
+
+- Add configuration path management documentation
 ## [0.1.63-dev] - 2025-11-06
 
 ### 🚀 Features
