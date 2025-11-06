@@ -73,6 +73,10 @@ allow-downgrades = true
 [package.metadata.packager.nsis]
 installer-mode = "perMachine"
 
+[package.metadata.packager.macos]
+# Code signing will use Developer ID certificate from keychain if available
+# Notarization disabled (requires additional setup with Apple ID + app-specific password)
+
 [package.metadata.release]
 # Customize the release commit message
 pre-release-commit-message = "chore: Release {{crate_name}} v{{version}}"

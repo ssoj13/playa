@@ -50,7 +50,17 @@ Download the latest release for your platform from the [Releases page](https://g
   - `playa-x.x.x-openexr.AppImage` / `playa-x.x.x-openexr.deb` - OpenEXR C++ backend
   - Portable ZIPs: `playa-exrs-x86_64-unknown-linux-gnu.zip`, `playa-openexr-x86_64-unknown-linux-gnu.zip`
 
-- **macOS**: Currently disabled (cross-compilation issues being resolved)
+- **macOS**:
+  - `playa-x.x.x-exrs.dmg` - Pure Rust backend (code-signed)
+  - `playa-x.x.x-openexr.dmg` - OpenEXR C++ backend (code-signed)
+  - Portable ZIPs: `playa-exrs-aarch64-apple-darwin.zip`, `playa-openexr-aarch64-apple-darwin.zip`
+
+**macOS Security Note:**
+Applications are code-signed with a Developer ID certificate. On first launch, you may see a security warning. To open the app:
+- **Right-click** (or Control-click) the app → Select **Open**
+- Or run: `xattr -d com.apple.quarantine /path/to/Playa.app`
+
+This is normal for apps downloaded from outside the App Store. The app is signed but not notarized.
 
 **Which backend to choose?**
 - **exrs**: Faster installation, smaller size, pure Rust. Use if you don't need DWAA/DWAB compression.
