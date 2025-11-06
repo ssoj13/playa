@@ -43,6 +43,9 @@ jobs:
     runs-on: windows-latest
     needs: check-branch
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        backend: [exrs, openexr]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -61,9 +64,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-release-v1
+          key: playa-windows-release-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-windows-release-
+            playa-windows-release-${{ matrix.backend }}-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -83,11 +86,26 @@ jobs:
             Write-Host "cargo-packager already installed"
           }
 
-      - name: Build the application (OpenEXR backend with DWAA/DWAB support)
-        run: cargo xtask build --openexr
+      - name: Build the application (${{ matrix.backend }} backend)
+        run: |
+          if ("${{ matrix.backend }}" -eq "openexr") {
+            cargo xtask build --openexr
+          } else {
+            cargo xtask build
+          }
 
       - name: Package the application
         run: cargo packager --release
+
+      - name: Rename installer to include backend
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "target/release" -Filter "playa_*-setup.*" | Select-Object -First 1
+          if ($installer) {
+            $newName = $installer.Name -replace '(playa_[\d\.\-]+)', "`$1-${{ matrix.backend }}"
+            Rename-Item -Path $installer.FullName -NewName $newName
+            Write-Host "Renamed $($installer.Name) to $newName"
+          }
 
       - name: Find installer
         id: find_installer
@@ -117,20 +135,20 @@ jobs:
           Get-ChildItem -Path "target/release" -Filter "*.dll" | Copy-Item -Destination "binstall/"
 
           # Create zip with rust target name for cargo-binstall
-          $zipName = "playa-x86_64-pc-windows-msvc.zip"
+          $zipName = "playa-${{ matrix.backend }}-x86_64-pc-windows-msvc.zip"
           Compress-Archive -Path "binstall/*" -DestinationPath "target/release/$zipName" -Force
 
           echo "Created binstall ZIP: $zipName"
           echo "Contents:"
           Get-ChildItem "binstall" | Format-Table Name, Length
 
-      - name: Upload Windows artifacts (installer + binstall)
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: windows-artifacts
+          name: windows-${{ matrix.backend }}
           path: |
             ${{ steps.find_installer.outputs.path }}
-            target/release/playa-x86_64-pc-windows-msvc.zip
+            target/release/playa-${{ matrix.backend }}-x86_64-pc-windows-msvc.zip
           if-no-files-found: warn
           retention-days: 7
 
@@ -143,7 +161,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-windows-release-v1
+          key: playa-windows-release-${{ matrix.backend }}-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -151,7 +169,7 @@ jobs:
         with:
           files: |
             ${{ steps.find_installer.outputs.path }}
-            target/release/playa-x86_64-pc-windows-msvc.zip
+            target/release/playa-${{ matrix.backend }}-x86_64-pc-windows-msvc.zip
           fail_on_unmatched_files: false
 
   # TODO: Re-enable macOS build after fixing cross-compilation issues
@@ -227,6 +245,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-branch
     if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        backend: [exrs, openexr]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -250,9 +271,9 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-release-v1
+          key: playa-linux-release-${{ matrix.backend }}-v1
           restore-keys: |
-            playa-linux-release-
+            playa-linux-release-${{ matrix.backend }}-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -265,13 +286,36 @@ jobs:
           # Remove old installer artifacts from cache to prevent version mismatch
           rm -f target/release/*.AppImage target/release/*.deb
 
-      - name: Build the application (OpenEXR backend with DWAA/DWAB support)
-        run: cargo xtask build --openexr
+      - name: Build the application (${{ matrix.backend }} backend)
+        run: |
+          if [ "${{ matrix.backend }}" = "openexr" ]; then
+            cargo xtask build --openexr
+          else
+            cargo xtask build
+          fi
 
       - name: Package the application
         run: |
           export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
           cargo packager --release
+
+      - name: Rename installers to include backend
+        run: |
+          # Rename AppImage
+          appimage=$(find target/release -maxdepth 1 \( -name "*.AppImage" -o -name "*.appimage" \) 2>/dev/null | head -n 1)
+          if [ -n "$appimage" ]; then
+            newname=$(echo "$appimage" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ matrix.backend }}/")
+            mv "$appimage" "$newname"
+            echo "Renamed AppImage: $(basename $appimage) -> $(basename $newname)"
+          fi
+
+          # Rename DEB
+          deb=$(find target/release -maxdepth 1 -name "*.deb" 2>/dev/null | head -n 1)
+          if [ -n "$deb" ]; then
+            newname=$(echo "$deb" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ matrix.backend }}/")
+            mv "$deb" "$newname"
+            echo "Renamed DEB: $(basename $deb) -> $(basename $newname)"
+          fi
 
       - name: List bundle contents (if successful)
         run: |
@@ -322,15 +366,15 @@ jobs:
           # Copy binary
           cp target/release/playa binstall/
 
-          # Copy all .so files
-          cp target/release/*.so* binstall/ 2>/dev/null || true
+          # Copy all .so files (including symlinks)
+          cp -P target/release/*.so* binstall/ 2>/dev/null || true
 
-          # Create zip with rust target name for cargo-binstall
+          # Create zip with rust target name for cargo-binstall (preserve symlinks)
           cd binstall
-          zip -r ../target/release/playa-x86_64-unknown-linux-gnu.zip *
+          zip -ry ../target/release/playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip *
           cd ..
 
-          echo "Created binstall ZIP: playa-x86_64-unknown-linux-gnu.zip"
+          echo "Created binstall ZIP: playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip"
           echo "Contents:"
           ls -lh binstall/
 
@@ -338,7 +382,7 @@ jobs:
         if: steps.find_appimage.outputs.path != ''
         uses: actions/upload-artifact@v5
         with:
-          name: linux-appimage
+          name: linux-appimage-${{ matrix.backend }}
           path: ${{ steps.find_appimage.outputs.path }}
           retention-days: 7
           if-no-files-found: error
@@ -347,8 +391,16 @@ jobs:
         if: steps.find_deb.outputs.path != ''
         uses: actions/upload-artifact@v5
         with:
-          name: linux-deb
+          name: linux-deb-${{ matrix.backend }}
           path: ${{ steps.find_deb.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload Linux binstall artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: linux-binstall-${{ matrix.backend }}
+          path: target/release/playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip
           retention-days: 7
           if-no-files-found: error
 
@@ -361,7 +413,7 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: playa-linux-release-v1
+          key: playa-linux-release-${{ matrix.backend }}-v1
 
       - name: Upload Release Assets
         if: startsWith(github.ref, 'refs/tags/')
@@ -370,5 +422,5 @@ jobs:
           files: |
             ${{ steps.find_appimage.outputs.path }}
             ${{ steps.find_deb.outputs.path }}
-            target/release/playa-x86_64-unknown-linux-gnu.zip
+            target/release/playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip
           fail_on_unmatched_files: false

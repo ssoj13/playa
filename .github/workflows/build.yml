@@ -93,6 +93,16 @@ jobs:
       - name: Package the application
         run: cargo packager --release
 
+      - name: Rename installer to include backend
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "target/release" -Filter "playa_*-setup.*" | Select-Object -First 1
+          if ($installer) {
+            $newName = $installer.Name -replace '(playa_[\d\.\-]+)', "`$1-${{ matrix.backend }}"
+            Rename-Item -Path $installer.FullName -NewName $newName
+            Write-Host "Renamed $($installer.Name) to $newName"
+          }
+
       - name: Find installer
         id: find_installer
         shell: pwsh
@@ -121,20 +131,20 @@ jobs:
           Get-ChildItem -Path "target/release" -Filter "*.dll" | Copy-Item -Destination "binstall/"
 
           # Create zip with rust target name for cargo-binstall
-          $zipName = "playa-x86_64-pc-windows-msvc.zip"
+          $zipName = "playa-${{ matrix.backend }}-x86_64-pc-windows-msvc.zip"
           Compress-Archive -Path "binstall/*" -DestinationPath "target/release/$zipName" -Force
 
           echo "Created binstall ZIP: $zipName"
           echo "Contents:"
           Get-ChildItem "binstall" | Format-Table Name, Length
 
-      - name: Upload Windows artifacts (installer + binstall)
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.backend }}
           path: |
             ${{ steps.find_installer.outputs.path }}
-            target/release/playa-x86_64-pc-windows-msvc.zip
+            target/release/playa-${{ matrix.backend }}-x86_64-pc-windows-msvc.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -195,6 +205,24 @@ jobs:
           export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
           cargo packager --release
 
+      - name: Rename installers to include backend
+        run: |
+          # Rename AppImage
+          appimage=$(find target/release -maxdepth 1 \( -name "*.AppImage" -o -name "*.appimage" \) 2>/dev/null | head -n 1)
+          if [ -n "$appimage" ]; then
+            newname=$(echo "$appimage" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ matrix.backend }}/")
+            mv "$appimage" "$newname"
+            echo "Renamed AppImage: $(basename $appimage) -> $(basename $newname)"
+          fi
+
+          # Rename DEB
+          deb=$(find target/release -maxdepth 1 -name "*.deb" 2>/dev/null | head -n 1)
+          if [ -n "$deb" ]; then
+            newname=$(echo "$deb" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ matrix.backend }}/")
+            mv "$deb" "$newname"
+            echo "Renamed DEB: $(basename $deb) -> $(basename $newname)"
+          fi
+
       - name: List bundle contents (if successful)
         run: |
           if [ -d "target/release/bundle" ]; then
@@ -244,15 +272,15 @@ jobs:
           # Copy binary
           cp target/release/playa binstall/
 
-          # Copy all .so files
-          cp target/release/*.so* binstall/ 2>/dev/null || true
+          # Copy all .so files (including symlinks)
+          cp -P target/release/*.so* binstall/ 2>/dev/null || true
 
-          # Create zip with rust target name for cargo-binstall
+          # Create zip with rust target name for cargo-binstall (preserve symlinks)
           cd binstall
-          zip -r ../target/release/playa-x86_64-unknown-linux-gnu.zip *
+          zip -ry ../target/release/playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip *
           cd ..
 
-          echo "Created binstall ZIP: playa-x86_64-unknown-linux-gnu.zip"
+          echo "Created binstall ZIP: playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip"
           echo "Contents:"
           ls -lh binstall/
 
@@ -271,5 +299,13 @@ jobs:
         with:
           name: linux-deb-${{ matrix.backend }}
           path: ${{ steps.find_deb.outputs.path }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload Linux binstall artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binstall-${{ matrix.backend }}
+          path: target/release/playa-${{ matrix.backend }}-x86_64-unknown-linux-gnu.zip
           retention-days: 7
           if-no-files-found: error
