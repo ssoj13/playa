@@ -6,7 +6,7 @@ name = "playa"
 version = "0.1.59"
 edition = "2024"
 authors = ["joss13@gmail.com"]
-description = "Image sequence player for VFX (EXR, PNG, JPEG, TIFF). Fast install: cargo binstall playa"
+description = "Image sequence player for VFX (EXR, PNG, JPEG, TIFF). Pure Rust with optional OpenEXR support."
 homepage = "https://github.com/ssoj13/playa"
 repository = "https://github.com/ssoj13/playa"
 license = "MIT"
@@ -14,6 +14,10 @@ keywords = ["image", "exr", "player", "vfx", "sequence"]
 categories = ["multimedia::images", "graphics"]
 readme = "README.md"
 exclude = [".github/*", "todo/*", "bootstrap.cmd", "bootstrap.sh", "build.rs", "cliff.toml"]
+
+[features]
+default = []
+openexr = ["dep:openexr"]
 
 [dependencies]
 anyhow = "1.0"
@@ -32,7 +36,7 @@ log = "0.4"
 lru = "0.16"
 num_cpus = "1.16"
 once_cell = "1.19"
-openexr = "0.11"
+openexr = { version = "0.11", optional = true }
 rayon = "1.10"
 regex = "1.12"
 rfd = "0.15"
@@ -68,10 +72,6 @@ allow-downgrades = true
 
 [package.metadata.packager.nsis]
 installer-mode = "perMachine"
-
-[package.metadata.binstall]
-pkg-url = "{ repo }/releases/download/v{ version }/playa-{ target }.zip"
-pkg-fmt = "zip"
 
 [package.metadata.release]
 # Customize the release commit message

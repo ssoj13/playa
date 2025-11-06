@@ -15,40 +15,25 @@ Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rend
 
 ## Features
 
-- **Multi-format support**: EXR, PNG, JPEG, TIFF, TGA
-- **Async multi-threaded loading**: 75% of CPU cores for parallel frame loading
-- **LRU caching**: Automatic memory management (50% of system RAM by default)
-- **Epoch-based request cancellation**: Stale frame requests cancelled during scrubbing
-- **Spiral preloading**: Frame preloading from current position
-- **Load indicator**: Visual timeline bar showing frame load status (Header/Loading/Loaded/Error)
-- **Interactive scrubbing**: Timeline navigation with mouse
-- **Color-coded time slider**: Visual sequence boundaries with unique colors and dividers
-- **Settings dialog**: TreeView-based preferences (F3) with dark/light theme and font size control
-- **Viewport controls**: Zoom, pan, fit-to-window, 100% view
-- **Custom shaders**: OpenGL shader support for display transformations
-- **Resizable panels**: Playlist panel width persists across sessions (min 20px)
-- **Playlist support**: Load and manage multiple sequences
-- **JKL transport controls**: Playback controls
+- **Multi-format support**: EXR, PNG, JPEG, TIFF, TGA with fast parallel loading
+- **HDR pixel precision**: Native support for 8-bit, 16-bit half-float, and 32-bit float images
+- **Drag-and-drop**: Drop any image file - automatically detects and loads the entire sequence
+- **Smart sequence detection**: Load one frame (e.g., `render.0001.exr`) - finds all frames automatically
+- **Persistent playlist**: Load multiple sequences, auto-saves and restores between sessions
+- **Color-coded timeline**: Visual sequence boundaries with real-time frame load indicators
+- **Responsive scrubbing**: Instant frame navigation - always responsive even during fast scrubbing, cancels stale loads automatically
+- **Cursor-centered zoom**: Mouse wheel zoom centers on cursor position (like Nuke/Houdini)
+- **Playback controls**: Standard transport controls (play/pause, JKL shuttle, loop)
+- **Viewport controls**: Zoom, pan, fit-to-window, 100% pixel-perfect view
+- **Custom GLSL shaders**: Load display shaders from `shaders/` directory - LUTs, color transforms, custom effects
+- **Smart memory management**: Automatically manages cache size - never runs out of memory
+- **Settings dialog**: Theme switching, font size, preferences (F3)
 - **Cinema mode**: Fullscreen playback with hidden UI
-- **Persistent settings**: Window state, playlists, panel sizes, and preferences saved across sessions
+- **Persistent settings**: Everything saves automatically - window layout, zoom level, shader selection
 
 ## Installation
 
-### Recommended: Using cargo-binstall (fastest)
-
-Install a pre-built binary with all dependencies included. This is the fastest method and works out of the box:
-
-```bash
-# Install cargo-binstall if you don't have it
-cargo install cargo-binstall
-
-# Install Playa (downloads from GitHub Releases)
-cargo binstall playa
-```
-
-Installs in seconds with all native libraries (OpenEXR, Imath, zlib) included.
-
-### Alternative: Download Pre-built Binaries
+### Download Pre-built Binaries (Recommended)
 
 Download the latest release for your platform from the [Releases page](https://github.com/ssoj13/playa/releases/latest):
 
@@ -56,26 +41,53 @@ Download the latest release for your platform from the [Releases page](https://g
 - **macOS**: `playa-x.x.x-x86_64-apple-darwin.dmg` or `playa-x.x.x-aarch64-apple-darwin.dmg`
 - **Linux**: `playa-x.x.x-x86_64-linux.AppImage` or `.deb`
 
+All installers include full OpenEXR support with DWAA/DWAB compression.
+
 ### Build from Source
 
-**Prerequisites:**
-- Rust 1.70+
-- C++ compiler and CMake (for building OpenEXR)
+Playa supports two EXR backends:
+
+| Backend | Build Command | Dependencies | DWAA/DWAB Support |
+|---------|--------------|--------------|-------------------|
+| **exrs** (default) | `cargo build --release` | None (pure Rust) | No |
+| **OpenEXR** (optional) | `cargo xtask build --release --openexr` | C++ compiler, CMake | Yes |
+
+#### Option 1: Default Build (exrs - Pure Rust)
+
+Fast build with no external dependencies. Suitable for most workflows:
 
 ```bash
 git clone https://github.com/ssoj13/playa.git
 cd playa
 
-# Build with automatic dependency management (recommended)
-cargo xtask build --release
+# Build with exrs backend (pure Rust, no DLLs)
+cargo build --release
+```
+
+The compiled binary will be in `target/release/playa` (or `playa.exe` on Windows).
+
+**Limitations**: Cannot load EXR files with DWAA/DWAB compression. Will show helpful error message with build instructions.
+
+#### Option 2: Full OpenEXR Support (C++ Backend)
+
+Supports all EXR compression formats including DWAA/DWAB:
+
+**Prerequisites:**
+- Rust 1.70+
+- C++ compiler and CMake
+
+```bash
+git clone https://github.com/ssoj13/playa.git
+cd playa
+
+# Build with OpenEXR backend (full format support)
+cargo xtask build --release --openexr
 
 # Or use the wrapper script
 ./build.sh
 ```
 
-The compiled binary will be in `target/release/playa` (or `playa.exe` on Windows).
-
-**Note:** Building from source using `cargo install playa` will compile OpenEXR from source, which may take 10-20 minutes. For faster installation, use `cargo binstall` instead.
+**Note:** OpenEXR backend compiles C++ libraries (~5-10 minutes first build, then cached).
 
 ### Using xtask - Project Build Automation
 
@@ -107,10 +119,10 @@ The compiled binary will be in `target/release/playa` (or `playa.exe` on Windows
 
 ```bash
 # Build automation
-cargo xtask build [--release]      # Full build with dependency management
-cargo xtask post [--release]       # Copy native libraries and shaders
-cargo xtask verify [--release]     # Verify all dependencies present
-cargo xtask deploy [--install-dir] # Install to system (local testing)
+cargo xtask build [--release] [--openexr]  # Full build (default: exrs, --openexr: C++ backend)
+cargo xtask post [--release]               # Copy native libraries and shaders (OpenEXR only)
+cargo xtask verify [--release]             # Verify all dependencies present
+cargo xtask deploy [--install-dir]         # Install to system (local testing)
 
 # Release management
 cargo xtask tag-dev [level]        # Create dev tag (v0.1.x-dev), trigger Build workflow
@@ -118,13 +130,19 @@ cargo xtask tag-rel [level]        # Create release tag (v0.1.x) on main, trigge
 cargo xtask pr [version]           # Create Pull Request from dev to main with all commits
 cargo xtask changelog              # Generate changelog preview from unreleased commits
 
-# Platform-specific (Linux only)
+# Platform-specific (Linux only, OpenEXR backend)
 cargo xtask pre                    # Patch OpenEXR headers for GCC 11+ compatibility
 ```
 
 **What `cargo xtask build` does:**
+
+**Without `--openexr` (default - exrs backend):**
+1. Runs `cargo build [--release]` with pure Rust exrs backend
+2. No external dependencies copied (self-contained binary)
+
+**With `--openexr` (OpenEXR C++ backend):**
 1. **Linux**: Patches OpenEXR headers for GCC 11+ compatibility
-2. **All platforms**: Runs `cargo build [--release]`
+2. **All platforms**: Runs `cargo build [--release] --features openexr`
 3. **All platforms**: Copies native libraries (OpenEXR, Imath, zlib) to target directory
 4. **All platforms**: Copies shaders from project root
 5. **Linux**: Creates necessary symlinks for library loading
@@ -132,11 +150,18 @@ cargo xtask pre                    # Patch OpenEXR headers for GCC 11+ compatibi
 **Common Workflows:**
 
 ```bash
-# Development build
-cargo xtask build
+# Development build (exrs backend - fast, no external deps)
+cargo build
 
-# Release build and local install
-cargo xtask build --release
+# Development build with full OpenEXR support
+cargo xtask build --openexr
+
+# Release build and local install (exrs)
+cargo build --release
+cargo xtask deploy
+
+# Release build and local install (OpenEXR)
+cargo xtask build --release --openexr
 cargo xtask deploy
 
 # Create dev tag and push (triggers CI Build workflow)
@@ -280,6 +305,8 @@ cargo clean                          # Clean build artifacts
 
 #### Linux-Specific Build Notes
 
+**Note:** These instructions apply only to the OpenEXR C++ backend (`--openexr` feature). The default exrs backend requires no external dependencies.
+
 **OpenEXR GCC 11+ Header Patching:**
 
 OpenEXR 3.0.5 headers are missing `#include <cstdint>`, causing compilation errors with GCC 11+:
@@ -357,6 +384,8 @@ cargo xtask build --release  # Re-patches automatically
 ```
 
 #### Windows-Specific Build Notes
+
+**Note:** These instructions apply only to the OpenEXR C++ backend (`--openexr` feature). The default exrs backend requires no external DLLs.
 
 **Native Libraries (DLL Management):**
 
@@ -724,7 +753,10 @@ Cache state (sequences + current frame) auto-saves to `playa_cache.json` for ins
 - **UI**: egui 0.33 + eframe
 - **TreeView**: egui_ltreeview 0.6.0 (with persistence feature)
 - **Graphics**: OpenGL via glow + egui_glow
-- **Image**: openexr 0.11 (EXR), image 0.25 (PNG/JPEG/TIFF)
+- **Image**:
+  - **EXR (default)**: exrs via image 0.25 (pure Rust)
+  - **EXR (optional)**: openexr 0.11 (C++ bindings, `openexr` feature)
+  - **Other formats**: image 0.25 (PNG/JPEG/TIFF/TGA/HDR)
 - **Async**: std::thread + crossbeam-channel + mpsc
 - **Concurrency**: AtomicU64 for epoch counter, Arc<Mutex> for shared state
 - **CLI**: clap 4.5

@@ -27,8 +27,11 @@ use log::{debug, info};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-// Import f16 from half crate (same version as openexr uses)
+// Import f16 from half crate
 use half::f16 as F16;
+
+// Import EXR loader (exrs or openexr-rs based on features)
+use crate::exr::{ExrImpl, ExrLoader};
 
 /// Pixel buffer format - stores different precision levels
 #[derive(Debug, Clone)]
@@ -243,127 +246,21 @@ impl Frame {
         }
     }
 
-    /// Load EXR file - detect pixel type and load in native format
+    /// Load EXR file - delegate to ExrImpl (exrs or openexr-rs)
     fn load_exr<P: AsRef<Path>>(&self, path: P) -> Result<(), FrameError> {
-        use openexr::prelude::*;
-
         debug!("Loading EXR: {}", path.as_ref().display());
 
-        // Open file to read header and detect pixel type
-        let file = RgbaInputFile::new(path.as_ref(), 1)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
-
-        let header = file.header();
-        let data_window = header.data_window::<[i32; 4]>();
-        let width = (data_window[2] - data_window[0] + 1) as usize;
-        let height = (data_window[3] - data_window[1] + 1) as usize;
-
-        // Detect pixel type from channels (check R channel)
-        // Note: RgbaInputFile always reads as HALF (f16), so we detect the source
-        // pixel type to decide whether to keep as f16 or convert to f32
-        let channels = header.channels();
-        let pixel_type = channels
-            .iter()
-            .find(|(name, _)| *name == "R")
-            .map(|(_, ch)| ch.type_)
-            .unwrap_or(PixelType::Half.into());
-
-        drop(header);
-        drop(file);
-
-        // Load based on detected pixel type
-        // Compare using the underlying enum values
-        if pixel_type == PixelType::Half.into() {
-            self.load_exr_half(path.as_ref(), width, height)
-        } else if pixel_type == PixelType::Float.into() {
-            self.load_exr_float(path.as_ref(), width, height)
-        } else {
-            // UINT pixels - load as f16 for memory efficiency (2x savings vs f32)
-            info!("EXR UINT pixels detected, loading as f16");
-            self.load_exr_half(path.as_ref(), width, height)
-        }
-    }
-
-    /// Load EXR with HALF pixels (native f16)
-    fn load_exr_half(&self, path: &Path, width: usize, height: usize) -> Result<(), FrameError> {
-        use openexr::prelude::*;
-
-        let mut file = RgbaInputFile::new(path, 1)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
-
-        let header = file.header();
-        let data_window = header.data_window::<[i32; 4]>();
-        let y_min = data_window[1];
-        let y_max = data_window[3];
-        drop(header);
-
-        // Read as Rgba (which uses half::f16 internally)
-        let mut pixels_rgba = vec![Rgba::from_f32(0.0, 0.0, 0.0, 0.0); width * height];
-        file.set_frame_buffer(&mut pixels_rgba, 1, width)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
-
-        unsafe {
-            file.read_pixels(y_min, y_max)
-                .map_err(|e| FrameError::Exr(e.to_string()))?;
-        }
-
-        // Extract f16 values from Rgba into flat RGBA buffer
-        let mut buffer_f16 = Vec::with_capacity(width * height * 4);
-        for pixel in pixels_rgba.iter() {
-            buffer_f16.push(pixel.r);  // half::f16
-            buffer_f16.push(pixel.g);
-            buffer_f16.push(pixel.b);
-            buffer_f16.push(pixel.a);
-        }
+        // Delegate to ExrImpl (compile-time selected backend)
+        let (buffer, pixel_format, width, height) = ExrImpl::load(path.as_ref())?;
 
         // Update frame data
         let mut data = self.data.lock().unwrap();
-        data.buffer = PixelBuffer::F16(buffer_f16);
-        data.pixel_format = PixelFormat::RgbaF16;
+        data.buffer = buffer;
+        data.pixel_format = pixel_format;
         data.width = width;
         data.height = height;
 
-        debug!("Loaded EXR HALF: {}x{} (f16)", width, height);
-        Ok(())
-    }
-
-    /// Load EXR with FLOAT pixels (native f32, true precision)
-    fn load_exr_float(&self, path: &Path, width: usize, height: usize) -> Result<(), FrameError> {
-        use openexr::prelude::*;
-
-        // Use InputFile + Frame API for true f32 precision (no f16 conversion)
-        let file = InputFile::new(path, 1)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
-
-        let header = file.header();
-        let data_window = *header.data_window::<[i32; 4]>();
-        let y_min = data_window[1];
-        let y_max = data_window[3];
-        drop(header);
-
-        // Create Frame with f32 pixel type for RGBA channels
-        // Frame::new<f32> with 4 channel names creates packed array: [r,g,b,a, r,g,b,a, ...]
-        let frame_rgba = Frame::new::<f32, _, _>(&["R", "G", "B", "A"], data_window)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
-
-        // Read pixels into frame (f32, no f16 conversion)
-        let (_file, mut frames) = file
-            .into_reader(vec![frame_rgba])
-            .map_err(|e| FrameError::Exr(e.to_string()))?
-            .read_pixels(y_min, y_max)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
-
-        // Extract flat RGBA f32 buffer
-        let buffer_f32: Vec<f32> = frames.remove(0).into_vec();
-
-        // Update frame data
-        let mut data = self.data.lock().unwrap();
-        data.buffer = PixelBuffer::F32(buffer_f32);
-        data.pixel_format = PixelFormat::RgbaF32;
-        data.width = width;
-        data.height = height;
-
-        debug!("Loaded EXR FLOAT: {}x{} (f32, native precision)", width, height);
+        debug!("Loaded EXR: {}x{} ({:?})", width, height, pixel_format);
         Ok(())
     }
 

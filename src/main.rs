@@ -1,4 +1,5 @@
 mod frame;
+mod exr;
 mod sequence;
 mod progress;
 mod player;
@@ -517,9 +518,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("No input file provided, starting with empty state (drag-and-drop supported)");
     }
 
+    // Determine EXR backend at compile time
+    const BACKEND: &str = if cfg!(feature = "openexr") {
+        "openexr-rs"
+    } else {
+        "exrs"
+    };
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Playa - Image Sequence Player | Press F1 for help")
+            .with_title(&format!("Playa v{} • {} • F1 for help",
+                env!("CARGO_PKG_VERSION"), BACKEND))
             .with_resizable(true)
             .with_drag_and_drop(true),
         persist_window: true,

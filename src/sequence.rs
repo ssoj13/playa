@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::frame::{Frame, FrameError};
+use crate::exr::{ExrImpl, ExrLoader};
 
 /// Sequence of frames with pattern-based file naming
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -448,14 +449,8 @@ impl Sequence {
 
         match ext.as_str() {
             "exr" => {
-                use openexr::prelude::*;
-                let file = RgbaInputFile::new(path, 1)
-                    .map_err(|e| FrameError::Exr(e.to_string()))?;
-                let header = file.header();
-                let data_window = header.data_window::<[i32; 4]>();
-                let width = (data_window[2] - data_window[0] + 1) as usize;
-                let height = (data_window[3] - data_window[1] + 1) as usize;
-                Ok((width, height))
+                // Use ExrImpl (compile-time selected backend)
+                ExrImpl::header(path)
             }
             "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" => {
                 let reader = image::ImageReader::open(path)

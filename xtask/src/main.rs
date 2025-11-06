@@ -29,6 +29,10 @@ enum Commands {
         /// Build in debug mode
         #[arg(long, conflicts_with = "release", overrides_with = "release")]
         debug: bool,
+
+        /// Build with OpenEXR support (requires C++ libraries, enables DWAA/DWAB compression)
+        #[arg(long)]
+        openexr: bool,
     },
 
     /// Copy native dependencies and shaders after build
@@ -104,9 +108,9 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Pre => cmd_pre(),
-        Commands::Build { release, debug } => {
+        Commands::Build { release, debug, openexr } => {
             let is_release = if debug { false } else { release };
-            cmd_build(is_release)
+            cmd_build(is_release, openexr)
         }
         Commands::Post { release, debug } => {
             let is_release = if debug { false } else { release };
@@ -129,24 +133,25 @@ fn cmd_pre() -> Result<()> {
     pre_build::patch_headers()
 }
 
-/// Command: cargo xtask build [--release]
-fn cmd_build(release: bool) -> Result<()> {
+/// Command: cargo xtask build [--release] [--openexr]
+fn cmd_build(release: bool, openexr: bool) -> Result<()> {
     println!("========================================");
-    println!("Building playa with automatic dependency management");
+    println!("Building playa");
     println!("Profile: {}", if release { "release" } else { "debug" });
+    println!("Backend: {}", if openexr { "OpenEXR (C++, full DWAA/DWAB support)" } else { "exrs (pure Rust)" });
     println!("========================================");
     println!();
 
-    // Step 1: Pre-build (Linux header patching)
+    // Step 1: Pre-build (Linux header patching, only for OpenEXR)
     #[cfg(target_os = "linux")]
-    {
+    if openexr {
         println!("Step 1/3: Patching headers...");
         pre_build::patch_headers()?;
         println!();
     }
 
     // Step 2: Run cargo build
-    let step_num = if cfg!(target_os = "linux") {
+    let step_num = if cfg!(target_os = "linux") && openexr {
         "2/3"
     } else {
         "1/2"
@@ -161,6 +166,10 @@ fn cmd_build(release: bool) -> Result<()> {
         cmd.arg("--release");
     }
 
+    if openexr {
+        cmd.arg("--features").arg("openexr");
+    }
+
     let status = cmd.status()?;
 
     if !status.success() {
@@ -169,18 +178,22 @@ fn cmd_build(release: bool) -> Result<()> {
 
     println!();
 
-    // Step 3: Post-build (copy dependencies)
-    let step_num = if cfg!(target_os = "linux") {
-        "3/3"
+    // Step 3: Post-build (copy dependencies, only for OpenEXR)
+    if openexr {
+        let step_num = if cfg!(target_os = "linux") {
+            "3/3"
+        } else {
+            "2/2"
+        };
+
+        println!("Step {}: Copying dependencies...", step_num);
+        println!();
+
+        let profile = if release { "release" } else { "debug" };
+        post_build::copy_dependencies(profile)?;
     } else {
-        "2/2"
-    };
-
-    println!("Step {}: Copying dependencies...", step_num);
-    println!();
-
-    let profile = if release { "release" } else { "debug" };
-    post_build::copy_dependencies(profile)?;
+        println!("✓ Build complete (exrs backend, no external dependencies)");
+    }
 
     Ok(())
 }
@@ -438,7 +451,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
 
     // Build in release mode first
     println!("Building release version...");
-    cmd_build(true)?;  // release=true
+    cmd_build(true, false)?;  // release=true, openexr=false (exrs backend)
     println!();
 
     // Copy files
