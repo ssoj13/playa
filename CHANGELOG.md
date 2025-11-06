@@ -1,3 +1,17 @@
+## [0.1.62] - 2025-11-06
+
+### 📚 Documentation
+
+- Update README with dual EXR backend release info
+## [0.1.61-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Remove build warnings for unused imports and dead code
+
+### ⚙️ Miscellaneous Tasks
+
+- Add dual EXR backend support to CI/CD workflows
 ## [0.1.61] - 2025-11-06
 
 ### 🐛 Bug Fixes
@@ -7,11 +21,6 @@
 ### 📚 Documentation
 
 - Add comprehensive dual EXR backend documentation to README
-- Update README with dual EXR backend release info
-
-### ⚙️ Miscellaneous Tasks
-
-- Add dual EXR backend support to CI/CD workflows
 ## [0.1.60-dev] - 2025-11-06
 
 ### 🚀 Features
