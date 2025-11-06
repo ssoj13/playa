@@ -1,3 +1,13 @@
+## [0.1.70-dev] - 2025-11-06
+
+### 🚀 Features
+
+- Embed Reinhard and ACES tonemapping shaders
+- Make external shaders directory optional
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove tonemap shader files (now embedded in code)
 ## [0.1.69-dev] - 2025-11-06
 
 ### 🐛 Bug Fixes
