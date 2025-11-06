@@ -472,6 +472,13 @@ playa
 
 # Load specific file or sequence
 playa path/to/image.0001.exr
+
+# Use custom config directory
+playa --config-dir ~/.playa path/to/image.0001.exr
+
+# Enable file logging
+playa --log                          # Logs to playa.log
+playa --log custom.log               # Logs to custom file
 ```
 
 ### Keyboard Shortcuts
@@ -787,7 +794,40 @@ Settings Dialog (F3)
 
 ## Configuration
 
-Settings auto-save to `playa.json` in the working directory:
+### Configuration Files
+
+Playa uses platform-specific configuration directories with flexible override options.
+
+**Priority order:**
+1. **CLI argument**: `--config-dir /custom/path`
+2. **Environment variable**: `PLAYA_CONFIG_DIR=/custom/path`
+3. **Local folder** (backward compatibility): Uses current directory IF any config files already exist
+4. **Platform defaults** (new installations):
+   - **Linux**: `~/.config/playa/` (config), `~/.local/share/playa/` (data)
+   - **macOS**: `~/Library/Application Support/playa/`
+   - **Windows**: `%APPDATA%\playa\`
+
+**Files:**
+- `playa.json` - Settings (FPS, theme, viewport, etc.)
+- `playa_cache.json` - Cache state (sequences, current frame)
+- `playa.log` - Log file (when `--log` flag is used)
+
+**Examples:**
+```bash
+# Use custom directory
+playa --config-dir ~/.playa
+
+# Use environment variable
+export PLAYA_CONFIG_DIR=~/my-playa-config
+playa
+
+# Default behavior:
+# - Existing users: Uses current directory (if files found)
+# - New users: Uses platform-specific location
+playa
+```
+
+**Settings auto-saved to `playa.json`:**
 - FPS
 - Loop mode
 - Shader selection
@@ -799,7 +839,7 @@ Settings auto-save to `playa.json` in the working directory:
 - Panel widths (playlist)
 - Settings dialog state (selected category)
 
-Cache state (sequences + current frame) auto-saves to `playa_cache.json` for instant restoration on restart.
+**Cache state auto-saved to `playa_cache.json`** for instant restoration on restart.
 
 ## Technical Stack
 
