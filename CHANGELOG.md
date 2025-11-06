@@ -1,3 +1,17 @@
+## [0.1.60-dev] - 2025-11-06
+
+### 🚀 Features
+
+- Add dual EXR backend support (exrs default, openexr optional)
+- Add professional emoji-rich formatting to xtask help
+
+### 🐛 Bug Fixes
+
+- Update CI/CD workflows to use correct EXR backends and reduce log spam
+
+### 📚 Documentation
+
+- Add comprehensive workflow examples and xtask help documentation
 ## [0.1.59] - 2025-11-05
 
 ### 🐛 Bug Fixes
