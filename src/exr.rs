@@ -11,7 +11,7 @@
 ///! - `ExrImpl`: Type alias that selects implementation at compile time
 
 use std::path::Path;
-use log::{debug, info};
+use log::debug;
 use crate::frame::{PixelBuffer, PixelFormat, FrameError};
 use half::f16 as F16;
 
@@ -34,6 +34,7 @@ pub trait ExrLoader {
 // EXRS IMPLEMENTATION (default, pure Rust)
 // ============================================================================
 
+#[cfg_attr(feature = "openexr", allow(dead_code))]
 pub struct Exr;
 
 impl ExrLoader for Exr {
