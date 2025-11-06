@@ -26,10 +26,10 @@ impl PathConfig {
 /// Get path to a configuration file
 ///
 /// Priority:
-/// 1. Custom config_dir from PathConfig (CLI args)
+/// 1. CLI --config-dir argument
 /// 2. PLAYA_CONFIG_DIR environment variable
-/// 3. Local folder (current directory + playa.json/playa_cache.json)
-/// 4. Platform-specific config directory from dirs-next (fallback)
+/// 3. Local folder IF any config files exist (playa.json, playa_cache.json, playa.log)
+/// 4. Platform-specific config directory from dirs-next (default)
 ///
 /// Platform paths:
 /// - Linux: ~/.config/playa/{name}
@@ -42,10 +42,10 @@ pub fn config_file(name: &str, config: &PathConfig) -> PathBuf {
 /// Get path to a data file (cache, logs, etc.)
 ///
 /// Priority:
-/// 1. Custom config_dir from PathConfig (CLI args, used for data too)
+/// 1. CLI --config-dir argument
 /// 2. PLAYA_CONFIG_DIR environment variable
-/// 3. Local folder (current directory + playa.json/playa_cache.json)
-/// 4. Platform-specific data directory from dirs-next (fallback)
+/// 3. Local folder IF any config files exist (playa.json, playa_cache.json, playa.log)
+/// 4. Platform-specific data directory from dirs-next (default)
 ///
 /// Platform paths:
 /// - Linux: ~/.local/share/playa/{name}
@@ -76,6 +76,12 @@ pub fn ensure_dirs(config: &PathConfig) -> Result<()> {
     Ok(())
 }
 
+/// Check if any config files exist in the given directory
+fn has_local_config_files(dir: &PathBuf) -> bool {
+    let files = ["playa.json", "playa_cache.json", "playa.log"];
+    files.iter().any(|f| dir.join(f).exists())
+}
+
 /// Get the configuration directory
 fn get_config_dir(config: &PathConfig) -> PathBuf {
     // Priority 1: Custom directory from CLI or ENV
@@ -83,9 +89,11 @@ fn get_config_dir(config: &PathConfig) -> PathBuf {
         return dir.clone();
     }
 
-    // Priority 2: Local folder (current directory)
+    // Priority 2: Local folder IF config files exist there
     if let Ok(current_dir) = std::env::current_dir() {
-        return current_dir;
+        if has_local_config_files(&current_dir) {
+            return current_dir;
+        }
     }
 
     // Priority 3: Platform-specific config directory
@@ -104,9 +112,11 @@ fn get_data_dir(config: &PathConfig) -> PathBuf {
         return dir.clone();
     }
 
-    // Priority 2: Local folder (current directory)
+    // Priority 2: Local folder IF config files exist there
     if let Ok(current_dir) = std::env::current_dir() {
-        return current_dir;
+        if has_local_config_files(&current_dir) {
+            return current_dir;
+        }
     }
 
     // Priority 3: Platform-specific data directory
@@ -154,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_show_actual_paths() {
-        println!("\n=== Platform-specific paths on this system ===");
+        println!("\n=== Platform-specific paths (no local files) ===");
 
         let config = PathConfig { config_dir: None };
 
@@ -174,5 +184,41 @@ mod tests {
         println!("Config file: {}", config_file("playa.json", &custom_config).display());
         println!("Cache file:  {}", data_file("playa_cache.json", &custom_config).display());
         println!("Log file:    {}", data_file("playa.log", &custom_config).display());
+    }
+
+    #[test]
+    fn test_local_files_priority() {
+        use std::fs;
+
+        // Create a temporary directory
+        let temp_dir = std::env::temp_dir().join("playa_test_local");
+        let _ = fs::create_dir_all(&temp_dir);
+
+        // Save current dir
+        let original_dir = std::env::current_dir().unwrap();
+
+        // Change to temp dir
+        std::env::set_current_dir(&temp_dir).unwrap();
+
+        let config = PathConfig { config_dir: None };
+
+        // Test 1: No local files - should use platform defaults
+        let path_without_local = config_file("playa.json", &config);
+        println!("\nWithout local files: {}", path_without_local.display());
+        assert!(path_without_local.to_string_lossy().contains("playa"));
+        assert!(!path_without_local.starts_with(&temp_dir));
+
+        // Test 2: Create a local file - should use current directory
+        fs::write(temp_dir.join("playa.json"), "{}").unwrap();
+        let path_with_local = config_file("playa.json", &config);
+        println!("With local playa.json: {}", path_with_local.display());
+        // Compare canonicalized paths to handle symlinks (e.g., /var vs /private/var on macOS)
+        let canonical_result = path_with_local.canonicalize().unwrap();
+        let canonical_expected = temp_dir.join("playa.json").canonicalize().unwrap();
+        assert_eq!(canonical_result, canonical_expected);
+
+        // Cleanup
+        std::env::set_current_dir(&original_dir).unwrap();
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
