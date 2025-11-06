@@ -7,7 +7,7 @@
 [![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
-> **Experimental project**: Built to explore Rust's ecosystem and CI/CD patterns while solving real VFX workflow needs. Production-ready where tested, rough edges expected elsewhere. Open source contributions welcome.
+> **Experimental project**: Built to explore Rust's ecosystem and CI/CD patterns while building some cool tools. Production-ready where tested, rough edges expected elsewhere. Open source contributions welcome.
 
 ![Screenshot](.github/screenshot.png)
 

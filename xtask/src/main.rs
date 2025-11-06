@@ -9,7 +9,27 @@ use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "xtask")]
-#[command(about = "Playa build automation tasks", long_about = None)]
+#[command(about = "Playa build automation tasks")]
+#[command(long_about = "\
+Playa build automation tasks
+
+Common workflows:
+
+  Local build with exrs (default):
+    cargo xtask build
+
+  Local build with OpenEXR (full DWAA/DWAB support):
+    cargo xtask build --openexr
+
+  Dev release (testing):
+    cargo xtask tag-dev patch
+
+  Production release:
+    cargo xtask pr v0.1.60        # Create PR
+    # Merge PR on GitHub
+    git checkout main && git pull
+    cargo xtask tag-rel patch     # Tag release
+")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -17,25 +37,35 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Patch OpenEXR headers for Linux GCC 11+ compatibility
+    /// Patch OpenEXR headers for Linux GCC 11+ compatibility (OpenEXR backend only)
     Pre,
 
     /// Build the project and copy dependencies automatically
+    ///
+    /// Examples:
+    ///   cargo xtask build                      # Release build with exrs (default)
+    ///   cargo xtask build --debug              # Debug build with exrs
+    ///   cargo xtask build --openexr            # Release build with OpenEXR C++ backend
+    ///   cargo xtask build --debug --openexr   # Debug build with OpenEXR C++ backend
+    ///
+    /// Backends:
+    ///   exrs (default):    Pure Rust, no external dependencies, fast builds
+    ///   openexr (--openexr): C++ backend, full DWAA/DWAB support, requires C++ compiler/CMake
     Build {
-        /// Build in release mode (default: true)
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        /// Build in release mode (default if no flag specified)
+        #[arg(long)]
         release: bool,
 
         /// Build in debug mode
-        #[arg(long, conflicts_with = "release", overrides_with = "release")]
+        #[arg(long)]
         debug: bool,
 
-        /// Build with OpenEXR support (requires C++ libraries, enables DWAA/DWAB compression)
+        /// Build with OpenEXR C++ backend (enables DWAA/DWAB compression, requires C++ compiler/CMake)
         #[arg(long)]
         openexr: bool,
     },
 
-    /// Copy native dependencies and shaders after build
+    /// Copy native dependencies and shaders after build (OpenEXR backend only)
     Post {
         /// Use release profile (default: true)
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
@@ -61,6 +91,20 @@ enum Commands {
     Changelog,
 
     /// Tag dev build on GitHub, trigger Build workflow (creates v0.1.x-dev)
+    ///
+    /// Creates a dev tag (e.g., v0.1.60-dev) that triggers CI Build workflow.
+    /// CI builds artifacts for testing (NOT a GitHub Release).
+    ///
+    /// Workflow:
+    ///   1. cargo xtask tag-dev patch              # Creates v0.1.60-dev tag
+    ///   2. GitHub Actions builds both backends (exrs + OpenEXR)
+    ///   3. Download artifacts from Actions to test
+    ///   4. If good, create PR to main for official release
+    ///
+    /// Examples:
+    ///   cargo xtask tag-dev patch       # Bump patch version (v0.1.59 -> v0.1.60-dev)
+    ///   cargo xtask tag-dev minor       # Bump minor version (v0.1.59 -> v0.2.0-dev)
+    ///   cargo xtask tag-dev --dry-run   # Preview changes without pushing
     TagDev {
         /// Release level: patch, minor, or major (default: patch)
         #[arg(default_value = "patch")]
@@ -72,6 +116,22 @@ enum Commands {
     },
 
     /// Tag release on main, trigger Release workflow + GitHub Release (creates v0.1.x)
+    ///
+    /// Creates official release tag on main that triggers CI Release workflow.
+    /// MUST be run from main branch after merging dev PR.
+    /// Creates GitHub Release with installers (OpenEXR backend with DWAA/DWAB support).
+    ///
+    /// Full workflow:
+    ///   1. cargo xtask pr v0.1.60                 # Create PR: dev -> main
+    ///   2. Merge PR on GitHub
+    ///   3. git checkout main && git pull
+    ///   4. cargo xtask tag-rel patch              # Creates v0.1.60 tag
+    ///   5. GitHub Actions creates Release + installers
+    ///
+    /// Examples:
+    ///   cargo xtask tag-rel patch       # Bump patch version (v0.1.59 -> v0.1.60)
+    ///   cargo xtask tag-rel minor       # Bump minor version (v0.1.59 -> v0.2.0)
+    ///   cargo xtask tag-rel --dry-run   # Preview changes without pushing
     TagRel {
         /// Release level: patch, minor, or major (default: patch)
         #[arg(default_value = "patch")]
@@ -108,8 +168,10 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Pre => cmd_pre(),
-        Commands::Build { release, debug, openexr } => {
-            let is_release = if debug { false } else { release };
+        Commands::Build { release: _, debug, openexr } => {
+            // Default to release if neither flag specified
+            // --debug overrides --release if both specified
+            let is_release = if debug { false } else { true };
             cmd_build(is_release, openexr)
         }
         Commands::Post { release, debug } => {
