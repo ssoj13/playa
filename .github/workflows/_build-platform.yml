@@ -1,0 +1,53 @@
+name: Build Platform
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+        description: 'GitHub runner (windows-latest/ubuntu-latest/macos-latest)'
+      platform:
+        type: string
+        required: true
+        description: 'Platform name (windows/linux/macos)'
+      branch_condition:
+        type: string
+        required: true
+        description: 'Branch check result (true/false string)'
+      should_release:
+        type: boolean
+        required: false
+        default: false
+        description: 'Whether to upload release assets'
+    secrets:
+      APPLE_CERTIFICATE:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+
+jobs:
+  build-exrs:
+    uses: ./.github/workflows/_build-backend.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      backend: 'exrs'
+      build_args: ''
+      branch_condition: ${{ inputs.branch_condition }}
+      should_release: ${{ inputs.should_release }}
+      cache_key_prefix: playa-${{ inputs.platform }}-v1
+    secrets: inherit
+
+  build-openexr:
+    needs: build-exrs
+    uses: ./.github/workflows/_build-backend.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      backend: 'openexr'
+      build_args: '--openexr'
+      branch_condition: ${{ inputs.branch_condition }}
+      should_release: ${{ inputs.should_release }}
+      cache_key_prefix: playa-${{ inputs.platform }}-v1
+    secrets: inherit

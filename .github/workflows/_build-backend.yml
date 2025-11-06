@@ -1,0 +1,318 @@
+name: Build Backend
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+        description: 'GitHub runner (windows-latest/ubuntu-latest/macos-latest)'
+      platform:
+        type: string
+        required: true
+        description: 'Platform name (windows/linux/macos)'
+      backend:
+        type: string
+        required: true
+        description: 'Backend type (exrs/openexr)'
+      build_args:
+        type: string
+        required: false
+        default: ''
+        description: 'Extra args for cargo xtask build (e.g., --openexr)'
+      branch_condition:
+        type: string
+        required: true
+        description: 'Branch check result (true/false string)'
+      should_release:
+        type: boolean
+        required: false
+        default: false
+        description: 'Whether to upload release assets'
+      cache_key_prefix:
+        type: string
+        required: true
+        description: 'Cache key prefix (playa-windows-v1, etc.)'
+    secrets:
+      APPLE_CERTIFICATE:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: inputs.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libspeechd-dev libxkbcommon-dev libssl-dev
+
+      - name: Install macOS dependencies
+        if: inputs.platform == 'macos'
+        run: brew install cmake
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2025-10-15
+
+      - name: Restore cargo and build artifacts cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            ~/.cargo/bin/
+            target/
+          key: ${{ inputs.cache_key_prefix }}
+          restore-keys: |
+            ${{ inputs.cache_key_prefix }}-
+
+      - name: Install cargo-packager (Windows)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          if (!(Get-Command cargo-packager -ErrorAction SilentlyContinue)) {
+            cargo install cargo-packager --version 0.11.7 --locked
+          } else {
+            Write-Host "cargo-packager already installed"
+          }
+
+      - name: Install cargo-packager (Unix)
+        if: inputs.platform != 'windows'
+        run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
+
+      - name: Import Code Signing Certificate
+        if: inputs.platform == 'macos' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
+
+          security create-keychain -p "" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "" $KEYCHAIN_PATH
+
+          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" $KEYCHAIN_PATH
+
+      - name: Fetch dependencies
+        run: cargo fetch
+
+      - name: Clean old installers (Windows)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          # Remove old installer artifacts from cache to prevent version mismatch
+          # Keep playa.exe binary, only remove installer packages
+          Remove-Item target/release/playa_*-setup.* -ErrorAction SilentlyContinue
+          Remove-Item target/release/*.msi -ErrorAction SilentlyContinue
+
+      - name: Clean old installers (Linux)
+        if: inputs.platform == 'linux'
+        run: |
+          # Remove old installer artifacts from cache to prevent version mismatch
+          rm -f target/release/*.AppImage target/release/*.deb
+
+      - name: Clean old installers (macOS)
+        if: inputs.platform == 'macos'
+        run: |
+          # Unmount any existing DMG volumes
+          hdiutil detach /Volumes/Playa 2>/dev/null || true
+          # Remove old DMG artifacts from cache
+          rm -f target/release/*.dmg
+          rm -rf target/release/.cargo-packager/dmg
+          rm -rf ~/Library/Caches/.cargo-packager/DMG
+
+      - name: Clean previous backend binaries (Windows)
+        if: inputs.backend == 'openexr' && inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          # Clean exrs backend binaries before building openexr
+          Remove-Item target/release/playa.exe -ErrorAction SilentlyContinue
+          Remove-Item target/release/*.dll -ErrorAction SilentlyContinue
+
+      - name: Clean previous backend binaries (Linux)
+        if: inputs.backend == 'openexr' && inputs.platform == 'linux'
+        run: |
+          # Clean exrs backend binaries before building openexr
+          rm -f target/release/playa
+          rm -f target/release/lib*.so*
+
+      - name: Clean previous backend binaries (macOS)
+        if: inputs.backend == 'openexr' && inputs.platform == 'macos'
+        run: |
+          # Clean exrs backend binaries before building openexr
+          rm -f target/release/playa
+          rm -f target/release/lib*.dylib
+
+      - name: Build application
+        run: cargo xtask build --release ${{ inputs.build_args }}
+
+      - name: Package application (Linux)
+        if: inputs.platform == 'linux'
+        run: |
+          # Set LD_LIBRARY_PATH so cargo-packager can find shared libraries
+          export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
+          cargo packager --release
+
+      - name: Package application (Other platforms)
+        if: inputs.platform != 'linux'
+        run: cargo packager --release
+
+      - name: Process Windows artifacts
+        if: inputs.platform == 'windows'
+        id: windows-artifacts
+        shell: pwsh
+        run: |
+          # Find and rename installer
+          $installer = Get-ChildItem -Path "target/release" -Filter "playa_*-setup.*" -File | Select-Object -First 1
+          if ($installer) {
+            $newName = $installer.Name -replace '(playa_[\d\.\-]+)', "`$1-${{ inputs.backend }}"
+            $newPath = Join-Path "target/release" $newName
+            Rename-Item -Path $installer.FullName -NewName $newName
+            echo "installer_path=$newPath" >> $env:GITHUB_OUTPUT
+          }
+
+          # Create binstall ZIP
+          New-Item -ItemType Directory -Force -Path "binstall" | Out-Null
+          Copy-Item "target/release/playa.exe" -Destination "binstall/"
+          Get-ChildItem -Path "target/release" -Filter "*.dll" | Copy-Item -Destination "binstall/"
+          $zipName = "playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.zip"
+          Compress-Archive -Path "binstall/*" -DestinationPath "target/release/$zipName" -Force
+          echo "binstall_path=target/release/$zipName" >> $env:GITHUB_OUTPUT
+
+      - name: Process Linux artifacts
+        if: inputs.platform == 'linux'
+        id: linux-artifacts
+        run: |
+          # Find and rename AppImage
+          appimage=$(find target/release -maxdepth 1 \( -name "*.AppImage" -o -name "*.appimage" \) 2>/dev/null | head -n 1)
+          if [ -n "$appimage" ]; then
+            newname=$(echo "$appimage" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ inputs.backend }}/")
+            mv "$appimage" "$newname"
+            echo "appimage_path=$newname" >> $GITHUB_OUTPUT
+          fi
+
+          # Find and rename DEB
+          deb=$(find target/release -maxdepth 1 -name "*.deb" 2>/dev/null | head -n 1)
+          if [ -n "$deb" ]; then
+            newname=$(echo "$deb" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ inputs.backend }}/")
+            mv "$deb" "$newname"
+            echo "deb_path=$newname" >> $GITHUB_OUTPUT
+          fi
+
+          # Create binstall ZIP
+          mkdir -p binstall
+          cp target/release/playa binstall/
+          cp -P target/release/*.so* binstall/ 2>/dev/null || true
+          cd binstall
+          zip -ry ../target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip *
+          cd ..
+          echo "binstall_path=target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip" >> $GITHUB_OUTPUT
+
+      - name: Process macOS artifacts
+        if: inputs.platform == 'macos'
+        id: macos-artifacts
+        run: |
+          # Find and rename DMG
+          dmg=$(find target/release -maxdepth 1 -name "*.dmg" 2>/dev/null | head -n 1)
+          if [ -n "$dmg" ]; then
+            newname=$(echo "$dmg" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ inputs.backend }}/")
+            mv "$dmg" "$newname"
+            echo "dmg_path=$newname" >> $GITHUB_OUTPUT
+          fi
+
+          # Create binstall ZIP
+          mkdir -p binstall
+          cp target/release/playa binstall/
+          cp -P target/release/lib*.dylib binstall/ 2>/dev/null || true
+          cd binstall
+          zip -ry ../target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.zip *
+          cd ..
+          echo "binstall_path=target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.zip" >> $GITHUB_OUTPUT
+
+      - name: Upload Windows artifacts
+        if: inputs.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ inputs.backend }}
+          path: |
+            ${{ steps.windows-artifacts.outputs.installer_path }}
+            ${{ steps.windows-artifacts.outputs.binstall_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Linux artifacts
+        if: inputs.platform == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ inputs.backend }}-combined
+          path: |
+            ${{ steps.linux-artifacts.outputs.appimage_path }}
+            ${{ steps.linux-artifacts.outputs.deb_path }}
+            ${{ steps.linux-artifacts.outputs.binstall_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload macOS artifacts
+        if: inputs.platform == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ inputs.backend }}-combined
+          path: |
+            ${{ steps.macos-artifacts.outputs.dmg_path }}
+            ${{ steps.macos-artifacts.outputs.binstall_path }}
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Save cargo and build artifacts cache
+        if: inputs.branch_condition == 'true' && steps.cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            ~/.cargo/bin/
+            target/
+          key: ${{ inputs.cache_key_prefix }}
+
+      - name: Upload Release Assets (Windows)
+        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.windows-artifacts.outputs.installer_path }}
+            ${{ steps.windows-artifacts.outputs.binstall_path }}
+          fail_on_unmatched_files: false
+
+      - name: Upload Release Assets (Linux)
+        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.linux-artifacts.outputs.appimage_path }}
+            ${{ steps.linux-artifacts.outputs.deb_path }}
+            ${{ steps.linux-artifacts.outputs.binstall_path }}
+          fail_on_unmatched_files: false
+
+      - name: Upload Release Assets (macOS)
+        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.macos-artifacts.outputs.dmg_path }}
+            ${{ steps.macos-artifacts.outputs.binstall_path }}
+          fail_on_unmatched_files: false
