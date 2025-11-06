@@ -32,27 +32,27 @@ on:
         required: false
 
 jobs:
-  build-exrs:
-    uses: ./.github/workflows/_build-backend.yml
-    with:
-      runner: ${{ inputs.runner }}
-      platform: ${{ inputs.platform }}
-      backend: 'exrs'
-      build_args: ''
-      branch_condition: ${{ inputs.branch_condition }}
-      should_release: ${{ inputs.should_release }}
-      cache_key_prefix: playa-${{ inputs.platform }}-v1
-      cache_only: ${{ inputs.cache_only }}
-    secrets: inherit
-
   build-openexr:
-    needs: build-exrs
     uses: ./.github/workflows/_build-backend.yml
     with:
       runner: ${{ inputs.runner }}
       platform: ${{ inputs.platform }}
       backend: 'openexr'
       build_args: '--openexr'
+      branch_condition: ${{ inputs.branch_condition }}
+      should_release: ${{ inputs.should_release }}
+      cache_key_prefix: playa-${{ inputs.platform }}-v1
+      cache_only: ${{ inputs.cache_only }}
+    secrets: inherit
+
+  build-exrs:
+    needs: build-openexr
+    uses: ./.github/workflows/_build-backend.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      backend: 'exrs'
+      build_args: ''
       branch_condition: ${{ inputs.branch_condition }}
       should_release: ${{ inputs.should_release }}
       cache_key_prefix: playa-${{ inputs.platform }}-v1

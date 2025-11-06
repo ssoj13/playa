@@ -66,7 +66,7 @@ jobs:
         with:
           toolchain: nightly-2025-10-15
 
-      - name: Restore cargo and build artifacts cache (current ref)
+      - name: Restore cargo and build artifacts cache
         id: cache-restore
         uses: actions/cache/restore@v4
         with:
@@ -76,32 +76,6 @@ jobs:
             ~/.cargo/bin/
             target/
           key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Restore cargo and build artifacts cache (from main)
-        if: steps.cache-restore.outputs.cache-hit != 'true'
-        id: cache-restore-main
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry/
-            ~/.cargo/git/
-            ~/.cargo/bin/
-            target/
-          key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-          ref: refs/heads/main
-
-      - name: Restore cargo and build artifacts cache (from dev)
-        if: steps.cache-restore.outputs.cache-hit != 'true' && steps.cache-restore-main.outputs.cache-hit != 'true'
-        id: cache-restore-dev
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry/
-            ~/.cargo/git/
-            ~/.cargo/bin/
-            target/
-          key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-          ref: refs/heads/dev
 
       - name: Install cargo-packager (Windows)
         if: inputs.platform == 'windows' && inputs.cache_only != true
@@ -307,8 +281,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Check cache exists (post-build, lookup-only)
+        id: cache-exists
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            ~/.cargo/bin/
+            target/
+          key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          lookup-only: true
+
       - name: Save cargo and build artifacts cache
-        if: inputs.branch_condition == 'true' && steps.cache-restore.outputs.cache-hit != 'true' && steps.cache-restore-main.outputs.cache-hit != 'true' && steps.cache-restore-dev.outputs.cache-hit != 'true'
+        if: inputs.branch_condition == 'true' && steps.cache-restore.outputs.cache-hit != 'true' && steps.cache-exists.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |

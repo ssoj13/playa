@@ -275,6 +275,7 @@ Automated builds for Windows, Linux, and macOS with strict cache reuse and optio
 - Multi-source restore order: current ref → `refs/heads/main` → `refs/heads/dev`.
 - Save only if no restore hit (no duplicate uploads when a cache exists).
 - Per-platform and per-arch isolation to avoid cross-OS conflicts.
+ - OpenEXR job runs first, then exrs (to ensure the heavy build creates/updates the cache before the lightweight one uses it).
 
 Why this works without “прогрева”:
 - If a matching cache exists on any of the refs above, it is reused and not re-saved.
