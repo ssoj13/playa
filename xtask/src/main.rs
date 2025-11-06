@@ -9,26 +9,30 @@ use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "xtask")]
-#[command(about = "Playa build automation tasks")]
+#[command(about = "🎬 Playa build automation tasks")]
 #[command(long_about = "\
-Playa build automation tasks
+🎬 Playa build automation tasks
 
-Common workflows:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMMON WORKFLOWS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Local build with exrs (default):
-    cargo xtask build
+  🔧 Local build with exrs (default, fast):
+     cargo xtask build
 
-  Local build with OpenEXR (full DWAA/DWAB support):
-    cargo xtask build --openexr
+  ⚡ Local build with OpenEXR (full DWAA/DWAB support):
+     cargo xtask build --openexr
 
-  Dev release (testing):
-    cargo xtask tag-dev patch
+  🧪 Dev release (testing on CI):
+     cargo xtask tag-dev patch
 
-  Production release:
-    cargo xtask pr v0.1.60        # Create PR
-    # Merge PR on GitHub
-    git checkout main && git pull
-    cargo xtask tag-rel patch     # Tag release
+  🚀 Production release:
+     cargo xtask pr v0.1.60        # Create PR: dev → main
+     # Merge PR on GitHub
+     git checkout main && git pull
+     cargo xtask tag-rel patch     # Tag and release
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ")]
 struct Cli {
     #[command(subcommand)]
@@ -37,10 +41,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Patch OpenEXR headers for Linux GCC 11+ compatibility (OpenEXR backend only)
+    /// 🔧 Patch OpenEXR headers for Linux GCC 11+ compatibility (OpenEXR backend only)
     Pre,
 
-    /// Build the project and copy dependencies automatically
+    /// 🏗️  Build the project and copy dependencies automatically
     ///
     /// Examples:
     ///   cargo xtask build                      # Release build with exrs (default)
@@ -65,7 +69,7 @@ enum Commands {
         openexr: bool,
     },
 
-    /// Copy native dependencies and shaders after build (OpenEXR backend only)
+    /// 📦 Copy native dependencies and shaders after build (OpenEXR backend only)
     Post {
         /// Use release profile (default: true)
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
@@ -76,7 +80,7 @@ enum Commands {
         debug: bool,
     },
 
-    /// Verify all dependencies are present
+    /// ✅ Verify all dependencies are present
     Verify {
         /// Use release profile (default: true)
         #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
@@ -87,10 +91,10 @@ enum Commands {
         debug: bool,
     },
 
-    /// Generate changelog preview (saves to CHANGELOG.preview.md)
+    /// 📋 Generate changelog preview (saves to CHANGELOG.preview.md)
     Changelog,
 
-    /// Tag dev build on GitHub, trigger Build workflow (creates v0.1.x-dev)
+    /// 🧪 Tag dev build on GitHub, trigger Build workflow (creates v0.1.x-dev)
     ///
     /// Creates a dev tag (e.g., v0.1.60-dev) that triggers CI Build workflow.
     /// CI builds artifacts for testing (NOT a GitHub Release).
@@ -102,8 +106,8 @@ enum Commands {
     ///   4. If good, create PR to main for official release
     ///
     /// Examples:
-    ///   cargo xtask tag-dev patch       # Bump patch version (v0.1.59 -> v0.1.60-dev)
-    ///   cargo xtask tag-dev minor       # Bump minor version (v0.1.59 -> v0.2.0-dev)
+    ///   cargo xtask tag-dev patch       # Bump patch version (v0.1.59 → v0.1.60-dev)
+    ///   cargo xtask tag-dev minor       # Bump minor version (v0.1.59 → v0.2.0-dev)
     ///   cargo xtask tag-dev --dry-run   # Preview changes without pushing
     TagDev {
         /// Release level: patch, minor, or major (default: patch)
@@ -115,22 +119,22 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Tag release on main, trigger Release workflow + GitHub Release (creates v0.1.x)
+    /// 🚀 Tag release on main, trigger Release workflow + GitHub Release (creates v0.1.x)
     ///
     /// Creates official release tag on main that triggers CI Release workflow.
     /// MUST be run from main branch after merging dev PR.
     /// Creates GitHub Release with installers (OpenEXR backend with DWAA/DWAB support).
     ///
     /// Full workflow:
-    ///   1. cargo xtask pr v0.1.60                 # Create PR: dev -> main
+    ///   1. cargo xtask pr v0.1.60                 # Create PR: dev → main
     ///   2. Merge PR on GitHub
     ///   3. git checkout main && git pull
     ///   4. cargo xtask tag-rel patch              # Creates v0.1.60 tag
     ///   5. GitHub Actions creates Release + installers
     ///
     /// Examples:
-    ///   cargo xtask tag-rel patch       # Bump patch version (v0.1.59 -> v0.1.60)
-    ///   cargo xtask tag-rel minor       # Bump minor version (v0.1.59 -> v0.2.0)
+    ///   cargo xtask tag-rel patch       # Bump patch version (v0.1.59 → v0.1.60)
+    ///   cargo xtask tag-rel minor       # Bump minor version (v0.1.59 → v0.2.0)
     ///   cargo xtask tag-rel --dry-run   # Preview changes without pushing
     TagRel {
         /// Release level: patch, minor, or major (default: patch)
@@ -142,13 +146,13 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Create Pull Request from dev to main with all commits
+    /// 🔀 Create Pull Request from dev to main with all commits
     Pr {
         /// Optional version for PR title (e.g., v0.2.0)
         version: Option<String>,
     },
 
-    /// Install to system (Windows: %LOCALAPPDATA%\Programs, Linux: ~/.local/bin)
+    /// 💾 Install to system (Windows: %LOCALAPPDATA%\Programs, Linux: ~/.local/bin)
     Deploy {
         /// Custom install directory
         #[arg(long)]
