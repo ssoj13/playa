@@ -1,0 +1,46 @@
+name: Warm Cache
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  build-windows:
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      runner: windows-latest
+      platform: windows
+      branch_condition: 'true'
+      should_release: false
+      cache_only: true
+    secrets: inherit
+
+  build-linux:
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      runner: ubuntu-latest
+      platform: linux
+      branch_condition: 'true'
+      should_release: false
+      cache_only: true
+    secrets: inherit
+
+  build-macos:
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      runner: macos-latest
+      platform: macos
+      branch_condition: 'true'
+      should_release: false
+      cache_only: true
+    secrets: inherit
+

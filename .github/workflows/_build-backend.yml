@@ -33,6 +33,11 @@ on:
         type: string
         required: true
         description: 'Cache key prefix (playa-windows-v1, etc.)'
+      cache_only:
+        type: boolean
+        required: false
+        default: false
+        description: 'Only build to warm cache; skip packaging/uploads'
     secrets:
       APPLE_CERTIFICATE:
         required: false
@@ -61,7 +66,7 @@ jobs:
         with:
           toolchain: nightly-2025-10-15
 
-      - name: Restore cargo and build artifacts cache
+      - name: Restore cargo and build artifacts cache (current ref)
         id: cache-restore
         uses: actions/cache/restore@v4
         with:
@@ -70,12 +75,36 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: ${{ inputs.cache_key_prefix }}
-          restore-keys: |
-            ${{ inputs.cache_key_prefix }}-
+          key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Restore cargo and build artifacts cache (from main)
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        id: cache-restore-main
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            ~/.cargo/bin/
+            target/
+          key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          ref: refs/heads/main
+
+      - name: Restore cargo and build artifacts cache (from dev)
+        if: steps.cache-restore.outputs.cache-hit != 'true' && steps.cache-restore-main.outputs.cache-hit != 'true'
+        id: cache-restore-dev
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            ~/.cargo/bin/
+            target/
+          key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          ref: refs/heads/dev
 
       - name: Install cargo-packager (Windows)
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && inputs.cache_only != true
         shell: pwsh
         run: |
           if (!(Get-Command cargo-packager -ErrorAction SilentlyContinue)) {
@@ -85,7 +114,7 @@ jobs:
           }
 
       - name: Install cargo-packager (Unix)
-        if: inputs.platform != 'windows'
+        if: inputs.platform != 'windows' && inputs.cache_only != true
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
 
       - name: Import Code Signing Certificate
@@ -162,18 +191,18 @@ jobs:
         run: cargo xtask build --release ${{ inputs.build_args }}
 
       - name: Package application (Linux)
-        if: inputs.platform == 'linux'
+        if: inputs.platform == 'linux' && inputs.cache_only != true
         run: |
           # Set LD_LIBRARY_PATH so cargo-packager can find shared libraries
           export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
           cargo packager --release
 
       - name: Package application (Other platforms)
-        if: inputs.platform != 'linux'
+        if: inputs.platform != 'linux' && inputs.cache_only != true
         run: cargo packager --release
 
       - name: Process Windows artifacts
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && inputs.cache_only != true
         id: windows-artifacts
         shell: pwsh
         run: |
@@ -195,7 +224,7 @@ jobs:
           echo "binstall_path=target/release/$zipName" >> $env:GITHUB_OUTPUT
 
       - name: Process Linux artifacts
-        if: inputs.platform == 'linux'
+        if: inputs.platform == 'linux' && inputs.cache_only != true
         id: linux-artifacts
         run: |
           # Find and rename AppImage
@@ -224,7 +253,7 @@ jobs:
           echo "binstall_path=target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip" >> $GITHUB_OUTPUT
 
       - name: Process macOS artifacts
-        if: inputs.platform == 'macos'
+        if: inputs.platform == 'macos' && inputs.cache_only != true
         id: macos-artifacts
         run: |
           # Find and rename DMG
@@ -245,7 +274,7 @@ jobs:
           echo "binstall_path=target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.zip" >> $GITHUB_OUTPUT
 
       - name: Upload Windows artifacts
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && inputs.cache_only != true
         uses: actions/upload-artifact@v4
         with:
           name: windows-${{ inputs.backend }}
@@ -256,7 +285,7 @@ jobs:
           retention-days: 7
 
       - name: Upload Linux artifacts
-        if: inputs.platform == 'linux'
+        if: inputs.platform == 'linux' && inputs.cache_only != true
         uses: actions/upload-artifact@v4
         with:
           name: linux-${{ inputs.backend }}-combined
@@ -268,7 +297,7 @@ jobs:
           retention-days: 7
 
       - name: Upload macOS artifacts
-        if: inputs.platform == 'macos'
+        if: inputs.platform == 'macos' && inputs.cache_only != true
         uses: actions/upload-artifact@v4
         with:
           name: macos-${{ inputs.backend }}-combined
@@ -279,7 +308,7 @@ jobs:
           retention-days: 7
 
       - name: Save cargo and build artifacts cache
-        if: inputs.branch_condition == 'true' && steps.cache-restore.outputs.cache-hit != 'true'
+        if: inputs.branch_condition == 'true' && steps.cache-restore.outputs.cache-hit != 'true' && steps.cache-restore-main.outputs.cache-hit != 'true' && steps.cache-restore-dev.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -287,10 +316,10 @@ jobs:
             ~/.cargo/git/
             ~/.cargo/bin/
             target/
-          key: ${{ inputs.cache_key_prefix }}
+          key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Upload Release Assets (Windows)
-        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows'
+        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -299,7 +328,7 @@ jobs:
           fail_on_unmatched_files: false
 
       - name: Upload Release Assets (Linux)
-        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux'
+        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -309,7 +338,7 @@ jobs:
           fail_on_unmatched_files: false
 
       - name: Upload Release Assets (macOS)
-        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos'
+        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
         with:
           files: |

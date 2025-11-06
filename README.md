@@ -260,88 +260,39 @@ cargo xtask build --openexr    # OpenEXR backend
 
 ### GitHub Actions CI/CD
 
-Automated builds on Windows and Linux with optimized multi-tier caching.
+Automated builds for Windows, Linux, and macOS with strict cache reuse and optional warm-up.
 
-#### Workflow Triggers
+#### Workflows
 
-- **Push to main**: Updates release cache, no artifacts
-- **Tags `v*` on main**: Triggers `release.yml` → GitHub Release with both backends (exrs + OpenEXR)
-- **Tags `v*` NOT on main**: Triggers `build.yml` → Dev artifacts for both backends (exrs + OpenEXR)
-- **Manual dispatch**: Available for both workflows
+- `main.yml` (Release): tags `v*` on main or manual dispatch. Publishes release assets.
+- `dev.yml` (Build): tags `v*` not on main or manual dispatch. Produces dev artifacts.
+- `warm-cache.yml` (Warm Cache): push to `main`/`dev` or manual dispatch. Builds only to warm caches (no packaging/uploads).
 
 #### Caching Strategy
 
-**Backend-specific caches for both release and dev builds:**
+- Full cache contents: `~/.cargo/registry`, `~/.cargo/git`, `~/.cargo/bin`, and full `target/`.
+- Strict cache key: ``playa-${platform}-v1-${arch}-${hash(Cargo.lock)}``.
+- Multi-source restore order: current ref → `refs/heads/main` → `refs/heads/dev`.
+- Save only if no restore hit (no duplicate uploads when a cache exists).
+- Per-platform and per-arch isolation to avoid cross-OS conflicts.
 
-| Cache Key | Usage | Contents |
-|-----------|-------|----------|
-| `playa-windows-release-exrs-v1` | Main branch releases (exrs backend) | Registry, git, bin, target |
-| `playa-windows-release-openexr-v1` | Main branch releases (OpenEXR backend) | Registry, git, bin, target |
-| `playa-linux-release-exrs-v1` | Main branch releases (exrs backend) | Registry, git, bin, target |
-| `playa-linux-release-openexr-v1` | Main branch releases (OpenEXR backend) | Registry, git, bin, target |
-| `playa-windows-dev-exrs-v1` | Dev tag builds (exrs backend) | Registry, git, bin, target |
-| `playa-windows-dev-openexr-v1` | Dev tag builds (OpenEXR backend) | Registry, git, bin, target |
-| `playa-linux-dev-exrs-v1` | Dev tag builds (exrs backend) | Registry, git, bin, target |
-| `playa-linux-dev-openexr-v1` | Dev tag builds (OpenEXR backend) | Registry, git, bin, target |
+Why this works without “прогрева”:
+- If a matching cache exists on any of the refs above, it is reused and not re-saved.
+- If no cache exists yet, the first run (on any ref) creates it with the exact key.
 
-**Key optimizations:**
-- **cargo-packager binary cached** in `~/.cargo/bin/` - saves ~2-3 min/build
-- **Conditional install**: Checks if binary exists before `cargo install`
-- **Conditional save**: Skips cache save if successfully restored (cache-hit)
-- **Split restore/save**: Release workflow saves only from main branch
+Ref scoping note:
+- GitHub caches are scoped by ref. The warm-cache workflow ensures caches exist under `main`/`dev` so future tags can reuse them immediately.
 
-#### Build Performance
+#### Warm Cache Workflow
 
-**Typical times:**
-- **First build (cold cache)**: ~20-25 minutes (includes OpenEXR compilation)
-- **Subsequent builds (warm cache)**: ~10-12 minutes
-- **cargo-packager**: Cached (~10 sec check) or installed fresh (~2-3 min)
-- **Cache restore/save**: ~1-2 minutes
+- Location: `.github/workflows/warm-cache.yml`.
+- Trigger: push to `main` or `dev` (and manual dispatch).
+- Behavior: runs builds with `cache_only: true` to populate caches; skips packaging and uploads.
 
-**Cache benefits:**
-- Rust dependencies: Saves ~10-15 minutes
-- cargo-packager binary: Saves ~2-3 minutes
-- Total speedup: ~13-18 minutes per build
+#### Build Times
 
-**Problem solved:**
-Previous approach compiled OpenEXR (~20 min) and cargo-packager (~2-3 min) every run. New caching brings this down to ~10-12 min for warm builds.
-
-#### GitHub Actions Cache Ref Scoping
-
-**The Problem:**
-GitHub Actions caches are scoped by ref (branch/tag). Each tag creates a unique ref:
-- Tag `v0.1.54` → ref `refs/tags/v0.1.54`
-- Tag `v0.1.55` → ref `refs/tags/v0.1.55`
-
-By default, caches created on one ref cannot be accessed by another ref. This means:
-- Each tag would rebuild from scratch (~20 minutes with OpenEXR)
-- No cache reuse between releases
-- Wasted CI time and resources
-
-**The Solution:**
-Use **parent ref inheritance** with split cache operations:
-
-1. **Main branch creates canonical cache**:
-   - `actions/cache/save@v4` with condition: `if: github.ref == 'refs/heads/main'`
-   - Creates cache with key `playa-windows-release-v1`
-   - Ref: `refs/heads/main`
-
-2. **Tags inherit from main**:
-   - `actions/cache/restore@v4` (no condition)
-   - Looks for key `playa-windows-release-v1`
-   - GitHub Actions allows reading caches from parent refs
-   - Tags on main automatically find main's cache
-
-3. **Conditional save with cache-hit check**:
-   - Skip save if cache was restored: `steps.cache.outputs.cache-hit != 'true'`
-   - Prevents redundant cache uploads
-
-**Result:**
-- First push to main: ~20 min, creates cache
-- Tags on main: ~10 min, reuse main's cache
-- Dev tags (not on main): Use separate `*-dev-v1` caches
-
-**Key insight:** GitHub Actions allows child refs (tags) to read caches from parent refs (branches they're based on), but not vice versa. Main branch is the "source of truth" for release caches.
+- Cold cache (first time for a given `Cargo.lock`): longer, due to dependency and OpenEXR compilation.
+- Warm cache: significantly faster; restores dependencies and reuses full `target/`.
 
 ### Standard Rust Development
 
