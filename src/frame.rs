@@ -79,6 +79,7 @@ pub struct Frame {
 /// Frame loading errors
 #[derive(Debug)]
 pub enum FrameError {
+    #[cfg_attr(not(feature = "openexr"), allow(dead_code))]
     Exr(String),
     Image(String),
     UnsupportedFormat(String),
