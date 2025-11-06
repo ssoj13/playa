@@ -1,3 +1,8 @@
+## [0.1.69-dev] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Unify cache keys between dev and main workflows
 ## [0.1.68-dev] - 2025-11-06
 
 ### 🐛 Bug Fixes
