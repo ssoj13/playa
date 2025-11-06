@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use anyhow::Result;
 
 #[cfg(target_os = "linux")]
@@ -286,18 +287,4 @@ fn patch_zutil_file(path: &std::path::Path) -> Result<bool> {
         .with_context(|| format!("Failed to write {}", path.display()))?;
 
     Ok(true)
-}
-
-/// No-op on non-Linux/non-macOS platforms
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub fn patch_headers() -> Result<()> {
-    println!("Header patching not needed on this platform");
-    Ok(())
-}
-
-/// No-op on non-macOS platforms
-#[cfg(not(target_os = "macos"))]
-pub fn patch_zlib_for_macos() -> Result<()> {
-    // This function is only needed on macOS
-    Ok(())
 }
