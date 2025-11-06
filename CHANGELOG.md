@@ -1,3 +1,8 @@
+## [0.1.77] - 2025-11-06
+
+### 🐛 Bug Fixes
+
+- Remove branch/event filters from Release Status badge
 ## [0.1.76] - 2025-11-06
 
 ### 🐛 Bug Fixes
