@@ -1,3 +1,8 @@
+## [0.1.79] - 2025-11-06
+
+### 🚜 Refactor
+
+- Extract reusable workflows to eliminate duplication
 ## [0.1.78] - 2025-11-06
 
 ### 🐛 Bug Fixes
