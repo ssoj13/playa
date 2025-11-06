@@ -310,18 +310,17 @@ fn cmd_verify(release: bool) -> Result<()> {
     println!();
     lib_discovery::verify_library_count(&libraries)?;
 
-    // Check shaders
+    // Check shaders (optional - using embedded shaders if not present)
     let shaders_dir = std::path::PathBuf::from(format!("target/{}/shaders", profile));
 
     println!();
     println!("Checking shaders directory...");
 
     if !shaders_dir.exists() {
-        println!("  ✗ shaders/ directory not found!");
-        anyhow::bail!("Missing shaders directory");
+        println!("  ⚠ shaders/ directory not found (using embedded shaders only)");
+    } else {
+        println!("  ✓ shaders/ directory present");
     }
-
-    println!("  ✓ shaders/ directory present");
 
     println!();
     println!("========================================");
@@ -575,7 +574,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
         println!("  ✓ Copied {}", file_name.to_string_lossy());
     }
 
-    // Copy shaders directory from project root
+    // Copy shaders directory from project root (optional)
     let source_shaders = PathBuf::from("shaders");
 
     if source_shaders.exists() {
@@ -586,6 +585,8 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
         )
         .context("Failed to copy shaders directory")?;
         println!("  ✓ Copied shaders/");
+    } else {
+        println!("  ⚠ shaders/ directory not found (using embedded shaders only)");
     }
 
     println!();

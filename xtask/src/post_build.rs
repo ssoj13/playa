@@ -83,16 +83,18 @@ pub fn copy_dependencies(profile: &str) -> Result<()> {
     Ok(())
 }
 
-/// Copy shaders directory to target
+/// Copy shaders directory to target (or create empty if source doesn't exist)
 fn copy_shaders(target_dir: &Path) -> Result<()> {
     let shaders_src = PathBuf::from("shaders");
+    let shaders_dest = target_dir.join("shaders");
 
     if !shaders_src.exists() {
-        println!("Warning: shaders/ directory not found, skipping");
+        println!("Warning: shaders/ directory not found, creating empty directory for cargo-packager");
+        // Create empty shaders directory so cargo-packager doesn't fail
+        fs::create_dir_all(&shaders_dest)
+            .context("Failed to create empty shaders directory")?;
         return Ok(());
     }
-
-    let shaders_dest = target_dir.join("shaders");
 
     println!("Copying shaders/ directory...");
 
