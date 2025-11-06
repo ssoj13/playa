@@ -2,8 +2,10 @@ name: Build
 
 on:
   push:
+    branches:
+      - dev  # Build on dev branch to create/update cache
     tags:
-      - 'v*'  # Only build on version tags (v0.1.26, etc.)
+      - 'v*'  # Build on version tags (v0.1.26, etc.)
   workflow_dispatch:  # Allow manual trigger
 
 permissions:
