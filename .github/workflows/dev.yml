@@ -59,6 +59,8 @@ jobs:
             ~/.cargo/bin/
             target/
           key: playa-windows-v1
+          restore-keys: |
+            playa-windows-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -173,6 +175,8 @@ jobs:
             ~/.cargo/bin/
             target/
           key: playa-windows-v1
+          restore-keys: |
+            playa-windows-
 
       - name: Fetch dependencies
         run: cargo fetch
@@ -286,6 +290,8 @@ jobs:
             ~/.cargo/bin/
             target/
           key: playa-linux-v1
+          restore-keys: |
+            playa-linux-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -450,6 +456,8 @@ jobs:
             ~/.cargo/bin/
             target/
           key: playa-linux-v1
+          restore-keys: |
+            playa-linux-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -606,6 +614,8 @@ jobs:
             ~/.cargo/bin/
             target/
           key: playa-macos-v1
+          restore-keys: |
+            playa-macos-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
@@ -772,6 +782,8 @@ jobs:
             ~/.cargo/bin/
             target/
           key: playa-macos-v1
+          restore-keys: |
+            playa-macos-
 
       - name: Install cargo-packager
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
