@@ -38,11 +38,23 @@ Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rend
 
 Download the latest release for your platform from the [Releases page](https://github.com/ssoj13/playa/releases/latest):
 
-- **Windows**: `playa-x.x.x-x64-windows-setup.exe` (installer) or portable `.exe`
-- **macOS**: `playa-x.x.x-x86_64-apple-darwin.dmg` or `playa-x.x.x-aarch64-apple-darwin.dmg`
-- **Linux**: `playa-x.x.x-x86_64-linux.AppImage` or `.deb`
+**Two backends available for each platform:**
 
-All installers include full OpenEXR support with DWAA/DWAB compression.
+- **Windows**:
+  - `playa_x.x.x-exrs-x64-setup.exe` - Pure Rust backend (fast, no DWAA/DWAB)
+  - `playa_x.x.x-openexr-x64-setup.exe` - OpenEXR C++ backend (full compression support)
+  - Portable ZIPs: `playa-exrs-x86_64-pc-windows-msvc.zip`, `playa-openexr-x86_64-pc-windows-msvc.zip`
+
+- **Linux**:
+  - `playa-x.x.x-exrs.AppImage` / `playa-x.x.x-exrs.deb` - Pure Rust backend
+  - `playa-x.x.x-openexr.AppImage` / `playa-x.x.x-openexr.deb` - OpenEXR C++ backend
+  - Portable ZIPs: `playa-exrs-x86_64-unknown-linux-gnu.zip`, `playa-openexr-x86_64-unknown-linux-gnu.zip`
+
+- **macOS**: Currently disabled (cross-compilation issues being resolved)
+
+**Which backend to choose?**
+- **exrs**: Faster installation, smaller size, pure Rust. Use if you don't need DWAA/DWAB compression.
+- **openexr**: Full OpenEXR feature support including DWAA/DWAB. Use for maximum compatibility.
 
 ### Build from Source
 
@@ -243,18 +255,20 @@ Automated builds on Windows and Linux with optimized multi-tier caching.
 #### Workflow Triggers
 
 - **Push to main**: Updates release cache, no artifacts
-- **Tags `v*` on main**: Triggers `release.yml` → GitHub Release (OpenEXR backend)
+- **Tags `v*` on main**: Triggers `release.yml` → GitHub Release with both backends (exrs + OpenEXR)
 - **Tags `v*` NOT on main**: Triggers `build.yml` → Dev artifacts for both backends (exrs + OpenEXR)
 - **Manual dispatch**: Available for both workflows
 
 #### Caching Strategy
 
-**Separate caches for release, dev, and backends:**
+**Backend-specific caches for both release and dev builds:**
 
 | Cache Key | Usage | Contents |
 |-----------|-------|----------|
-| `playa-windows-release-v1` | Main branch builds/releases (OpenEXR) | Registry, git, bin, target |
-| `playa-linux-release-v1` | Main branch builds/releases (OpenEXR) | Registry, git, bin, target |
+| `playa-windows-release-exrs-v1` | Main branch releases (exrs backend) | Registry, git, bin, target |
+| `playa-windows-release-openexr-v1` | Main branch releases (OpenEXR backend) | Registry, git, bin, target |
+| `playa-linux-release-exrs-v1` | Main branch releases (exrs backend) | Registry, git, bin, target |
+| `playa-linux-release-openexr-v1` | Main branch releases (OpenEXR backend) | Registry, git, bin, target |
 | `playa-windows-dev-exrs-v1` | Dev tag builds (exrs backend) | Registry, git, bin, target |
 | `playa-windows-dev-openexr-v1` | Dev tag builds (OpenEXR backend) | Registry, git, bin, target |
 | `playa-linux-dev-exrs-v1` | Dev tag builds (exrs backend) | Registry, git, bin, target |
