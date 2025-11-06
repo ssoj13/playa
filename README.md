@@ -279,11 +279,15 @@ Automated builds for Windows, Linux, and macOS with strict cache reuse and optio
 
 Tooling cache (cargo-packager):
 - Separate cache for the `cargo-packager` binary, independent of `Cargo.lock` changes.
-- Key: ``tools-cargo-packager-0.11.7-${OS}-${ARCH}``
-- Paths: `~/.cargo/bin/cargo-packager[.exe]` only (no overlap with project cache).
+- Key: ``tools-cargo-packager-0.11.7-${OS}-${ARCH}``.
+- Paths (OS-specific): `~/.cargo/bin/cargo-packager` (Unix) or `~/.cargo/bin/cargo-packager.exe` (Windows); no overlap with project cache.
 - Restore before install; if not found, install and then save (with a lookup-only check to avoid races).
 
-Why this works without “прогрева”:
+Tag checks (release vs dev):
+- Both `main.yml` and `dev.yml` explicitly fetch remote branches and compare the tag commit (`$GITHUB_SHA`) against `origin/main`.
+- Release runs only if the tag commit is contained in `origin/main`; dev runs only otherwise.
+
+Why this works without “warmup:
 - If a matching cache exists on any of the refs above, it is reused and not re-saved.
 - If no cache exists yet, the first run (on any ref) creates it with the exact key.
 
@@ -293,8 +297,14 @@ Ref scoping note:
 #### Warm Cache Workflow
 
 - Location: `.github/workflows/warm-cache.yml`.
-- Trigger: push to `main` or `dev` (and manual dispatch).
+- Triggers: push to `main` or `dev`, and manual dispatch (`workflow_dispatch`).
+- Matrix: single job uses a platform matrix for `windows`, `linux`, `macos`.
 - Behavior: runs builds with `cache_only: true` to populate caches; skips packaging and uploads.
+- Backends: accepts `backends` input to control which backends to warm.
+  - Values: `openexr` | `exrs` | `both`.
+  - Default when manually dispatched: `openexr`.
+  - On push to `main`/`dev`: warms `openexr` by default.
+- Execution order (when `both`): OpenEXR builds first, then exrs to avoid cache races and ensure the heavy build populates caches.
 
 #### Build Times
 

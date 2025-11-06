@@ -6,6 +6,11 @@ on:
       - main
       - dev
   workflow_dispatch:
+    inputs:
+      backends:
+        description: 'Which backends to warm (openexr|exrs|both)'
+        required: false
+        default: 'openexr'
 
 permissions:
   contents: read
@@ -14,33 +19,22 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
-  build-windows:
+  warm:
+    strategy:
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-latest
+          - platform: linux
+            runner: ubuntu-latest
+          - platform: macos
+            runner: macos-latest
     uses: ./.github/workflows/_build-platform.yml
     with:
-      runner: windows-latest
-      platform: windows
+      runner: ${{ matrix.runner }}
+      platform: ${{ matrix.platform }}
       branch_condition: 'true'
       should_release: false
       cache_only: true
+      backends: ${{ github.event_name == 'workflow_dispatch' && inputs.backends || 'openexr' }}
     secrets: inherit
-
-  build-linux:
-    uses: ./.github/workflows/_build-platform.yml
-    with:
-      runner: ubuntu-latest
-      platform: linux
-      branch_condition: 'true'
-      should_release: false
-      cache_only: true
-    secrets: inherit
-
-  build-macos:
-    uses: ./.github/workflows/_build-platform.yml
-    with:
-      runner: macos-latest
-      platform: macos
-      branch_condition: 'true'
-      should_release: false
-      cache_only: true
-    secrets: inherit
-
