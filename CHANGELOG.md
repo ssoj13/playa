@@ -1,3 +1,21 @@
+## [0.1.63-dev] - 2025-11-06
+
+### 🚀 Features
+
+- Add macOS support for OpenEXR backend
+
+### 🐛 Bug Fixes
+
+- Add dylib symlinks creation for macOS
+- Correct dylib copy pattern for macOS binstall ZIP
+
+### 📚 Documentation
+
+- Update README with dual EXR backend release info
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version to 0.1.62-dev
 ## [0.1.61-dev] - 2025-11-06
 
 ### 🐛 Bug Fixes
