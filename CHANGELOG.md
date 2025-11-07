@@ -1,3 +1,14 @@
+## [0.1.88] - 2025-11-07
+
+### 💼 Other
+
+- Add 'wipe' command to remove executables and shared libraries from ./target (non-recursive) with clear logging
+- Remove accidental dump file
+- Mention 'xtask wipe' in help; CI: run 'cargo xtask wipe' after cache restore and install NSIS on Windows to produce .exe installer; docs: add wipe to README usage
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Thu 11/06/2025 - 19:36:07.45
 ## [0.1.87] - 2025-11-07
 
 ### 💼 Other
