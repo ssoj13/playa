@@ -344,45 +344,39 @@ fn cmd_verify(release: bool) -> Result<()> {
 /// Command: cargo xtask wipe (non-recursive)
 fn cmd_wipe() -> Result<()> {
     println!("========================================");
-    println!("Wiping executables and shared libraries from ./target (non-recursive)");
+    println!("Wiping executables and shared libraries from ./target, ./target/release, ./target/debug (non-recursive)");
     println!("This removes platform-specific artifacts left by previous builds or cache restore.");
     println!("========================================");
     println!();
 
     let target_root = PathBuf::from("target");
-    if !target_root.exists() {
-        println!("target/ directory not found. Nothing to clean.");
-        return Ok(());
-    }
+    let dirs = [
+        target_root.clone(),
+        target_root.join("release"),
+        target_root.join("debug"),
+    ];
 
     let mut removed = 0usize;
 
-    let entries = match fs::read_dir(&target_root) {
-        Ok(it) => it,
-        Err(e) => {
-            println!("Failed to read {}: {}", target_root.display(), e);
-            return Ok(());
-        }
-    };
-
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if !path.is_file() { continue; }
-            let name_lc = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_ascii_lowercase())
-                .unwrap_or_default();
-
-            let is_installer = name_lc.ends_with(".msi") || (name_lc.ends_with(".exe") && name_lc.contains("setup"));
-            let is_win_bin = name_lc.ends_with(".exe") || name_lc.ends_with(".dll");
-            let is_unix_lib = name_lc.contains(".so") || name_lc.ends_with(".dylib");
-
-            if is_installer || is_win_bin || is_unix_lib {
-                println!("  removing {}", path.display());
-                let _ = fs::remove_file(&path);
-                removed += 1;
+    for dir in dirs.iter() {
+        if !dir.exists() { continue; }
+        let entries = match fs::read_dir(dir) {
+            Ok(it) => it,
+            Err(e) => { println!("Failed to read {}: {}", dir.display(), e); continue; }
+        };
+        for entry in entries {
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if !path.is_file() { continue; }
+                let name_lc = path.file_name().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+                let is_installer = name_lc.ends_with(".msi") || (name_lc.ends_with(".exe") && name_lc.contains("setup"));
+                let is_win_bin = name_lc.ends_with(".exe") || name_lc.ends_with(".dll");
+                let is_unix_lib = name_lc.contains(".so") || name_lc.ends_with(".dylib");
+                if is_installer || is_win_bin || is_unix_lib {
+                    println!("  removing {}", path.display());
+                    let _ = fs::remove_file(&path);
+                    removed += 1;
+                }
             }
         }
     }
