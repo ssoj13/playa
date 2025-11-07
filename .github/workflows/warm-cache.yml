@@ -72,28 +72,67 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
     steps:
-      - name: Check recent successful Warm Cache run (12h threshold)
+      - name: Check cache existence and age (12h threshold)
         id: check
         uses: actions/github-script@v7
         with:
           script: |
             if (context.eventName === 'workflow_dispatch') {
-              core.info('Manual run detected: skipping cooldown check.');
+              core.info('Manual run detected: skipping cache check.');
               core.setOutput('should_run', 'true');
               return;
             }
+
             const THRESHOLD_MS = 12 * 60 * 60 * 1000; // 12 hours
             const { owner, repo } = context.repo;
-            const workflow_id = 'warm-cache.yml';
-            const res = await github.rest.actions.listWorkflowRuns({ owner, repo, workflow_id, status: 'success', per_page: 1 });
-            const runs = res.data.workflow_runs || [];
-            if (runs.length === 0) {
-              core.setOutput('should_run', 'true');
-              return;
+
+            // Check caches for all platforms
+            const platforms = [
+              { name: 'windows', prefix: 'playa-windows-v1' },
+              { name: 'linux', prefix: 'playa-linux-v1' },
+              { name: 'macos', prefix: 'playa-macos-v1' }
+            ];
+
+            let shouldRun = false;
+            const now = Date.now();
+
+            for (const platform of platforms) {
+              core.info(`Checking ${platform.name} cache (prefix: ${platform.prefix})...`);
+
+              try {
+                const caches = await github.rest.actions.getActionsCacheList({
+                  owner,
+                  repo,
+                  key: platform.prefix,
+                  per_page: 1,
+                  sort: 'created_at',
+                  direction: 'desc'
+                });
+
+                if (caches.data.actions_caches.length === 0) {
+                  core.info(`  ❌ No cache found for ${platform.name}`);
+                  shouldRun = true;
+                  continue;
+                }
+
+                const cache = caches.data.actions_caches[0];
+                const createdAt = new Date(cache.created_at).getTime();
+                const ageMs = now - createdAt;
+                const ageHours = (ageMs / (60 * 60 * 1000)).toFixed(1);
+
+                core.info(`  ✓ Cache found: ${cache.key}`);
+                core.info(`    Age: ${ageHours}h (threshold: 12h)`);
+                core.info(`    Size: ${(cache.size_in_bytes / 1024 / 1024).toFixed(1)} MB`);
+
+                if (ageMs > THRESHOLD_MS) {
+                  core.info(`    → Cache is stale, needs refresh`);
+                  shouldRun = true;
+                }
+              } catch (error) {
+                core.warning(`  ⚠️ Error checking ${platform.name} cache: ${error.message}`);
+                shouldRun = true;
+              }
             }
-            const latest = runs[0];
-            const updated = new Date(latest.updated_at).getTime();
-            const ageMs = Date.now() - updated;
-            const ageMin = (ageMs / 60000).toFixed(1);
-            core.info(`Latest Warm Cache success: ${ageMin} minutes ago (threshold 12h)`);
-            core.setOutput('should_run', ageMs > THRESHOLD_MS ? 'true' : 'false');
+
+            core.info(`\nDecision: should_run = ${shouldRun}`);
+            core.setOutput('should_run', shouldRun.toString());
