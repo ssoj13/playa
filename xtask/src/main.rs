@@ -4,6 +4,7 @@ mod pre_build;
 mod release;
 
 use anyhow::{Result, Context};
+use indicatif::{ProgressBar, ProgressStyle};
 use clap::{Parser, Subcommand};
 use std::process::Command;
 use std::fs;
@@ -448,7 +449,7 @@ fn cmd_wipe_wf() -> Result<()> {
         anyhow::bail!("'gh' CLI not found. Please install GitHub CLI and authenticate (gh auth login)");
     }
 
-    // List runs (IDs only) and delete each
+    // List runs (IDs only)
     let out = Command::new("gh")
         .args(["run", "list", "--limit", "1000", "--json", "databaseId", "--jq", ".[].databaseId"]) // up to 1000
         .output()
@@ -457,18 +458,66 @@ fn cmd_wipe_wf() -> Result<()> {
         anyhow::bail!("gh run list failed: {}", String::from_utf8_lossy(&out.stderr));
     }
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let mut total = 0usize;
-    for line in stdout.lines() {
-        let id = line.trim();
-        if id.is_empty() { continue; }
-        total += 1;
-        let status = Command::new("gh")
-            .args(["run", "delete", id, "--confirm"]).status()
-            .with_context(|| format!("Failed to delete run #{id}"))?;
-        if status.success() { println!("Deleted run #{id}"); } else { println!("Failed to delete run #{id}"); }
+    let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if ids.is_empty() {
+        println!("No workflow runs found.");
+        return Ok(());
     }
-    println!("Done. Deleted {} run(s)", total);
+
+    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8).min(16).max(4);
+    println!("Found {} run(s). Deleting with {} workers...", ids.len(), workers);
+
+    // Progress bar
+    let pb = ProgressBar::new(ids.len() as u64);
+    pb.set_style(ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+        .unwrap()
+        .progress_chars("=>-"));
+
+    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    let ids = Arc::new(ids);
+    let next = Arc::new(AtomicUsize::new(0));
+    let deleted = Arc::new(AtomicUsize::new(0));
+    let failed = Arc::new(AtomicUsize::new(0));
+    let pb_arc = Arc::new(pb);
+
+    let mut handles = Vec::new();
+    for _ in 0..workers {
+        let ids_cl = Arc::clone(&ids);
+        let next_cl = Arc::clone(&next);
+        let deleted_cl = Arc::clone(&deleted);
+        let failed_cl = Arc::clone(&failed);
+        let pb_cl = Arc::clone(&pb_arc);
+        handles.push(std::thread::spawn(move || {
+            loop {
+                let idx = next_cl.fetch_add(1, Ordering::Relaxed);
+                if idx >= ids_cl.len() { break; }
+                let id = &ids_cl[idx];
+                let endpoint = format!("repos/:owner/:repo/actions/runs/{}", id);
+                let status = Command::new("gh").args(["api", "-X", "DELETE", &endpoint]).status();
+                match status {
+                    Ok(st) if st.success() => {
+                        println!("Deleted run #{}", id);
+                        deleted_cl.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Ok(_) | Err(_) => {
+                        println!("Failed to delete run #{}", id);
+                        failed_cl.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                pb_cl.inc(1);
+            }
+        }));
+    }
+    for h in handles { let _ = h.join(); }
+    let del = deleted.load(Ordering::Relaxed);
+    let fail = failed.load(Ordering::Relaxed);
+    pb_arc.finish_with_message(format!("deleted {} failed {}", del, fail));
+    println!("Done. Deleted {} run(s), failed {}", del, fail);
     Ok(())
 }
 
