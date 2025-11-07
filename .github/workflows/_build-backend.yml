@@ -372,6 +372,18 @@ jobs:
             ${{ steps.windows-artifacts.outputs.binstall_path }}
           fail_on_unmatched_files: false
 
+      - name: Release Summary (Windows)
+        if: startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows' && inputs.cache_only != true
+        shell: pwsh
+        run: |
+          $exe = "${{ steps.windows-artifacts.outputs.installer_path }}"
+          $msi = "${{ steps.windows-artifacts.outputs.msi_path }}"
+          $zip = "${{ steps.windows-artifacts.outputs.binstall_path }}"
+          Add-Content $env:GITHUB_STEP_SUMMARY "### Windows release assets (`${{ inputs.backend }}`)"
+          Add-Content $env:GITHUB_STEP_SUMMARY ("- EXE: " + ($exe -ne "" ? $exe : "<not found>"))
+          Add-Content $env:GITHUB_STEP_SUMMARY ("- MSI: " + ($msi -ne "" ? $msi : "<not found>"))
+          Add-Content $env:GITHUB_STEP_SUMMARY ("- ZIP: " + ($zip -ne "" ? $zip : "<not found>"))
+
       - name: Upload Release Assets (Linux)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
@@ -382,6 +394,14 @@ jobs:
             ${{ steps.linux-artifacts.outputs.binstall_path }}
           fail_on_unmatched_files: false
 
+      - name: Release Summary (Linux)
+        if: startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux' && inputs.cache_only != true
+        run: |
+          echo "### Linux release assets (\`${{ inputs.backend }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- AppImage: ${{ steps.linux-artifacts.outputs.appimage_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- DEB: ${{ steps.linux-artifacts.outputs.deb_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ZIP: ${{ steps.linux-artifacts.outputs.binstall_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Release Assets (macOS)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
@@ -390,3 +410,10 @@ jobs:
             ${{ steps.macos-artifacts.outputs.dmg_path }}
             ${{ steps.macos-artifacts.outputs.binstall_path }}
           fail_on_unmatched_files: false
+
+      - name: Release Summary (macOS)
+        if: startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos' && inputs.cache_only != true
+        run: |
+          echo "### macOS release assets (\`${{ inputs.backend }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- DMG: ${{ steps.macos-artifacts.outputs.dmg_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ZIP: ${{ steps.macos-artifacts.outputs.binstall_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
