@@ -147,6 +147,19 @@ jobs:
       - name: Build application
         run: cargo xtask build --release ${{ inputs.build_args }}
 
+      - name: Cleanup stale DMG mounts (macOS)
+        if: inputs.platform == 'macos' && inputs.cache_only != true
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Detach leftover volume from previous runs to avoid create-dmg 'Resource busy'
+          if [ -d "/Volumes/Playa" ]; then
+            echo "Detaching existing /Volumes/Playa mount"
+            hdiutil detach "/Volumes/Playa" -force || diskutil unmount force "/Volumes/Playa" || true
+          fi
+          # Also remove any stale DMG file in target/release
+          rm -f target/release/*.dmg 2>/dev/null || true
+
       - name: Package application (Linux, openexr)
         if: inputs.platform == 'linux' && inputs.cache_only != true && inputs.backend == 'openexr'
         run: |
@@ -164,7 +177,22 @@ jobs:
 
       - name: Package application (macOS)
         if: inputs.platform == 'macos' && inputs.cache_only != true
-        run: cargo packager --release
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "[macOS] Packaging attempt $attempt"
+            if cargo packager --release; then
+              exit 0
+            fi
+            echo "[macOS] cargo packager failed. Cleaning up and retrying..."
+            if [ -d "/Volumes/Playa" ]; then
+              hdiutil detach "/Volumes/Playa" -force || diskutil unmount force "/Volumes/Playa" || true
+            fi
+            sleep 5
+          done
+          echo "[macOS] cargo packager failed after 3 attempts" >&2
+          exit 1
 
       - name: Process Windows artifacts
         if: inputs.platform == 'windows' && inputs.cache_only != true

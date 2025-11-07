@@ -1,6 +1,7 @@
 # Playa - Image Sequence Player
 
 [![Release Status](https://github.com/ssoj13/playa/actions/workflows/main.yml/badge.svg)](https://github.com/ssoj13/playa/actions/workflows/main.yml)
+[![Warm Cache Status](https://github.com/ssoj13/playa/actions/workflows/warm-cache.yml/badge.svg)](https://github.com/ssoj13/playa/actions/workflows/warm-cache.yml)
 [![Release](https://img.shields.io/github/v/release/ssoj13/playa)](https://github.com/ssoj13/playa/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/ssoj13/playa/total)](https://github.com/ssoj13/playa/releases)
 [![License](https://img.shields.io/github/license/ssoj13/playa)](LICENSE)
@@ -8,6 +9,8 @@
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
 > **Experimental project**: Built to explore Rust's ecosystem and CI/CD patterns while building some cool tools. Production-ready where tested, rough edges expected elsewhere. Open source contributions welcome.
+
+Note on CI/CD (GitHub Actions): we now use a single workflow for both release and dev builds triggered by tags, and a smarter cache warmer. See “CI/CD Workflows” below.
 
 ![Screenshot](.github/screenshot.png)
 
@@ -202,6 +205,35 @@ cargo xtask pr v0.2.0
 git checkout main
 git pull
 cargo xtask tag-rel patch
+
+## CI/CD Workflows
+
+We use GitHub Actions with two key workflows:
+
+- `Release` (single unified workflow)
+  - Trigger: pushing a tag matching `v*` or manual run.
+  - Behavior:
+    - If the tag points to a commit contained in `main` → release path (publishes GitHub Release and uploads platform artifacts).
+    - If the tag is not on `main` → dev path (builds artifacts without publishing a Release).
+  - Manual run supports `build_type: auto | release | dev`.
+
+- `Warm Cache`
+  - Trigger: pushing a tag matching `v*` (i.e., around releases) or manual run.
+  - Gate: only executes automatically when the tag’s commit is on `main`.
+  - Cooldown: skips if a successful Warm Cache run happened within the last 12 hours.
+  - Manual run ignores cooldown (always runs) and doesn’t hit the API for history.
+
+macOS packaging stability
+- We added a pre‑packaging cleanup step that forcibly detaches a stale `/Volumes/Playa` mount and removes leftover `*.dmg` to avoid `hdiutil: create failed - Resource busy`.
+- Packaging now retries up to 3 times with a short delay and cleanup between attempts.
+
+Why one workflow for tags?
+- Cleaner UI (one run per tag), less duplication.
+- Same reusable platform build logic under the hood.
+
+Permissions
+- Unified workflow is configured with `contents: write` to allow publishing Releases on the release path.
+- If we decide to enforce least‑privilege, we can split jobs into `release-*` (write) and `dev-*` (read) with identical build steps.
 ```
 
 ### Cargo Features
