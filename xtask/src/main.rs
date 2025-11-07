@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::process::Command;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "xtask")]
