@@ -167,7 +167,15 @@ enum Commands {
     /// - Windows: *.exe, *.dll, *.msi
     /// - Linux:   *.so*
     /// - macOS:   *.dylib, *.so*
-    Wipe,
+    Wipe {
+        /// Verbose output (list scanned dirs and skipped files)
+        #[arg(short = 'v', long = "verbose")]
+        verbose: bool,
+
+        /// Dry run (show what would be removed without deleting)
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
 }
 
 fn main() {
@@ -201,7 +209,7 @@ fn run() -> Result<()> {
         Commands::TagRel { level, dry_run } => cmd_tag_rel(&level, dry_run),
         Commands::Pr { version } => cmd_pr(version.as_deref()),
         Commands::Deploy { install_dir } => cmd_deploy(install_dir.as_deref()),
-        Commands::Wipe => cmd_wipe(),
+        Commands::Wipe { verbose, dry_run } => cmd_wipe(verbose, dry_run),
     }
 }
 
@@ -342,8 +350,9 @@ fn cmd_verify(release: bool) -> Result<()> {
 }
 
 /// Command: cargo xtask wipe (non-recursive)
-fn cmd_wipe() -> Result<()> {
+fn cmd_wipe(verbose: bool, dry_run: bool) -> Result<()>  {
     println!("========================================");
+    if verbose { println!("[wipe] scanning target directories"); }
     println!("Wiping executables, shared libraries, and packager staging from ./target, ./target/release, ./target/debug (non-recursive)");
     println!("This removes platform-specific artifacts left by previous builds or cache restore.");
     println!("========================================");
@@ -358,8 +367,7 @@ fn cmd_wipe() -> Result<()> {
         target_root.join("debug/.cargo-packager"),
     ] {
         if d.exists() {
-            println!("  removing {}", d.display());
-            let _ = fs::remove_dir_all(&d);
+            if dry_run { println!("  would remove {}", d.display()); } else { println!("  removing {}", d.display()); let _ = fs::remove_dir_all(&d); }
         }
     }
 
@@ -396,9 +404,7 @@ fn cmd_wipe() -> Result<()> {
 
                 // Regular files
                 if ftype.is_file() && (is_installer || is_win_bin || is_unix_lib) {
-                    println!("  removing {}", path.display());
-                    let _ = fs::remove_file(&path);
-                    removed += 1;
+                    if dry_run { println!("  would remove {}", path.display()); } else { println!("  removing {}", path.display()); let _ = fs::remove_file(&path); } removed += 1;
                     continue;
                 }
 
