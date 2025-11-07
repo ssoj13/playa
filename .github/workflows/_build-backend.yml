@@ -144,37 +144,19 @@ jobs:
         run: cargo fetch
 
 
-      - name: Clean previous backend binaries (Windows)
-        if: inputs.backend == 'openexr' && inputs.platform == 'windows'
-        shell: pwsh
-        run: |
-          # Clean exrs backend binaries before building openexr
-          Remove-Item target/release/playa.exe -ErrorAction SilentlyContinue
-          Remove-Item target/release/*.dll -ErrorAction SilentlyContinue
-
-      - name: Clean previous backend binaries (Linux)
-        if: inputs.backend == 'openexr' && inputs.platform == 'linux'
-        run: |
-          # Clean exrs backend binaries before building openexr
-          rm -f target/release/playa
-          rm -f target/release/lib*.so*
-
-      - name: Clean previous backend binaries (macOS)
-        if: inputs.backend == 'openexr' && inputs.platform == 'macos'
-        run: |
-          # Clean exrs backend binaries before building openexr
-          rm -f target/release/playa
-          rm -f target/release/lib*.dylib
-
       - name: Build application
         run: cargo xtask build --release ${{ inputs.build_args }}
 
-      - name: Package application (Linux)
-        if: inputs.platform == 'linux' && inputs.cache_only != true
+      - name: Package application (Linux, openexr)
+        if: inputs.platform == 'linux' && inputs.cache_only != true && inputs.backend == 'openexr'
         run: |
-          # Set LD_LIBRARY_PATH so cargo-packager can find shared libraries
+          # Set LD_LIBRARY_PATH so cargo-packager can find shared libraries (OpenEXR backend)
           export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
           cargo packager --release
+
+      - name: Package application (Linux, exrs)
+        if: inputs.platform == 'linux' && inputs.cache_only != true && inputs.backend == 'exrs'
+        run: cargo packager --release
 
       - name: Package application (Windows)
         if: inputs.platform == 'windows' && inputs.cache_only != true
