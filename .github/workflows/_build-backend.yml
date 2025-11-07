@@ -121,6 +121,13 @@ jobs:
           choco install nsis -y
           Write-Host "NSIS installed"
 
+      - name: Install WiX Toolset (Windows for .msi installer)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          choco install wixtoolset -y
+          Write-Host "WiX Toolset installed"
+
       - name: Import Code Signing Certificate
         if: inputs.platform == 'macos' && env.APPLE_CERTIFICATE != ''
         env:
@@ -201,8 +208,12 @@ jobs:
           export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
           cargo packager --release
 
-      - name: Package application (Other platforms)
-        if: inputs.platform != 'linux' && inputs.cache_only != true
+      - name: Package application (Windows)
+        if: inputs.platform == 'windows' && inputs.cache_only != true
+        run: cargo packager --release --formats nsis,wix
+
+      - name: Package application (macOS)
+        if: inputs.platform == 'macos' && inputs.cache_only != true
         run: cargo packager --release
 
       - name: Process Windows artifacts
