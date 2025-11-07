@@ -111,58 +111,16 @@ pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result
         return Ok(());
     }
 
-    // Step 3: Get current branch
-    println!();
-    println!("[3/4] Detecting current branch...");
-
-    let output = Command::new("git")
-        .args(&["branch", "--show-current"])
-        .output()
-        .context("Failed to get current branch")?;
-
-    let current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    println!("Current branch: {}", current_branch);
-
-    // Step 4: Push current branch and tags
-    println!();
-    println!("[4/4] Pushing to {} branch and tags (triggers workflow)...", current_branch);
-
-    let status = Command::new("git")
-        .args(&["push", "origin", &current_branch])
-        .status()
-        .context("Failed to push current branch")?;
-
-    if !status.success() {
-        anyhow::bail!(
-            "Failed to push to {} branch. Exit code: {:?}",
-            current_branch,
-            status.code()
-        );
-    }
-
-    // Push tags (triggers build workflow)
-    println!("Pushing tags...");
-
-    let status = Command::new("git")
-        .args(&["push", "--tags"])
-        .status()
-        .context("Failed to push tags")?;
-
-    if !status.success() {
-        anyhow::bail!("Failed to push tags. Exit code: {:?}", status.code());
-    }
-
-    // Success message
+    // Success message (cargo-release handles pushing branch and tags by default)
     println!();
     println!("========================================");
-    println!("SUCCESS! Release tag pushed from {} branch", current_branch);
+    println!("SUCCESS! cargo-release executed (branch + tags handled by cargo-release)");
     println!("========================================");
     println!();
     println!("Next steps:");
     println!("1. Build workflow will run at: https://github.com/ssoj13/playa/actions");
     println!("2. Download and test the build artifacts (retained for 7 days)");
-    println!("3. If everything works, merge {} to main (manually or via PR)", current_branch);
-    println!("4. After merge to main, the release workflow will publish the release");
+    println!("3. Verify release artifacts and publish notes as needed");
     println!();
 
     Ok(())

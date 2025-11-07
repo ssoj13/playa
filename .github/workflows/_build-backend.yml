@@ -221,14 +221,12 @@ jobs:
         id: windows-artifacts
         shell: pwsh
         run: |
-          # Find and rename installer
-          $installer = Get-ChildItem -Path "target/release" -Filter "playa_*-setup.*" -File | Select-Object -First 1
-          if ($installer) {
-            $newName = $installer.Name -replace '(playa_[\d\.\-]+)', "`$1-${{ inputs.backend }}"
-            $newPath = Join-Path "target/release" $newName
-            Rename-Item -Path $installer.FullName -NewName $newName
-            echo "installer_path=$newPath" >> $env:GITHUB_OUTPUT
-          }
+          # Find installers produced by cargo-packager (no renaming)
+          $exe = Get-ChildItem -Path "target/release" -Filter "playa_*_x64-setup.exe" -File | Select-Object -First 1
+          if ($exe) { echo "installer_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT }
+
+          $msi = Get-ChildItem -Path "target/release" -Filter "playa_*_x64*.msi" -File | Select-Object -First 1
+          if ($msi) { echo "msi_path=$($msi.FullName)" >> $env:GITHUB_OUTPUT }
 
           # Create binstall ZIP
           New-Item -ItemType Directory -Force -Path "binstall" | Out-Null
@@ -295,6 +293,7 @@ jobs:
           name: windows-${{ inputs.backend }}
           path: |
             ${{ steps.windows-artifacts.outputs.installer_path }}
+            ${{ steps.windows-artifacts.outputs.msi_path }}
             ${{ steps.windows-artifacts.outputs.binstall_path }}
           if-no-files-found: error
           retention-days: 7
