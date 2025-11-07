@@ -76,16 +76,7 @@ jobs:
             target/
           key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Wipe target artifacts after cache restore
-        if: inputs.cache_only != true
-        run: cargo xtask wipe
-
-      - name: Install NSIS (Windows for .exe installer)
-        if: inputs.platform == 'windows'
-        shell: pwsh
-        run: |
-          choco install nsis -y
-          Write-Host "NSIS installed"
+      
 
       - name: Restore cargo-packager cache (Unix)
         if: inputs.platform != 'windows'
@@ -118,6 +109,17 @@ jobs:
       - name: Install cargo-packager (Unix)
         if: inputs.platform != 'windows' && steps.tools-cache-restore-unix.outputs.cache-hit != 'true'
         run: cargo packager --version || cargo install cargo-packager --version 0.11.7 --locked
+
+      - name: Wipe target artifacts after cache restore
+        if: inputs.cache_only != true
+        run: cargo xtask wipe
+
+      - name: Install NSIS (Windows for .exe installer)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          Write-Host "NSIS installed"
 
       - name: Import Code Signing Certificate
         if: inputs.platform == 'macos' && env.APPLE_CERTIFICATE != ''
