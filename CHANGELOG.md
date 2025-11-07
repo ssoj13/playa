@@ -1,3 +1,14 @@
+## [0.1.95] - 2025-11-07
+
+### 💼 Other
+
+- Add diagnostic messages for found/not-found installers and created ZIPs on all platforms
+- Add release summaries to  for Windows/Linux/macOS (list found/not-found assets)
+- Add 'wipe-wf' to delete all GitHub Actions workflow runs via gh; no flags; prints progress
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Fri 11/07/2025 -  0:10:22.11
 ## [0.1.94] - 2025-11-07
 
 ### 💼 Other
