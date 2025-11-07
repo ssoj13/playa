@@ -1,3 +1,10 @@
+## [0.1.87] - 2025-11-07
+
+### 💼 Other
+
+- Recompute AutoFit on image load; UI: render bottom panels before central viewport so Fit uses visible area and image isn’t hidden behind toolbars
+- Remove temporary disabled duplicate blocks after viewport (now rendered before viewport)
+- Remove explanatory comments around reordered panels
 ## [0.1.83] - 2025-11-06
 
 ### ⚙️ Miscellaneous Tasks
