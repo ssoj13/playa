@@ -394,8 +394,7 @@ impl eframe::App for PlayaApp {
             }
         }
 
-        // Controls panel BEFORE viewport to ensure visible area excludes toolbars
-        if !self.is_fullscreen {
+                if !self.is_fullscreen {
             let shader_changed = ui::render_controls(
                 ctx,
                 &mut self.player,
@@ -410,8 +409,7 @@ impl eframe::App for PlayaApp {
             }
         }
 
-        // Status bar BEFORE viewport so fit uses only visible height
-        if !self.is_fullscreen {
+                if !self.is_fullscreen {
             self.status_bar.render(
                 ctx,
                 self.frame.as_ref(),
@@ -439,42 +437,9 @@ impl eframe::App for PlayaApp {
             let _ = self.path_sender.send(path);
         }
 
-        /* CLEANUP: removed duplicate panel logic after viewport
-        // Update status bar from cache messages and handle detected sequences
-        if false {
-        let detected_sequences = self.status_bar.update(ctx);
-        let has_sequences = !detected_sequences.is_empty();
-
-        for seq in detected_sequences {
-            // Try to find existing sequence by pattern
-            let pattern = seq.pattern().to_string();
-
-            if let Some(idx) = self.find_sequence_by_pattern(&pattern) {
-                // UPDATE existing sequence
-                let old_len = self.player.cache.sequences()[idx].len();
-                let new_len = seq.len();
-
-                if old_len != new_len {
-                    info!("Updating sequence [{}]: {} → {} frames", idx, old_len, new_len);
-                    self.player.cache.update_sequence(idx, seq);
-                } else {
-                    debug!("Sequence [{}] unchanged, skipping update", idx);
-                }
-            } else {
-                // NEW sequence
-                info!("Adding new sequence: {} ({} frames)", seq.pattern(), seq.len());
-                self.player.cache.append_seq(seq);
-            }
-        }
-
-        // Trigger preload if sequences were added/updated
-        if has_sequences {
-            self.player.cache.signal_preload();
-        }
-        */
         
-        // (duplicate bottom panels removed)
-
+        
+        
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
             render_settings_window(ctx, &mut self.show_settings, &mut self.settings);
