@@ -1,3 +1,8 @@
+## [0.1.101] - 2025-11-07
+
+### 🐛 Bug Fixes
+
+- Check real cache existence instead of workflow runs
 ## [0.1.100] - 2025-11-07
 
 ### ⚙️ Miscellaneous Tasks
