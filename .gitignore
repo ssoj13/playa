@@ -5,9 +5,6 @@
 *.json
 temp_log.txt
 
-# Cargo
-Cargo.lock
-
 # IDE
 .vscode/
 .idea/
