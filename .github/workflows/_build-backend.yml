@@ -221,12 +221,25 @@ jobs:
         id: windows-artifacts
         shell: pwsh
         run: |
-          # Find installers produced by cargo-packager (no renaming)
+          # Find installers produced by cargo-packager
           $exe = Get-ChildItem -Path "target/release" -Filter "playa_*_x64-setup.exe" -File | Select-Object -First 1
-          if ($exe) { echo "installer_path=$($exe.FullName)" >> $env:GITHUB_OUTPUT }
-
           $msi = Get-ChildItem -Path "target/release" -Filter "playa_*_x64*.msi" -File | Select-Object -First 1
-          if ($msi) { echo "msi_path=$($msi.FullName)" >> $env:GITHUB_OUTPUT }
+
+          # Unified naming to match ZIP: playa-<backend>-x86_64-pc-windows-msvc.{exe,msi}
+          $unifiedExe = Join-Path "target/release" ("playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.exe")
+          $unifiedMsi = Join-Path "target/release" ("playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.msi")
+
+          if ($exe) {
+            if (Test-Path $unifiedExe) { Remove-Item $unifiedExe -Force }
+            Rename-Item -Path $exe.FullName -NewName (Split-Path $unifiedExe -Leaf)
+            echo "installer_path=$unifiedExe" >> $env:GITHUB_OUTPUT
+          }
+
+          if ($msi) {
+            if (Test-Path $unifiedMsi) { Remove-Item $unifiedMsi -Force }
+            Rename-Item -Path $msi.FullName -NewName (Split-Path $unifiedMsi -Leaf)
+            echo "msi_path=$unifiedMsi" >> $env:GITHUB_OUTPUT
+          }
 
           # Create binstall ZIP
           New-Item -ItemType Directory -Force -Path "binstall" | Out-Null
@@ -384,6 +397,7 @@ jobs:
         with:
           files: |
             ${{ steps.windows-artifacts.outputs.installer_path }}
+            ${{ steps.windows-artifacts.outputs.msi_path }}
             ${{ steps.windows-artifacts.outputs.binstall_path }}
           fail_on_unmatched_files: false
 
