@@ -253,20 +253,22 @@ jobs:
         if: inputs.platform == 'linux' && inputs.cache_only != true
         id: linux-artifacts
         run: |
-          # Find and rename AppImage
+          # Find AppImage and rename to unified name: playa-<backend>-x86_64-unknown-linux-gnu.AppImage
           appimage=$(find target/release -maxdepth 1 \( -name "*.AppImage" -o -name "*.appimage" \) 2>/dev/null | head -n 1)
           if [ -n "$appimage" ]; then
-            newname=$(echo "$appimage" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ inputs.backend }}/")
-            mv "$appimage" "$newname"
-            echo "appimage_path=$newname" >> $GITHUB_OUTPUT
+            unified="target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.AppImage"
+            rm -f "$unified"
+            mv "$appimage" "$unified"
+            echo "appimage_path=$unified" >> $GITHUB_OUTPUT
           fi
 
-          # Find and rename DEB
+          # Find DEB and rename to unified name: playa-<backend>-x86_64-unknown-linux-gnu.deb
           deb=$(find target/release -maxdepth 1 -name "*.deb" 2>/dev/null | head -n 1)
           if [ -n "$deb" ]; then
-            newname=$(echo "$deb" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ inputs.backend }}/")
-            mv "$deb" "$newname"
-            echo "deb_path=$newname" >> $GITHUB_OUTPUT
+            unified="target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.deb"
+            rm -f "$unified"
+            mv "$deb" "$unified"
+            echo "deb_path=$unified" >> $GITHUB_OUTPUT
           fi
 
           # Create binstall ZIP
@@ -282,12 +284,13 @@ jobs:
         if: inputs.platform == 'macos' && inputs.cache_only != true
         id: macos-artifacts
         run: |
-          # Find and rename DMG
+          # Find DMG and rename to unified name: playa-<backend>-aarch64-apple-darwin.dmg
           dmg=$(find target/release -maxdepth 1 -name "*.dmg" 2>/dev/null | head -n 1)
           if [ -n "$dmg" ]; then
-            newname=$(echo "$dmg" | sed "s/\(playa[_-][0-9.]\+\)/\1-${{ inputs.backend }}/")
-            mv "$dmg" "$newname"
-            echo "dmg_path=$newname" >> $GITHUB_OUTPUT
+            unified="target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.dmg"
+            rm -f "$unified"
+            mv "$dmg" "$unified"
+            echo "dmg_path=$unified" >> $GITHUB_OUTPUT
           fi
 
           # Create binstall ZIP
