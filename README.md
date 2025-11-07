@@ -59,11 +59,21 @@ Download the latest release for your platform from the [Releases page](https://g
   - Portable ZIPs: `playa-exrs-aarch64-apple-darwin.zip`, `playa-openexr-aarch64-apple-darwin.zip`
 
 **macOS Security Note:**
-Applications are code-signed with a Developer ID certificate. On first launch, you may see a security warning. To open the app:
-- **Right-click** (or Control-click) the app → Select **Open**
-- Or run: `xattr -d com.apple.quarantine /path/to/Playa.app`
 
-This is normal for apps downloaded from outside the App Store. The app is signed but not notarized.
+⚠️ **Current Status**: Applications are **code-signed** but **NOT notarized**.
+
+**What this means:**
+- ✅ Code-signed with Developer ID certificate (authenticity verified)
+- ❌ Not notarized by Apple (no malware scan completed)
+- ⚠️ macOS will show "Apple could not verify" warning
+
+**To open the app:**
+1. **Right-click** (or Control-click) the app → Select **Open**
+2. Or run: `xattr -d com.apple.quarantine /path/to/Playa.app`
+
+This is normal for apps downloaded from outside the App Store.
+
+**For Maintainers**: To enable notarization, configure GitHub secrets (see NOTARIZATION.md).
 
 **Which backend to choose?**
 - **exrs**: Faster installation, smaller size, pure Rust. Use if you don't need DWAA/DWAB compression.

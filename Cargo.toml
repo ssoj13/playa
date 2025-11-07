@@ -75,7 +75,24 @@ installer-mode = "perMachine"
 
 [package.metadata.packager.macos]
 # Code signing will use Developer ID certificate from keychain if available
-# Notarization disabled (requires additional setup with Apple ID + app-specific password)
+#
+# Notarization requires Apple credentials via environment variables:
+#
+# Method 1 (Recommended for CI/CD): App Store Connect API
+#   APPLE_API_KEY         - Your API Key ID (from App Store Connect)
+#   APPLE_API_ISSUER      - Your Issuer ID (from App Store Connect)
+#   APPLE_API_KEY_PATH    - Path to .p8 API key file
+#
+# Method 2: Apple ID credentials
+#   APPLE_ID              - Your Apple ID email
+#   APPLE_PASSWORD        - App-specific password (generate at appleid.apple.com)
+#   APPLE_TEAM_ID         - Your Team ID (if you belong to multiple teams)
+#
+# Optional (usually auto-detected):
+#   APPLE_SIGNING_IDENTITY      - Overrides signing identity
+#   APPLE_PROVIDER_SHORT_NAME   - Provider short name (for multiple teams)
+#
+# Setup instructions: See README.md or apple_cert.sh
 
 [package.metadata.release]
 # Customize the release commit message

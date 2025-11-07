@@ -43,6 +43,21 @@ on:
         required: false
       APPLE_CERTIFICATE_PASSWORD:
         required: false
+      # Notarization secrets (choose one method):
+      # Method 1: App Store Connect API (recommended)
+      APPLE_API_KEY:
+        required: false
+      APPLE_API_ISSUER:
+        required: false
+      APPLE_API_KEY_PATH:
+        required: false
+      # Method 2: Apple ID credentials
+      APPLE_ID:
+        required: false
+      APPLE_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
 
 jobs:
   build:
@@ -178,8 +193,28 @@ jobs:
       - name: Package application (macOS)
         if: inputs.platform == 'macos' && inputs.cache_only != true
         shell: bash
+        env:
+          # Notarization credentials (cargo-packager will use these if available)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
         run: |
           set -euo pipefail
+
+          # Log notarization configuration (without exposing secrets)
+          if [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ]; then
+            echo "[macOS] Notarization: Using App Store Connect API (Method 1)"
+          elif [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ]; then
+            echo "[macOS] Notarization: Using Apple ID credentials (Method 2)"
+          else
+            echo "[macOS] WARNING: No notarization credentials found!"
+            echo "[macOS] App will be code-signed but NOT notarized"
+            echo "[macOS] Users will see 'Apple could not verify' warning"
+          fi
+
           for attempt in 1 2 3; do
             echo "[macOS] Packaging attempt $attempt"
             if cargo packager --release; then

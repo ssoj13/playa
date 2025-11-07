@@ -35,6 +35,21 @@ on:
         required: false
       APPLE_CERTIFICATE_PASSWORD:
         required: false
+      # Notarization secrets (choose one method):
+      # Method 1: App Store Connect API (recommended)
+      APPLE_API_KEY:
+        required: false
+      APPLE_API_ISSUER:
+        required: false
+      APPLE_API_KEY_PATH:
+        required: false
+      # Method 2: Apple ID credentials
+      APPLE_ID:
+        required: false
+      APPLE_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
 
 jobs:
   build-openexr:
