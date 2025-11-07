@@ -1,3 +1,10 @@
+## [0.1.94] - 2025-11-07
+
+### 💼 Other
+
+- Unify Linux (.AppImage/.deb) and macOS (.dmg) artifact names to playa-<backend>-<triple>.<ext>; keep Windows unified as well
+- Group platform installs at top; remove duplicate old-installer cleanup; keep wipe once after cache restore; drop separate NSIS/WiX install steps
+- Remove 'Clean previous backend binaries' steps; make Linux packaging conditional (LD_LIBRARY_PATH only for openexr, exrs without it)
 ## [0.1.91] - 2025-11-07
 
 ### ⚙️ Miscellaneous Tasks
