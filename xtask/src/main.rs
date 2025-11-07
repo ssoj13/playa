@@ -3,7 +3,7 @@ mod post_build;
 mod pre_build;
 mod release;
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use clap::{Parser, Subcommand};
 use std::process::Command;
 use std::fs;
@@ -176,6 +176,13 @@ enum Commands {
         #[arg(long = "dry-run")]
         dry_run: bool,
     },
+
+    /// Delete all GitHub Actions workflow runs for this repository (uses gh CLI)
+    ///
+    /// Usage:
+    ///   cargo xtask wipe-wf
+    #[clap(name = "wipe-wf")]
+    WipeWf,
 }
 
 fn main() {
@@ -210,6 +217,7 @@ fn run() -> Result<()> {
         Commands::Pr { version } => cmd_pr(version.as_deref()),
         Commands::Deploy { install_dir } => cmd_deploy(install_dir.as_deref()),
         Commands::Wipe { verbose, dry_run } => cmd_wipe(verbose, dry_run),
+        Commands::WipeWf => cmd_wipe_wf(),
     }
 }
 
@@ -423,6 +431,44 @@ fn cmd_wipe(verbose: bool, dry_run: bool) -> Result<()>  {
     println!();
     println!("Removed {} file(s)", removed);
     println!("Done.");
+    Ok(())
+}
+
+/// Command: cargo xtask wipe-wf
+/// Deletes all workflow runs via GitHub CLI (gh)
+fn cmd_wipe_wf() -> Result<()> {
+    println!("========================================");
+    println!("Deleting all GitHub Actions workflow runs (via gh)");
+    println!("========================================");
+    println!();
+
+    // Ensure gh is available
+    let gh_ok = Command::new("gh").arg("--version").output().is_ok();
+    if !gh_ok {
+        anyhow::bail!("'gh' CLI not found. Please install GitHub CLI and authenticate (gh auth login)");
+    }
+
+    // List runs (IDs only) and delete each
+    let out = Command::new("gh")
+        .args(["run", "list", "--limit", "1000", "--json", "databaseId", "--jq", ".[].databaseId"]) // up to 1000
+        .output()
+        .context("Failed to list workflow runs via 'gh run list'")?;
+    if !out.status.success() {
+        anyhow::bail!("gh run list failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut total = 0usize;
+    for line in stdout.lines() {
+        let id = line.trim();
+        if id.is_empty() { continue; }
+        total += 1;
+        let status = Command::new("gh")
+            .args(["run", "delete", id, "--confirm"]).status()
+            .with_context(|| format!("Failed to delete run #{id}"))?;
+        if status.success() { println!("Deleted run #{id}"); } else { println!("Failed to delete run #{id}"); }
+    }
+    println!("Done. Deleted {} run(s)", total);
     Ok(())
 }
 
