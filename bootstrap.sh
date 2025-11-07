@@ -6,7 +6,9 @@
 #   ./bootstrap.sh                    # Show xtask help
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
-#   ./bootstrap.sh wipe               # Remove stale *.dll / *.so* / *.dylib from ./target
+#   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
+#   ./bootstrap.sh wipe -v            # Verbose output
+#   ./bootstrap.sh wipe --dry-run     # Show what would be removed
 
 set -e
 
