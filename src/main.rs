@@ -439,6 +439,7 @@ impl eframe::App for PlayaApp {
             let _ = self.path_sender.send(path);
         }
 
+        /* CLEANUP: removed duplicate panel logic after viewport
         // Update status bar from cache messages and handle detected sequences
         if false {
         let detected_sequences = self.status_bar.update(ctx);
@@ -470,36 +471,9 @@ impl eframe::App for PlayaApp {
         if has_sequences {
             self.player.cache.signal_preload();
         }
-        }
-
-        // Status bar (hidden in cinema mode)
-        if false && !self.is_fullscreen {
-            self.status_bar.render(
-                ctx,
-                self.frame.as_ref(),
-                &self.player,
-                &self.viewport_state,
-                self.last_render_time_ms,
-            );
-        }
-
-        // Controls panel (hidden in cinema mode)
-        if false && !self.is_fullscreen {
-            let shader_changed = ui::render_controls(
-                ctx,
-                &mut self.player,
-                &mut self.shader_manager,
-                &mut self.cached_seq_ranges,
-                &mut self.last_seq_version,
-            );
-
-            // If shader changed during this frame, update the renderer
-            if shader_changed {
-                let mut renderer = self.viewport_renderer.lock().unwrap();
-                renderer.update_shader(&self.shader_manager);
-                log::info!("Shader changed to: {}", self.shader_manager.current_shader);
-            }
-        }
+        */
+        
+        // (duplicate bottom panels removed)
 
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
