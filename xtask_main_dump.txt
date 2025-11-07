@@ -6,8 +6,6 @@ mod release;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::process::Command;
-use std::fs;
-use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "xtask")]
@@ -160,14 +158,6 @@ enum Commands {
         #[arg(long)]
         install_dir: Option<String>,
     },
-
-    /// Remove executables and shared libraries from ./target (non-recursive)
-    ///
-    /// Cleans platform-specific artifacts so exrs packaging doesn't pick up stale files:
-    /// - Windows: *.exe, *.dll, *.msi
-    /// - Linux:   *.so*
-    /// - macOS:   *.dylib, *.so*
-    Wipe,
 }
 
 fn main() {
@@ -201,7 +191,6 @@ fn run() -> Result<()> {
         Commands::TagRel { level, dry_run } => cmd_tag_rel(&level, dry_run),
         Commands::Pr { version } => cmd_pr(version.as_deref()),
         Commands::Deploy { install_dir } => cmd_deploy(install_dir.as_deref()),
-        Commands::Wipe => cmd_wipe(),
     }
 }
 
@@ -338,58 +327,6 @@ fn cmd_verify(release: bool) -> Result<()> {
     println!("All dependencies verified successfully!");
     println!("========================================");
 
-    Ok(())
-}
-
-/// Command: cargo xtask wipe (non-recursive)
-fn cmd_wipe() -> Result<()> {
-    println!("========================================");
-    println!("Wiping executables and shared libraries from ./target (non-recursive)");
-    println!("This removes platform-specific artifacts left by previous builds or cache restore.");
-    println!("========================================");
-    println!();
-
-    let target_root = PathBuf::from("target");
-    if !target_root.exists() {
-        println!("target/ directory not found. Nothing to clean.");
-        return Ok(());
-    }
-
-    let mut removed = 0usize;
-
-    let entries = match fs::read_dir(&target_root) {
-        Ok(it) => it,
-        Err(e) => {
-            println!("Failed to read {}: {}", target_root.display(), e);
-            return Ok(());
-        }
-    };
-
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if !path.is_file() { continue; }
-            let name_lc = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_ascii_lowercase())
-                .unwrap_or_default();
-
-            let is_installer = name_lc.ends_with(".msi") || (name_lc.ends_with(".exe") && name_lc.contains("setup"));
-            let is_win_bin = name_lc.ends_with(".exe") || name_lc.ends_with(".dll");
-            let is_unix_lib = name_lc.contains(".so") || name_lc.ends_with(".dylib");
-
-            if is_installer || is_win_bin || is_unix_lib {
-                println!("  removing {}", path.display());
-                let _ = fs::remove_file(&path);
-                removed += 1;
-            }
-        }
-    }
-
-    println!();
-    println!("Removed {} file(s)", removed);
-    println!("Done.");
     Ok(())
 }
 
@@ -665,3 +602,4 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
 
     Ok(())
 }
+
