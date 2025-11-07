@@ -76,6 +76,17 @@ jobs:
             target/
           key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Wipe target artifacts after cache restore
+        if: inputs.cache_only != true
+        run: cargo xtask wipe
+
+      - name: Install NSIS (Windows for .exe installer)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          Write-Host "NSIS installed"
+
       - name: Restore cargo-packager cache (Unix)
         if: inputs.platform != 'windows'
         id: tools-cache-restore-unix

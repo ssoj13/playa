@@ -6,6 +6,7 @@
 ::   bootstrap.cmd                    # Show xtask help
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
+::   bootstrap.cmd wipe               # Remove stale *.exe/*.dll/*.msi, *.so*, *.dylib from .\target
 
 setlocal enabledelayedexpansion
 

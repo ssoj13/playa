@@ -146,6 +146,7 @@ cargo xtask build [--release] [--openexr]  # Full build (default: exrs, --openex
 cargo xtask post [--release]               # Copy native libraries and shaders (OpenEXR only)
 cargo xtask verify [--release]             # Verify all dependencies present
 cargo xtask deploy [--install-dir]         # Install to system (local testing)
+cargo xtask wipe                           # Clean ./target from stale platform binaries (non-recursive)
 
 # Release management
 cargo xtask tag-dev [level]        # Create dev tag (v0.1.x-dev), trigger Build workflow
