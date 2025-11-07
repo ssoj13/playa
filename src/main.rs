@@ -347,6 +347,31 @@ impl eframe::App for PlayaApp {
             self.displayed_frame = Some(self.player.current_frame());
         }
 
+        // Update status messages and handle detected sequences BEFORE laying out panels
+        let detected_sequences = self.status_bar.update(ctx);
+        let has_sequences = !detected_sequences.is_empty();
+
+        for seq in detected_sequences {
+            let pattern = seq.pattern().to_string();
+            if let Some(idx) = self.find_sequence_by_pattern(&pattern) {
+                let old_len = self.player.cache.sequences()[idx].len();
+                let new_len = seq.len();
+                if old_len != new_len {
+                    info!("Updating sequence [{}]: {} → {} frames", idx, old_len, new_len);
+                    self.player.cache.update_sequence(idx, seq);
+                } else {
+                    debug!("Sequence [{}] unchanged, skipping update", idx);
+                }
+            } else {
+                info!("Adding new sequence: {} ({} frames)", seq.pattern(), seq.len());
+                self.player.cache.append_seq(seq);
+            }
+        }
+
+        if has_sequences {
+            self.player.cache.signal_preload();
+        }
+
         // Playlist panel on the right (hidden in cinema mode or when toggled off)
         if !self.is_fullscreen && self.show_playlist {
             let playlist_actions = ui::render_playlist(ctx, &mut self.player);
@@ -369,6 +394,33 @@ impl eframe::App for PlayaApp {
             }
         }
 
+        // Controls panel BEFORE viewport to ensure visible area excludes toolbars
+        if !self.is_fullscreen {
+            let shader_changed = ui::render_controls(
+                ctx,
+                &mut self.player,
+                &mut self.shader_manager,
+                &mut self.cached_seq_ranges,
+                &mut self.last_seq_version,
+            );
+            if shader_changed {
+                let mut renderer = self.viewport_renderer.lock().unwrap();
+                renderer.update_shader(&self.shader_manager);
+                log::info!("Shader changed to: {}", self.shader_manager.current_shader);
+            }
+        }
+
+        // Status bar BEFORE viewport so fit uses only visible height
+        if !self.is_fullscreen {
+            self.status_bar.render(
+                ctx,
+                self.frame.as_ref(),
+                &self.player,
+                &self.viewport_state,
+                self.last_render_time_ms,
+            );
+        }
+
         // Render viewport (central panel)
         let (viewport_actions, render_time) = ui::render_viewport(
             ctx,
@@ -388,6 +440,7 @@ impl eframe::App for PlayaApp {
         }
 
         // Update status bar from cache messages and handle detected sequences
+        if false {
         let detected_sequences = self.status_bar.update(ctx);
         let has_sequences = !detected_sequences.is_empty();
 
@@ -417,9 +470,10 @@ impl eframe::App for PlayaApp {
         if has_sequences {
             self.player.cache.signal_preload();
         }
+        }
 
         // Status bar (hidden in cinema mode)
-        if !self.is_fullscreen {
+        if false && !self.is_fullscreen {
             self.status_bar.render(
                 ctx,
                 self.frame.as_ref(),
@@ -430,7 +484,7 @@ impl eframe::App for PlayaApp {
         }
 
         // Controls panel (hidden in cinema mode)
-        if !self.is_fullscreen {
+        if false && !self.is_fullscreen {
             let shader_changed = ui::render_controls(
                 ctx,
                 &mut self.player,

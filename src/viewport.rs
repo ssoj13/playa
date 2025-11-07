@@ -66,6 +66,10 @@ impl ViewportState {
     /// Update image size (called when new image loads)
     pub fn set_image_size(&mut self, size: egui::Vec2) {
         self.image_size = size;
+        // If we're in AutoFit, recompute fit when image size changes
+        if self.mode == ViewportMode::AutoFit {
+            self.apply_fit();
+        }
     }
 
     /// Set AutoFit mode and apply fit
