@@ -175,9 +175,10 @@ jobs:
           $exe = Get-ChildItem -Path "target/release" -Filter "playa_*_x64-setup.exe" -File | Select-Object -First 1
           $msi = Get-ChildItem -Path "target/release" -Filter "playa_*_x64*.msi" -File | Select-Object -First 1
 
-          # Unified naming to match ZIP: playa-<backend>-x86_64-pc-windows-msvc.{exe,msi}
-          $unifiedExe = Join-Path "target/release" ("playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.exe")
-          $unifiedMsi = Join-Path "target/release" ("playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.msi")
+          # Unified naming to match ZIP (use forward slashes for release uploader):
+          # playa-<backend>-x86_64-pc-windows-msvc.{exe,msi}
+          $unifiedExe = "target/release/playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.exe"
+          $unifiedMsi = "target/release/playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.msi"
 
           if ($exe) {
             if (Test-Path $unifiedExe) { Remove-Item $unifiedExe -Force }

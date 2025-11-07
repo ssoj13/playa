@@ -147,6 +147,7 @@ cargo xtask post [--release]               # Copy native libraries and shaders (
 cargo xtask verify [--release]             # Verify all dependencies present
 cargo xtask deploy [--install-dir]         # Install to system (local testing)
 cargo xtask wipe                           # Clean ./target from stale platform binaries (non-recursive)
+cargo xtask wipe-wf                        # Delete ALL GitHub Actions runs via gh (parallel, with progress)
 
 # Release management
 cargo xtask tag-dev [level]        # Create dev tag (v0.1.x-dev), trigger Build workflow
@@ -848,3 +849,14 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 See [CHANGELOG.md](CHANGELOG.md) for project history.
 
+
+### Cleaning & CI Utilities
+
+- `cargo xtask wipe` (supports `-v`, `--dry-run`):
+  - Non-recursively removes executables and shared libraries from `./target`, `./target/release`, and `./target/debug`.
+  - Also removes packager staging directories: `target/.cargo-packager`, `target/release/.cargo-packager`, `target/debug/.cargo-packager`.
+  - Does not touch user caches (e.g., `~/.cargo`, `%LOCALAPPDATA%`).
+
+- `cargo xtask wipe-wf`:
+  - Deletes ALL GitHub Actions workflow runs for this repository using `gh api`.
+  - Runs deletions in parallel with a progress bar and prints final stats (deleted/failed).

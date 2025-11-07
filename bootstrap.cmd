@@ -9,6 +9,7 @@
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
 ::   bootstrap.cmd wipe -v            # Verbose output
 ::   bootstrap.cmd wipe --dry-run     # Show what would be removed
+::   bootstrap.cmd wipe-wf            # Delete all GitHub Actions workflow runs for this repo
 
 setlocal enabledelayedexpansion
 

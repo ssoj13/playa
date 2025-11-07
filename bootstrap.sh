@@ -9,6 +9,7 @@
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
 #   ./bootstrap.sh wipe -v            # Verbose output
 #   ./bootstrap.sh wipe --dry-run     # Show what would be removed
+#   ./bootstrap.sh wipe-wf            # Delete all GitHub Actions workflow runs for this repo
 
 set -e
 
