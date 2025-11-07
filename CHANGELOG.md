@@ -1,3 +1,8 @@
+## [0.1.89] - 2025-11-07
+
+### 💼 Other
+
+- Move 'cargo xtask wipe' step after both cache restores (target + cargo-packager) to avoid confusion; keep NSIS install adjacent
 ## [0.1.88] - 2025-11-07
 
 ### 💼 Other
