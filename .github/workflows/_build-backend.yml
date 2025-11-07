@@ -183,12 +183,18 @@ jobs:
             if (Test-Path $unifiedExe) { Remove-Item $unifiedExe -Force }
             Rename-Item -Path $exe.FullName -NewName (Split-Path $unifiedExe -Leaf)
             echo "installer_path=$unifiedExe" >> $env:GITHUB_OUTPUT
+            Write-Host "[diagnostic] Windows EXE installer found and unified:" (Split-Path $unifiedExe -Leaf)
+          } else {
+            Write-Host "[diagnostic] No Windows EXE installer found in target/release"
           }
 
           if ($msi) {
             if (Test-Path $unifiedMsi) { Remove-Item $unifiedMsi -Force }
             Rename-Item -Path $msi.FullName -NewName (Split-Path $unifiedMsi -Leaf)
             echo "msi_path=$unifiedMsi" >> $env:GITHUB_OUTPUT
+            Write-Host "[diagnostic] Windows MSI installer found and unified:" (Split-Path $unifiedMsi -Leaf)
+          } else {
+            Write-Host "[diagnostic] No Windows MSI installer found in target/release"
           }
 
           # Create binstall ZIP
@@ -198,6 +204,7 @@ jobs:
           $zipName = "playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.zip"
           Compress-Archive -Path "binstall/*" -DestinationPath "target/release/$zipName" -Force
           echo "binstall_path=target/release/$zipName" >> $env:GITHUB_OUTPUT
+          Write-Host "[diagnostic] Windows binstall ZIP created:" $zipName
 
       - name: Process Linux artifacts
         if: inputs.platform == 'linux' && inputs.cache_only != true
@@ -210,6 +217,9 @@ jobs:
             rm -f "$unified"
             mv "$appimage" "$unified"
             echo "appimage_path=$unified" >> $GITHUB_OUTPUT
+            echo "[diagnostic] Linux AppImage found and unified: $(basename "$unified")"
+          else
+            echo "[diagnostic] No Linux AppImage found in target/release"
           fi
 
           # Find DEB and rename to unified name: playa-<backend>-x86_64-unknown-linux-gnu.deb
@@ -219,6 +229,9 @@ jobs:
             rm -f "$unified"
             mv "$deb" "$unified"
             echo "deb_path=$unified" >> $GITHUB_OUTPUT
+            echo "[diagnostic] Linux DEB found and unified: $(basename "$unified")"
+          else
+            echo "[diagnostic] No Linux DEB found in target/release"
           fi
 
           # Create binstall ZIP
@@ -229,6 +242,7 @@ jobs:
           zip -ry ../target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip *
           cd ..
           echo "binstall_path=target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip" >> $GITHUB_OUTPUT
+          echo "[diagnostic] Linux binstall ZIP created: playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip"
 
       - name: Process macOS artifacts
         if: inputs.platform == 'macos' && inputs.cache_only != true
@@ -241,6 +255,9 @@ jobs:
             rm -f "$unified"
             mv "$dmg" "$unified"
             echo "dmg_path=$unified" >> $GITHUB_OUTPUT
+            echo "[diagnostic] macOS DMG found and unified: $(basename "$unified")"
+          else
+            echo "[diagnostic] No macOS DMG found in target/release"
           fi
 
           # Create binstall ZIP
@@ -251,6 +268,7 @@ jobs:
           zip -ry ../target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.zip *
           cd ..
           echo "binstall_path=target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.zip" >> $GITHUB_OUTPUT
+          echo "[diagnostic] macOS binstall ZIP created: playa-${{ inputs.backend }}-aarch64-apple-darwin.zip"
 
       - name: Upload Windows artifacts
         if: inputs.platform == 'windows' && inputs.cache_only != true
