@@ -61,6 +61,14 @@ jobs:
         if: inputs.platform == 'macos'
         run: brew install cmake
 
+      - name: Install Windows dependencies
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          choco install wixtoolset -y
+          Write-Host "Windows dependencies installed"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
@@ -75,8 +83,6 @@ jobs:
             ~/.cargo/git/
             target/
           key: ${{ inputs.cache_key_prefix }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock') }}
-
-      
 
       - name: Restore cargo-packager cache (Unix)
         if: inputs.platform != 'windows'
@@ -114,20 +120,6 @@ jobs:
         if: inputs.cache_only != true
         run: cargo xtask wipe
 
-      - name: Install NSIS (Windows for .exe installer)
-        if: inputs.platform == 'windows'
-        shell: pwsh
-        run: |
-          choco install nsis -y
-          Write-Host "NSIS installed"
-
-      - name: Install WiX Toolset (Windows for .msi installer)
-        if: inputs.platform == 'windows'
-        shell: pwsh
-        run: |
-          choco install wixtoolset -y
-          Write-Host "WiX Toolset installed"
-
       - name: Import Code Signing Certificate
         if: inputs.platform == 'macos' && env.APPLE_CERTIFICATE != ''
         env:
@@ -151,30 +143,6 @@ jobs:
       - name: Fetch dependencies
         run: cargo fetch
 
-      - name: Clean old installers (Windows)
-        if: inputs.platform == 'windows'
-        shell: pwsh
-        run: |
-          # Remove old installer artifacts from cache to prevent version mismatch
-          # Keep playa.exe binary, only remove installer packages
-          Remove-Item target/release/playa_*-setup.* -ErrorAction SilentlyContinue
-          Remove-Item target/release/*.msi -ErrorAction SilentlyContinue
-
-      - name: Clean old installers (Linux)
-        if: inputs.platform == 'linux'
-        run: |
-          # Remove old installer artifacts from cache to prevent version mismatch
-          rm -f target/release/*.AppImage target/release/*.deb
-
-      - name: Clean old installers (macOS)
-        if: inputs.platform == 'macos'
-        run: |
-          # Unmount any existing DMG volumes
-          hdiutil detach /Volumes/Playa 2>/dev/null || true
-          # Remove old DMG artifacts from cache
-          rm -f target/release/*.dmg
-          rm -rf target/release/.cargo-packager/dmg
-          rm -rf ~/Library/Caches/.cargo-packager/DMG
 
       - name: Clean previous backend binaries (Windows)
         if: inputs.backend == 'openexr' && inputs.platform == 'windows'
