@@ -60,18 +60,8 @@ jobs:
     with:
       runner: windows-latest
       platform: windows
-      branch_condition: ${{
-        (github.event_name == 'workflow_dispatch' && (
-          inputs.build_type == 'release' ||
-          (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true')
-        )) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')
-      }}
-      should_release: ${{
-        (github.event_name == 'workflow_dispatch' && (
-          inputs.build_type == 'release' ||
-          (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true')
-        )) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')
-      }}
+      branch_condition: ${{ (((github.event_name == 'workflow_dispatch') && (inputs.build_type == 'release' || (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true'))) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')) && 'true' || 'false' }}
+      should_release: ${{ (github.event_name == 'workflow_dispatch' && (inputs.build_type == 'release' || (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true'))) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true') }}
     secrets: inherit
 
   build-linux:
@@ -80,18 +70,8 @@ jobs:
     with:
       runner: ubuntu-latest
       platform: linux
-      branch_condition: ${{
-        (github.event_name == 'workflow_dispatch' && (
-          inputs.build_type == 'release' ||
-          (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true')
-        )) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')
-      }}
-      should_release: ${{
-        (github.event_name == 'workflow_dispatch' && (
-          inputs.build_type == 'release' ||
-          (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true')
-        )) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')
-      }}
+      branch_condition: ${{ (((github.event_name == 'workflow_dispatch') && (inputs.build_type == 'release' || (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true'))) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')) && 'true' || 'false' }}
+      should_release: ${{ (github.event_name == 'workflow_dispatch' && (inputs.build_type == 'release' || (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true'))) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true') }}
     secrets: inherit
 
   build-macos:
@@ -100,17 +80,6 @@ jobs:
     with:
       runner: macos-latest
       platform: macos
-      branch_condition: ${{
-        (github.event_name == 'workflow_dispatch' && (
-          inputs.build_type == 'release' ||
-          (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true')
-        )) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')
-      }}
-      should_release: ${{
-        (github.event_name == 'workflow_dispatch' && (
-          inputs.build_type == 'release' ||
-          (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true')
-        )) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')
-      }}
+      branch_condition: ${{ (((github.event_name == 'workflow_dispatch') && (inputs.build_type == 'release' || (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true'))) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true')) && 'true' || 'false' }}
+      should_release: ${{ (github.event_name == 'workflow_dispatch' && (inputs.build_type == 'release' || (inputs.build_type == 'auto' && needs.check-branch.outputs.on-main == 'true'))) || (github.event_name != 'workflow_dispatch' && needs.check-branch.outputs.on-main == 'true') }}
     secrets: inherit
-

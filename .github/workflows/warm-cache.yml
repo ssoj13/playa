@@ -2,9 +2,8 @@ name: Warm Cache
 
 on:
   push:
-    branches:
-      - main
-      - dev
+    tags:
+      - 'v*'  # only on release-like tags
   workflow_dispatch:
     inputs:
       backends:
@@ -19,7 +18,35 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
+  check-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      on-main: ${{ steps.check.outputs.on-main }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check if tag is on main branch
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/*:refs/remotes/origin/*
+          TAG_SHA="${GITHUB_SHA}"
+          if git rev-parse --verify origin/main >/dev/null 2>&1; then
+            if git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+              echo "on-main=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "on-main=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "on-main=false" >> "$GITHUB_OUTPUT"
+          fi
+
   warm:
+    needs: check-branch
+    if: needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       matrix:
         include:
