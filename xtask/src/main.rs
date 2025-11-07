@@ -344,12 +344,25 @@ fn cmd_verify(release: bool) -> Result<()> {
 /// Command: cargo xtask wipe (non-recursive)
 fn cmd_wipe() -> Result<()> {
     println!("========================================");
-    println!("Wiping executables and shared libraries from ./target, ./target/release, ./target/debug (non-recursive)");
+    println!("Wiping executables, shared libraries, and packager staging from ./target, ./target/release, ./target/debug (non-recursive)");
     println!("This removes platform-specific artifacts left by previous builds or cache restore.");
     println!("========================================");
     println!();
 
     let target_root = PathBuf::from("target");
+
+    // Always clean packager staging directories if present
+    for d in [
+        target_root.join(".cargo-packager"),
+        target_root.join("release/.cargo-packager"),
+        target_root.join("debug/.cargo-packager"),
+    ] {
+        if d.exists() {
+            println!("  removing {}", d.display());
+            let _ = fs::remove_dir_all(&d);
+        }
+    }
+
     let dirs = [
         target_root.clone(),
         target_root.join("release"),
@@ -367,17 +380,35 @@ fn cmd_wipe() -> Result<()> {
         for entry in entries {
             if let Ok(entry) = entry {
                 let path = entry.path();
-                if !path.is_file() { continue; }
+                let meta = match fs::symlink_metadata(&path) { Ok(m) => m, Err(_) => continue };
+                let ftype = meta.file_type();
+                if !(ftype.is_file() || ftype.is_symlink()) { continue; }
+
                 let name_lc = path.file_name().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
                 let stem_lc = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+
+                // Never remove our own helper binary
                 if stem_lc == "xtask" { continue; }
+
                 let is_installer = name_lc.ends_with(".msi") || (name_lc.ends_with(".exe") && name_lc.contains("setup"));
                 let is_win_bin = name_lc.ends_with(".exe") || name_lc.ends_with(".dll");
                 let is_unix_lib = name_lc.contains(".so") || name_lc.ends_with(".dylib");
-                if is_installer || is_win_bin || is_unix_lib {
+
+                // Regular files
+                if ftype.is_file() && (is_installer || is_win_bin || is_unix_lib) {
                     println!("  removing {}", path.display());
                     let _ = fs::remove_file(&path);
                     removed += 1;
+                    continue;
+                }
+
+                // Symlinks to shared libs
+                #[cfg(unix)]
+                if ftype.is_symlink() && is_unix_lib {
+                    println!("  removing symlink {}", path.display());
+                    let _ = fs::remove_file(&path);
+                    removed += 1;
+                    continue;
                 }
             }
         }
