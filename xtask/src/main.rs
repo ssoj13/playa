@@ -369,6 +369,8 @@ fn cmd_wipe() -> Result<()> {
                 let path = entry.path();
                 if !path.is_file() { continue; }
                 let name_lc = path.file_name().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+                let stem_lc = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+                if stem_lc == "xtask" { continue; }
                 let is_installer = name_lc.ends_with(".msi") || (name_lc.ends_with(".exe") && name_lc.contains("setup"));
                 let is_win_bin = name_lc.ends_with(".exe") || name_lc.ends_with(".dll");
                 let is_unix_lib = name_lc.contains(".so") || name_lc.ends_with(".dylib");
