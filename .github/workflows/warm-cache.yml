@@ -1,0 +1,138 @@
+name: Warm Cache
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      backends:
+        description: 'Which backends to warm (openexr|exrs|both)'
+        required: false
+        default: 'openexr'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  check-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      on-main: ${{ steps.check.outputs.on-main }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check if tag is on main branch
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/*:refs/remotes/origin/*
+          TAG_SHA="${GITHUB_SHA}"
+          if git rev-parse --verify origin/main >/dev/null 2>&1; then
+            if git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+              echo "on-main=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "on-main=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "on-main=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  warm:
+    needs: [check-branch, decide]
+    if: (needs.check-branch.outputs.on-main == 'true' || github.event_name == 'workflow_dispatch') && (github.event_name == 'workflow_dispatch' || needs.decide.outputs.should_run == 'true')
+    strategy:
+      matrix:
+        include:
+          - platform: windows
+            runner: windows-latest
+          - platform: linux
+            runner: ubuntu-latest
+          - platform: macos
+            runner: macos-latest
+    uses: ./.github/workflows/_build-platform.yml
+    with:
+      runner: ${{ matrix.runner }}
+      platform: ${{ matrix.platform }}
+      branch_condition: 'true'
+      should_release: false
+      cache_only: true
+      backends: ${{ github.event_name == 'workflow_dispatch' && inputs.backends || 'openexr' }}
+    secrets: inherit
+
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+    steps:
+      - name: Check cache existence and age (12h threshold)
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'workflow_dispatch') {
+              core.info('Manual run detected: skipping cache check.');
+              core.setOutput('should_run', 'true');
+              return;
+            }
+
+            const THRESHOLD_MS = 12 * 60 * 60 * 1000; // 12 hours
+            const { owner, repo } = context.repo;
+
+            // Check caches for all platforms
+            const platforms = [
+              { name: 'windows', prefix: 'playa-windows-v1' },
+              { name: 'linux', prefix: 'playa-linux-v1' },
+              { name: 'macos', prefix: 'playa-macos-v1' }
+            ];
+
+            let shouldRun = false;
+            const now = Date.now();
+
+            for (const platform of platforms) {
+              core.info(`Checking ${platform.name} cache (prefix: ${platform.prefix})...`);
+
+              try {
+                const caches = await github.rest.actions.getActionsCacheList({
+                  owner,
+                  repo,
+                  key: platform.prefix,
+                  per_page: 1,
+                  sort: 'created_at',
+                  direction: 'desc'
+                });
+
+                if (caches.data.actions_caches.length === 0) {
+                  core.info(`  ❌ No cache found for ${platform.name}`);
+                  shouldRun = true;
+                  continue;
+                }
+
+                const cache = caches.data.actions_caches[0];
+                const createdAt = new Date(cache.created_at).getTime();
+                const ageMs = now - createdAt;
+                const ageHours = (ageMs / (60 * 60 * 1000)).toFixed(1);
+
+                core.info(`  ✓ Cache found: ${cache.key}`);
+                core.info(`    Age: ${ageHours}h (threshold: 12h)`);
+                core.info(`    Size: ${(cache.size_in_bytes / 1024 / 1024).toFixed(1)} MB`);
+
+                if (ageMs > THRESHOLD_MS) {
+                  core.info(`    → Cache is stale, needs refresh`);
+                  shouldRun = true;
+                }
+              } catch (error) {
+                core.warning(`  ⚠️ Error checking ${platform.name} cache: ${error.message}`);
+                shouldRun = true;
+              }
+            }
+
+            core.info(`\nDecision: should_run = ${shouldRun}`);
+            core.setOutput('should_run', shouldRun.toString());

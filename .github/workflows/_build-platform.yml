@@ -1,0 +1,81 @@
+name: Build Platform
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+        description: 'GitHub runner (windows-latest/ubuntu-latest/macos-latest)'
+      platform:
+        type: string
+        required: true
+        description: 'Platform name (windows/linux/macos)'
+      branch_condition:
+        type: string
+        required: true
+        description: 'Branch check result (true/false string)'
+      should_release:
+        type: boolean
+        required: false
+        default: false
+        description: 'Whether to upload release assets'
+      cache_only:
+        type: boolean
+        required: false
+        default: false
+        description: 'Only build to warm cache; skip packaging/uploads'
+      backends:
+        type: string
+        required: false
+        default: both
+        description: 'Which backends to build: openexr|exrs|both'
+    secrets:
+      APPLE_CERTIFICATE:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+
+jobs:
+  build-openexr:
+    if: inputs.backends != 'exrs'
+    uses: ./.github/workflows/_build-backend.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      backend: 'openexr'
+      build_args: '--openexr'
+      branch_condition: ${{ inputs.branch_condition }}
+      should_release: ${{ inputs.should_release }}
+      cache_key_prefix: playa-${{ inputs.platform }}-v1
+      cache_only: ${{ inputs.cache_only }}
+    secrets: inherit
+
+  build-exrs-after:
+    if: inputs.backends == 'both'
+    needs: build-openexr
+    uses: ./.github/workflows/_build-backend.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      backend: 'exrs'
+      build_args: ''
+      branch_condition: ${{ inputs.branch_condition }}
+      should_release: ${{ inputs.should_release }}
+      cache_key_prefix: playa-${{ inputs.platform }}-v1
+      cache_only: ${{ inputs.cache_only }}
+    secrets: inherit
+
+  build-exrs-alone:
+    if: inputs.backends == 'exrs'
+    uses: ./.github/workflows/_build-backend.yml
+    with:
+      runner: ${{ inputs.runner }}
+      platform: ${{ inputs.platform }}
+      backend: 'exrs'
+      build_args: ''
+      branch_condition: ${{ inputs.branch_condition }}
+      should_release: ${{ inputs.should_release }}
+      cache_key_prefix: playa-${{ inputs.platform }}-v1
+      cache_only: ${{ inputs.cache_only }}
+    secrets: inherit

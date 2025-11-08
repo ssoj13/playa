@@ -1,0 +1,30 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+*.json
+temp_log.txt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Changelog preview (generated locally)
+CHANGELOG.preview.md
+
+# Certificate export files (sensitive data)
+cert.txt
+passwd.txt
