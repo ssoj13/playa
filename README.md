@@ -8,9 +8,10 @@
 [![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
-> **Experimental project**: Built to explore Rust's ecosystem and CI/CD patterns while building some cool tools. Production-ready where tested, rough edges expected elsewhere. Open source contributions welcome.
+**Small note**: This is a learning project. I'm really excited to discover the Rust universe and the rise of AI agentic coding techniques to quickly learn a new stack. I perfectly know what I want to build and supposed app architecture, but implementing that alone would be probably not possible within some reasonable timeframe (not within a week, definitely). Well, also now Rust users and open source community now have a half-decent cross-platform image sequence player made of a single binary. I really wanted to express my gratitude towards creators and maintainers of `exrs` and `openexr-rs` crates and of course the rest - Rust is amazing!
 
-Note on CI/CD (GitHub Actions): we now use a single workflow for both release and dev builds triggered by tags, and a smarter cache warmer. See “CI/CD Workflows” below.
+Short list of things resolved while building this tool:
+
 
 ![Screenshot](.github/screenshot.png)
 
@@ -19,16 +20,15 @@ Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rend
 ## Features
 
 - **Dual EXR backends**: Choose between pure Rust (exrs) for fast builds or OpenEXR C++ for full DWAA/DWAB compression support
-- **Multi-format support**: EXR, PNG, JPEG, TIFF, TGA with fast parallel loading
-- **HDR pixel precision**: Native support for 8-bit, 16-bit half-float, and 32-bit float images
+- **Native Rust Multi-format support**: EXR, PNG, JPEG, TIFF, TGA with fast parallel loading
+- **HDR pixel precision**: Support for 8 / 16 / half-float / 32-bit float images
 - **Drag-and-drop**: Drop any image file - automatically detects and loads the entire sequence
 - **Smart sequence detection**: Load one frame (e.g., `render.0001.exr`) - finds all frames automatically
 - **Persistent playlist**: Load multiple sequences, auto-saves and restores between sessions
 - **Color-coded timeline**: Visual sequence boundaries with real-time frame load indicators
 - **Responsive scrubbing**: Instant frame navigation - always responsive even during fast scrubbing, cancels stale loads automatically
-- **Cursor-centered zoom**: Mouse wheel zoom centers on cursor position (like Nuke/Houdini)
 - **Playback controls**: Standard transport controls (play/pause, JKL shuttle, loop)
-- **Viewport controls**: Zoom, pan, fit-to-window, 100% pixel-perfect view
+- **Viewport controls**: Zoom, pan, fit-to-window, 100% pixel-perfect view, cursor-centered zoom
 - **Custom GLSL shaders**: Load display shaders from `shaders/` directory - LUTs, color transforms, custom effects
 - **Smart memory management**: Automatically manages cache size - never runs out of memory
 - **Settings dialog**: Theme switching, font size, preferences (F3)
@@ -45,9 +45,9 @@ The standard Rust way - install directly from crates.io:
 cargo install playa
 ```
 
-Installs **exrs** backend (pure Rust, single binary, no external dependencies).
-
-For full OpenEXR support (DWAA/DWAB compression), see "Build from Source" below.
+**Backend comparison:**
+- **exrs**: pure Rust, single binary, no external dependencies, fast startup
+- **openexr**: Binary + native libraries (DLLs/.so files), full DWAA/DWAB support (see "Build from Source" below)
 
 ### Download Pre-built Binaries
 
@@ -73,9 +73,6 @@ Download the latest release from the [Releases page](https://github.com/ssoj13/p
 **macOS Security Note:**
 All DMG releases are code-signed with Developer ID and notarized by Apple. No Gatekeeper warnings - just drag to Applications and run.
 
-**Backend comparison:**
-- **exrs**: Single binary, no dependencies, fast startup
-- **openexr**: Binary + native libraries (DLLs/.so files), full DWAA/DWAB support
 
 ### Build from Source
 
@@ -945,18 +942,6 @@ Settings Dialog (F3)
 - **CLI**: clap 4.5
 - **Logging**: env_logger (set `RUST_LOG=debug` for verbose output)
 
-## License
-
-See LICENSE file for details.
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
-- Commit message conventions (Conventional Commits)
-- Development workflow and tools
-- Release process
-- CI/CD architecture
-
 ## AI Dev experiment:
 
 This project heavily relies on AI agents: Claude Code and Codex.
@@ -981,16 +966,29 @@ Without them development time could span months instead of a single week (still,
 
 ### What Works Well
 
-**Speed:** Implement in minutes what would take days manually
-**Breadth:** Cross-platform knowledge (Windows/Linux/macOS quirks) instantly available
-**Consistency:** Code style, documentation, commit messages uniform across project
-**Tirelessness:** Agents iterate without frustration, test edge cases without boredom
+**Speed:** Implement in minutes what would take days manually  
+**Breadth:** Cross-platform knowledge (Windows/Linux/macOS quirks) instantly available  
+**Consistency:** Code style, documentation, commit messages uniform across project  
+**Tirelessness:** Agents iterate without frustration, test edge cases without boredom  
 
 ### What's not
 
-**Logic:** "AI" is a great trickster.
+**Logic:** "AI" is a great trickster.  
 It can execute the task perfectly to your description, working completely incorrect and/or unexpected way.
 
-Need a quick operational overview? Check the [Repository Guidelines](AGENTS.md) for a concise map of modules, commands, and review expectations.
+
+## Contributing
+
+I'm not looking for contributors, but if you think you can add some useful feature - be my guest.
+Fork it, clone it, improve it, PR if you want.
+Here's the [Contributing Guide](CONTRIBUTING.md) for details on:
+- Commit message conventions (Conventional Commits)
+- Development workflow and tools
+- Release process
+- CI/CD architecture
+
+
+## Acknowledgements
+Cool Halloween Cat app icon is taken from this cute [Flaticon icon pack by Yasashii std](http://flaticon.com/packs/halloween-18020037)  
 
 See [CHANGELOG.md](CHANGELOG.md) for project history.
