@@ -4,7 +4,6 @@ use crate::cache::CacheMessage;
 use crate::frame::{Frame, PixelFormat};
 use crate::player::Player;
 use crate::progress_bar::ProgressBar;
-use crate::sequence::Sequence;
 use crate::viewport::ViewportState;
 
 /// Status bar component that receives updates from cache via messages
@@ -28,19 +27,11 @@ impl StatusBar {
     }
 
     /// Read messages from channel and update status
-    /// Returns detected sequences that should be added to cache
-    pub fn update(&mut self, ctx: &egui::Context) -> Vec<Sequence> {
+    pub fn update(&mut self, ctx: &egui::Context) {
         let mut has_updates = false;
-        let mut detected_sequences = Vec::new();
 
         while let Ok(msg) = self.message_rx.try_recv() {
             match msg {
-                CacheMessage::SequenceDetected(seq) => {
-                    detected_sequences.push(seq);
-                }
-                CacheMessage::StatusMessage(s) => {
-                    self.current_message = s;
-                }
                 CacheMessage::LoadProgress { cached_count, total_count } => {
                     self.cached_count = cached_count;
                     self.total_count = total_count;
@@ -56,8 +47,6 @@ impl StatusBar {
         if has_updates {
             ctx.request_repaint();
         }
-
-        detected_sequences
     }
 
     /// Render status bar at bottom of screen

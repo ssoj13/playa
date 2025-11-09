@@ -30,6 +30,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::frame::{Frame, FrameError};
+use crate::utils::media;
 use crate::exr::{ExrImpl, ExrLoader};
 
 /// Sequence of frames with pattern-based file naming
@@ -118,14 +119,24 @@ impl Sequence {
         }
     }
 
-    /// Get frame path by frame number (public API)
-    pub fn get_frame_path(&self, frame_num: usize) -> PathBuf {
-        PathBuf::from(Self::format_path(&self.pattern, frame_num, self.padding))
+    /// Create sequence from pre-loaded frames (for testing)
+    #[cfg(test)]
+    pub fn from_frames(frames: Vec<Frame>, pattern: String, xres: usize, yres: usize) -> Self {
+        let end = frames.len().saturating_sub(1);
+        Self {
+            frames,
+            pattern,
+            start: 0,
+            end,
+            padding: 4,
+            xres,
+            yres,
+        }
     }
 
     /// Format frame path from pattern and frame number
-    /// pattern: "/path/frame.*.exr" or "/path/frame.%04d.exr"
-    /// Returns: "/path/frame.0001.exr"
+    /// pattern: "/path/frame.*.exr" or "/path/frame.%04d.exr" or "/path/video.mp4"
+    /// Returns: "/path/frame.0001.exr" or "/path/video.mp4@17"
     fn format_path(pattern: &str, frame_num: usize, padding: usize) -> String {
         if pattern.contains('%') {
             // printf-style: frame.%04d.exr
@@ -136,8 +147,11 @@ impl Sequence {
         } else if pattern.contains('*') {
             // glob-style: frame.*.exr
             pattern.replace('*', &format!("{:0width$}", frame_num, width = padding))
+        } else if media::is_video(Path::new(pattern)) {
+            // Video file: append @frame_num
+            format!("{}@{}", pattern, frame_num)
         } else {
-            // Fallback: just return pattern (shouldn't happen in normal usage)
+            // Fallback: single static image
             pattern.to_string()
         }
     }
@@ -310,9 +324,14 @@ impl Sequence {
         &self.pattern
     }
 
-    /// Get range
-    pub fn range(&self) -> (usize, usize) {
-        (self.start, self.end)
+    /// Get x resolution (width)
+    pub fn xres(&self) -> usize {
+        self.xres
+    }
+
+    /// Get y resolution (height)
+    pub fn yres(&self) -> usize {
+        self.yres
     }
 
     /// Detect image sequences from files or directories
@@ -376,6 +395,11 @@ impl Sequence {
 
     /// Detect sequence from single file
     fn detect_from_file(path: &Path) -> Result<Self, FrameError> {
+        // Check if this is a video file
+        if media::is_video(path) {
+            return Self::detect_video_file(path);
+        }
+
         // Get resolution from first file (header only)
         let (xres, yres) = Self::get_resolution(path)?;
 
@@ -461,6 +485,29 @@ impl Sequence {
             }
             _ => Err(FrameError::UnsupportedFormat(format!(".{}", ext))),
         }
+    }
+
+    /// Detect video file as sequence
+    fn detect_video_file(path: &Path) -> Result<Self, FrameError> {
+        // Get metadata from video
+        let meta = crate::video::VideoMetadata::from_file(path)?;
+
+        // Create frames with @N suffix
+        let mut frames = Vec::new();
+        for i in 0..meta.frame_count {
+            let frame_path = format!("{}@{}", path.display(), i);
+            frames.push(Frame::new_unloaded(PathBuf::from(frame_path)));
+        }
+
+        Ok(Sequence {
+            pattern: path.to_string_lossy().to_string(),
+            frames,
+            start: 0,
+            end: meta.frame_count.saturating_sub(1),
+            padding: 0, // Video doesn't use padding
+            xres: meta.width as usize,
+            yres: meta.height as usize,
+        })
     }
 }
 

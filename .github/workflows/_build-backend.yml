@@ -69,6 +69,21 @@ jobs:
           choco install wixtoolset -y
           Write-Host "Windows dependencies installed"
 
+      - name: Setup vcpkg (Unix)
+        if: inputs.platform != 'windows'
+        run: |
+          if [ ! -d "$HOME/vcpkg" ]; then
+            git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+            "$HOME/vcpkg/bootstrap-vcpkg.sh"
+          fi
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> $GITHUB_ENV
+
+      - name: Setup vcpkg (Windows)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:

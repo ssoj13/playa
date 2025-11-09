@@ -6,6 +6,7 @@
 ::   bootstrap.cmd                    # Show xtask help
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
+::   bootstrap.cmd test               # Run encoding integration test
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
 ::   bootstrap.cmd wipe -v            # Verbose output
 ::   bootstrap.cmd wipe --dry-run     # Show what would be removed
@@ -21,6 +22,27 @@ if errorlevel 1 (
     echo Please install Rust from: https://rustup.rs/
     exit /b 1
 )
+
+:: Setup Visual Studio environment
+echo Setting up build environment...
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+    for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -property installationPath`) do (
+        set "VCVARS=%%i\VC\Auxiliary\Build\vcvars64.bat"
+        if exist "!VCVARS!" (
+            call "!VCVARS!" >nul 2>&1
+            echo ✓ Visual Studio environment configured
+        )
+    )
+)
+
+:: Setup vcpkg
+if exist "C:\vcpkg" (
+    set "VCPKG_ROOT=C:\vcpkg"
+    set "PKG_CONFIG_PATH=C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
+    echo ✓ vcpkg configured
+)
+echo.
 
 echo Checking dependencies...
 echo.
@@ -91,6 +113,15 @@ if not exist "target\debug\xtask.exe" (
     echo.
 )
 
+:: Handle special commands
+if "%~1"=="test" (
+    :: Run encoding integration test
+    echo Running encoding integration test...
+    echo.
+    cargo test --release test_encode_placeholder_frames -- --nocapture
+    goto :end
+)
+
 :: Run xtask with all arguments
 if "%~1"=="" (
     :: No arguments - show help
@@ -99,5 +130,7 @@ if "%~1"=="" (
     :: Pass all arguments to xtask
     cargo xtask %*
 )
+
+:end
 
 endlocal

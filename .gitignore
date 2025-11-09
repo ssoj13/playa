@@ -2,6 +2,7 @@
 /target/
 **/*.rs.bk
 *.pdb
+*.mp4
 *.json
 temp_log.txt
 

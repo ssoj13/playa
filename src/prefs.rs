@@ -46,6 +46,9 @@ pub struct AppSettings {
     pub cache_mem_percent: f32,     // 5..95; applied live to cache
     pub workers_override: u32,      // 0 = auto, N = override (applies on restart)
 
+    // Encoding
+    pub encoder_settings: crate::encode::EncoderSettings,
+
     // Internal
     pub selected_settings_category: Option<String>,
 }
@@ -62,6 +65,7 @@ impl Default for AppSettings {
             font_size: 13.0,
             cache_mem_percent: 75.0,
             workers_override: 0,
+            encoder_settings: crate::encode::EncoderSettings::default(),
             selected_settings_category: Some("UI".to_string()),
         }
     }
