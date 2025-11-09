@@ -43,40 +43,6 @@ fix(cache): Prevent duplicate image loading
 docs(readme): Add macOS build instructions
 ```
 
-## Quick Commit Helper (Optional)
-
-For rapid commits during development, you can use the `gpush2.cmd` helper script:
-
-```bash
-# Commit with custom message (auto-adds 'chore:' if no type specified)
-gpush2.cmd "Add placeholder icon"
-# → commits as "chore: Add placeholder icon"
-
-# Commit with explicit type
-gpush2.cmd "feat: Add playback speed indicator"
-# → commits as "feat: Add playback speed indicator"
-
-# Commit with scope
-gpush2.cmd "fix(ui): Correct timeline alignment"
-# → commits as "fix(ui): Correct timeline alignment"
-
-# Interactive mode (prompts for message)
-gpush2.cmd
-# → Enter commit message: [your message]
-
-# Quick WIP commit (empty input)
-gpush2.cmd
-# → [press Enter]
-# → commits as "chore: WIP <timestamp>"
-```
-
-The script automatically:
-- Stages all changes (`git add -A`)
-- Commits with the message
-- Pushes to origin with `--set-upstream`
-
-**Note**: For proper conventional commits, always specify the type explicitly or let it default to `chore:`.
-
 ## Changelog Generation
 
 The project uses [git-cliff](https://git-cliff.org/) to automatically generate `CHANGELOG.md` from commit messages.
@@ -264,6 +230,49 @@ You can manually trigger builds from GitHub Actions UI with custom parameters.
 ## Build Instructions
 
 See `README.md` for platform-specific build instructions (Windows/Linux/macOS).
+
+## Development Environment
+
+### FFmpeg Setup for Development
+
+**Windows:**
+```powershell
+# Required environment variables for local development
+$env:VCPKG_ROOT = "C:\vcpkg"
+$env:VCPKGRS_TRIPLET = "x64-windows-static-md"
+
+# Add these permanently to your system environment variables
+setx VCPKG_ROOT "C:\vcpkg"
+setx VCPKGRS_TRIPLET "x64-windows-static-md"
+```
+
+**Why these variables matter:**
+- `VCPKG_ROOT`: Points to your vcpkg installation directory
+- `VCPKGRS_TRIPLET`: Tells Rust's vcpkg integration which triplet to use
+  - Without this, builds may fail with "package ffmpeg is not installed" errors
+  - Ensures static linking (portable binaries, no DLL dependencies)
+
+**macOS/Linux:**
+```bash
+# vcpkg is typically in system location
+export VCPKG_ROOT="/usr/local/share/vcpkg"
+
+# PKG_CONFIG_PATH for finding FFmpeg
+export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/x64-linux-release/lib/pkgconfig"  # Linux
+export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/arm64-osx-release/lib/pkgconfig" # macOS ARM
+```
+
+### Static vs Dynamic Linking
+
+**Development builds** (local):
+- Use `x64-windows-static-md` triplet for consistency with CI
+- Static FFmpeg means no DLL/shared library dependencies
+- Easier debugging - all symbols in one binary
+
+**CI builds** (release):
+- Use `-release` suffix triplets (`x64-windows-static-md-release`)
+- Release-only configuration (no debug builds)
+- Optimized for size and build speed
 
 ## Development Workflow
 

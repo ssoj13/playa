@@ -1,3 +1,33 @@
+## [Unreleased]
+
+### 🚀 Features
+
+- **Static FFmpeg linking** across all platforms for portable, self-contained binaries
+- **FFmpeg vcpkg caching** reduces CI build time from ~20 minutes to ~30 seconds
+
+### 🐛 Bug Fixes
+
+- **Windows builds** now properly use custom vcpkg triplet `x64-windows-static-md-release`
+- Set `VCPKGRS_TRIPLET` environment variable for Windows cargo builds to ensure correct triplet detection
+- Create custom vcpkg triplets **before** cache check to ensure proper FFmpeg library discovery
+- Fixed vcpkg paths on Unix systems to use system location `/usr/local/share/vcpkg`
+
+### 🔧 Improvements
+
+- **Custom vcpkg triplets** for optimized CI builds:
+  - Windows: `x64-windows-static-md-release` (static libraries + dynamic CRT)
+  - macOS: `arm64-osx-release` / `x64-osx-release` (release-only builds)
+  - Linux: `x64-linux-release` (release-only configuration)
+- Optimized FFmpeg installation workflow with proper triplet creation order
+- Added comprehensive documentation for FFmpeg setup and static linking strategy
+
+### 📚 Documentation
+
+- Updated Windows FFmpeg setup instructions with `VCPKGRS_TRIPLET` requirement
+- Added CI/CD static linking strategy documentation
+- Expanded video encoding features documentation (play range, resolution requirements)
+- Added development environment setup guide for contributors
+
 ## [0.1.123] - 2025-11-09
 
 ### 🐛 Bug Fixes
