@@ -7,12 +7,36 @@
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
 #   ./bootstrap.sh test               # Run encoding integration test
+#   ./bootstrap.sh package            # Build installer package
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
 #   ./bootstrap.sh wipe -v            # Verbose output
 #   ./bootstrap.sh wipe --dry-run     # Show what would be removed
 #   ./bootstrap.sh wipe-wf            # Delete all GitHub Actions workflow runs for this repo
 
 set -e
+
+# Set FFmpeg/vcpkg environment variables for this script session
+if [ -d "/usr/local/share/vcpkg" ]; then
+    export VCPKG_ROOT="/usr/local/share/vcpkg"
+
+    # Determine triplet based on OS and architecture
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        if [[ "$(uname -m)" == "arm64" ]]; then
+            export VCPKGRS_TRIPLET="arm64-osx-release"
+        else
+            export VCPKGRS_TRIPLET="x64-osx-release"
+        fi
+    else
+        # Linux
+        export VCPKGRS_TRIPLET="x64-linux-release"
+    fi
+
+    export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/$VCPKGRS_TRIPLET/lib/pkgconfig"
+    echo "✓ vcpkg configured: $VCPKG_ROOT"
+    echo "✓ triplet: $VCPKGRS_TRIPLET"
+    echo ""
+fi
 
 # Check if cargo is installed
 if ! command -v cargo &> /dev/null; then
@@ -76,6 +100,19 @@ if [ "$1" = "test" ]; then
     echo "Running encoding integration test..."
     echo ""
     cargo test --release test_encode_placeholder_frames -- --nocapture
+    exit 0
+fi
+
+if [ "$1" = "package" ]; then
+    # Build installer package
+    echo "Building installer package..."
+    echo ""
+    cargo build --release
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to build release binary"
+        exit 1
+    fi
+    cargo packager --release
     exit 0
 fi
 

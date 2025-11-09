@@ -7,12 +7,20 @@
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
 ::   bootstrap.cmd test               # Run encoding integration test
+::   bootstrap.cmd package            # Build installer package
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
 ::   bootstrap.cmd wipe -v            # Verbose output
 ::   bootstrap.cmd wipe --dry-run     # Show what would be removed
 ::   bootstrap.cmd wipe-wf            # Delete all GitHub Actions workflow runs for this repo
 
 setlocal enabledelayedexpansion
+
+:: Set FFmpeg/vcpkg environment variables for this script session
+if exist "C:\vcpkg" (
+    set "VCPKG_ROOT=C:\vcpkg"
+    set "VCPKGRS_TRIPLET=x64-windows-static-md"
+    set "PKG_CONFIG_PATH=C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
+)
 
 :: Check if cargo is installed
 where cargo >nul 2>&1
@@ -36,11 +44,10 @@ if exist "%VSWHERE%" (
     )
 )
 
-:: Setup vcpkg
-if exist "C:\vcpkg" (
-    set "VCPKG_ROOT=C:\vcpkg"
-    set "PKG_CONFIG_PATH=C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
-    echo ✓ vcpkg configured
+:: Verify vcpkg configuration
+if defined VCPKG_ROOT (
+    echo ✓ vcpkg configured: %VCPKG_ROOT%
+    echo ✓ triplet: %VCPKGRS_TRIPLET%
 )
 echo.
 
@@ -119,6 +126,19 @@ if "%~1"=="test" (
     echo Running encoding integration test...
     echo.
     cargo test --release test_encode_placeholder_frames -- --nocapture
+    goto :end
+)
+
+if "%~1"=="package" (
+    :: Build installer package
+    echo Building installer package...
+    echo.
+    cargo build --release
+    if errorlevel 1 (
+        echo Error: Failed to build release binary
+        exit /b 1
+    )
+    cargo packager --release
     goto :end
 )
 
