@@ -1,3 +1,12 @@
+## [0.1.125] - 2025-11-09
+
+### 🚀 Features
+
+- Add vcpkg env variables and package command to bootstrap
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Sun 11/09/2025 - 10:09:49.37
 ## [0.1.124] - 2025-11-09
 
 ### 📚 Documentation
