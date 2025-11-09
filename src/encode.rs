@@ -371,9 +371,18 @@ pub fn encode_sequence(
     match settings.quality_mode {
         QualityMode::CRF => {
             // CRF mode (quality-based)
-            opts.set("crf", &settings.quality_value.to_string());
-            if encoder_name == "libx264" || encoder_name == "h264_nvenc" || encoder_name == "h264_qsv" {
-                opts.set("preset", "medium");  // x264 preset
+            if encoder_name == "h264_nvenc" || encoder_name == "hevc_nvenc" {
+                // NVENC uses -cq (constant quantizer) instead of -crf
+                opts.set("rc", "constqp");  // Rate control mode
+                opts.set("cq", &settings.quality_value.to_string());  // Quality (0-51, lower is better)
+                opts.set("preset", "p4");  // NVENC preset (p1-p7, p4 = medium)
+            } else if encoder_name == "libx264" || encoder_name == "libx265" {
+                // Software encoders use standard CRF
+                opts.set("crf", &settings.quality_value.to_string());
+                opts.set("preset", "medium");
+            } else if encoder_name == "h264_qsv" || encoder_name == "hevc_qsv" {
+                // QSV uses global_quality
+                opts.set("global_quality", &settings.quality_value.to_string());
             }
         }
         QualityMode::Bitrate => {
@@ -388,8 +397,11 @@ pub fn encode_sequence(
     }
 
     // Open encoder with options
+    info!("Opening encoder '{}' with pixel_format={:?}, size={}x{}", encoder_name, encoder.format(), width, height);
     let mut encoder = encoder.open_with(opts)
-        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to open encoder: {}", e)))?;
+        .map_err(|e| {
+            EncodeError::OutputCreateFailed(format!("Failed to open encoder '{}': {}", encoder_name, e))
+        })?;
 
     // Add stream and set parameters from encoder
     let mut ost = octx.add_stream(codec)
@@ -610,26 +622,25 @@ mod tests {
 
         cache.append_seq(seq);
 
-        // NOTE: Full encoding test skipped because mpeg4 encoder doesn't support RGB24 pixel format
-        // which is what our frames use. We would need to add swscale conversion to YUV420P which
-        // is complex. The encoding pipeline works fine with libx264 which accepts RGB24.
+        // NOTE: Hardware encoders (NVENC, QSV, AMF) and most software encoders
+        // require YUV pixel formats (NV12, YUV420P), not RGB24.
         //
-        // This test verifies:
-        // - Cache creation and sequence management
-        // - Frame placeholder generation (100 frames)
-        // - Encoder discovery (mpeg4 found, libx264 not found in this build)
+        // Our current pipeline: RGBA8 → RGB24 → encoder
         //
-        // Full encoding test will work when:
-        // - FFmpeg build includes libx264 (which accepts RGB24 directly)
-        // OR
-        // - We add swscale conversion to YUV420P for mpeg4 compatibility
+        // Only libx264 can accept RGB24 directly (does internal conversion).
+        // Other encoders need: RGBA8 → RGB24 → swscale → YUV420P → encoder
+        //
+        // This requires adding swscale support (~50 lines + unsafe FFI).
+        //
+        // For now, test verifies infrastructure only.
 
-        println!("\n⚠ Skipping full encoding: mpeg4 doesn't support RGB24 pixel format");
-        println!("   Our frames are RGBA8 → RGB24, but mpeg4 requires YUV420P conversion");
-        println!("   Full test works with libx264 which accepts RGB24 directly");
+        println!("\n⚠ Skipping encoding: Hardware/MPEG4 encoders need YUV420P pixel format");
+        println!("   Current pipeline: RGBA8 → RGB24");
+        println!("   Need: RGBA8 → RGB24 → [swscale] → YUV420P → encoder");
+        println!("   Only libx264 accepts RGB24 directly (not available in this build)");
         println!("\n✓ Test infrastructure verified:");
-        println!("  - Cache with 100 placeholder frames created");
-        println!("  - Encoder discovery working (mpeg4 found)");
-        println!("  - Encode dialog will work with libx264 encoder");
+        println!("  - Cache with 100 placeholder frames");
+        println!("  - Encoder discovery: {} found", found_encoder.unwrap());
+        println!("  - Encoding pipeline ready (needs YUV conversion for HW encoders)");
     }
 }
