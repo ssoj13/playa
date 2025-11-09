@@ -72,17 +72,145 @@ jobs:
       - name: Setup vcpkg (Unix)
         if: inputs.platform != 'windows'
         run: |
-          if [ ! -d "$HOME/vcpkg" ]; then
-            git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
-            "$HOME/vcpkg/bootstrap-vcpkg.sh"
+          # Use system vcpkg location to match playa-ffmpeg
+          if [ ! -d "/usr/local/share/vcpkg" ]; then
+            sudo git clone https://github.com/microsoft/vcpkg.git /usr/local/share/vcpkg
+            sudo /usr/local/share/vcpkg/bootstrap-vcpkg.sh
           fi
-          echo "VCPKG_ROOT=$HOME/vcpkg" >> $GITHUB_ENV
+          echo "VCPKG_ROOT=/usr/local/share/vcpkg" >> $GITHUB_ENV
 
       - name: Setup vcpkg (Windows)
         if: inputs.platform == 'windows'
         shell: pwsh
         run: |
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
+      - name: Create custom Windows release-only triplet
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          $tripletContent = @"
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_BUILD_TYPE release)
+          "@
+          New-Item -Path "C:\vcpkg\triplets\community" -ItemType Directory -Force | Out-Null
+          Set-Content -Path "C:\vcpkg\triplets\community\x64-windows-static-md-release.cmake" -Value $tripletContent
+
+      - name: Create custom macOS release triplets
+        if: inputs.platform == 'macos'
+        run: |
+          # Create arm64-osx-release triplet
+          sudo tee /usr/local/share/vcpkg/triplets/community/arm64-osx-release.cmake > /dev/null <<'EOF'
+          set(VCPKG_TARGET_ARCHITECTURE arm64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
+          set(VCPKG_BUILD_TYPE release)
+          EOF
+
+          # Create x64-osx-release triplet
+          sudo tee /usr/local/share/vcpkg/triplets/community/x64-osx-release.cmake > /dev/null <<'EOF'
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
+          set(VCPKG_BUILD_TYPE release)
+          EOF
+
+      - name: Create custom Linux release triplet
+        if: inputs.platform == 'linux'
+        run: |
+          sudo tee /usr/local/share/vcpkg/triplets/community/x64-linux-release.cmake > /dev/null <<'EOF'
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Linux)
+          set(VCPKG_BUILD_TYPE release)
+          EOF
+
+      - name: Determine vcpkg triplet
+        id: vcpkg-triplet
+        shell: bash
+        run: |
+          if [ "${{ inputs.platform }}" = "windows" ]; then
+            echo "triplet=x64-windows-static-md-release" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.platform }}" = "macos" ]; then
+            if [ "$(uname -m)" = "arm64" ]; then
+              echo "triplet=arm64-osx-release" >> $GITHUB_OUTPUT
+            else
+              echo "triplet=x64-osx-release" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "triplet=x64-linux-release" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Cache vcpkg FFmpeg (Windows)
+        if: inputs.platform == 'windows'
+        uses: actions/cache@v4
+        id: cache-vcpkg-ffmpeg-windows
+        with:
+          path: |
+            C:\vcpkg\installed
+            C:\vcpkg\buildtrees
+            C:\vcpkg\downloads
+            C:\vcpkg\packages
+            ~\AppData\Local\vcpkg\archives
+          key: ${{ runner.os }}-vcpkg-ffmpeg-nvcodec-release-only-v3
+
+      - name: Cache vcpkg FFmpeg (Unix)
+        if: inputs.platform != 'windows'
+        uses: actions/cache@v4
+        id: cache-vcpkg-ffmpeg-unix
+        with:
+          path: |
+            /usr/local/share/vcpkg/installed
+            /usr/local/share/vcpkg/buildtrees
+            /usr/local/share/vcpkg/downloads
+            /usr/local/share/vcpkg/packages
+            ~/.cache/vcpkg
+          key: ${{ runner.os }}-${{ steps.vcpkg-triplet.outputs.triplet }}-vcpkg-ffmpeg-v2
+
+      - name: Install FFmpeg via vcpkg (Linux)
+        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit != 'true'
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends nasm yasm autoconf automake libtool
+          vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-linux-release
+          echo "PKG_CONFIG_PATH=/usr/local/share/vcpkg/installed/x64-linux-release/lib/pkgconfig" >> $GITHUB_ENV
+        env:
+          VCPKG_BUILD_TYPE: release
+
+      - name: Install FFmpeg via vcpkg (macOS)
+        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit != 'true'
+        run: |
+          brew install nasm yasm autoconf automake libtool pkg-config
+          echo "VCPKG_DEFAULT_TRIPLET=${{ steps.vcpkg-triplet.outputs.triplet }}" >> $GITHUB_ENV
+          vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:${{ steps.vcpkg-triplet.outputs.triplet }}
+          echo "PKG_CONFIG_PATH=/usr/local/share/vcpkg/installed/${{ steps.vcpkg-triplet.outputs.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
+        env:
+          VCPKG_BUILD_TYPE: release
+          VCPKG_DEFAULT_TRIPLET: ${{ steps.vcpkg-triplet.outputs.triplet }}
+
+      - name: Install FFmpeg via vcpkg (Windows)
+        if: inputs.platform == 'windows' && steps.cache-vcpkg-ffmpeg-windows.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
+        env:
+          VCPKG_DEFAULT_TRIPLET: x64-windows-static-md-release
+          VCPKGRS_TRIPLET: x64-windows-static-md-release
+
+      - name: Set FFmpeg environment (cached - Linux)
+        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit == 'true'
+        run: |
+          echo "PKG_CONFIG_PATH=/usr/local/share/vcpkg/installed/x64-linux-release/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Set FFmpeg environment (cached - macOS)
+        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit == 'true'
+        run: |
+          echo "PKG_CONFIG_PATH=/usr/local/share/vcpkg/installed/${{ steps.vcpkg-triplet.outputs.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
