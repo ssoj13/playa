@@ -19,8 +19,8 @@ setlocal enabledelayedexpansion
 :: Set FFmpeg/vcpkg environment variables for this script session
 if exist "C:\vcpkg" (
     set "VCPKG_ROOT=C:\vcpkg"
-    set "VCPKGRS_TRIPLET=x64-windows-static-md"
-    set "PKG_CONFIG_PATH=C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
+    set "VCPKGRS_TRIPLET=x64-windows-static-md-release"
+    set "PKG_CONFIG_PATH=C:\vcpkg\installed\x64-windows-static-md-release\lib\pkgconfig"
 )
 
 :: Check if cargo is installed
@@ -162,14 +162,14 @@ if "%~1"=="install" (
     )
 
     :: Check FFmpeg
-    if not exist "C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig\libavutil.pc" (
+    if not exist "C:\vcpkg\installed\x64-windows-static-md-release\lib\pkgconfig\libavutil.pc" (
         echo.
         echo Error: FFmpeg not found
         echo.
         set /p "install_ffmpeg=Install FFmpeg via vcpkg? (y/N): "
         if /i "!install_ffmpeg!"=="y" (
             echo Installing FFmpeg...
-            C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv]:x64-windows-static-md
+            C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv]:x64-windows-static-md-release
             echo ✓ FFmpeg installed
         ) else (
             echo Installation cancelled.
@@ -188,7 +188,7 @@ if "%~1"=="install" (
         set /p "install_pkgconfig=Install pkg-config via vcpkg? (y/N): "
         if /i "!install_pkgconfig!"=="y" (
             echo Installing pkg-config...
-            C:\vcpkg\vcpkg install pkgconf:x64-windows-static-md
+            C:\vcpkg\vcpkg install pkgconf:x64-windows-static-md-release
             echo ✓ pkg-config installed
         ) else (
             echo Installation cancelled.
