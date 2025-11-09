@@ -71,19 +71,17 @@ CHANGELOG.md is generated automatically by **git-cliff** during the release proc
 
 ```bash
 # Regenerate full CHANGELOG.md from all git history
-./changelog.sh      # Linux/macOS
-changelog.cmd       # Windows
+cargo xtask changelog
 
-# Preview unreleased changes (doesn't modify CHANGELOG.md)
-cargo xtask changelog-preview
-# Creates CHANGELOG.preview.md (git-ignored)
+# Note: changelog regenerates the entire file from git history,
+# there is no incremental or preview mode
 ```
 
 ### Configuration Files
 
 - **`Cargo.toml`** (line 71): Defines when git-cliff runs via `pre-release-hook`
 - **`cliff.toml`**: Configures commit parsing, filtering, grouping, and output format
-- **`changelog.sh`** / **`changelog.cmd`**: Manual scripts for regenerating CHANGELOG outside of release process
+- **`cargo xtask changelog`**: Command for manually regenerating CHANGELOG outside of release process
 
 ## Release Process
 
@@ -103,17 +101,13 @@ cargo install git-cliff  # Already installed
 From the `dev` branch, run:
 
 ```bash
-# Using convenience scripts:
-./build_dev.sh patch        # Linux/macOS - patch version (0.1.23 -> 0.1.24)
-build_dev.cmd patch         # Windows - patch version (0.1.23 -> 0.1.24)
-
-# Or use cargo xtask directly:
-cargo xtask release patch   # Patch version
-cargo xtask release minor   # Minor version (0.1.23 -> 0.2.0)
-cargo xtask release major   # Major version (0.1.23 -> 1.0.0)
+# Create dev release tag:
+cargo xtask tag-dev patch   # Patch version (0.1.23 -> 0.1.24-dev)
+cargo xtask tag-dev minor   # Minor version (0.1.23 -> 0.2.0-dev)
+cargo xtask tag-dev major   # Major version (0.1.23 -> 1.0.0-dev)
 
 # Dry run (test without committing)
-cargo xtask release patch --dry-run
+cargo xtask tag-dev patch --dry-run
 ```
 
 ### What Happens in Step 1
@@ -230,6 +224,44 @@ You can manually trigger builds from GitHub Actions UI with custom parameters.
 ## Build Instructions
 
 See `README.md` for platform-specific build instructions (Windows/Linux/macOS).
+
+### Bootstrap Scripts
+
+The project includes bootstrap scripts for initial setup and running xtask commands:
+
+**Windows:**
+```cmd
+bootstrap.cmd              # Show xtask help
+bootstrap.cmd build        # Build the project
+bootstrap.cmd test         # Run encoding test
+```
+
+**Linux/macOS:**
+```bash
+./bootstrap.sh             # Show xtask help
+./bootstrap.sh build       # Build the project
+./bootstrap.sh test        # Run encoding test
+```
+
+**What bootstrap does:**
+1. Checks Rust/Cargo installation
+2. Configures Visual Studio environment (Windows only)
+3. Sets up vcpkg if available (Windows only)
+4. Installs dependencies via cargo-binstall:
+   - `cargo-binstall` (fast binary installer)
+   - `cargo-release` (release automation)
+   - `cargo-packager` v0.11.7 (installer generation)
+5. Builds xtask binary if not already built
+6. Executes requested xtask command or shows help
+
+**Available xtask commands** (use `cargo xtask --help` for full list):
+- `build [--openexr] [--debug]` - Build the application
+- `deploy [--install-dir PATH]` - Install to system location
+- `wipe [-v] [--dry-run]` - Clean build artifacts
+- `tag-dev [patch|minor|major]` - Create dev release
+- `tag-rel [patch|minor|major]` - Create production release
+- `pr [version]` - Create pull request dev → main
+- `changelog` - Regenerate CHANGELOG.md
 
 ## Development Environment
 
