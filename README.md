@@ -35,6 +35,34 @@ Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rend
 - **Cinema mode**: Fullscreen playback with hidden UI
 - **Persistent settings**: Everything saves automatically - window layout, zoom level, shader selection
 
+## Video Support
+
+Playa now supports video playback alongside image sequences:
+
+**Supported formats**: MP4, MOV, AVI, MKV
+
+**Features**:
+- Frame-by-frame video playback with seek support
+- Automatic frame count detection
+- Cached decoding with worker pool (same as image sequences)
+- FFmpeg-based decoding via `playa-ffmpeg` crate
+
+**Usage**:
+- Open video file via drag-and-drop or file browser
+- Videos appear in playlist with detected frame count
+- Scrub timeline to seek through video frames
+- All playback controls work identically to image sequences
+
+**Technical details**:
+- Videos internally use `@N` suffix notation (e.g., `video.mp4@17` for frame 17)
+- Each frame decoded on-demand with YUV→RGB→RGBA conversion
+- FFmpeg logging suppressed to avoid console spam
+- Playlist serialization preserves video sequences correctly
+
+**Requirements**:
+- FFmpeg libraries (auto-detected via vcpkg on Windows)
+- `playa-ffmpeg` crate handles all FFmpeg bindings
+
 ## Installation
 
 ### Classic Installation: cargo install

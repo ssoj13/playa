@@ -26,7 +26,6 @@
 //! Handles sequence boundaries (loop or stop at end).
 
 use log::{debug, info};
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -49,16 +48,16 @@ pub struct Player {
 
 impl Player {
     /// Create new player with empty cache and defaults
-    /// Returns (Player, UI message receiver, Path sender)
-    pub fn new() -> (Self, mpsc::Receiver<CacheMessage>, mpsc::Sender<PathBuf>) {
+    /// Returns (Player, UI message receiver)
+    pub fn new() -> (Self, mpsc::Receiver<CacheMessage>) {
         Self::new_with_config(0.75, None)
     }
 
     /// Create new player with configurable memory budget and worker count
-    pub fn new_with_config(max_mem_fraction: f64, workers: Option<usize>) -> (Self, mpsc::Receiver<CacheMessage>, mpsc::Sender<PathBuf>) {
+    pub fn new_with_config(max_mem_fraction: f64, workers: Option<usize>) -> (Self, mpsc::Receiver<CacheMessage>) {
         info!("Player initialized with new architecture");
 
-        let (cache, ui_rx, path_tx) = Cache::new(max_mem_fraction, workers); // configurable memory/workers
+        let (cache, ui_rx) = Cache::new(max_mem_fraction, workers); // configurable memory/workers
 
         let player = Self {
             cache,
@@ -70,7 +69,7 @@ impl Player {
             selected_seq_idx: None,
         };
 
-        (player, ui_rx, path_tx)
+        (player, ui_rx)
     }
 
     /// Get current frame from cache
@@ -259,7 +258,7 @@ impl Player {
 
 impl Default for Player {
     fn default() -> Self {
-        let (player, _rx, _path_tx) = Self::new();
+        let (player, _rx) = Self::new();
         player
     }
 }

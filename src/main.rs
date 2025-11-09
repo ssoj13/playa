@@ -1,5 +1,6 @@
 mod frame;
 mod exr;
+mod video;
 mod sequence;
 mod progress;
 mod player;
@@ -13,6 +14,7 @@ mod progress_bar;
 mod ui;
 mod prefs;
 mod paths;
+mod utils;
 
 use clap::Parser;
 use eframe::{egui, glow};
@@ -21,6 +23,7 @@ use log::{debug, error, info, warn};
 use player::Player;
 use prefs::{AppSettings, render_settings_window};
 use scrub::Scrubber;
+use sequence::Sequence;
 use status_bar::StatusBar;
 use std::path::PathBuf;
 use shaders::Shaders;
@@ -68,8 +71,6 @@ struct PlayaApp {
     #[serde(skip)]
     status_bar: StatusBar,
     #[serde(skip)]
-    path_sender: std::sync::mpsc::Sender<PathBuf>,
-    #[serde(skip)]
     viewport_renderer: std::sync::Arc<std::sync::Mutex<ViewportRenderer>>,
     viewport_state: ViewportState,
     #[serde(skip)]
@@ -99,7 +100,7 @@ struct PlayaApp {
 
 impl Default for PlayaApp {
     fn default() -> Self {
-        let (player, ui_rx, path_tx) = Player::new();
+        let (player, ui_rx) = Player::new();
         let status_bar = StatusBar::new(ui_rx);
 
         Self {
@@ -109,7 +110,6 @@ impl Default for PlayaApp {
             error_msg: None,
             scrubber: Some(Scrubber::new()),
             status_bar,
-            path_sender: path_tx,
             viewport_renderer: std::sync::Arc::new(std::sync::Mutex::new(ViewportRenderer::new())),
             viewport_state: ViewportState::new(),
             shader_manager: Shaders::new(),
@@ -144,13 +144,6 @@ impl PlayaApp {
             error!("{}", e);
             self.error_msg = Some(e);
         }
-    }
-
-    /// Find sequence index by pattern (for update detection)
-    fn find_sequence_by_pattern(&self, pattern: &str) -> Option<usize> {
-        self.player.cache.sequences()
-            .iter()
-            .position(|seq| seq.pattern() == pattern)
     }
 
     /// Load playlist from JSON file (append=true by default)
@@ -329,7 +322,17 @@ impl eframe::App for PlayaApp {
             if !dropped.is_empty() {
                 info!("Files dropped: {:?}", dropped);
                 for path in dropped {
-                    let _ = self.path_sender.send(path);
+                    // Validate and load sequence directly
+                    match Sequence::detect(vec![path.clone()]) {
+                        Ok(sequences) => {
+                            for seq in sequences {
+                                self.player.cache.append_seq(seq);
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to load {}: {}", path.display(), e);
+                        }
+                    }
                 }
             }
         });
@@ -347,44 +350,31 @@ impl eframe::App for PlayaApp {
             self.displayed_frame = Some(self.player.current_frame());
         }
 
-        // Update status messages and handle detected sequences BEFORE laying out panels
-        let detected_sequences = self.status_bar.update(ctx);
-        let has_sequences = !detected_sequences.is_empty();
-
-        for seq in detected_sequences {
-            let pattern = seq.pattern().to_string();
-            if let Some(idx) = self.find_sequence_by_pattern(&pattern) {
-                let old_len = self.player.cache.sequences()[idx].len();
-                let new_len = seq.len();
-                if old_len != new_len {
-                    info!("Updating sequence [{}]: {} → {} frames", idx, old_len, new_len);
-                    self.player.cache.update_sequence(idx, seq);
-                } else {
-                    debug!("Sequence [{}] unchanged, skipping update", idx);
-                }
-            } else {
-                info!("Adding new sequence: {} ({} frames)", seq.pattern(), seq.len());
-                self.player.cache.append_seq(seq);
-            }
-        }
-
-        if has_sequences {
-            self.player.cache.signal_preload();
-        }
+        // Update status messages BEFORE laying out panels
+        self.status_bar.update(ctx);
 
         // Playlist panel on the right (hidden in cinema mode or when toggled off)
         if !self.is_fullscreen && self.show_playlist {
             let playlist_actions = ui::render_playlist(ctx, &mut self.player);
             if let Some(path) = playlist_actions.load_sequence {
-                let _ = self.path_sender.send(path);
+                // Validate and load sequence directly
+                match Sequence::detect(vec![path.clone()]) {
+                    Ok(sequences) => {
+                        for seq in sequences {
+                            self.player.cache.append_seq(seq);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to load {}: {}", path.display(), e);
+                    }
+                }
             }
             if playlist_actions.clear_all {
                 self.frame = None;
                 self.displayed_frame = None;
-                let (player, ui_rx, path_tx) = Player::new();
+                let (player, ui_rx) = Player::new();
                 self.player = player;
                 self.status_bar = StatusBar::new(ui_rx);
-                self.path_sender = path_tx;
             }
             if let Some(path) = playlist_actions.save_playlist {
                 self.save_playlist(path);
@@ -434,7 +424,17 @@ impl eframe::App for PlayaApp {
         );
         self.last_render_time_ms = render_time;
         if let Some(path) = viewport_actions.load_sequence {
-            let _ = self.path_sender.send(path);
+            // Validate and load sequence directly
+            match Sequence::detect(vec![path.clone()]) {
+                Ok(sequences) => {
+                    for seq in sequences {
+                        self.player.cache.append_seq(seq);
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to load {}: {}", path.display(), e);
+                }
+            }
         }
 
         
@@ -481,6 +481,9 @@ impl eframe::App for PlayaApp {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize FFmpeg
+    playa_ffmpeg::init()?;
+
     // Parse command-line arguments first (needed for log setup)
     let args = Args::parse();
 
@@ -575,10 +578,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or(0.75);
             let workers = args.workers
                 .or_else(|| if app.settings.workers_override > 0 { Some(app.settings.workers_override as usize) } else { None });
-            let (player, ui_rx, path_tx) = Player::new_with_config(mem_fraction, workers);
+            let (player, ui_rx) = Player::new_with_config(mem_fraction, workers);
             app.player = player;
             app.status_bar = StatusBar::new(ui_rx);
-            app.path_sender = path_tx;
             app.applied_mem_fraction = mem_fraction;
             app.applied_workers = workers;
             app.path_config = path_config_for_app;
@@ -603,8 +605,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // CLI argument has priority
             if let Some(file_path) = args.file_path {
-                info!("CLI argument provided, queueing for loading");
-                let _ = app.path_sender.send(file_path);
+                info!("CLI argument provided, loading sequence");
+                match Sequence::detect(vec![file_path.clone()]) {
+                    Ok(sequences) => {
+                        for seq in sequences {
+                            app.player.cache.append_seq(seq);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to load {}: {}", file_path.display(), e);
+                    }
+                }
             } else if cache_path.exists() {
                 // Restore cache state (instant UI, no I/O)
                 info!("Restoring cache from {}", cache_path.display());
@@ -614,15 +625,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Trigger frame loading from current position
                         app.player.cache.signal_preload();
-
-                        // Queue async validation of sequences
-                        info!("Queuing {} sequence(s) for async validation", count);
-                        for seq in app.player.cache.sequences() {
-                            // Generate path to first file from sequence metadata
-                            let first_frame_num = seq.range().0;
-                            let first_frame_path = seq.get_frame_path(first_frame_num);
-                            let _ = app.path_sender.send(first_frame_path);
-                        }
                     }
                     Err(e) => {
                         warn!("Failed to restore cache: {}", e);

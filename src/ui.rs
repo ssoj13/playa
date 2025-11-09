@@ -9,9 +9,10 @@ use crate::scrub::Scrubber;
 use crate::shaders::Shaders;
 use crate::timeslider::{time_slider, SequenceRange, TimeSliderConfig};
 use crate::viewport::{ViewportRenderer, ViewportState};
+use crate::utils::media;
 
-/// Image file format filters for file dialogs
-pub const FILE_FILTERS: &[&str] = &["exr", "png", "jpg", "jpeg", "tif", "tiff", "tga"];
+/// Image and video file format filters for file dialogs
+pub const FILE_FILTERS: &[&str] = media::ALL_EXTS;
 
 /// Help text displayed in overlay
 pub fn help_text() -> &'static str {

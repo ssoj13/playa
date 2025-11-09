@@ -32,6 +32,25 @@ use half::f16 as F16;
 
 // Import EXR loader (exrs or openexr-rs based on features)
 use crate::exr::{ExrImpl, ExrLoader};
+use crate::utils::media;
+
+/// Parse video path with frame suffix
+/// "video.mp4@17" -> (PathBuf("video.mp4"), Some(17))
+/// "video.mp4" -> (PathBuf("video.mp4"), None)
+fn parse_video_path(path: &Path) -> (PathBuf, Option<usize>) {
+    let path_str = path.to_string_lossy();
+
+    if let Some(at_pos) = path_str.rfind('@') {
+        let base = &path_str[..at_pos];
+        let frame_num = &path_str[at_pos + 1..];
+
+        if let Ok(num) = frame_num.parse::<usize>() {
+            return (PathBuf::from(base), Some(num));
+        }
+    }
+
+    (path.to_path_buf(), None)
+}
 
 /// Pixel buffer format - stores different precision levels
 #[derive(Debug, Clone)]
@@ -82,6 +101,7 @@ pub enum FrameError {
     #[cfg_attr(not(feature = "openexr"), allow(dead_code))]
     Exr(String),
     Image(String),
+    LoadError(String),
     UnsupportedFormat(String),
     NoFilename,
 }
@@ -91,6 +111,7 @@ impl std::fmt::Display for FrameError {
         match self {
             FrameError::Exr(e) => write!(f, "EXR error: {}", e),
             FrameError::Image(e) => write!(f, "Image error: {}", e),
+            FrameError::LoadError(e) => write!(f, "Load error: {}", e),
             FrameError::UnsupportedFormat(e) => write!(f, "Unsupported format: {}", e),
             FrameError::NoFilename => write!(f, "No filename set"),
         }
@@ -210,6 +231,9 @@ impl Frame {
     pub fn load(&self) -> Result<(), FrameError> {
         let path = self.filename.as_ref().ok_or(FrameError::NoFilename)?.clone();
 
+        // Parse video path: "video.mp4@17" -> ("video.mp4", Some(17))
+        let (actual_path, frame_num) = parse_video_path(&path);
+
         // Atomically claim frame for loading (prevents duplicate loads)
         if !self.try_claim_for_loading() {
             // Already loading/loaded/error - just return current status
@@ -222,17 +246,21 @@ impl Frame {
         }
 
         // Detect format by extension
-        let ext = path
+        let ext = actual_path
             .extension()
             .and_then(|s| s.to_str())
             .map(|s| s.to_lowercase())
             .unwrap_or_default();
 
-        let result = match ext.as_str() {
-            "exr" => self.load_exr(&path),
-            "hdr" => self.load_hdr(&path),
-            "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" => self.load_image(&path),
-            _ => Err(FrameError::UnsupportedFormat(format!(".{}", ext))),
+        let result = if media::is_video(&actual_path) {
+            self.load_video(&actual_path, frame_num.unwrap_or(0))
+        } else {
+            match ext.as_str() {
+                "exr" => self.load_exr(&actual_path),
+                "hdr" => self.load_hdr(&actual_path),
+                "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" => self.load_image(&actual_path),
+                _ => Err(FrameError::UnsupportedFormat(format!(".{}", ext))),
+            }
         };
 
         match result {
@@ -317,6 +345,23 @@ impl Frame {
         data.width = width;
         data.height = height;
 
+        Ok(())
+    }
+
+    /// Load video frame
+    fn load_video<P: AsRef<Path>>(&self, path: P, frame_num: usize) -> Result<(), FrameError> {
+        debug!("Loading video frame {}: {}", frame_num, path.as_ref().display());
+
+        let (buffer, pixel_format, width, height) = crate::video::decode_frame(path.as_ref(), frame_num)?;
+
+        // Update frame data atomically
+        let mut data = self.data.lock().unwrap();
+        data.buffer = buffer;
+        data.pixel_format = pixel_format;
+        data.width = width;
+        data.height = height;
+
+        info!("Loaded video frame {}: {}x{}", frame_num, width, height);
         Ok(())
     }
 
