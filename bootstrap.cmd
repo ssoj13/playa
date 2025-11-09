@@ -6,6 +6,7 @@
 ::   bootstrap.cmd                    # Show xtask help
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
+::   bootstrap.cmd test               # Run encoding integration test
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
 ::   bootstrap.cmd wipe -v            # Verbose output
 ::   bootstrap.cmd wipe --dry-run     # Show what would be removed
@@ -112,6 +113,15 @@ if not exist "target\debug\xtask.exe" (
     echo.
 )
 
+:: Handle special commands
+if "%~1"=="test" (
+    :: Run encoding integration test
+    echo Running encoding integration test...
+    echo.
+    cargo test --release test_encode_placeholder_frames -- --nocapture
+    goto :end
+)
+
 :: Run xtask with all arguments
 if "%~1"=="" (
     :: No arguments - show help
@@ -120,5 +130,7 @@ if "%~1"=="" (
     :: Pass all arguments to xtask
     cargo xtask %*
 )
+
+:end
 
 endlocal

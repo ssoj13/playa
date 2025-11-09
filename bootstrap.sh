@@ -6,6 +6,7 @@
 #   ./bootstrap.sh                    # Show xtask help
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
+#   ./bootstrap.sh test               # Run encoding integration test
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
 #   ./bootstrap.sh wipe -v            # Verbose output
 #   ./bootstrap.sh wipe --dry-run     # Show what would be removed
@@ -67,6 +68,15 @@ if [ ! -f "target/debug/xtask" ]; then
     cargo build -p xtask
     echo "✓ xtask built"
     echo ""
+fi
+
+# Handle special commands
+if [ "$1" = "test" ]; then
+    # Run encoding integration test
+    echo "Running encoding integration test..."
+    echo ""
+    cargo test --release test_encode_placeholder_frames -- --nocapture
+    exit 0
 fi
 
 # Run xtask with all arguments
