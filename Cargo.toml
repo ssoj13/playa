@@ -3,7 +3,7 @@ members = ["xtask"]
 
 [package]
 name = "playa"
-version = "0.1.125"
+version = "0.1.126"
 edition = "2024"
 authors = ["joss13@gmail.com"]
 description = "Image sequence player for VFX (EXR, PNG, JPEG, TIFF). Pure Rust with optional OpenEXR support."

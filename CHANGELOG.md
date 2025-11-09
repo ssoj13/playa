@@ -1,3 +1,17 @@
+## [0.1.126] - 2025-11-09
+
+### 🚀 Features
+
+- Add install command to bootstrap scripts
+
+### 🐛 Bug Fixes
+
+- Use release triplet in bootstrap.cmd for static FFmpeg
+- Correct FFmpeg features to match CI/CD configuration
+
+### 📚 Documentation
+
+- Add bootstrap install as recommended installation method
 ## [0.1.125] - 2025-11-09
 
 ### 🚀 Features
