@@ -389,6 +389,19 @@ pub fn encode_sequence(
             } else if encoder_name == "h264_qsv" || encoder_name == "hevc_qsv" {
                 // QSV uses global_quality
                 opts.set("global_quality", &settings.quality_value.to_string());
+            } else if encoder_name == "prores_ks" {
+                // ProRes profile: 0=Proxy, 1=LT, 2=Standard(422), 3=HQ, 4=4444, 5=4444XQ
+                // Map CRF value to profile (lower CRF = higher quality)
+                let profile = if settings.quality_value <= 18 {
+                    "3"  // HQ for best quality
+                } else if settings.quality_value <= 23 {
+                    "2"  // Standard (422) for balanced
+                } else {
+                    "1"  // LT for lower quality
+                };
+                info!("ProRes encoding with profile {} (CRF {})", profile, settings.quality_value);
+                opts.set("profile", profile);
+                opts.set("vendor", "apl0");  // Apple vendor ID for compatibility
             }
         }
         QualityMode::Bitrate => {
