@@ -467,6 +467,9 @@ impl Cache {
         self.sequences_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         info!("Appended sequence: {} frames, global_end={}", seq_len, self.global_end);
+
+        // Trigger preload for new sequence
+        self.signal_preload();
     }
 
     /// Clear all sequences
@@ -549,6 +552,9 @@ impl Cache {
         if total > 0 {
             self.play_range_start.store(0, Ordering::Relaxed);
             self.play_range_end.store(total - 1, Ordering::Relaxed);
+
+            // Trigger preload for new range
+            self.signal_preload();
         }
     }
 
