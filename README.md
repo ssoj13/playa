@@ -63,6 +63,48 @@ Playa now supports video playback alongside image sequences:
 - FFmpeg libraries (auto-detected via vcpkg on Windows)
 - `playa-ffmpeg` crate handles all FFmpeg bindings
 
+## Video Encoding
+
+Playa includes built-in video encoding (F7 hotkey) for exporting image sequences and play ranges to video files.
+
+**Features**:
+- **F7 hotkey**: Opens encoding dialog with codec/quality settings
+- **Play range support**: Encode only selected frames (B/N markers)
+- **Hardware acceleration**: NVENC (NVIDIA), QSV (Intel), AMF (AMD)
+- **Software codecs**: H.264, H.265, MPEG4
+- **Containers**: MP4, MOV
+- **Quality modes**: CRF (constant quality) or Bitrate
+- **Progress tracking**: Real-time encoding progress with cancel support
+
+**Supported Encoders**:
+
+| Encoder | Type | Platform | Notes |
+|---------|------|----------|-------|
+| `h264_nvenc` | Hardware | Windows/Linux | NVIDIA GPUs (GTX 600+) |
+| `hevc_nvenc` | Hardware | Windows/Linux | NVIDIA GPUs (GTX 900+) |
+| `h264_qsv` | Hardware | Windows/Linux | Intel Quick Sync (HD 2000+) |
+| `hevc_qsv` | Hardware | Windows/Linux | Intel Quick Sync (Skylake+) |
+| `h264_amf` | Hardware | Windows | AMD GPUs |
+| `hevc_amf` | Hardware | Windows | AMD GPUs |
+| `libx264` | Software | All | CPU-based H.264 |
+| `libx265` | Software | All | CPU-based H.265 |
+| `mpeg4` | Software | All | Legacy MPEG-4 Part 2 |
+
+**Usage**:
+1. Load image sequence or video
+2. Set play range with **B** (begin) and **N** (end) markers (optional)
+3. Press **F7** to open encoding dialog
+4. Select codec, quality, output path
+5. Click "Encode" - progress shown in real-time
+6. Output file written to selected location
+
+**Technical details**:
+- Automatic pixel format conversion (RGB24 → YUV420P for hardware encoders)
+- Uses FFmpeg swscale for color space conversion
+- Respects play range markers (B/N) - only encodes selected frames
+- Multi-threaded encoding via background worker thread
+- Cancellable operation with atomic flag
+
 ## Installation
 
 ### Classic Installation: cargo install
@@ -145,6 +187,139 @@ cargo xtask build --release --openexr
 
 **Note:** OpenEXR backend compiles C++ libraries (~5-10 minutes first build, then cached).
 
+### FFmpeg Setup (Video Playback & Encoding)
+
+Playa requires FFmpeg libraries for video support. Install via vcpkg for best compatibility:
+
+#### Windows
+
+```cmd
+# Install vcpkg (if not already installed)
+git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat
+
+# Set environment variable
+setx VCPKG_ROOT "C:\vcpkg"
+setx PKG_CONFIG_PATH "C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig"
+
+# Install FFmpeg with hardware encoder support
+vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv]:x64-windows-static-md
+
+# Optional: Install additional features
+vcpkg install ffmpeg[vpl,amf,x264,x265,vpx,aom]:x64-windows-static-md
+```
+
+**Features explained**:
+- `core,avcodec,avformat,avutil,swscale` - Required (decoding, muxing, scaling)
+- `nvcodec` - NVIDIA NVENC hardware encoding (GTX 600+)
+- `qsv` - Intel Quick Sync hardware encoding (requires `vpl`)
+- `vpl` - Intel Video Processing Library (for QSV)
+- `amf` - AMD hardware encoding
+- `x264,x265` - H.264/H.265 software encoders
+- `vpx,aom` - VP8/VP9/AV1 codecs
+
+**Setup Visual Studio environment** (before building):
+```cmd
+"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+```
+
+#### Linux
+
+```bash
+# Install vcpkg
+git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
+~/vcpkg/bootstrap-vcpkg.sh
+
+# Set environment variables
+export VCPKG_ROOT=~/vcpkg
+export PKG_CONFIG_PATH=~/vcpkg/installed/x64-linux/lib/pkgconfig
+
+# Install FFmpeg with hardware encoder support
+vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec]:x64-linux
+
+# Optional: Install additional codecs
+vcpkg install ffmpeg[x264,x265,vpx,aom]:x64-linux
+```
+
+**Hardware encoders on Linux**:
+- `nvcodec` - NVIDIA NVENC (requires CUDA drivers)
+- QSV - Requires Intel Media SDK (install via system package manager)
+- VAAPI - Use system FFmpeg with VAAPI support
+
+**Alternative: System FFmpeg**
+```bash
+# Ubuntu/Debian
+sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+
+# Fedora
+sudo dnf install ffmpeg-devel
+
+# Arch
+sudo pacman -S ffmpeg
+```
+
+#### macOS
+
+```bash
+# Install vcpkg
+git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
+~/vcpkg/bootstrap-vcpkg.sh
+
+# Set environment variables
+export VCPKG_ROOT=~/vcpkg
+export PKG_CONFIG_PATH=~/vcpkg/installed/arm64-osx/lib/pkgconfig  # M1/M2
+# export PKG_CONFIG_PATH=~/vcpkg/installed/x64-osx/lib/pkgconfig  # Intel
+
+# Install FFmpeg
+vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale]:arm64-osx  # M1/M2
+# vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale]:x64-osx  # Intel
+
+# Optional: Install additional codecs
+vcpkg install ffmpeg[x264,x265,vpx,aom]:arm64-osx
+```
+
+**Alternative: Homebrew**
+```bash
+brew install ffmpeg
+```
+
+**Note**: macOS hardware encoding (VideoToolbox) requires system FFmpeg or manual FFmpeg build with `--enable-videotoolbox`.
+
+### Verifying FFmpeg Installation
+
+```bash
+# Check FFmpeg availability
+pkg-config --modversion libavcodec libavformat libavutil libswscale
+
+# List available encoders (after building playa)
+ffmpeg -encoders | grep -E "(nvenc|qsv|amf|264|265)"
+
+# Test encoding (requires playa built)
+bootstrap.cmd test    # Windows
+./bootstrap.sh test   # Linux/macOS
+```
+
+### CI/CD Runner Requirements
+
+GitHub Actions runners need FFmpeg for video support:
+
+**Windows runners**:
+- Install vcpkg during workflow
+- Cache: `~\vcpkg` and `~\AppData\Local\vcpkg`
+- Required features: `ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv,vpl]:x64-windows-static-md`
+
+**Linux runners**:
+- Install vcpkg during workflow OR use system FFmpeg
+- Cache: `~/vcpkg`
+- Required features: `ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec]:x64-linux`
+
+**macOS runners**:
+- Use Homebrew FFmpeg (faster than vcpkg)
+- Cache: Homebrew bottles
+- Command: `brew install ffmpeg`
+
+See `.github/workflows/warm-cache.yml` for reference implementation.
+
 ## Quick Start (New Contributors)
 
 **Start here!** Bootstrap scripts handle all dependencies automatically:
@@ -154,6 +329,7 @@ cargo xtask build --release --openexr
 bootstrap.cmd              # Show xtask help
 bootstrap.cmd build        # Build with exrs (fast)
 bootstrap.cmd build --openexr  # Build with full OpenEXR support
+bootstrap.cmd test         # Run encoding integration test
 ```
 
 ### Linux/macOS
@@ -161,6 +337,7 @@ bootstrap.cmd build --openexr  # Build with full OpenEXR support
 ./bootstrap.sh             # Show xtask help
 ./bootstrap.sh build       # Build with exrs (fast)
 ./bootstrap.sh build --openexr  # Build with full OpenEXR support
+./bootstrap.sh test        # Run encoding integration test
 ```
 
 **What bootstrap does:**
@@ -195,6 +372,44 @@ cargo xtask verify [--release]             # Verify dependencies present
 cargo xtask deploy [--install-dir PATH]    # Install to system
   # Windows: %LOCALAPPDATA%\Programs\playa
   # Linux/macOS: ~/.local/bin/playa
+```
+
+##### 🧪 Testing
+```bash
+bootstrap.cmd test     # Windows: Run encoding integration test
+./bootstrap.sh test    # Linux/macOS: Run encoding integration test
+```
+
+**What `bootstrap test` does:**
+- Runs `cargo test --release test_encode_placeholder_frames -- --nocapture`
+- Creates 100 placeholder frames (640x480, green color)
+- Sets play range to frames 10-49 (40 frames)
+- Detects available encoder (NVENC/libx264/mpeg4)
+- Encodes to `test_encode_output.mp4` in current directory
+- Verifies RGB24→YUV420P conversion for hardware encoders
+- Shows encoder type, output path, file size, and frame count
+
+**Example output:**
+```
+🎬 Using NVENC hardware encoder
+Play range set: 10..49 (40 frames)
+Encoding frames 10..49 to: C:\projects\playa\test_encode_output.mp4
+✓ Encoding test passed!
+  Encoder: h264_nvenc
+  Output: C:\projects\playa\test_encode_output.mp4
+  Size: 2817 bytes (2.75 KB)
+  Frames: 40/40 (play range: 10..49)
+```
+
+**Test file location:** `./test_encode_output.mp4` (in project root)
+
+**Additional video tests:**
+```bash
+# List all video-related tests
+cargo test --release -- --list | grep video
+
+# Run specific video test
+cargo test --release test_video_decoder_basic -- --nocapture
 ```
 
 ##### 🧹 Maintenance
@@ -664,10 +879,20 @@ playa --log custom.log               # Logs to custom file
 - `Middle Mouse Drag` - Pan
 - `Left Click + Drag` - Scrub timeline
 
+**Play Range (Work Area):**
+- `B` - Set play range start (begin marker)
+- `N` - Set play range end (end marker)
+- `Ctrl+B` - Reset play range to full sequence
+- Used for:
+  - Loop playback within selected range
+  - Encoding only selected frames (F7)
+  - Timeline highlighting
+
 **UI:**
 - `F1` - Toggle help overlay
 - `F2` - Toggle playlist panel
 - `F3` - Toggle settings dialog
+- `F7` - Open video encoding dialog
 - `Z` - Toggle fullscreen (cinema mode)
 - `ESC` - Exit fullscreen / Quit
 - `Q` - Quit
