@@ -7,7 +7,7 @@
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
 #   ./bootstrap.sh test               # Run encoding integration test
-#   ./bootstrap.sh package            # Build installer package
+#   ./bootstrap.sh publish            # Publish crate to crates.io
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
 #   ./bootstrap.sh wipe -v            # Verbose output
 #   ./bootstrap.sh wipe --dry-run     # Show what would be removed
@@ -103,16 +103,11 @@ if [ "$1" = "test" ]; then
     exit 0
 fi
 
-if [ "$1" = "package" ]; then
-    # Build installer package
-    echo "Building installer package..."
+if [ "$1" = "publish" ]; then
+    # Publish crate to crates.io
+    echo "Publishing crate to crates.io..."
     echo ""
-    cargo build --release
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to build release binary"
-        exit 1
-    fi
-    cargo packager --release
+    cargo publish
     exit 0
 fi
 

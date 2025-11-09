@@ -7,7 +7,7 @@
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
 ::   bootstrap.cmd test               # Run encoding integration test
-::   bootstrap.cmd package            # Build installer package
+::   bootstrap.cmd publish            # Publish crate to crates.io
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
 ::   bootstrap.cmd wipe -v            # Verbose output
 ::   bootstrap.cmd wipe --dry-run     # Show what would be removed
@@ -129,16 +129,11 @@ if "%~1"=="test" (
     goto :end
 )
 
-if "%~1"=="package" (
-    :: Build installer package
-    echo Building installer package...
+if "%~1"=="publish" (
+    :: Publish crate to crates.io
+    echo Publishing crate to crates.io...
     echo.
-    cargo build --release
-    if errorlevel 1 (
-        echo Error: Failed to build release binary
-        exit /b 1
-    )
-    cargo packager --release
+    cargo publish
     goto :end
 )
 
