@@ -27,7 +27,8 @@ pub fn help_text() -> &'static str {
     Ctrl+R - Reset Settings\n\n\
     ' / ` - Toggle Loop\n\
     B - Set Play Range Start\n\
-    N - Set Play Range End\n\n\
+    N - Set Play Range End\n\
+    Ctrl+B - Reset Play Range\n\n\
     Playback:\n\
     Space - Play/Pause\n\
     J / , / ← - Backward\n\
@@ -426,6 +427,7 @@ pub fn render_viewport(
                                 // Calculate frame from new normalized position (clamps to valid range)
                                 let frame_idx = Scrubber::normalized_to_frame(normalized, player.total_frames());
                                 player.set_frame(frame_idx);
+                                player.cache.signal_preload();  // Trigger preload (respects play_range)
                                 scrubber.set_current_frame(frame_idx);
 
                                 // Visual line follows mouse everywhere (can be outside image bounds)
@@ -441,6 +443,7 @@ pub fn render_viewport(
                                 // Update frame from saved normalized (clamps to valid range)
                                 let frame_idx = Scrubber::normalized_to_frame(saved_normalized, player.total_frames());
                                 player.set_frame(frame_idx);
+                                player.cache.signal_preload();  // Trigger preload (respects play_range)
                                 scrubber.set_current_frame(frame_idx);
 
                                 // Update visual from saved normalized (converts back to pixel position)

@@ -109,7 +109,7 @@ pub struct Cache {
     ui_message_sender: mpsc::Sender<CacheMessage>,
 
     // Preload signaling
-    preload_tx: mpsc::Sender<(usize, usize, Vec<FramePath>)>, // (center_frame, global_end, frame_paths)
+    preload_tx: mpsc::Sender<(usize, usize, Vec<FramePath>, (usize, usize))>, // (center_frame, global_end, frame_paths, play_range)
     cancel_preload: Arc<AtomicBool>,
     current_epoch: Arc<AtomicU64>, // Epoch counter for cancelling stale requests
 
@@ -258,7 +258,7 @@ impl Cache {
         }
 
         // Preload thread
-        let (preload_tx, preload_rx) = mpsc::channel::<(usize, usize, Vec<FramePath>)>();
+        let (preload_tx, preload_rx) = mpsc::channel::<(usize, usize, Vec<FramePath>, (usize, usize))>();
         let cancel_preload = Arc::new(AtomicBool::new(false));
 
         let preload_sender = load_request_sender.clone();
@@ -282,13 +282,22 @@ impl Cache {
                         latest = msg;
                     }
 
-                    let (center_frame, global_end, frame_paths) = latest;
+                    let (center_frame, _global_end, frame_paths, play_range) = latest;
+
+                    // Check if center_frame is within play_range
+                    let (play_start, play_end) = play_range;
+                    if center_frame < play_start || center_frame > play_end {
+                        debug!("Preload: frame {} outside play_range ({}..{}), skipping request",
+                               center_frame, play_start, play_end);
+                        continue;
+                    }
 
                     // Increment epoch counter
                     session_counter += 1;
                     let epoch = session_counter;
                     preload_epoch.store(epoch, Ordering::Relaxed);
-                    debug!("Preload epoch {}: center={}, total={}", epoch, center_frame, global_end + 1);
+                    debug!("Preload epoch {}: center={}, play_range={}..{}",
+                           epoch, center_frame, play_start, play_end);
 
                     // Reset cancel flag
                     preload_cancel.store(false, Ordering::Relaxed);
@@ -330,9 +339,9 @@ impl Cache {
                     };
 
                     if use_forward_only {
-                        // Forward-only preload: center, center+1, center+2, ...
+                        // Forward-only preload: center, center+1, center+2, ... (within play_range)
                         // Optimized for video where seeking backward is expensive
-                        for global_idx in center_frame..=global_end {
+                        for global_idx in center_frame..=play_end {
                             // Check cancel flag
                             if preload_cancel.load(Ordering::Relaxed) {
                                 debug!("Preload epoch {} cancelled at frame {} ({} sent, {} skipped)",
@@ -347,9 +356,10 @@ impl Cache {
                             }
                         }
                     } else {
-                        // Spiral preload: 0, +1, -1, +2, -2, ...
+                        // Spiral preload: 0, +1, -1, +2, -2, ... (within play_range)
                         // Good for image sequences where seeking is cheap
-                        for offset in 0..=global_end {
+                        let max_offset = play_end - play_start;
+                        for offset in 0..=max_offset {
                             // Check cancel flag BEFORE each request
                             if preload_cancel.load(Ordering::Relaxed) {
                                 debug!("Preload epoch {} cancelled at offset {} ({} sent, {} skipped)",
@@ -357,23 +367,27 @@ impl Cache {
                                 break;
                             }
 
-                            // Load backward
+                            // Load backward (clamp to play_start)
                             if center_frame >= offset {
                                 let global_idx = center_frame - offset;
-                                if try_send(global_idx) {
-                                    sent += 1;
-                                } else if frame_paths.get(global_idx).is_some() {
-                                    skipped += 1;
+                                if global_idx >= play_start {
+                                    if try_send(global_idx) {
+                                        sent += 1;
+                                    } else if frame_paths.get(global_idx).is_some() {
+                                        skipped += 1;
+                                    }
                                 }
                             }
 
-                            // Load forward (skip offset=0 as already loaded)
-                            if offset > 0 && center_frame + offset <= global_end {
+                            // Load forward (skip offset=0 as already loaded, clamp to play_end)
+                            if offset > 0 {
                                 let global_idx = center_frame + offset;
-                                if try_send(global_idx) {
-                                    sent += 1;
-                                } else if frame_paths.get(global_idx).is_some() {
-                                    skipped += 1;
+                                if global_idx <= play_end {
+                                    if try_send(global_idx) {
+                                        sent += 1;
+                                    } else if frame_paths.get(global_idx).is_some() {
+                                        skipped += 1;
+                                    }
                                 }
                             }
                         }
@@ -426,14 +440,23 @@ impl Cache {
     pub fn append_seq(&mut self, seq: Sequence) {
         let seq_len = seq.len();
         let was_empty = self.sequences.is_empty();
+        let old_global_end = self.global_end;
 
         self.sequences.push(seq);
         self.global_end = self.global_start + self.total_frames().saturating_sub(1);
         self.progress.set_total(self.total_frames());
 
-        // Initialize play_range to full range on first sequence
+        // Smart play_range update:
+        // - If cache was empty: initialize to full range
+        // - If play_range was at maximum: extend to new maximum
+        // - Otherwise: keep user's custom range (will be clamped if needed)
         if was_empty {
             self.reset_play_range();
+        } else {
+            let was_at_max = self.play_range_end.load(Ordering::Relaxed) == old_global_end;
+            if was_at_max {
+                self.play_range_end.store(self.global_end, Ordering::Relaxed);
+            }
         }
 
         // Update frame paths cache
@@ -462,6 +485,10 @@ impl Cache {
 
         // Clear progress
         self.progress.clear();
+
+        // Reset play_range (no sequences = no range)
+        self.play_range_start.store(0, Ordering::Relaxed);
+        self.play_range_end.store(0, Ordering::Relaxed);
 
         // Increment version to invalidate UI cache
         self.sequences_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -585,17 +612,21 @@ impl Cache {
             }
         }
 
-        // Not cached, trigger load ONLY if not already loaded
+        // Not cached, trigger load ONLY if not already loaded AND within play_range
         if let Some(seq) = self.sequences.get(seq_idx) {
             if let Some(frame) = seq.idx(frame_idx as isize, false) {
                 // Check if frame needs loading (Header status = file set but not loaded)
                 if matches!(frame.status(), FrameStatus::Header) {
-                    let _ = self.load_request_sender.send(LoadRequest {
-                        frame: frame.clone(), // Clone Arc - cheap!
-                        seq_idx,
-                        frame_idx,
-                        epoch: self.current_epoch.load(Ordering::Relaxed),
-                    });
+                    // Only trigger load if within play_range (second line of defense)
+                    let (play_start, play_end) = self.get_play_range();
+                    if global_idx >= play_start && global_idx <= play_end {
+                        let _ = self.load_request_sender.send(LoadRequest {
+                            frame: frame.clone(), // Clone Arc - cheap!
+                            seq_idx,
+                            frame_idx,
+                            epoch: self.current_epoch.load(Ordering::Relaxed),
+                        });
+                    }
                 }
             }
         }
@@ -752,6 +783,18 @@ impl Cache {
                 self.global_frame = self.global_end;
             }
 
+            // Clamp play_range_end if it exceeds new maximum
+            let current_end = self.play_range_end.load(Ordering::Relaxed);
+            if current_end > self.global_end {
+                self.play_range_end.store(self.global_end, Ordering::Relaxed);
+            }
+
+            // Clamp play_range_start as well (safety)
+            let current_start = self.play_range_start.load(Ordering::Relaxed);
+            if current_start > self.global_end {
+                self.play_range_start.store(self.global_end, Ordering::Relaxed);
+            }
+
             // Reindex cache to reflect new sequence positions
             self.reindex();
 
@@ -859,6 +902,7 @@ impl Cache {
     }
 
     /// Signal preload thread to start loading frames from current position
+    /// Only loads frames within play_range for memory efficiency
     pub fn signal_preload(&self) {
         // Set cancel flag to interrupt any ongoing preload
         self.cancel_preload.store(true, Ordering::Relaxed);
@@ -867,8 +911,9 @@ impl Cache {
         let frame_paths = self.frame_paths_cache.clone();
         let center = self.global_frame;
         let total = self.global_end;
+        let play_range = self.get_play_range();
 
-        if let Err(e) = self.preload_tx.send((center, total, frame_paths)) {
+        if let Err(e) = self.preload_tx.send((center, total, frame_paths, play_range)) {
             warn!("Failed to signal preload: {}", e);
         }
     }
@@ -919,6 +964,7 @@ impl Cache {
         info!("Restoring {} sequence(s) from cache", state.sequences.len());
 
         // Restore frames for each sequence (creates unloaded Frame placeholders)
+        // Note: append_seq() will set play_range to max, but we'll override it below
         for seq in &mut state.sequences {
             seq.restore_frames();
             self.append_seq(seq.clone());
@@ -927,13 +973,28 @@ impl Cache {
         // Restore current frame
         self.set_frame(state.current_frame);
 
-        // Restore play range
-        self.play_range_start.store(state.play_range_start, Ordering::Relaxed);
-        self.play_range_end.store(state.play_range_end, Ordering::Relaxed);
+        // Restore play_range from playlist (overrides auto-set from append_seq)
+        // Clamp to actual global range (safety check)
+        let max_frame = self.total_frames().saturating_sub(1);
+        let restored_start = state.play_range_start.min(max_frame);
+        let restored_end = state.play_range_end.min(max_frame);
+
+        if !append {
+            // Replace mode: use play_range from loaded playlist
+            self.play_range_start.store(restored_start, Ordering::Relaxed);
+            self.play_range_end.store(restored_end, Ordering::Relaxed);
+        } else {
+            // Append mode: extend play_range if loaded range goes beyond current
+            let current_end = self.play_range_end.load(Ordering::Relaxed);
+            if restored_end > current_end {
+                self.play_range_end.store(restored_end, Ordering::Relaxed);
+            }
+        }
 
         info!("Cache restored: {} sequences, current frame {}, play range {}..{}",
               state.sequences.len(), self.global_frame,
-              state.play_range_start, state.play_range_end);
+              self.play_range_start.load(Ordering::Relaxed),
+              self.play_range_end.load(Ordering::Relaxed));
 
         Ok(state.sequences.len())
     }

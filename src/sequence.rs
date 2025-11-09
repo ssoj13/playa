@@ -309,6 +309,16 @@ impl Sequence {
         &self.pattern
     }
 
+    /// Get x resolution (width)
+    pub fn xres(&self) -> usize {
+        self.xres
+    }
+
+    /// Get y resolution (height)
+    pub fn yres(&self) -> usize {
+        self.yres
+    }
+
     /// Detect image sequences from files or directories
     ///
     /// **Why**: Auto-discover frame range and numbering pattern from drag-dropped paths

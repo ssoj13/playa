@@ -16,6 +16,7 @@ mod prefs;
 mod paths;
 mod utils;
 mod encode;
+mod ui_encode;
 
 use clap::Parser;
 use eframe::{egui, glow};
@@ -86,6 +87,10 @@ struct PlayaApp {
     #[serde(skip)]
     show_settings: bool,
     #[serde(skip)]
+    show_encode_dialog: bool,
+    #[serde(skip)]
+    encode_dialog: Option<ui_encode::EncodeDialog>,
+    #[serde(skip)]
     is_fullscreen: bool,
     #[serde(skip)]
     cached_seq_ranges: Vec<timeslider::SequenceRange>,
@@ -119,6 +124,8 @@ impl Default for PlayaApp {
             show_help: true,
             show_playlist: true,
             show_settings: false,
+            show_encode_dialog: false,
+            encode_dialog: None,
             is_fullscreen: false,
             cached_seq_ranges: Vec::new(),
             last_seq_version: 0,
@@ -188,6 +195,16 @@ impl PlayaApp {
             self.show_settings = !self.show_settings;
         }
 
+        if input.key_pressed(egui::Key::F7) {
+            self.show_encode_dialog = !self.show_encode_dialog;
+            // Create dialog on first open with current settings
+            if self.show_encode_dialog && self.encode_dialog.is_none() {
+                self.encode_dialog = Some(ui_encode::EncodeDialog::new(
+                    self.settings.encoder_settings.clone()
+                ));
+            }
+        }
+
         // ESC/Q: one handler. ESC leaves cinema/fullscreen first; Q always quits.
         if input.key_pressed(egui::Key::Escape) || input.key_pressed(egui::Key::Q) {
             if input.key_pressed(egui::Key::Escape) && self.is_fullscreen {
@@ -234,7 +251,7 @@ impl PlayaApp {
         }
 
         // Set play range start (B = Begin)
-        if input.key_pressed(egui::Key::B) {
+        if !input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
             let current = self.player.cache.frame();
             let (_, end) = self.player.cache.get_play_range();
             self.player.cache.set_play_range(current, end);
@@ -245,6 +262,11 @@ impl PlayaApp {
             let current = self.player.cache.frame();
             let (start, _) = self.player.cache.get_play_range();
             self.player.cache.set_play_range(start, current);
+        }
+
+        // Reset play range to full sequence (Ctrl+B)
+        if input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
+            self.player.cache.reset_play_range();
         }
 
         // Skip to start/end (Ctrl modifiers)
@@ -458,6 +480,18 @@ impl eframe::App for PlayaApp {
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
             render_settings_window(ctx, &mut self.show_settings, &mut self.settings);
+        }
+
+        // Encode dialog (can be shown even in cinema mode)
+        if self.show_encode_dialog {
+            if let Some(ref mut dialog) = self.encode_dialog {
+                let should_stay_open = dialog.render(ctx, &self.player.cache);
+                if !should_stay_open {
+                    self.show_encode_dialog = false;
+                    // Save settings when closing after encoding
+                    self.settings.encoder_settings = dialog.settings.clone();
+                }
+            }
         }
     }
 

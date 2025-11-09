@@ -199,42 +199,37 @@ impl std::fmt::Display for EncodeError {
 
 impl std::error::Error for EncodeError {}
 
-/// Validate that all frames in range have same dimensions
+/// Validate that all sequences have same dimensions
 ///
+/// Uses sequence metadata (xres/yres) without loading frames.
 /// Returns (width, height) if valid, error otherwise
 fn validate_frame_sizes(
-    cache: &mut Cache,
-    range: (usize, usize),
+    cache: &Cache,
+    _range: (usize, usize),
 ) -> Result<(u32, u32), EncodeError> {
-    let mut width = None;
-    let mut height = None;
+    let sequences = cache.sequences();
 
-    for i in range.0..=range.1 {
-        if let Some(frame) = cache.get_frame(i) {
-            let w = frame.width();
-            let h = frame.height();
+    if sequences.is_empty() {
+        return Err(EncodeError::NoFrames);
+    }
 
-            match (width, height) {
-                (None, None) => {
-                    width = Some(w);
-                    height = Some(h);
-                }
-                (Some(w0), Some(h0)) if w0 != w || h0 != h => {
-                    return Err(EncodeError::InconsistentFrameSizes {
-                        expected: (w0 as u32, h0 as u32),
-                        found: (w as u32, h as u32),
-                        frame: i,
-                    });
-                }
-                _ => {}
-            }
+    // Get dimensions from first sequence
+    let first_seq = &sequences[0];
+    let width = first_seq.xres();
+    let height = first_seq.yres();
+
+    // Verify all sequences have same dimensions
+    for (idx, seq) in sequences.iter().enumerate().skip(1) {
+        if seq.xres() != width || seq.yres() != height {
+            return Err(EncodeError::InconsistentFrameSizes {
+                expected: (width as u32, height as u32),
+                found: (seq.xres() as u32, seq.yres() as u32),
+                frame: idx,
+            });
         }
     }
 
-    width
-        .zip(height)
-        .map(|(w, h)| (w as u32, h as u32))
-        .ok_or(EncodeError::NoFrames)
+    Ok((width as u32, height as u32))
 }
 
 /// Main encoding function
