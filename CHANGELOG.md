@@ -1,3 +1,8 @@
+## [0.1.123] - 2025-11-09
+
+### 🐛 Bug Fixes
+
+- Set VCPKGRS_TRIPLET env for Windows cargo build
 ## [0.1.122] - 2025-11-09
 
 ### 🚀 Features
