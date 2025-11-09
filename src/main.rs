@@ -161,6 +161,9 @@ impl PlayaApp {
             Ok(count) => {
                 info!("Added {} sequence(s) from playlist", count);
 
+                // Clear error message on successful load
+                self.error_msg = None;
+
                 // Get current frame for display
                 let current_frame_idx = self.player.current_frame();
                 if let Some(frame) = self.player.get_current_frame() {
@@ -366,6 +369,8 @@ impl eframe::App for PlayaApp {
                             for seq in sequences {
                                 self.player.cache.append_seq(seq);
                             }
+                            // Clear error message on successful load
+                            self.error_msg = None;
                         }
                         Err(e) => {
                             warn!("Failed to load {}: {}", path.display(), e);
@@ -401,6 +406,8 @@ impl eframe::App for PlayaApp {
                         for seq in sequences {
                             self.player.cache.append_seq(seq);
                         }
+                        // Clear error message on successful load
+                        self.error_msg = None;
                     }
                     Err(e) => {
                         warn!("Failed to load {}: {}", path.display(), e);
@@ -468,6 +475,8 @@ impl eframe::App for PlayaApp {
                     for seq in sequences {
                         self.player.cache.append_seq(seq);
                     }
+                    // Clear error message on successful load
+                    self.error_msg = None;
                 }
                 Err(e) => {
                     warn!("Failed to load {}: {}", path.display(), e);
@@ -549,7 +558,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(log_path_opt) = &args.log_file {
         // File logging with debug level
         let log_path = log_path_opt.as_ref()
-            .map(|p| p.clone())
+            .cloned()
             .unwrap_or_else(|| paths::data_file("playa.log", &path_config));
 
         let file = std::fs::File::create(&log_path)

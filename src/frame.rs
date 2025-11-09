@@ -81,7 +81,7 @@ pub enum FrameStatus {
 /// Internal frame data protected by mutex
 #[derive(Debug, Clone)]
 struct FrameData {
-    buffer: PixelBuffer,   // Multi-format pixel buffer
+    buffer: Arc<PixelBuffer>,   // Multi-format pixel buffer (Arc for cheap cloning)
     pixel_format: PixelFormat,
     width: usize,
     height: usize,
@@ -123,14 +123,16 @@ impl std::error::Error for FrameError {}
 impl Frame {
     /// Create new frame with green placeholder
     pub fn new(width: usize, height: usize) -> Self {
-        // Efficiently create repeated RGBA pattern [0,100,0,255]
-        let mut buffer_u8 = vec![0u8; width * height * 4];
-        for px in buffer_u8.chunks_mut(4) {
-            px.copy_from_slice(&[0, 100, 0, 255]); // Dark green RGBA
+        // Efficiently create repeated RGBA pattern [0,100,0,255] without double initialization
+        let mut buffer_u8 = Vec::with_capacity(width * height * 4);
+        buffer_u8.resize(width * height * 4, 0);
+        for px in buffer_u8.chunks_exact_mut(4) {
+            px[1] = 100;  // G channel
+            px[3] = 255;  // A channel (R,B already 0)
         }
 
         let data = FrameData {
-            buffer: PixelBuffer::U8(buffer_u8),
+            buffer: Arc::new(PixelBuffer::U8(buffer_u8)),
             pixel_format: PixelFormat::Rgba8,
             width,
             height,
@@ -149,7 +151,7 @@ impl Frame {
         let buffer_u8 = vec![0, 100, 0, 255]; // 1 pixel dark green
 
         let data = FrameData {
-            buffer: PixelBuffer::U8(buffer_u8),
+            buffer: Arc::new(PixelBuffer::U8(buffer_u8)),
             pixel_format: PixelFormat::Rgba8,
             width: 1,
             height: 1,
@@ -284,7 +286,7 @@ impl Frame {
 
         // Update frame data
         let mut data = self.data.lock().unwrap();
-        data.buffer = buffer;
+        data.buffer = Arc::new(buffer);
         data.pixel_format = pixel_format;
         data.width = width;
         data.height = height;
@@ -318,7 +320,7 @@ impl Frame {
 
         // Update frame data atomically - store as native f32 HDR
         let mut data = self.data.lock().unwrap();
-        data.buffer = PixelBuffer::F32(buffer_f32);
+        data.buffer = Arc::new(PixelBuffer::F32(buffer_f32));
         data.pixel_format = PixelFormat::RgbaF32;
         data.width = width;
         data.height = height;
@@ -340,7 +342,7 @@ impl Frame {
 
         // Update frame data atomically
         let mut data = self.data.lock().unwrap();
-        data.buffer = PixelBuffer::U8(rgba.into_raw());
+        data.buffer = Arc::new(PixelBuffer::U8(rgba.into_raw()));
         data.pixel_format = PixelFormat::Rgba8;
         data.width = width;
         data.height = height;
@@ -356,19 +358,19 @@ impl Frame {
 
         // Update frame data atomically
         let mut data = self.data.lock().unwrap();
-        data.buffer = buffer;
+        data.buffer = Arc::new(buffer);
         data.pixel_format = pixel_format;
         data.width = width;
         data.height = height;
 
-        info!("Loaded video frame {}: {}x{}", frame_num, width, height);
+        debug!("Loaded video frame {}: {}x{}", frame_num, width, height);
         Ok(())
     }
 
     /// Memory size in bytes
     pub fn mem(&self) -> usize {
         let data = self.data.lock().unwrap();
-        match &data.buffer {
+        match data.buffer.as_ref() {
             PixelBuffer::U8(vec) => vec.len(),       // 1 byte per u8
             PixelBuffer::F16(vec) => vec.len() * 2,  // 2 bytes per f16
             PixelBuffer::F32(vec) => vec.len() * 4,  // 4 bytes per f32
@@ -385,9 +387,9 @@ impl Frame {
         self.data.lock().unwrap().status = status;
     }
 
-    /// Get pixel buffer (returns cloned buffer)
-    pub fn pixel_buffer(&self) -> PixelBuffer {
-        self.data.lock().unwrap().buffer.clone()
+    /// Get pixel buffer (returns Arc for efficient sharing)
+    pub fn pixel_buffer(&self) -> Arc<PixelBuffer> {
+        Arc::clone(&self.data.lock().unwrap().buffer)
     }
 
     /// Get pixel format
@@ -399,7 +401,7 @@ impl Frame {
     /// Returns error if the pixel format is not U8 (e.g., HDR formats F16/F32)
     pub fn pixels(&self) -> Result<Vec<u8>, FrameError> {
         let data = self.data.lock().unwrap();
-        match &data.buffer {
+        match data.buffer.as_ref() {
             PixelBuffer::U8(vec) => Ok(vec.clone()),
             PixelBuffer::F16(_) => Err(FrameError::UnsupportedFormat(
                 "Frame uses F16 format, use pixel_buffer() for HDR data".into()

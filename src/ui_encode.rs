@@ -187,6 +187,16 @@ impl EncodeDialog {
                     });
                 });
 
+                ui.horizontal(|ui| {
+                    ui.label("Framerate:");
+                    ui.add_enabled_ui(!self.is_encoding, |ui| {
+                        ui.add(
+                            egui::Slider::new(&mut self.settings.fps, 1.0..=240.0)
+                                .text("fps"),
+                        );
+                    });
+                });
+
                 ui.add_space(8.0);
 
                 // === Frame Range Info ===
@@ -269,7 +279,7 @@ impl EncodeDialog {
 
         // Clone data for thread (including play_range)
         let cache_clone = cache.sequences().iter()
-            .map(|s| s.clone())
+            .cloned()
             .collect::<Vec<_>>();
         let play_range = cache.get_play_range();
         let settings_clone = self.settings.clone();

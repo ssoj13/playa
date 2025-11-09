@@ -183,6 +183,7 @@ impl Player {
     }
 
     /// Get current frame index
+    #[inline]
     pub fn current_frame(&self) -> usize {
         self.cache.frame()
     }

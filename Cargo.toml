@@ -37,7 +37,7 @@ lru = "0.16"
 num_cpus = "1.17"
 once_cell = "1.21"
 openexr = { version = "0.11", optional = true }
-playa-ffmpeg = "8.0.2"
+playa-ffmpeg = "8.0.3"
 rayon = "1.11"
 regex = "1.12"
 rfd = "0.15"
