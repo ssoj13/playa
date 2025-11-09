@@ -11,9 +11,6 @@ use crate::timeslider::{time_slider, SequenceRange, TimeSliderConfig};
 use crate::viewport::{ViewportRenderer, ViewportState};
 use crate::utils::media;
 
-/// Image and video file format filters for file dialogs
-pub const FILE_FILTERS: &[&str] = media::ALL_EXTS;
-
 /// Help text displayed in overlay
 pub fn help_text() -> &'static str {
     "Drag'n'drop a file here or double-click to open\n\n\
@@ -80,7 +77,7 @@ pub fn render_playlist(
             ui.horizontal(|ui| {
                 if ui.button("Add").clicked() {
                     if let Some(paths) = rfd::FileDialog::new()
-                        .add_filter("Image Files", FILE_FILTERS)
+                        .add_filter("Image Files", media::ALL_EXTS)
                         .set_title("Add Files")
                         .pick_files()
                     {
@@ -351,7 +348,7 @@ pub fn render_viewport(
         if double_clicked {
             info!("Double-click detected, opening file dialog");
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Image Files", FILE_FILTERS)
+                .add_filter("Image Files", media::ALL_EXTS)
                 .add_filter("EXR Images", &["exr"])
                 .add_filter("PNG Images", &["png"])
                 .add_filter("JPEG Images", &["jpg", "jpeg"])
