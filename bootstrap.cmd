@@ -168,8 +168,8 @@ if "%~1"=="install" (
         echo.
         set /p "install_ffmpeg=Install FFmpeg via vcpkg? (y/N): "
         if /i "!install_ffmpeg!"=="y" (
-            echo Installing FFmpeg...
-            C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv]:x64-windows-static-md-release
+            echo Installing FFmpeg with hardware acceleration support...
+            C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
             echo ✓ FFmpeg installed
         ) else (
             echo Installation cancelled.

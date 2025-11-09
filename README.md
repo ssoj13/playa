@@ -242,25 +242,18 @@ C:\vcpkg\bootstrap-vcpkg.bat
 # Set environment variables (required for Rust to find FFmpeg)
 # Add these permanently to your system environment variables:
 setx VCPKG_ROOT "C:\vcpkg"
-setx VCPKGRS_TRIPLET "x64-windows-static-md"
+setx VCPKGRS_TRIPLET "x64-windows-static-md-release"
 
-# Install FFmpeg with static linking (creates portable binaries without DLL dependencies)
-C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv]:x64-windows-static-md
-
-# Optional: Install additional codec features
-C:\vcpkg\vcpkg install ffmpeg[vpl,amf,x264,x265,vpx,aom]:x64-windows-static-md
+# Install FFmpeg with static linking and hardware acceleration support
+C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
 ```
 
-**Important:** The `VCPKGRS_TRIPLET` environment variable tells Rust's vcpkg integration which triplet to use. The `x64-windows-static-md` triplet provides static library linkage with dynamic CRT, creating self-contained binaries without requiring FFmpeg DLLs at runtime.
+**Important:** The `VCPKGRS_TRIPLET` environment variable tells Rust's vcpkg integration which triplet to use. The `x64-windows-static-md-release` triplet provides static library linkage with optimized release builds, creating self-contained binaries without requiring FFmpeg DLLs at runtime.
 
 **Features explained**:
-- `core,avcodec,avformat,avutil,swscale` - Required (decoding, muxing, scaling)
+- `core,avcodec,avformat,swscale,swresample` - Core libraries (required)
+- `avdevice,avfilter` - Device input and filtering support
 - `nvcodec` - NVIDIA NVENC hardware encoding (GTX 600+)
-- `qsv` - Intel Quick Sync hardware encoding (requires `vpl`)
-- `vpl` - Intel Video Processing Library (for QSV)
-- `amf` - AMD hardware encoding
-- `x264,x265` - H.264/H.265 software encoders
-- `vpx,aom` - VP8/VP9/AV1 codecs
 
 **Setup Visual Studio environment** (before building):
 ```cmd
@@ -271,24 +264,20 @@ C:\vcpkg\vcpkg install ffmpeg[vpl,amf,x264,x265,vpx,aom]:x64-windows-static-md
 
 ```bash
 # Install vcpkg
-git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
-~/vcpkg/bootstrap-vcpkg.sh
+git clone https://github.com/microsoft/vcpkg.git /usr/local/share/vcpkg
+/usr/local/share/vcpkg/bootstrap-vcpkg.sh
 
 # Set environment variables
-export VCPKG_ROOT=~/vcpkg
-export PKG_CONFIG_PATH=~/vcpkg/installed/x64-linux/lib/pkgconfig
+export VCPKG_ROOT=/usr/local/share/vcpkg
+export VCPKGRS_TRIPLET=x64-linux-release
+export PKG_CONFIG_PATH=$VCPKG_ROOT/installed/$VCPKGRS_TRIPLET/lib/pkgconfig
 
 # Install FFmpeg with hardware encoder support
-vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec]:x64-linux
-
-# Optional: Install additional codecs
-vcpkg install ffmpeg[x264,x265,vpx,aom]:x64-linux
+vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-linux-release
 ```
 
 **Hardware encoders on Linux**:
 - `nvcodec` - NVIDIA NVENC (requires CUDA drivers)
-- QSV - Requires Intel Media SDK (install via system package manager)
-- VAAPI - Use system FFmpeg with VAAPI support
 
 **Alternative: System FFmpeg**
 ```bash
@@ -306,20 +295,21 @@ sudo pacman -S ffmpeg
 
 ```bash
 # Install vcpkg
-git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
-~/vcpkg/bootstrap-vcpkg.sh
+git clone https://github.com/microsoft/vcpkg.git /usr/local/share/vcpkg
+/usr/local/share/vcpkg/bootstrap-vcpkg.sh
 
-# Set environment variables
-export VCPKG_ROOT=~/vcpkg
-export PKG_CONFIG_PATH=~/vcpkg/installed/arm64-osx/lib/pkgconfig  # M1/M2
-# export PKG_CONFIG_PATH=~/vcpkg/installed/x64-osx/lib/pkgconfig  # Intel
+# Set environment variables (automatically detected by bootstrap.sh)
+export VCPKG_ROOT=/usr/local/share/vcpkg
 
-# Install FFmpeg
-vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale]:arm64-osx  # M1/M2
-# vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale]:x64-osx  # Intel
+# M1/M2 Macs
+export VCPKGRS_TRIPLET=arm64-osx-release
+export PKG_CONFIG_PATH=$VCPKG_ROOT/installed/arm64-osx-release/lib/pkgconfig
+vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:arm64-osx-release
 
-# Optional: Install additional codecs
-vcpkg install ffmpeg[x264,x265,vpx,aom]:arm64-osx
+# Intel Macs
+export VCPKGRS_TRIPLET=x64-osx-release
+export PKG_CONFIG_PATH=$VCPKG_ROOT/installed/x64-osx-release/lib/pkgconfig
+vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:x64-osx-release
 ```
 
 **Alternative: Homebrew**

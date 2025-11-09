@@ -155,8 +155,13 @@ if [ "$1" = "install" ]; then
         echo ""
         read -p "Install FFmpeg via vcpkg? (y/N): " install_ffmpeg
         if [[ "$install_ffmpeg" =~ ^[Yy]$ ]]; then
-            echo "Installing FFmpeg..."
-            "$VCPKG_PATH/vcpkg" install "ffmpeg[core,avcodec,avformat,avutil,swscale]:$TRIPLET"
+            echo "Installing FFmpeg with hardware acceleration support..."
+            # macOS doesn't support nvcodec, Linux does
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                "$VCPKG_PATH/vcpkg" install "ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:$TRIPLET"
+            else
+                "$VCPKG_PATH/vcpkg" install "ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:$TRIPLET"
+            fi
             echo "✓ FFmpeg installed"
         else
             echo "Installation cancelled."
