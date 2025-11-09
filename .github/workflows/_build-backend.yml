@@ -212,6 +212,13 @@ jobs:
         run: |
           echo "PKG_CONFIG_PATH=/usr/local/share/vcpkg/installed/${{ steps.vcpkg-triplet.outputs.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
 
+      - name: Set FFmpeg environment (Windows)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          echo "VCPKG_DEFAULT_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
+          echo "VCPKGRS_TRIPLET=x64-windows-static-md-release" >> $env:GITHUB_ENV
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
