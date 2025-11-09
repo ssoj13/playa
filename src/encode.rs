@@ -646,6 +646,11 @@ mod tests {
 
         cache.append_seq(seq);
 
+        // Set play range to encode only frames 10-49 (40 frames total)
+        cache.set_play_range(10, 49);
+        let (play_start, play_end) = cache.get_play_range();
+        println!("Play range set: {}..{} ({} frames)", play_start, play_end, play_end - play_start + 1);
+
         // Determine which codec to use based on available encoder
         let (codec, encoder_impl, encoder_name) = if ffmpeg::encoder::find_by_name("h264_nvenc").is_some() {
             println!("\n🎬 Using NVENC hardware encoder");
@@ -687,7 +692,7 @@ mod tests {
         let abs_path = std::fs::canonicalize(&output_path).unwrap_or_else(|_| {
             std::env::current_dir().unwrap().join(&output_path)
         });
-        println!("Encoding 100 frames to: {}", abs_path.display());
+        println!("Encoding frames {}..{} to: {}", play_start, play_end, abs_path.display());
         let result = encode_sequence(&mut cache, &settings, tx, cancel_flag);
 
         // Check progress updates
@@ -712,7 +717,9 @@ mod tests {
         // Verify progress reached completion
         if let Some(progress) = last_progress {
             assert_eq!(progress.stage, EncodeStage::Complete, "Encoding did not complete");
-            println!("  Frames: {}/{}", progress.current_frame, progress.total_frames);
+            println!("  Frames: {}/{} (play range: {}..{})",
+                progress.current_frame, progress.total_frames, play_start, play_end);
+            assert_eq!(progress.total_frames, 40, "Should encode exactly 40 frames from play range");
         }
 
         // Cleanup

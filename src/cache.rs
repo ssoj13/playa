@@ -446,15 +446,15 @@ impl Cache {
         self.global_end = self.global_start + self.total_frames().saturating_sub(1);
         self.progress.set_total(self.total_frames());
 
-        // Smart play_range update:
-        // - If cache was empty: initialize to full range
-        // - If play_range was at maximum: extend to new maximum
-        // - Otherwise: keep user's custom range (will be clamped if needed)
+        // Update play_range only if extending the maximum
+        // User's custom range (B/N buttons) should persist
         if was_empty {
+            // First sequence: initialize to full range
             self.reset_play_range();
         } else {
-            let was_at_max = self.play_range_end.load(Ordering::Relaxed) == old_global_end;
-            if was_at_max {
+            // Subsequent sequences: only extend end if it was at maximum
+            let current_end = self.play_range_end.load(Ordering::Relaxed);
+            if current_end == old_global_end {
                 self.play_range_end.store(self.global_end, Ordering::Relaxed);
             }
         }

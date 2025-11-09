@@ -267,10 +267,11 @@ impl EncodeDialog {
         let (tx, rx) = channel();
         self.progress_rx = Some(rx);
 
-        // Clone data for thread
+        // Clone data for thread (including play_range)
         let cache_clone = cache.sequences().iter()
             .map(|s| s.clone())
             .collect::<Vec<_>>();
+        let play_range = cache.get_play_range();
         let settings_clone = self.settings.clone();
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
 
@@ -284,6 +285,9 @@ impl EncodeDialog {
             for seq in cache_clone {
                 temp_cache.append_seq(seq);
             }
+
+            // Set play range from original cache (append_seq sets full range by default)
+            temp_cache.set_play_range(play_range.0, play_range.1);
 
             // Run encoding
             encode_sequence(&mut temp_cache, &settings_clone, tx, cancel_flag_clone)
