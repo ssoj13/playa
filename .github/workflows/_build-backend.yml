@@ -55,12 +55,11 @@ jobs:
         if: inputs.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libspeechd-dev libxkbcommon-dev libssl-dev \
-            pkg-config libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev
+          sudo apt-get install -y cmake libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libspeechd-dev libxkbcommon-dev libssl-dev
 
       - name: Install macOS dependencies
         if: inputs.platform == 'macos'
-        run: brew install cmake pkg-config ffmpeg
+        run: brew install cmake
 
       - name: Install Windows dependencies
         if: inputs.platform == 'windows'
@@ -68,13 +67,22 @@ jobs:
         run: |
           choco install nsis -y
           choco install wixtoolset -y
-          choco install pkgconfiglite -y
-
-          # Install FFmpeg via vcpkg
-          $env:VCPKG_ROOT = "C:\vcpkg"
-          & C:\vcpkg\vcpkg.exe install ffmpeg:x64-windows
-
           Write-Host "Windows dependencies installed"
+
+      - name: Setup vcpkg (Unix)
+        if: inputs.platform != 'windows'
+        run: |
+          if [ ! -d "$HOME/vcpkg" ]; then
+            git clone https://github.com/microsoft/vcpkg.git "$HOME/vcpkg"
+            "$HOME/vcpkg/bootstrap-vcpkg.sh"
+          fi
+          echo "VCPKG_ROOT=$HOME/vcpkg" >> $GITHUB_ENV
+
+      - name: Setup vcpkg (Windows)
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
