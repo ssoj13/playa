@@ -536,7 +536,7 @@ pub fn encode_sequence(
             stage: EncodeStage::Encoding,
         });
 
-        if current_frame % 10 == 0 {
+        if current_frame.is_multiple_of(10) {
             info!("Encoded frame {}/{}", current_frame, total_frames);
         }
     }

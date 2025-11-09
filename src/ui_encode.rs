@@ -279,7 +279,7 @@ impl EncodeDialog {
 
         // Clone data for thread (including play_range)
         let cache_clone = cache.sequences().iter()
-            .map(|s| s.clone())
+            .cloned()
             .collect::<Vec<_>>();
         let play_range = cache.get_play_range();
         let settings_clone = self.settings.clone();

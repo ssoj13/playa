@@ -11,6 +11,13 @@ use crate::timeslider::{time_slider, SequenceRange, TimeSliderConfig};
 use crate::viewport::{ViewportRenderer, ViewportState};
 use crate::utils::media;
 
+/// Create configured file dialog for image/video selection
+fn create_image_dialog(title: &str) -> rfd::FileDialog {
+    rfd::FileDialog::new()
+        .add_filter("All Supported Files", media::ALL_EXTS)
+        .set_title(title)
+}
+
 /// Help text displayed in overlay
 pub fn help_text() -> &'static str {
     "Drag'n'drop a file here or double-click to open\n\n\
@@ -76,11 +83,7 @@ pub fn render_playlist(
             // Add/Clear buttons on left, Up/Down on right
             ui.horizontal(|ui| {
                 if ui.button("Add").clicked() {
-                    if let Some(paths) = rfd::FileDialog::new()
-                        .add_filter("Image Files", media::ALL_EXTS)
-                        .set_title("Add Files")
-                        .pick_files()
-                    {
+                    if let Some(paths) = create_image_dialog("Add Files").pick_files() {
                         if !paths.is_empty() {
                             info!("Add button: loading {}", paths[0].display());
                             actions.load_sequence = Some(paths[0].clone());
@@ -347,16 +350,7 @@ pub fn render_viewport(
 
         if double_clicked {
             info!("Double-click detected, opening file dialog");
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Image Files", media::ALL_EXTS)
-                .add_filter("EXR Images", &["exr"])
-                .add_filter("PNG Images", &["png"])
-                .add_filter("JPEG Images", &["jpg", "jpeg"])
-                .add_filter("TIFF Images", &["tif", "tiff"])
-                .add_filter("TGA Images", &["tga"])
-                .set_title("Select Image File")
-                .pick_file()
-            {
+            if let Some(path) = create_image_dialog("Select Image File").pick_file() {
                 info!("File selected: {}", path.display());
                 actions.load_sequence = Some(path);
             }
@@ -477,7 +471,7 @@ pub fn render_viewport(
             }
 
             // Only fetch pixel data when we actually need to upload
-            let upload_payload: Option<(crate::frame::PixelBuffer, crate::frame::PixelFormat)> = if needs_upload {
+            let upload_payload: Option<(std::sync::Arc<crate::frame::PixelBuffer>, crate::frame::PixelFormat)> = if needs_upload {
                 Some((img.pixel_buffer(), img.pixel_format()))
             } else {
                 None

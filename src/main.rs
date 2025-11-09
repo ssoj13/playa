@@ -549,7 +549,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(log_path_opt) = &args.log_file {
         // File logging with debug level
         let log_path = log_path_opt.as_ref()
-            .map(|p| p.clone())
+            .cloned()
             .unwrap_or_else(|| paths::data_file("playa.log", &path_config));
 
         let file = std::fs::File::create(&log_path)

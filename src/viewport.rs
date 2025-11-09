@@ -6,9 +6,6 @@ use log::{debug, error, info};
 use crate::shaders::Shaders;
 use crate::frame::{PixelBuffer, PixelFormat};
 
-// Import f16 from half crate (same version as openexr uses)
-use half::f16 as F16;
-
 // Zoom constants
 const ZOOM_STEP: f32 = 0.025;
 const ZOOM_IN_FACTOR: f32 = 1.0 + ZOOM_STEP;
@@ -524,11 +521,10 @@ impl ViewportRenderer {
                     (vec.as_slice(), glow::RGBA as i32, glow::RGBA, glow::UNSIGNED_BYTE)
                 }
                 PixelBuffer::F16(_) => {
-                    // Reuse scratch buffer to avoid new allocation per upload
+                    // Convert F16 → u16 → bytes (reuse scratch buffer)
                     if let PixelBuffer::F16(src) = pixel_buffer {
                         self.f16_scratch.clear();
-                        self.f16_scratch.reserve(src.len());
-                        self.f16_scratch.extend(src.iter().map(|f: &F16| f.to_bits()));
+                        self.f16_scratch.extend(src.iter().map(|f| f.to_bits()));
                     }
                     let bytes_u8: Vec<u8> = bytemuck::cast_slice(self.f16_scratch.as_slice()).to_vec();
                     owned_bytes = Some(bytes_u8);

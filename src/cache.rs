@@ -270,12 +270,8 @@ impl Cache {
             // Wrap preload logic in catch_unwind for graceful panic recovery
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut session_counter = 0u64;
-                loop {
+                while let Ok(mut latest) = preload_rx.recv() {
                     // Wait for first signal (blocks, no CPU usage when idle)
-                    let mut latest = match preload_rx.recv() {
-                        Ok(msg) => msg,
-                        Err(_) => break,
-                    };
 
                     // Drain channel to get LATEST message (skip stale requests from fast UI clicks)
                     while let Ok(msg) = preload_rx.try_recv() {
@@ -646,13 +642,12 @@ impl Cache {
 
     /// Process loaded frames from worker threads
     pub fn process_loaded_frames(&mut self) {
-        loop {
+        while let Ok(loaded_frame) = {
             let receiver = self.loaded_frame_receiver.lock().unwrap();
             let result = receiver.try_recv();
             drop(receiver);
-
-            match result {
-                Ok(loaded_frame) => {
+            result
+        } {
                     match loaded_frame.result {
                         Ok(frame) => {
                             let frame_size = frame.mem();
@@ -695,9 +690,6 @@ impl Cache {
                             }
                         }
                     }
-                }
-                Err(_) => break,
-            }
         }
 
         // Send progress update to UI after processing all loaded frames
