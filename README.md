@@ -120,13 +120,41 @@ Playa includes built-in video encoding (F7 hotkey) for exporting image sequences
 
 ## Installation
 
-### Classic Installation: cargo install
+### Recommended: Bootstrap Install (One Command)
 
-The standard Rust way - install directly from crates.io:
+**The easiest and most reliable way** to install Playa from crates.io with all dependencies:
+
+```bash
+# Clone the repository for bootstrap scripts
+git clone https://github.com/ssoj13/playa.git
+cd playa
+
+# Windows
+bootstrap.cmd install
+
+# macOS / Linux
+./bootstrap.sh install
+```
+
+**Why bootstrap install?**
+
+1. **Automatic dependency checks**: Verifies vcpkg, FFmpeg, and pkg-config are installed
+2. **Interactive setup**: Prompts to install missing dependencies with a single `y/N` response
+3. **Correct configuration**: Sets up proper static FFmpeg linking (same as CI/CD builds)
+4. **No manual environment setup**: Handles `VCPKG_ROOT`, `VCPKGRS_TRIPLET`, and `PKG_CONFIG_PATH` automatically
+5. **Guaranteed to work**: Uses the exact same configuration as our GitHub Actions runners
+
+The bootstrap script ensures FFmpeg video support works out of the box without manual configuration.
+
+### Alternative: cargo install
+
+If you prefer the standard Rust way (requires manual FFmpeg setup):
 
 ```bash
 cargo install playa
 ```
+
+**⚠️ Note:** You must manually install and configure FFmpeg dependencies (see "FFmpeg Setup" section below). Without proper setup, `cargo install` will fail with pkg-config errors.
 
 **Backend comparison:**
 - **exrs**: pure Rust, single binary, no external dependencies, fast startup
