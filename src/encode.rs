@@ -414,9 +414,15 @@ pub fn encode_sequence(
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to add stream: {}", e)))?;
     ost.set_parameters(&encoder);
 
+    // Set container options (MP4: move moov atom to start for seekability)
+    let mut container_opts = ffmpeg::Dictionary::new();
+    if matches!(settings.container, Container::MP4) {
+        container_opts.set("movflags", "faststart");
+    }
+
     // Write container header
     octx.set_metadata(octx.metadata().to_owned());
-    octx.write_header()
+    octx.write_header_with(container_opts)
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to write header: {}", e)))?;
 
     info!(
