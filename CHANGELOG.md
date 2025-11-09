@@ -1,3 +1,9 @@
+## [0.1.120-dev] - 2025-11-09
+
+### 🐛 Bug Fixes
+
+- Use standard vcpkg triplets for macOS
+- Create custom vcpkg release triplets for macOS and Linux
 ## [0.1.119-dev] - 2025-11-09
 
 ### 🚀 Features
