@@ -15,6 +15,7 @@ mod ui;
 mod prefs;
 mod paths;
 mod utils;
+mod encode;
 
 use clap::Parser;
 use eframe::{egui, glow};
@@ -230,6 +231,20 @@ impl PlayaApp {
         // Toggle Loop with ' and `
         if input.key_pressed(egui::Key::Quote) || input.key_pressed(egui::Key::Backtick) {
             self.player.loop_enabled = !self.player.loop_enabled;
+        }
+
+        // Set play range start (B = Begin)
+        if input.key_pressed(egui::Key::B) {
+            let current = self.player.cache.frame();
+            let (_, end) = self.player.cache.get_play_range();
+            self.player.cache.set_play_range(current, end);
+        }
+
+        // Set play range end (N = eNd)
+        if input.key_pressed(egui::Key::N) {
+            let current = self.player.cache.frame();
+            let (start, _) = self.player.cache.get_play_range();
+            self.player.cache.set_play_range(start, current);
         }
 
         // Skip to start/end (Ctrl modifiers)

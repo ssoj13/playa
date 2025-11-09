@@ -21,10 +21,13 @@ pub fn help_text() -> &'static str {
     F1 - Toggle this help\n\
     F2 - Toggle playlist\n\
     F3 - Preferences\n\
+    F7 - Video Encoding\n\
     ESC - Exit Fullscreen / Quit\n\n\
     Z - Toggle Fullscreen\n\
     Ctrl+R - Reset Settings\n\n\
     ' / ` - Toggle Loop\n\
+    B - Set Play Range Start\n\
+    N - Set Play Range End\n\n\
     Playback:\n\
     Space - Play/Pause\n\
     J / , / ← - Backward\n\

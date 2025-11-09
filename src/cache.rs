@@ -76,6 +76,8 @@ pub enum CacheMessage {
 struct CacheState {
     sequences: Vec<Sequence>,
     current_frame: usize,
+    play_range_start: usize,
+    play_range_end: usize,
 }
 
 /// Cache entry with access tracking
@@ -122,6 +124,10 @@ pub struct Cache {
 
     // Incremented on each successfully loaded frame (for UI invalidation)
     loaded_events_counter: AtomicUsize,
+
+    // Play range (work area) for encoding and playback loop
+    play_range_start: AtomicUsize,
+    play_range_end: AtomicUsize,
 }
 
 impl Cache {
@@ -408,6 +414,9 @@ impl Cache {
             progress: LoadProgress::new(0),
 
             loaded_events_counter: AtomicUsize::new(0),
+
+            play_range_start: AtomicUsize::new(0),
+            play_range_end: AtomicUsize::new(0),
         };
 
         (cache, ui_message_receiver)
@@ -416,10 +425,16 @@ impl Cache {
     /// Append sequence to cache
     pub fn append_seq(&mut self, seq: Sequence) {
         let seq_len = seq.len();
+        let was_empty = self.sequences.is_empty();
 
         self.sequences.push(seq);
         self.global_end = self.global_start + self.total_frames().saturating_sub(1);
         self.progress.set_total(self.total_frames());
+
+        // Initialize play_range to full range on first sequence
+        if was_empty {
+            self.reset_play_range();
+        }
 
         // Update frame paths cache
         self.rebuild_frame_paths_cache();
@@ -473,6 +488,36 @@ impl Cache {
     /// Get total frame count across all sequences
     pub fn total_frames(&self) -> usize {
         self.sequences.iter().map(|s| s.len()).sum()
+    }
+
+    /// Set play range (work area) for encoding and playback loop
+    /// Validates that start <= end and both are within global range
+    pub fn set_play_range(&self, start: usize, end: usize) {
+        let total = self.total_frames();
+
+        // Validate range
+        let valid_start = start.min(total.saturating_sub(1));
+        let valid_end = end.min(total.saturating_sub(1)).max(valid_start);
+
+        self.play_range_start.store(valid_start, Ordering::Relaxed);
+        self.play_range_end.store(valid_end, Ordering::Relaxed);
+    }
+
+    /// Get current play range (work area)
+    /// Returns (start, end) in global frame indices
+    pub fn get_play_range(&self) -> (usize, usize) {
+        let start = self.play_range_start.load(Ordering::Relaxed);
+        let end = self.play_range_end.load(Ordering::Relaxed);
+        (start, end)
+    }
+
+    /// Reset play range to full sequence range
+    pub fn reset_play_range(&self) {
+        let total = self.total_frames();
+        if total > 0 {
+            self.play_range_start.store(0, Ordering::Relaxed);
+            self.play_range_end.store(total - 1, Ordering::Relaxed);
+        }
     }
 
     /// Map global index to (seq_idx, frame_idx)
@@ -841,6 +886,8 @@ impl Cache {
         let state = CacheState {
             sequences: self.sequences.clone(),
             current_frame: self.global_frame,
+            play_range_start: self.play_range_start.load(Ordering::Relaxed),
+            play_range_end: self.play_range_end.load(Ordering::Relaxed),
         };
 
         let json = serde_json::to_string_pretty(&state)
@@ -880,8 +927,13 @@ impl Cache {
         // Restore current frame
         self.set_frame(state.current_frame);
 
-        info!("Cache restored: {} sequences, current frame {}",
-              state.sequences.len(), self.global_frame);
+        // Restore play range
+        self.play_range_start.store(state.play_range_start, Ordering::Relaxed);
+        self.play_range_end.store(state.play_range_end, Ordering::Relaxed);
+
+        info!("Cache restored: {} sequences, current frame {}, play range {}..{}",
+              state.sequences.len(), self.global_frame,
+              state.play_range_start, state.play_range_end);
 
         Ok(state.sequences.len())
     }

@@ -117,6 +117,9 @@ pub fn time_slider(
         // Draw sequence backgrounds
         draw_seq_backgrounds(painter, rect, sequences, total_frames);
 
+        // Draw play range (work area)
+        draw_play_range(painter, rect, cache.get_play_range(), total_frames);
+
         // Draw dividers between sequences
         if config.show_dividers {
             draw_seq_dividers(painter, rect, sequences, total_frames);
@@ -172,6 +175,39 @@ fn draw_seq_backgrounds(
         let color = hash_color(&seq.pattern);
         painter.rect_filled(seq_rect, 0.0, color);
     }
+}
+
+/// Draw play range (work area) indicator - grey bar in middle 50% height
+fn draw_play_range(
+    painter: &egui::Painter,
+    rect: Rect,
+    play_range: (usize, usize),
+    total_frames: usize,
+) {
+    if total_frames == 0 {
+        return;
+    }
+
+    let (start, end) = play_range;
+
+    let frame_to_x = |frame: usize| -> f32 {
+        rect.min.x + (frame as f32 / total_frames as f32) * rect.width()
+    };
+
+    let x_start = frame_to_x(start);
+    let x_end = frame_to_x(end + 1); // +1 to include end frame
+
+    // Position bar in middle 50% of height
+    let bar_height = rect.height() * 0.5;
+    let bar_y_offset = rect.height() * 0.25; // Center vertically
+
+    let play_rect = Rect::from_min_max(
+        Pos2::new(x_start, rect.min.y + bar_y_offset),
+        Pos2::new(x_end, rect.min.y + bar_y_offset + bar_height),
+    );
+
+    // Semi-transparent grey overlay
+    painter.rect_filled(play_rect, 0.0, Color32::from_rgba_premultiplied(120, 120, 120, 80));
 }
 
 /// Draw vertical divider lines between sequences

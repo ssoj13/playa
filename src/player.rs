@@ -107,18 +107,18 @@ impl Player {
         }
 
         let current = self.cache.frame();
-        let (_, global_end) = self.cache.range();
+        let (play_start, play_end) = self.cache.get_play_range();
 
         if self.play_direction > 0.0 {
             // Forward
             let next = current + 1;
-            if next > global_end {
+            if next > play_end {
                 if self.loop_enabled {
-                    debug!("Frame loop: {} -> 0", current);
-                    self.cache.set_frame(0);
+                    debug!("Frame loop: {} -> {}", current, play_start);
+                    self.cache.set_frame(play_start);
                 } else {
-                    debug!("Reached end, stopping");
-                    self.cache.set_frame(global_end);
+                    debug!("Reached play range end, stopping");
+                    self.cache.set_frame(play_end);
                     self.is_playing = false;
                 }
             } else {
@@ -126,12 +126,12 @@ impl Player {
             }
         } else {
             // Backward
-            if current == 0 {
+            if current <= play_start {
                 if self.loop_enabled {
-                    debug!("Frame loop: 0 -> {}", global_end);
-                    self.cache.set_frame(global_end);
+                    debug!("Frame loop: {} -> {}", current, play_end);
+                    self.cache.set_frame(play_end);
                 } else {
-                    debug!("Reached start, stopping");
+                    debug!("Reached play range start, stopping");
                     self.is_playing = false;
                 }
             } else {
