@@ -307,10 +307,44 @@ impl EncodeDialog {
         self.is_encoding = true;
     }
 
-    /// Cancel encoding
+    /// Cancel encoding with timeout and force reset
     fn cancel_encoding(&mut self) {
         info!("Cancelling encoding");
         self.cancel_flag.store(true, Ordering::Relaxed);
+
+        // Wait for thread with timeout
+        if let Some(handle) = self.encode_thread.take() {
+            use std::time::{Duration, Instant};
+
+            // Try to join with 2 second timeout
+            let timeout = Duration::from_secs(2);
+            let start = Instant::now();
+
+            loop {
+                if handle.is_finished() {
+                    match handle.join() {
+                        Ok(Ok(())) => info!("Encode thread stopped cleanly"),
+                        Ok(Err(e)) => info!("Encode thread stopped with error: {}", e),
+                        Err(_) => info!("Encode thread panicked"),
+                    }
+                    break;
+                }
+
+                if start.elapsed() > timeout {
+                    info!("Encode thread didn't stop within timeout - forcefully resetting UI");
+                    // Thread is stuck, but we reset UI anyway
+                    // The thread will be dropped and remain orphaned
+                    break;
+                }
+
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        // Force reset to clean state
+        self.stop_encoding();
+        self.progress = None;
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
     }
 
     /// Stop encoding (cleanup after completion or error)

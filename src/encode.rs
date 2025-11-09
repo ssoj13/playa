@@ -427,6 +427,9 @@ pub fn encode_sequence(
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to add stream: {}", e)))?;
     ost.set_parameters(&encoder);
 
+    // Set stream time_base to match encoder (critical for proper timestamps)
+    ost.set_time_base(encoder.time_base());
+
     // Set container options (MP4: move moov atom to start for seekability)
     let mut container_opts = ffmpeg::Dictionary::new();
     if matches!(settings.container, Container::MP4) {
@@ -539,10 +542,28 @@ pub fn encode_sequence(
         encoder.send_frame(&ffmpeg_frame)
             .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to send frame {}: {}", frame_idx, e)))?;
 
+        // Check for cancellation after sending frame
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(EncodeError::Cancelled);
+        }
+
         // Receive encoded packets
         let mut encoded = ffmpeg::Packet::empty();
         while encoder.receive_packet(&mut encoded).is_ok() {
+            // Check for cancellation during packet receiving
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(EncodeError::Cancelled);
+            }
             encoded.set_stream(0);
+
+            // Set packet duration (1 frame in time_base units)
+            encoded.set_duration(1);
+
+            // Set DTS equal to PTS for I-frame sequences (no B-frames)
+            if encoded.dts().is_none() {
+                encoded.set_dts(encoded.pts());
+            }
+
             encoded.write_interleaved(&mut octx)
                 .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write packet: {}", e)))?;
         }
@@ -576,7 +597,21 @@ pub fn encode_sequence(
     // Receive remaining packets
     let mut encoded = ffmpeg::Packet::empty();
     while encoder.receive_packet(&mut encoded).is_ok() {
+        // Check for cancellation during flush
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(EncodeError::Cancelled);
+        }
+
         encoded.set_stream(0);
+
+        // Set packet duration (1 frame in time_base units)
+        encoded.set_duration(1);
+
+        // Set DTS equal to PTS for I-frame sequences (no B-frames)
+        if encoded.dts().is_none() {
+            encoded.set_dts(encoded.pts());
+        }
+
         encoded.write_interleaved(&mut octx)
             .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write packet: {}", e)))?;
     }
