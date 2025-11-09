@@ -7,6 +7,7 @@
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
 #   ./bootstrap.sh test               # Run encoding integration test
+#   ./bootstrap.sh install            # Install playa from crates.io (checks FFmpeg dependencies)
 #   ./bootstrap.sh publish            # Publish crate to crates.io
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
 #   ./bootstrap.sh wipe -v            # Verbose output
@@ -108,6 +109,85 @@ if [ "$1" = "publish" ]; then
     echo "Publishing crate to crates.io..."
     echo ""
     cargo publish
+    exit 0
+fi
+
+if [ "$1" = "install" ]; then
+    # Install playa from crates.io with FFmpeg dependencies
+    echo "Checking FFmpeg dependencies..."
+    echo ""
+
+    # Determine vcpkg path and triplet based on OS
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        VCPKG_PATH="/usr/local/share/vcpkg"
+        if [[ "$(uname -m)" == "arm64" ]]; then
+            TRIPLET="arm64-osx-release"
+        else
+            TRIPLET="x64-osx-release"
+        fi
+    else
+        VCPKG_PATH="/usr/local/share/vcpkg"
+        TRIPLET="x64-linux-release"
+    fi
+
+    # Check vcpkg
+    if [ ! -d "$VCPKG_PATH" ]; then
+        echo "Error: vcpkg not found at $VCPKG_PATH"
+        echo ""
+        read -p "Install vcpkg? (y/N): " install_vcpkg
+        if [[ "$install_vcpkg" =~ ^[Yy]$ ]]; then
+            echo "Installing vcpkg..."
+            git clone https://github.com/microsoft/vcpkg.git "$VCPKG_PATH"
+            "$VCPKG_PATH/bootstrap-vcpkg.sh"
+            echo "✓ vcpkg installed"
+        else
+            echo "Installation cancelled."
+            exit 1
+        fi
+    else
+        echo "✓ vcpkg found"
+    fi
+
+    # Check FFmpeg
+    if [ ! -f "$VCPKG_PATH/installed/$TRIPLET/lib/pkgconfig/libavutil.pc" ]; then
+        echo ""
+        echo "Error: FFmpeg not found"
+        echo ""
+        read -p "Install FFmpeg via vcpkg? (y/N): " install_ffmpeg
+        if [[ "$install_ffmpeg" =~ ^[Yy]$ ]]; then
+            echo "Installing FFmpeg..."
+            "$VCPKG_PATH/vcpkg" install "ffmpeg[core,avcodec,avformat,avutil,swscale]:$TRIPLET"
+            echo "✓ FFmpeg installed"
+        else
+            echo "Installation cancelled."
+            exit 1
+        fi
+    else
+        echo "✓ FFmpeg found"
+    fi
+
+    # Check pkg-config
+    if ! command -v pkg-config &> /dev/null; then
+        echo ""
+        echo "Error: pkg-config not found"
+        echo ""
+        read -p "Install pkg-config via vcpkg? (y/N): " install_pkgconfig
+        if [[ "$install_pkgconfig" =~ ^[Yy]$ ]]; then
+            echo "Installing pkg-config..."
+            "$VCPKG_PATH/vcpkg" install "pkgconf:$TRIPLET"
+            echo "✓ pkg-config installed"
+        else
+            echo "Installation cancelled."
+            exit 1
+        fi
+    else
+        echo "✓ pkg-config found"
+    fi
+
+    echo ""
+    echo "Installing playa from crates.io..."
+    echo ""
+    cargo install playa
     exit 0
 fi
 

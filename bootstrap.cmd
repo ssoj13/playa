@@ -7,6 +7,7 @@
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
 ::   bootstrap.cmd test               # Run encoding integration test
+::   bootstrap.cmd install            # Install playa from crates.io (checks FFmpeg dependencies)
 ::   bootstrap.cmd publish            # Publish crate to crates.io
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
 ::   bootstrap.cmd wipe -v            # Verbose output
@@ -134,6 +135,73 @@ if "%~1"=="publish" (
     echo Publishing crate to crates.io...
     echo.
     cargo publish
+    goto :end
+)
+
+if "%~1"=="install" (
+    :: Install playa from crates.io with FFmpeg dependencies
+    echo Checking FFmpeg dependencies...
+    echo.
+
+    :: Check vcpkg
+    if not exist "C:\vcpkg" (
+        echo Error: vcpkg not found at C:\vcpkg
+        echo.
+        set /p "install_vcpkg=Install vcpkg? (y/N): "
+        if /i "!install_vcpkg!"=="y" (
+            echo Installing vcpkg...
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+            C:\vcpkg\bootstrap-vcpkg.bat
+            echo ✓ vcpkg installed
+        ) else (
+            echo Installation cancelled.
+            exit /b 1
+        )
+    ) else (
+        echo ✓ vcpkg found
+    )
+
+    :: Check FFmpeg
+    if not exist "C:\vcpkg\installed\x64-windows-static-md\lib\pkgconfig\libavutil.pc" (
+        echo.
+        echo Error: FFmpeg not found
+        echo.
+        set /p "install_ffmpeg=Install FFmpeg via vcpkg? (y/N): "
+        if /i "!install_ffmpeg!"=="y" (
+            echo Installing FFmpeg...
+            C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv]:x64-windows-static-md
+            echo ✓ FFmpeg installed
+        ) else (
+            echo Installation cancelled.
+            exit /b 1
+        )
+    ) else (
+        echo ✓ FFmpeg found
+    )
+
+    :: Check pkg-config
+    where pkg-config >nul 2>&1
+    if errorlevel 1 (
+        echo.
+        echo Error: pkg-config not found
+        echo.
+        set /p "install_pkgconfig=Install pkg-config via vcpkg? (y/N): "
+        if /i "!install_pkgconfig!"=="y" (
+            echo Installing pkg-config...
+            C:\vcpkg\vcpkg install pkgconf:x64-windows-static-md
+            echo ✓ pkg-config installed
+        ) else (
+            echo Installation cancelled.
+            exit /b 1
+        )
+    ) else (
+        echo ✓ pkg-config found
+    )
+
+    echo.
+    echo Installing playa from crates.io...
+    echo.
+    cargo install playa
     goto :end
 )
 
