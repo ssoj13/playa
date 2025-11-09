@@ -3074,9 +3074,9 @@ dependencies = [
 
 [[package]]
 name = "playa-ffmpeg"
-version = "8.0.1"
+version = "8.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a078eac680a4b8e8bd9d1e2f5bb9d469842fe6e215301fffe2c120043bc6850"
+checksum = "46ab206848c8a9492523f1470d2fe1a03336a21483bfe29f4e5e92fe159de6f2"
 dependencies = [
  "bitflags 2.10.0",
  "ffmpeg-sys-next",
