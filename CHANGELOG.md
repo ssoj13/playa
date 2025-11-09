@@ -1,3 +1,13 @@
+## [0.1.121-dev] - 2025-11-09
+
+### 🚀 Features
+
+- Improve vcpkg FFmpeg caching for faster CI builds
+
+### 🐛 Bug Fixes
+
+- Use system vcpkg location /usr/local/share/vcpkg
+- Create custom vcpkg triplets before cache for all platforms
 ## [0.1.120-dev] - 2025-11-09
 
 ### 🐛 Bug Fixes
