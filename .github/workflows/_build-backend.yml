@@ -84,6 +84,83 @@ jobs:
         run: |
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
+      - name: Determine vcpkg triplet
+        id: vcpkg-triplet
+        shell: bash
+        run: |
+          if [ "${{ inputs.platform }}" = "windows" ]; then
+            echo "triplet=x64-windows-static-md-release" >> $GITHUB_OUTPUT
+          elif [ "${{ inputs.platform }}" = "macos" ]; then
+            if [ "$(uname -m)" = "arm64" ]; then
+              echo "triplet=arm64-osx-release" >> $GITHUB_OUTPUT
+            else
+              echo "triplet=x64-osx-release" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "triplet=x64-linux-release" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Cache vcpkg FFmpeg
+        uses: actions/cache@v4
+        id: cache-vcpkg-ffmpeg
+        with:
+          path: |
+            ${{ inputs.platform == 'windows' && 'C:\vcpkg\installed' || format('{0}/vcpkg/installed', env.HOME) }}
+            ${{ inputs.platform == 'windows' && 'C:\vcpkg\buildtrees' || format('{0}/vcpkg/buildtrees', env.HOME) }}
+            ${{ inputs.platform == 'windows' && 'C:\vcpkg\downloads' || format('{0}/vcpkg/downloads', env.HOME) }}
+            ${{ inputs.platform == 'windows' && 'C:\vcpkg\packages' || format('{0}/vcpkg/packages', env.HOME) }}
+          key: vcpkg-ffmpeg-${{ inputs.platform }}-${{ steps.vcpkg-triplet.outputs.triplet }}-v1
+
+      - name: Create custom Windows release-only triplet
+        if: inputs.platform == 'windows'
+        shell: pwsh
+        run: |
+          $tripletContent = @"
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_BUILD_TYPE release)
+          "@
+          New-Item -Path "C:\vcpkg\triplets\community" -ItemType Directory -Force | Out-Null
+          Set-Content -Path "C:\vcpkg\triplets\community\x64-windows-static-md-release.cmake" -Value $tripletContent
+
+      - name: Install FFmpeg via vcpkg (Linux)
+        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          sudo apt update
+          sudo apt install -y --no-install-recommends nasm yasm autoconf automake libtool
+          vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-linux-release
+          echo "PKG_CONFIG_PATH=$HOME/vcpkg/installed/x64-linux-release/lib/pkgconfig" >> $GITHUB_ENV
+        env:
+          VCPKG_BUILD_TYPE: release
+
+      - name: Install FFmpeg via vcpkg (macOS)
+        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          brew install nasm yasm autoconf automake libtool pkg-config
+          vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:${{ steps.vcpkg-triplet.outputs.triplet }}
+          echo "PKG_CONFIG_PATH=$HOME/vcpkg/installed/${{ steps.vcpkg-triplet.outputs.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
+        env:
+          VCPKG_BUILD_TYPE: release
+
+      - name: Install FFmpeg via vcpkg (Windows)
+        if: inputs.platform == 'windows' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
+        env:
+          VCPKG_BUILD_TYPE: release
+
+      - name: Set FFmpeg environment (cached - Linux)
+        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit == 'true'
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/vcpkg/installed/x64-linux-release/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Set FFmpeg environment (cached - macOS)
+        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit == 'true'
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/vcpkg/installed/${{ steps.vcpkg-triplet.outputs.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
         with:
