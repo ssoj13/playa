@@ -92,13 +92,45 @@ jobs:
             echo "triplet=x64-windows-static-md-release" >> $GITHUB_OUTPUT
           elif [ "${{ inputs.platform }}" = "macos" ]; then
             if [ "$(uname -m)" = "arm64" ]; then
-              echo "triplet=arm64-osx" >> $GITHUB_OUTPUT
+              echo "triplet=arm64-osx-release" >> $GITHUB_OUTPUT
             else
-              echo "triplet=x64-osx" >> $GITHUB_OUTPUT
+              echo "triplet=x64-osx-release" >> $GITHUB_OUTPUT
             fi
           else
             echo "triplet=x64-linux-release" >> $GITHUB_OUTPUT
           fi
+
+      - name: Create custom macOS release triplets
+        if: inputs.platform == 'macos'
+        run: |
+          # Create arm64-osx-release triplet
+          cat > $HOME/vcpkg/triplets/community/arm64-osx-release.cmake <<'EOF'
+          set(VCPKG_TARGET_ARCHITECTURE arm64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
+          set(VCPKG_BUILD_TYPE release)
+          EOF
+
+          # Create x64-osx-release triplet
+          cat > $HOME/vcpkg/triplets/community/x64-osx-release.cmake <<'EOF'
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Darwin)
+          set(VCPKG_BUILD_TYPE release)
+          EOF
+
+      - name: Create custom Linux release triplet
+        if: inputs.platform == 'linux'
+        run: |
+          cat > $HOME/vcpkg/triplets/community/x64-linux-release.cmake <<'EOF'
+          set(VCPKG_TARGET_ARCHITECTURE x64)
+          set(VCPKG_CRT_LINKAGE dynamic)
+          set(VCPKG_LIBRARY_LINKAGE static)
+          set(VCPKG_CMAKE_SYSTEM_NAME Linux)
+          set(VCPKG_BUILD_TYPE release)
+          EOF
 
       - name: Cache vcpkg FFmpeg
         uses: actions/cache@v4
