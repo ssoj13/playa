@@ -132,16 +132,31 @@ jobs:
           set(VCPKG_BUILD_TYPE release)
           EOF
 
-      - name: Cache vcpkg FFmpeg
+      - name: Cache vcpkg FFmpeg (Windows)
+        if: inputs.platform == 'windows'
         uses: actions/cache@v4
-        id: cache-vcpkg-ffmpeg
+        id: cache-vcpkg-ffmpeg-windows
         with:
           path: |
-            ${{ inputs.platform == 'windows' && 'C:\vcpkg\installed' || format('{0}/vcpkg/installed', env.HOME) }}
-            ${{ inputs.platform == 'windows' && 'C:\vcpkg\buildtrees' || format('{0}/vcpkg/buildtrees', env.HOME) }}
-            ${{ inputs.platform == 'windows' && 'C:\vcpkg\downloads' || format('{0}/vcpkg/downloads', env.HOME) }}
-            ${{ inputs.platform == 'windows' && 'C:\vcpkg\packages' || format('{0}/vcpkg/packages', env.HOME) }}
-          key: vcpkg-ffmpeg-${{ inputs.platform }}-${{ steps.vcpkg-triplet.outputs.triplet }}-v1
+            C:\vcpkg\installed
+            C:\vcpkg\buildtrees
+            C:\vcpkg\downloads
+            C:\vcpkg\packages
+            ~\AppData\Local\vcpkg\archives
+          key: ${{ runner.os }}-vcpkg-ffmpeg-nvcodec-release-only-v3
+
+      - name: Cache vcpkg FFmpeg (Unix)
+        if: inputs.platform != 'windows'
+        uses: actions/cache@v4
+        id: cache-vcpkg-ffmpeg-unix
+        with:
+          path: |
+            ~/vcpkg/installed
+            ~/vcpkg/buildtrees
+            ~/vcpkg/downloads
+            ~/vcpkg/packages
+            ~/.cache/vcpkg
+          key: ${{ runner.os }}-${{ steps.vcpkg-triplet.outputs.triplet }}-vcpkg-ffmpeg-v2
 
       - name: Create custom Windows release-only triplet
         if: inputs.platform == 'windows'
@@ -157,7 +172,7 @@ jobs:
           Set-Content -Path "C:\vcpkg\triplets\community\x64-windows-static-md-release.cmake" -Value $tripletContent
 
       - name: Install FFmpeg via vcpkg (Linux)
-        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
+        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit != 'true'
         run: |
           sudo apt update
           sudo apt install -y --no-install-recommends nasm yasm autoconf automake libtool
@@ -167,7 +182,7 @@ jobs:
           VCPKG_BUILD_TYPE: release
 
       - name: Install FFmpeg via vcpkg (macOS)
-        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
+        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit != 'true'
         run: |
           brew install nasm yasm autoconf automake libtool pkg-config
           echo "VCPKG_DEFAULT_TRIPLET=${{ steps.vcpkg-triplet.outputs.triplet }}" >> $GITHUB_ENV
@@ -178,7 +193,7 @@ jobs:
           VCPKG_DEFAULT_TRIPLET: ${{ steps.vcpkg-triplet.outputs.triplet }}
 
       - name: Install FFmpeg via vcpkg (Windows)
-        if: inputs.platform == 'windows' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
+        if: inputs.platform == 'windows' && steps.cache-vcpkg-ffmpeg-windows.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
@@ -186,12 +201,12 @@ jobs:
           VCPKG_BUILD_TYPE: release
 
       - name: Set FFmpeg environment (cached - Linux)
-        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit == 'true'
+        if: inputs.platform == 'linux' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit == 'true'
         run: |
           echo "PKG_CONFIG_PATH=$HOME/vcpkg/installed/x64-linux-release/lib/pkgconfig" >> $GITHUB_ENV
 
       - name: Set FFmpeg environment (cached - macOS)
-        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit == 'true'
+        if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg-unix.outputs.cache-hit == 'true'
         run: |
           echo "PKG_CONFIG_PATH=$HOME/vcpkg/installed/${{ steps.vcpkg-triplet.outputs.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
 
