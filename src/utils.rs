@@ -22,8 +22,23 @@ pub mod media {
     ];
 
     /// Check if file is a video format
+    /// Handles video frame paths with @N suffix (e.g., "video.mp4@135")
     pub fn is_video(path: &Path) -> bool {
-        path.extension()
+        // Strip @N suffix if present (video frame indicator)
+        let path_str = path.to_string_lossy();
+        let base_path = if let Some(at_pos) = path_str.rfind('@') {
+            // Check if everything after @ is a number
+            if path_str[at_pos + 1..].chars().all(|c| c.is_ascii_digit()) {
+                &path_str[..at_pos]
+            } else {
+                &path_str[..]
+            }
+        } else {
+            &path_str[..]
+        };
+
+        Path::new(base_path)
+            .extension()
             .and_then(|s| s.to_str())
             .map(|s| VIDEO_EXTS.contains(&s.to_lowercase().as_str()))
             .unwrap_or(false)

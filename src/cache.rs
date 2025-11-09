@@ -303,9 +303,14 @@ impl Cache {
                     preload_cancel.store(false, Ordering::Relaxed);
 
                     // Detect preload strategy: video files use forward-only, images use spiral
-                    let use_forward_only = frame_paths.get(center_frame)
-                        .and_then(|fp| fp.frame.file())
-                        .map(|path| media::is_video(path))
+                    let center_path = frame_paths.get(center_frame).and_then(|fp| fp.frame.file());
+                    let use_forward_only = center_path
+                        .map(|path| {
+                            let is_vid = media::is_video(path);
+                            debug!("Preload epoch {}: checking center frame {} path: {:?}, is_video: {}",
+                                   epoch, center_frame, path, is_vid);
+                            is_vid
+                        })
                         .unwrap_or(false);
 
                     if use_forward_only {
@@ -519,6 +524,7 @@ impl Cache {
 
     /// Set play range (work area) for encoding and playback loop
     /// Validates that start <= end and both are within global range
+    /// Triggers cache preload for new range
     pub fn set_play_range(&self, start: usize, end: usize) {
         let total = self.total_frames();
 
@@ -528,6 +534,9 @@ impl Cache {
 
         self.play_range_start.store(valid_start, Ordering::Relaxed);
         self.play_range_end.store(valid_end, Ordering::Relaxed);
+
+        // Trigger preload for new range
+        self.signal_preload();
     }
 
     /// Get current play range (work area)
@@ -760,9 +769,9 @@ impl Cache {
         lru.len()
     }
 
-    /// Get sequences (cloned)
-    pub fn sequences(&self) -> Vec<Sequence> {
-        self.sequences.clone()
+    /// Get sequences (returns reference for zero-copy access)
+    pub fn sequences(&self) -> &[Sequence] {
+        &self.sequences
     }
 
     /// Set global frame
@@ -819,26 +828,20 @@ impl Cache {
             }
         }
 
-        // Rebuild LRU cache with correct indices
-        // LruCache doesn't have drain(), so we collect keys first then rebuild
-        let old_entries: Vec<_> = {
-            let mut entries = Vec::new();
-            // Iterate and collect all entries (preserves order for LRU)
-            while let Some((key, entry)) = lru.pop_lru() {
-                entries.push((key, entry));
-            }
-            entries
-        };
+        // Rebuild LRU cache with correct indices (avoid intermediate tuple copy)
+        let mut new_lru = lru::LruCache::unbounded();
 
-        // Reinsert with correct indices based on path (in reverse order to preserve LRU)
-        for ((_old_seq, _old_frame), entry) in old_entries.into_iter().rev() {
+        // Drain old cache and rebuild with updated indices
+        while let Some((_, entry)) = lru.pop_lru() {
             if let Some(path) = entry.frame.file() {
                 if let Some(&(new_seq, new_frame)) = path_to_idx.get(path) {
-                    lru.put((new_seq, new_frame), entry);
+                    new_lru.push((new_seq, new_frame), entry);
                 }
             }
-            // If path not found, frame was removed - don't reinsert
+            // If path not found, frame was removed - skip
         }
+
+        *lru = new_lru;
     }
 
     /// Move sequence by offset (-1 = up, +1 = down, etc.)
@@ -892,11 +895,13 @@ impl Cache {
     }
 
     /// Get global frame
+    #[inline]
     pub fn frame(&self) -> usize {
         self.global_frame
     }
 
     /// Get global range
+    #[inline]
     pub fn range(&self) -> (usize, usize) {
         (self.global_start, self.global_end)
     }

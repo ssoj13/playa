@@ -22,6 +22,7 @@ pub struct EncoderSettings {
     pub encoder_impl: EncoderImpl,
     pub quality_mode: QualityMode,
     pub quality_value: u32, // CRF 18-28 or bitrate in kbps
+    pub fps: f32, // Output framerate (frames per second)
 }
 
 impl Default for EncoderSettings {
@@ -33,6 +34,7 @@ impl Default for EncoderSettings {
             encoder_impl: EncoderImpl::Auto,
             quality_mode: QualityMode::CRF,
             quality_value: 23, // Default CRF for H.264
+            fps: 24.0, // Default framerate
         }
     }
 }
@@ -144,7 +146,6 @@ pub struct EncodeProgress {
     pub current_frame: usize,
     pub total_frames: usize,
     pub stage: EncodeStage,
-    pub error: Option<String>,
 }
 
 /// Encoding stages
@@ -155,6 +156,7 @@ pub enum EncodeStage {
     Encoding,     // Encoding frames
     Flushing,     // Flushing encoder
     Complete,     // Successfully finished
+    #[allow(dead_code)] // Used in ui_encode.rs pattern matching
     Error(String), // Failed with error
 }
 
@@ -201,16 +203,6 @@ impl std::fmt::Display for EncodeError {
 }
 
 impl std::error::Error for EncodeError {}
-
-/// Get FFmpeg codec ID from VideoCodec
-fn get_codec_id(codec: VideoCodec) -> ffmpeg::codec::Id {
-    match codec {
-        VideoCodec::H264 => ffmpeg::codec::Id::H264,
-        VideoCodec::H265 => ffmpeg::codec::Id::HEVC,
-        VideoCodec::ProRes => ffmpeg::codec::Id::PRORES,
-        VideoCodec::MPEG4 => ffmpeg::codec::Id::MPEG4,
-    }
-}
 
 /// Get encoder name based on codec and implementation preference
 fn get_encoder_name(codec: VideoCodec, encoder_impl: EncoderImpl) -> Result<&'static str, EncodeError> {
@@ -309,7 +301,6 @@ pub fn encode_sequence(
         current_frame: 0,
         total_frames,
         stage: EncodeStage::Validating,
-        error: None,
     });
 
     let (width, height) = validate_frame_sizes(cache, play_range)?;
@@ -325,7 +316,6 @@ pub fn encode_sequence(
         current_frame: 0,
         total_frames,
         stage: EncodeStage::Opening,
-        error: None,
     });
 
     // Initialize FFmpeg (suppress logging)
@@ -378,8 +368,9 @@ pub fn encode_sequence(
     };
 
     encoder.set_format(pixel_format);
-    encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(24, 1)));  // 24 fps
-    encoder.set_time_base(ffmpeg::util::rational::Rational::new(1, 24));  // Time base 1/24
+    let fps_num = settings.fps as i32;
+    encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(fps_num, 1)));
+    encoder.set_time_base(ffmpeg::util::rational::Rational::new(1, fps_num));
 
     // Set quality parameters
     let mut opts = ffmpeg::Dictionary::new();
@@ -430,7 +421,7 @@ pub fn encode_sequence(
 
     info!(
         "Encoder initialized: {}x{} @ {} fps, quality mode: {:?}",
-        width, height, 24, settings.quality_mode
+        width, height, settings.fps, settings.quality_mode
     );
 
     // Check for cancellation
@@ -443,7 +434,6 @@ pub fn encode_sequence(
         current_frame: 0,
         total_frames,
         stage: EncodeStage::Encoding,
-        error: None,
     });
 
     let mut pts = 0i64;
@@ -466,7 +456,7 @@ pub fn encode_sequence(
 
         // Get pixel data (must be RGB24/U8 format)
         let pixel_buffer = frame.pixel_buffer();
-        let rgb_data = match pixel_buffer {
+        let rgb_data = match &*pixel_buffer {
             crate::frame::PixelBuffer::U8(data) => data,
             _ => {
                 return Err(EncodeError::EncodeFrameFailed(
@@ -544,7 +534,6 @@ pub fn encode_sequence(
             current_frame,
             total_frames,
             stage: EncodeStage::Encoding,
-            error: None,
         });
 
         if current_frame % 10 == 0 {
@@ -557,7 +546,6 @@ pub fn encode_sequence(
         current_frame: total_frames,
         total_frames,
         stage: EncodeStage::Flushing,
-        error: None,
     });
 
     info!("Flushing encoder...");
@@ -583,7 +571,6 @@ pub fn encode_sequence(
         current_frame: total_frames,
         total_frames,
         stage: EncodeStage::Complete,
-        error: None,
     });
 
     info!("Encoding complete: {} frames written to {:?}", total_frames, settings.output_path);
