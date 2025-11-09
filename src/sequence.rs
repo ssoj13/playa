@@ -119,6 +119,21 @@ impl Sequence {
         }
     }
 
+    /// Create sequence from pre-loaded frames (for testing)
+    #[cfg(test)]
+    pub fn from_frames(frames: Vec<Frame>, pattern: String, xres: usize, yres: usize) -> Self {
+        let end = frames.len().saturating_sub(1);
+        Self {
+            frames,
+            pattern,
+            start: 0,
+            end,
+            padding: 4,
+            xres,
+            yres,
+        }
+    }
+
     /// Format frame path from pattern and frame number
     /// pattern: "/path/frame.*.exr" or "/path/frame.%04d.exr" or "/path/video.mp4"
     /// Returns: "/path/frame.0001.exr" or "/path/video.mp4@17"
