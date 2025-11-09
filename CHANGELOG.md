@@ -1,3 +1,12 @@
+## [0.1.117-dev] - 2025-11-09
+
+### 🚀 Features
+
+- Add video playback support (.mp4, .mov, .avi, .mkv)
+
+### 📚 Documentation
+
+- Add video support implementation plan
 ## [0.1.116] - 2025-11-08
 
 ### ⚙️ Miscellaneous Tasks
