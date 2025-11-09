@@ -92,9 +92,9 @@ jobs:
             echo "triplet=x64-windows-static-md-release" >> $GITHUB_OUTPUT
           elif [ "${{ inputs.platform }}" = "macos" ]; then
             if [ "$(uname -m)" = "arm64" ]; then
-              echo "triplet=arm64-osx-release" >> $GITHUB_OUTPUT
+              echo "triplet=arm64-osx" >> $GITHUB_OUTPUT
             else
-              echo "triplet=x64-osx-release" >> $GITHUB_OUTPUT
+              echo "triplet=x64-osx" >> $GITHUB_OUTPUT
             fi
           else
             echo "triplet=x64-linux-release" >> $GITHUB_OUTPUT
@@ -138,10 +138,12 @@ jobs:
         if: inputs.platform == 'macos' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
         run: |
           brew install nasm yasm autoconf automake libtool pkg-config
+          echo "VCPKG_DEFAULT_TRIPLET=${{ steps.vcpkg-triplet.outputs.triplet }}" >> $GITHUB_ENV
           vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:${{ steps.vcpkg-triplet.outputs.triplet }}
           echo "PKG_CONFIG_PATH=$HOME/vcpkg/installed/${{ steps.vcpkg-triplet.outputs.triplet }}/lib/pkgconfig" >> $GITHUB_ENV
         env:
           VCPKG_BUILD_TYPE: release
+          VCPKG_DEFAULT_TRIPLET: ${{ steps.vcpkg-triplet.outputs.triplet }}
 
       - name: Install FFmpeg via vcpkg (Windows)
         if: inputs.platform == 'windows' && steps.cache-vcpkg-ffmpeg.outputs.cache-hit != 'true'
