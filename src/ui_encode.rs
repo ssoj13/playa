@@ -257,7 +257,7 @@ impl EncodeDialog {
     }
 
     /// Start encoding process
-    fn start_encoding(&mut self, _cache: &Cache) {
+    fn start_encoding(&mut self, cache: &Cache) {
         info!("Starting encoding: {:?}", self.settings);
 
         // Reset cancel flag
@@ -267,18 +267,30 @@ impl EncodeDialog {
         let (tx, rx) = channel();
         self.progress_rx = Some(rx);
 
-        // TODO: Spawn encoder thread
-        // For now, just set state
-        self.is_encoding = true;
-        self.progress = Some(EncodeProgress {
-            current_frame: 0,
-            total_frames: 100,
-            stage: EncodeStage::Validating,
-            error: None,
+        // Clone data for thread
+        let cache_clone = cache.sequences().iter()
+            .map(|s| s.clone())
+            .collect::<Vec<_>>();
+        let settings_clone = self.settings.clone();
+        let cancel_flag_clone = Arc::clone(&self.cancel_flag);
+
+        // Spawn encoder thread
+        use crate::encode::encode_sequence;
+        use std::thread;
+
+        let handle = thread::spawn(move || {
+            // Create temporary cache with cloned sequences
+            let (mut temp_cache, _rx) = Cache::new(0.75, None);
+            for seq in cache_clone {
+                temp_cache.append_seq(seq);
+            }
+
+            // Run encoding
+            encode_sequence(&mut temp_cache, &settings_clone, tx, cancel_flag_clone)
         });
 
-        // Store channel sender for thread (placeholder)
-        let _ = tx;
+        self.encode_thread = Some(handle);
+        self.is_encoding = true;
     }
 
     /// Cancel encoding

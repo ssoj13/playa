@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use log::info;
 
 use crate::cache::Cache;
+use playa_ffmpeg as ffmpeg;
 
 /// Encoder settings (persistent via AppSettings)
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -199,6 +200,52 @@ impl std::fmt::Display for EncodeError {
 
 impl std::error::Error for EncodeError {}
 
+/// Get FFmpeg codec ID from VideoCodec
+fn get_codec_id(codec: VideoCodec) -> ffmpeg::codec::Id {
+    match codec {
+        VideoCodec::H264 => ffmpeg::codec::Id::H264,
+        VideoCodec::H265 => ffmpeg::codec::Id::HEVC,
+        VideoCodec::ProRes => ffmpeg::codec::Id::PRORES,
+    }
+}
+
+/// Get encoder name based on codec and implementation preference
+fn get_encoder_name(codec: VideoCodec, encoder_impl: EncoderImpl) -> Result<&'static str, EncodeError> {
+    match (codec, encoder_impl) {
+        // H.264 encoders
+        (VideoCodec::H264, EncoderImpl::Hardware) | (VideoCodec::H264, EncoderImpl::Auto) => {
+            // Try NVENC first, then QSV
+            if ffmpeg::encoder::find_by_name("h264_nvenc").is_some() {
+                Ok("h264_nvenc")
+            } else if ffmpeg::encoder::find_by_name("h264_qsv").is_some() {
+                Ok("h264_qsv")
+            } else if encoder_impl == EncoderImpl::Auto {
+                Ok("libx264")  // Fallback to software
+            } else {
+                Err(EncodeError::HardwareEncoderUnavailable)
+            }
+        }
+        (VideoCodec::H264, EncoderImpl::Software) => Ok("libx264"),
+
+        // H.265 encoders
+        (VideoCodec::H265, EncoderImpl::Hardware) | (VideoCodec::H265, EncoderImpl::Auto) => {
+            if ffmpeg::encoder::find_by_name("hevc_nvenc").is_some() {
+                Ok("hevc_nvenc")
+            } else if ffmpeg::encoder::find_by_name("hevc_qsv").is_some() {
+                Ok("hevc_qsv")
+            } else if encoder_impl == EncoderImpl::Auto {
+                Ok("libx265")  // Fallback to software
+            } else {
+                Err(EncodeError::HardwareEncoderUnavailable)
+            }
+        }
+        (VideoCodec::H265, EncoderImpl::Software) => Ok("libx265"),
+
+        // ProRes (software only)
+        (VideoCodec::ProRes, _) => Ok("prores_ks"),
+    }
+}
+
 /// Validate that all sequences have same dimensions
 ///
 /// Uses sequence metadata (xres/yres) without loading frames.
@@ -275,11 +322,211 @@ pub fn encode_sequence(
         error: None,
     });
 
-    // TODO: Implement encoder creation
-    // TODO: Implement encoding loop
-    // TODO: Implement flushing
+    // Initialize FFmpeg (suppress logging)
+    unsafe {
+        ffmpeg::ffi::av_log_set_level(ffmpeg::ffi::AV_LOG_QUIET);
+    }
 
-    // Stage 3: Complete
+    // Create output muxer (MP4 or MOV container)
+    let _container_format = match settings.container {
+        Container::MP4 => "mp4",
+        Container::MOV => "mov",
+    };
+
+    let mut octx = ffmpeg::format::output(&settings.output_path)
+        .map_err(|e| EncodeError::OutputCreateFailed(e.to_string()))?;
+
+    // Find encoder by name (hardware with fallback or software)
+    let encoder_name = get_encoder_name(settings.codec, settings.encoder_impl)?;
+    let codec = ffmpeg::encoder::find_by_name(encoder_name)
+        .ok_or(EncodeError::EncoderNotFound)?;
+
+    info!("Using encoder: {} for codec {:?}", encoder_name, settings.codec);
+
+    // Create encoder context
+    let mut encoder = ffmpeg::codec::context::Context::new_with_codec(codec)
+        .encoder()
+        .video()
+        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create encoder: {}", e)))?;
+
+    encoder.set_width(width);
+    encoder.set_height(height);
+    encoder.set_format(ffmpeg::format::Pixel::RGB24);  // Our frames are RGB24
+    encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(24, 1)));  // 24 fps
+    encoder.set_time_base(ffmpeg::util::rational::Rational::new(1, 24));  // Time base 1/24
+
+    // Set quality parameters
+    let mut opts = ffmpeg::Dictionary::new();
+    match settings.quality_mode {
+        QualityMode::CRF => {
+            // CRF mode (quality-based)
+            opts.set("crf", &settings.quality_value.to_string());
+            if encoder_name == "libx264" || encoder_name == "h264_nvenc" || encoder_name == "h264_qsv" {
+                opts.set("preset", "medium");  // x264 preset
+            }
+        }
+        QualityMode::Bitrate => {
+            // Bitrate mode
+            encoder.set_bit_rate(settings.quality_value as usize * 1000);  // Convert kbps to bps
+        }
+    }
+
+    // Open encoder with options
+    let mut encoder = encoder.open_with(opts)
+        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to open encoder: {}", e)))?;
+
+    // Add stream and set parameters from encoder
+    let mut ost = octx.add_stream(codec)
+        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to add stream: {}", e)))?;
+    ost.set_parameters(&encoder);
+
+    // Write container header
+    octx.set_metadata(octx.metadata().to_owned());
+    octx.write_header()
+        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to write header: {}", e)))?;
+
+    info!(
+        "Encoder initialized: {}x{} @ {} fps, quality mode: {:?}",
+        width, height, 24, settings.quality_mode
+    );
+
+    // Check for cancellation
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Err(EncodeError::Cancelled);
+    }
+
+    // Stage 3: Encoding loop
+    let _ = progress_tx.send(EncodeProgress {
+        current_frame: 0,
+        total_frames,
+        stage: EncodeStage::Encoding,
+        error: None,
+    });
+
+    let mut pts = 0i64;
+
+    for frame_idx in play_range.0..=play_range.1 {
+        // Check for cancellation
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(EncodeError::Cancelled);
+        }
+
+        // Get frame from cache
+        let frame = cache.get_frame(frame_idx)
+            .ok_or_else(|| EncodeError::EncodeFrameFailed(format!("Frame {} not in cache", frame_idx)))?;
+
+        // Ensure frame is loaded
+        if frame.status() != crate::frame::FrameStatus::Loaded {
+            frame.load()
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to load frame {}: {}", frame_idx, e)))?;
+        }
+
+        // Get pixel data (must be RGB24/U8 format)
+        let pixel_buffer = frame.pixel_buffer();
+        let rgb_data = match pixel_buffer {
+            crate::frame::PixelBuffer::U8(data) => data,
+            _ => {
+                return Err(EncodeError::EncodeFrameFailed(
+                    format!("Frame {} has unsupported format (expected U8/RGBA8)", frame_idx)
+                ));
+            }
+        };
+
+        // Convert RGBA to RGB24 (remove alpha channel)
+        let (frame_width, frame_height) = frame.resolution();
+        let mut rgb24_data = vec![0u8; frame_width * frame_height * 3];
+
+        for y in 0..frame_height {
+            for x in 0..frame_width {
+                let src_idx = (y * frame_width + x) * 4;  // RGBA stride
+                let dst_idx = (y * frame_width + x) * 3;  // RGB stride
+
+                rgb24_data[dst_idx] = rgb_data[src_idx];         // R
+                rgb24_data[dst_idx + 1] = rgb_data[src_idx + 1]; // G
+                rgb24_data[dst_idx + 2] = rgb_data[src_idx + 2]; // B
+            }
+        }
+
+        // Create FFmpeg video frame
+        let mut ffmpeg_frame = ffmpeg::util::frame::video::Video::new(
+            ffmpeg::format::Pixel::RGB24,
+            width,
+            height,
+        );
+
+        // Copy RGB24 data to FFmpeg frame
+        let dst_stride = ffmpeg_frame.stride(0);
+        let src_stride = (width * 3) as usize;
+
+        {
+            let dst_data = ffmpeg_frame.data_mut(0);
+            for y in 0..height as usize {
+                let src_offset = y * src_stride;
+                let dst_offset = y * dst_stride;
+                let row_bytes = src_stride;
+
+                dst_data[dst_offset..dst_offset + row_bytes]
+                    .copy_from_slice(&rgb24_data[src_offset..src_offset + row_bytes]);
+            }
+        }
+
+        // Set PTS (presentation timestamp)
+        ffmpeg_frame.set_pts(Some(pts));
+        pts += 1;
+
+        // Send frame to encoder
+        encoder.send_frame(&ffmpeg_frame)
+            .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to send frame {}: {}", frame_idx, e)))?;
+
+        // Receive encoded packets
+        let mut encoded = ffmpeg::Packet::empty();
+        while encoder.receive_packet(&mut encoded).is_ok() {
+            encoded.set_stream(0);
+            encoded.write_interleaved(&mut octx)
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write packet: {}", e)))?;
+        }
+
+        // Update progress
+        let current_frame = frame_idx - play_range.0 + 1;
+        let _ = progress_tx.send(EncodeProgress {
+            current_frame,
+            total_frames,
+            stage: EncodeStage::Encoding,
+            error: None,
+        });
+
+        if current_frame % 10 == 0 {
+            info!("Encoded frame {}/{}", current_frame, total_frames);
+        }
+    }
+
+    // Stage 4: Flush encoder
+    let _ = progress_tx.send(EncodeProgress {
+        current_frame: total_frames,
+        total_frames,
+        stage: EncodeStage::Flushing,
+        error: None,
+    });
+
+    info!("Flushing encoder...");
+
+    // Send flush signal to encoder
+    encoder.send_eof()
+        .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to flush encoder: {}", e)))?;
+
+    // Receive remaining packets
+    let mut encoded = ffmpeg::Packet::empty();
+    while encoder.receive_packet(&mut encoded).is_ok() {
+        encoded.set_stream(0);
+        encoded.write_interleaved(&mut octx)
+            .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write packet: {}", e)))?;
+    }
+
+    // Write container trailer
+    octx.write_trailer()
+        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to write trailer: {}", e)))?;
+
+    // Stage 5: Complete
     let _ = progress_tx.send(EncodeProgress {
         current_frame: total_frames,
         total_frames,
@@ -287,6 +534,6 @@ pub fn encode_sequence(
         error: None,
     });
 
-    info!("Encoding complete");
+    info!("Encoding complete: {} frames written to {:?}", total_frames, settings.output_path);
     Ok(())
 }
