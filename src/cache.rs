@@ -954,10 +954,11 @@ impl Cache {
     /// - append=false: clear cache before loading
     pub fn from_json(&mut self, path: &Path, append: bool) -> Result<usize, String> {
         let json = std::fs::read_to_string(path)
-            .map_err(|e| format!("Read error: {}", e))?;
+            .map_err(|e| format!("Failed to read playlist: {}", e))?;
 
+        // Parse BEFORE clearing cache to avoid data loss on parse error
         let mut state: CacheState = serde_json::from_str(&json)
-            .map_err(|e| format!("Parse error: {}", e))?;
+            .map_err(|e| format!("Failed to parse playlist: {}", e))?;
 
         if !append {
             info!("Clearing cache before loading");

@@ -161,6 +161,9 @@ impl PlayaApp {
             Ok(count) => {
                 info!("Added {} sequence(s) from playlist", count);
 
+                // Clear error message on successful load
+                self.error_msg = None;
+
                 // Get current frame for display
                 let current_frame_idx = self.player.current_frame();
                 if let Some(frame) = self.player.get_current_frame() {
@@ -366,6 +369,8 @@ impl eframe::App for PlayaApp {
                             for seq in sequences {
                                 self.player.cache.append_seq(seq);
                             }
+                            // Clear error message on successful load
+                            self.error_msg = None;
                         }
                         Err(e) => {
                             warn!("Failed to load {}: {}", path.display(), e);
@@ -401,6 +406,8 @@ impl eframe::App for PlayaApp {
                         for seq in sequences {
                             self.player.cache.append_seq(seq);
                         }
+                        // Clear error message on successful load
+                        self.error_msg = None;
                     }
                     Err(e) => {
                         warn!("Failed to load {}: {}", path.display(), e);
@@ -468,6 +475,8 @@ impl eframe::App for PlayaApp {
                     for seq in sequences {
                         self.player.cache.append_seq(seq);
                     }
+                    // Clear error message on successful load
+                    self.error_msg = None;
                 }
                 Err(e) => {
                     warn!("Failed to load {}: {}", path.display(), e);
