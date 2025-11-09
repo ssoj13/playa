@@ -17,6 +17,7 @@ mod paths;
 mod utils;
 mod encode;
 mod ui_encode;
+mod rgb_cvt;
 
 use clap::Parser;
 use eframe::{egui, glow};

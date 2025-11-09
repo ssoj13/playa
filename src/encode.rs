@@ -362,7 +362,22 @@ pub fn encode_sequence(
 
     encoder.set_width(width);
     encoder.set_height(height);
-    encoder.set_format(ffmpeg::format::Pixel::RGB24);  // Our frames are RGB24
+
+    // Determine pixel format based on encoder
+    // Hardware encoders (NVENC, QSV, AMF) and MPEG4 need YUV420P
+    // Only libx264/libx265 can accept RGB24 directly
+    let needs_yuv = matches!(
+        encoder_name,
+        "h264_nvenc" | "hevc_nvenc" | "h264_qsv" | "hevc_qsv" | "h264_amf" | "hevc_amf" | "mpeg4"
+    );
+
+    let pixel_format = if needs_yuv {
+        ffmpeg::format::Pixel::YUV420P
+    } else {
+        ffmpeg::format::Pixel::RGB24
+    };
+
+    encoder.set_format(pixel_format);
     encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(24, 1)));  // 24 fps
     encoder.set_time_base(ffmpeg::util::rational::Rational::new(1, 24));  // Time base 1/24
 
@@ -443,8 +458,8 @@ pub fn encode_sequence(
         let frame = cache.get_frame(frame_idx)
             .ok_or_else(|| EncodeError::EncodeFrameFailed(format!("Frame {} not in cache", frame_idx)))?;
 
-        // Ensure frame is loaded
-        if frame.status() != crate::frame::FrameStatus::Loaded {
+        // Ensure frame is loaded (skip Placeholder frames - they're already in memory)
+        if frame.status() == crate::frame::FrameStatus::Header {
             frame.load()
                 .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to load frame {}: {}", frame_idx, e)))?;
         }
@@ -475,28 +490,37 @@ pub fn encode_sequence(
             }
         }
 
-        // Create FFmpeg video frame
-        let mut ffmpeg_frame = ffmpeg::util::frame::video::Video::new(
-            ffmpeg::format::Pixel::RGB24,
-            width,
-            height,
-        );
+        // Create FFmpeg frame - RGB24 or YUV420P depending on encoder
+        let mut ffmpeg_frame = if needs_yuv {
+            // Convert RGB24 → YUV420P for hardware encoders
+            crate::rgb_cvt::rgb24_to_yuv420p(&rgb24_data, width, height)
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("RGB→YUV conversion failed: {}", e)))?
+        } else {
+            // Use RGB24 directly for libx264/libx265
+            let mut frame = ffmpeg::util::frame::video::Video::new(
+                ffmpeg::format::Pixel::RGB24,
+                width,
+                height,
+            );
 
-        // Copy RGB24 data to FFmpeg frame
-        let dst_stride = ffmpeg_frame.stride(0);
-        let src_stride = (width * 3) as usize;
+            // Copy RGB24 data to frame
+            let dst_stride = frame.stride(0);
+            let src_stride = (width * 3) as usize;
 
-        {
-            let dst_data = ffmpeg_frame.data_mut(0);
-            for y in 0..height as usize {
-                let src_offset = y * src_stride;
-                let dst_offset = y * dst_stride;
-                let row_bytes = src_stride;
+            {
+                let dst_data = frame.data_mut(0);
+                for y in 0..height as usize {
+                    let src_offset = y * src_stride;
+                    let dst_offset = y * dst_stride;
+                    let row_bytes = src_stride;
 
-                dst_data[dst_offset..dst_offset + row_bytes]
-                    .copy_from_slice(&rgb24_data[src_offset..src_offset + row_bytes]);
+                    dst_data[dst_offset..dst_offset + row_bytes]
+                        .copy_from_slice(&rgb24_data[src_offset..src_offset + row_bytes]);
+                }
             }
-        }
+
+            frame
+        };
 
         // Set PTS (presentation timestamp)
         ffmpeg_frame.set_pts(Some(pts));
@@ -622,25 +646,76 @@ mod tests {
 
         cache.append_seq(seq);
 
-        // NOTE: Hardware encoders (NVENC, QSV, AMF) and most software encoders
-        // require YUV pixel formats (NV12, YUV420P), not RGB24.
-        //
-        // Our current pipeline: RGBA8 → RGB24 → encoder
-        //
-        // Only libx264 can accept RGB24 directly (does internal conversion).
-        // Other encoders need: RGBA8 → RGB24 → swscale → YUV420P → encoder
-        //
-        // This requires adding swscale support (~50 lines + unsafe FFI).
-        //
-        // For now, test verifies infrastructure only.
+        // Determine which codec to use based on available encoder
+        let (codec, encoder_impl, encoder_name) = if ffmpeg::encoder::find_by_name("h264_nvenc").is_some() {
+            println!("\n🎬 Using NVENC hardware encoder");
+            (VideoCodec::H264, EncoderImpl::Hardware, "h264_nvenc")
+        } else if ffmpeg::encoder::find_by_name("libx264").is_some() {
+            println!("\n🎬 Using libx264 software encoder");
+            (VideoCodec::H264, EncoderImpl::Software, "libx264")
+        } else if ffmpeg::encoder::find_by_name("mpeg4").is_some() {
+            println!("\n🎬 Using mpeg4 encoder");
+            (VideoCodec::MPEG4, EncoderImpl::Software, "mpeg4")
+        } else {
+            println!("\n⚠ No compatible encoder available, skipping encoding test");
+            println!("   Available: {}", found_encoder.unwrap());
+            println!("   Need: libx264, h264_nvenc, or mpeg4");
+            println!("\n✓ Test infrastructure verified:");
+            println!("  - Cache with 100 placeholder frames created");
+            println!("  - Encoder discovery working");
+            return;
+        };
 
-        println!("\n⚠ Skipping encoding: Hardware/MPEG4 encoders need YUV420P pixel format");
-        println!("   Current pipeline: RGBA8 → RGB24");
-        println!("   Need: RGBA8 → RGB24 → [swscale] → YUV420P → encoder");
-        println!("   Only libx264 accepts RGB24 directly (not available in this build)");
-        println!("\n✓ Test infrastructure verified:");
-        println!("  - Cache with 100 placeholder frames");
-        println!("  - Encoder discovery: {} found", found_encoder.unwrap());
-        println!("  - Encoding pipeline ready (needs YUV conversion for HW encoders)");
+        // Setup encoding - create file in current directory
+        let output_path = std::path::PathBuf::from("test_encode_output.mp4");
+        let _ = std::fs::remove_file(&output_path);
+
+        let settings = EncoderSettings {
+            output_path: output_path.clone(),
+            container: Container::MP4,
+            codec,
+            encoder_impl,
+            quality_mode: QualityMode::Bitrate,
+            quality_value: 2000,  // 2 Mbps
+        };
+
+        // Create progress channel
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+
+        // Run encoding
+        let abs_path = std::fs::canonicalize(&output_path).unwrap_or_else(|_| {
+            std::env::current_dir().unwrap().join(&output_path)
+        });
+        println!("Encoding 100 frames to: {}", abs_path.display());
+        let result = encode_sequence(&mut cache, &settings, tx, cancel_flag);
+
+        // Check progress updates
+        let mut last_progress: Option<EncodeProgress> = None;
+        while let Ok(progress) = rx.try_recv() {
+            last_progress = Some(progress);
+        }
+
+        // Verify encoding succeeded
+        assert!(result.is_ok(), "Encoding failed: {:?}", result);
+
+        // Verify output file exists and is not empty
+        assert!(output_path.exists(), "Output file was not created");
+        let metadata = std::fs::metadata(&output_path).expect("Failed to read output file metadata");
+        assert!(metadata.len() > 0, "Output file is empty");
+
+        println!("✓ Encoding test passed!");
+        println!("  Encoder: {}", encoder_name);
+        println!("  Output: {}", abs_path.display());
+        println!("  Size: {} bytes ({:.2} KB)", metadata.len(), metadata.len() as f64 / 1024.0);
+
+        // Verify progress reached completion
+        if let Some(progress) = last_progress {
+            assert_eq!(progress.stage, EncodeStage::Complete, "Encoding did not complete");
+            println!("  Frames: {}/{}", progress.current_frame, progress.total_frames);
+        }
+
+        // Cleanup
+        // let _ = std::fs::remove_file(&output_path);
     }
 }
