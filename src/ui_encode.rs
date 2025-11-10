@@ -322,11 +322,11 @@ impl EncodeDialog {
 
                 ui.add_space(12.0);
 
-                // === Progress Section (only when encoding) ===
-                if self.is_encoding {
-                    ui.separator();
-                    ui.heading("Progress");
+                // === Progress (always visible to prevent dialog size jumping) ===
+                ui.separator();
+                ui.heading("Progress");
 
+                if self.is_encoding {
                     if let Some(ref progress) = self.progress {
                         // Stage description
                         let stage_text = match &progress.stage {
@@ -349,9 +349,15 @@ impl EncodeDialog {
                             ui.label(format!("Encoder: {}", self.encoder_name));
                         }
                     }
-
-                    ui.add_space(8.0);
+                } else {
+                    // Not encoding: show empty progress bar to maintain dialog size
+                    ui.label("Ready to encode");
+                    self.progress_bar.set_progress(0, 100);
+                    self.progress_bar.render(ui);
+                    ui.label(""); // Empty label for encoder name spacing
                 }
+
+                ui.add_space(8.0);
 
                 ui.separator();
 
@@ -395,23 +401,24 @@ impl EncodeDialog {
                         should_close = true;
                     }
 
-                    // Stop button (active only during encoding, doesn't close window)
-                    ui.add_enabled_ui(self.is_encoding, |ui| {
+                    // Encode/Stop button (toggles between Encode and Stop)
+                    if self.is_encoding {
+                        // During encoding: show "Stop" button
                         if ui.button("Stop").clicked() {
                             self.stop_encoding_keep_window();
                         }
-                    });
-
-                    // Encode button (disabled during encoding or if frames not ready)
-                    ui.add_enabled_ui(!self.is_encoding && ready_to_encode, |ui| {
-                        let mut button = ui.button("Encode");
-                        if !ready_to_encode {
-                            button = button.on_disabled_hover_text("Wait for all frames to load");
-                        }
-                        if button.clicked() {
-                            self.start_encoding(cache);
-                        }
-                    });
+                    } else {
+                        // Not encoding: show "Encode" button
+                        ui.add_enabled_ui(ready_to_encode, |ui| {
+                            let mut button = ui.button("Encode");
+                            if !ready_to_encode {
+                                button = button.on_disabled_hover_text("Wait for all frames to load");
+                            }
+                            if button.clicked() {
+                                self.start_encoding(cache);
+                            }
+                        });
+                    }
                 });
             });
 
@@ -575,6 +582,9 @@ impl EncodeDialog {
             ui.label("Profile:");
             ui.text_edit_singleline(&mut self.codec_settings.h264.profile);
         });
+
+        ui.add_space(4.0);
+        ui.label(""); // Empty line for vertical alignment
     }
 
     /// Render H.265 settings
@@ -627,6 +637,12 @@ impl EncodeDialog {
             ui.label("Preset:");
             ui.text_edit_singleline(&mut self.codec_settings.h265.preset);
         });
+
+        // Empty lines for vertical alignment with H264 tab
+        ui.add_space(4.0);
+        ui.label("");
+        ui.add_space(4.0);
+        ui.label("");
     }
 
     /// Render ProRes settings
@@ -644,6 +660,18 @@ impl EncodeDialog {
 
         ui.add_space(4.0);
         ui.label("ProRes is always software-encoded (prores_ks)");
+
+        // Empty lines for vertical alignment with H264 tab
+        ui.add_space(4.0);
+        ui.label("");
+        ui.add_space(4.0);
+        ui.label("");
+        ui.add_space(4.0);
+        ui.label("");
+        ui.add_space(4.0);
+        ui.label("");
+        ui.add_space(4.0);
+        ui.label("");
     }
 
     /// Render AV1 settings
@@ -693,5 +721,9 @@ impl EncodeDialog {
 
         ui.add_space(4.0);
         ui.label("💡 AV1: Best compression, slower encoding. HW: RTX 40xx/Arc/RDNA 3");
+
+        // Empty line for vertical alignment with H264 tab
+        ui.add_space(4.0);
+        ui.label("");
     }
 }
