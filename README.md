@@ -120,47 +120,9 @@ Playa includes built-in video encoding (F7 hotkey) for exporting image sequences
 
 ## Installation
 
-### Recommended: Bootstrap Install (One Command)
+### Recommended: Download Pre-built Installers
 
-**The easiest and most reliable way** to install Playa from crates.io with all dependencies:
-
-```bash
-# Clone the repository for bootstrap scripts
-git clone https://github.com/ssoj13/playa.git
-cd playa
-
-# Windows
-bootstrap.cmd install
-
-# macOS / Linux
-./bootstrap.sh install
-```
-
-**Why bootstrap install?**
-
-1. **Automatic dependency checks**: Verifies vcpkg, FFmpeg, and pkg-config are installed
-2. **Interactive setup**: Prompts to install missing dependencies with a single `y/N` response
-3. **Correct configuration**: Sets up proper static FFmpeg linking (same as CI/CD builds)
-4. **No manual environment setup**: Handles `VCPKG_ROOT`, `VCPKGRS_TRIPLET`, and `PKG_CONFIG_PATH` automatically
-5. **Guaranteed to work**: Uses the exact same configuration as our GitHub Actions runners
-
-The bootstrap script ensures FFmpeg video support works out of the box without manual configuration.
-
-### Alternative: cargo install
-
-If you prefer the standard Rust way (requires manual FFmpeg setup):
-
-```bash
-cargo install playa
-```
-
-**⚠️ Note:** You must manually install and configure FFmpeg dependencies (see "FFmpeg Setup" section below). Without proper setup, `cargo install` will fail with pkg-config errors.
-
-**Backend comparison:**
-- **exrs**: pure Rust, single binary, no external dependencies, fast startup
-- **openexr**: Binary + native libraries (DLLs/.so files), full DWAA/DWAB support (see "Build from Source" below)
-
-### Download Pre-built Binaries
+**The easiest way** to install Playa - download and run the installer for your platform:
 
 Download the latest release from the [Releases page](https://github.com/ssoj13/playa/releases/latest):
 
@@ -184,8 +146,97 @@ Download the latest release from the [Releases page](https://github.com/ssoj13/p
 **macOS Security Note:**
 All DMG releases are code-signed with Developer ID and notarized by Apple. No Gatekeeper warnings - just drag to Applications and run.
 
+---
 
-### Build from Source
+### Alternative: cargo install
+
+Install from crates.io (requires manual FFmpeg setup):
+
+```bash
+cargo install playa
+```
+
+**⚠️ Requirements:**
+
+1. **vcpkg** must be installed and configured:
+   ```bash
+   # Windows
+   git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+   C:\vcpkg\bootstrap-vcpkg.bat
+   setx VCPKG_ROOT "C:\vcpkg"
+   setx VCPKGRS_TRIPLET "x64-windows-static-md-release"
+
+   # Linux/macOS
+   git clone https://github.com/microsoft/vcpkg.git /usr/local/share/vcpkg
+   /usr/local/share/vcpkg/bootstrap-vcpkg.sh
+   export VCPKG_ROOT=/usr/local/share/vcpkg
+   ```
+
+2. **FFmpeg** with static linking:
+   ```bash
+   # Windows
+   vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
+
+   # Linux
+   export VCPKGRS_TRIPLET=x64-linux-release
+   vcpkg install ffmpeg[...]:x64-linux-release
+
+   # macOS
+   export VCPKGRS_TRIPLET=arm64-osx-release  # or x64-osx-release for Intel
+   vcpkg install ffmpeg[...]:arm64-osx-release
+   ```
+
+**See "FFmpeg Setup" section below for complete instructions.**
+
+---
+
+### Build from Source (Development)
+
+**For most users:** Use pre-built installers above or `cargo install`.
+
+**For developers:** Use bootstrap scripts that automatically handle all dependencies and environment setup.
+
+#### Quick Start with Bootstrap
+
+Bootstrap scripts provide the easiest build experience with automatic dependency management:
+
+```bash
+# Clone repository
+git clone https://github.com/ssoj13/playa.git
+cd playa
+
+# Windows
+bootstrap.cmd build          # Build with exrs (fast, pure Rust)
+bootstrap.cmd build --openexr  # Build with OpenEXR (full DWAA/DWAB support)
+
+# Linux/macOS
+./bootstrap.sh build
+./bootstrap.sh build --openexr
+```
+
+**What bootstrap does:**
+
+1. **Checks Rust installation** - Exits with error if missing
+2. **Sets up vcpkg environment variables** automatically:
+   - `VCPKG_ROOT` - Points to vcpkg installation
+   - `VCPKGRS_TRIPLET` - Platform-specific triplet (e.g., `x64-windows-static-md-release`)
+   - `PKG_CONFIG_PATH` - For FFmpeg pkg-config files (Linux/macOS)
+3. **Installs dev tools** via cargo-binstall:
+   - `cargo-release` - Version bumping and changelog
+   - `cargo-packager` - Cross-platform installer generation
+4. **Builds xtask** - Project build automation helper
+5. **Forwards to xtask** - Handles actual compilation with correct configuration
+
+**Benefits over manual cargo build:**
+- ✅ Guaranteed correct FFmpeg linking configuration
+- ✅ Same setup as CI/CD builds
+- ✅ No manual environment variable setup
+- ✅ Handles platform-specific triplets automatically
+- ✅ Works identically on Windows, Linux, and macOS
+
+**After bootstrap:** Continue using `bootstrap.{sh|cmd}` or use `cargo xtask` directly.
+
+#### EXR Backend Options
 
 Playa supports two EXR backends:
 
