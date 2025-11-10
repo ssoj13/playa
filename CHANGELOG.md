@@ -1,3 +1,18 @@
+## [0.1.128] - 2025-11-10
+
+### 🚀 Features
+
+- Add comprehensive CLI arguments for player control
+- Add sequence navigation and frame number display
+
+### 📚 Documentation
+
+- Add CLI documentation and improve shader messages
+- Reorganize installation instructions, prioritize pre-built installers
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Mon 11/10/2025 -  1:24:03.47
 ## [0.1.127] - 2025-11-10
 
 ### 🚀 Features
