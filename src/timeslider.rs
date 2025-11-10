@@ -6,11 +6,11 @@ use crate::cache::Cache;
 use crate::frame::FrameStatus;
 
 // Load indicator colors
-const COLOR_PLACEHOLDER: Color32 = Color32::from_rgb(40, 40, 45);    // Тёмно-серый
-const COLOR_HEADER: Color32 = Color32::from_rgb(60, 100, 180);       // Синий
-const COLOR_LOADING: Color32 = Color32::from_rgb(220, 160, 60);      // Оранжевый
-const COLOR_LOADED: Color32 = Color32::from_rgb(80, 200, 120);       // Зелёный
-const COLOR_ERROR: Color32 = Color32::from_rgb(200, 60, 60);         // Красный
+const COLOR_PLACEHOLDER: Color32 = Color32::from_rgb(40, 40, 45); // Тёмно-серый
+const COLOR_HEADER: Color32 = Color32::from_rgb(60, 100, 180); // Синий
+const COLOR_LOADING: Color32 = Color32::from_rgb(220, 160, 60); // Оранжевый
+const COLOR_LOADED: Color32 = Color32::from_rgb(80, 200, 120); // Зелёный
+const COLOR_ERROR: Color32 = Color32::from_rgb(200, 60, 60); // Красный
 
 /// Cache for load indicator state
 #[derive(Clone, Debug)]
@@ -127,7 +127,13 @@ pub fn time_slider(
 
         // Draw sequence labels
         if config.show_labels {
-            draw_seq_labels(painter, rect, sequences, total_frames, config.label_min_width);
+            draw_seq_labels(
+                painter,
+                rect,
+                sequences,
+                total_frames,
+                config.label_min_width,
+            );
         }
 
         // Draw playhead (current frame indicator)
@@ -145,10 +151,8 @@ pub fn time_slider(
     }
 
     // Handle interaction (only on slider rect, not including load indicator)
-    let slider_rect = Rect::from_min_max(
-        rect.min,
-        Pos2::new(rect.max.x, rect.min.y + config.height),
-    );
+    let slider_rect =
+        Rect::from_min_max(rect.min, Pos2::new(rect.max.x, rect.min.y + config.height));
     handle_interaction(&response, slider_rect, total_frames)
 }
 
@@ -159,18 +163,15 @@ fn draw_seq_backgrounds(
     sequences: &[SequenceRange],
     total_frames: usize,
 ) {
-    let frame_to_x = |frame: usize| -> f32 {
-        rect.min.x + (frame as f32 / total_frames as f32) * rect.width()
-    };
+    let frame_to_x =
+        |frame: usize| -> f32 { rect.min.x + (frame as f32 / total_frames as f32) * rect.width() };
 
     for seq in sequences {
         let x_start = frame_to_x(seq.start_frame);
         let x_end = frame_to_x(seq.end_frame + 1); // +1 to include end frame
 
-        let seq_rect = Rect::from_min_max(
-            Pos2::new(x_start, rect.min.y),
-            Pos2::new(x_end, rect.max.y),
-        );
+        let seq_rect =
+            Rect::from_min_max(Pos2::new(x_start, rect.min.y), Pos2::new(x_end, rect.max.y));
 
         let color = hash_color(&seq.pattern);
         painter.rect_filled(seq_rect, 0.0, color);
@@ -190,9 +191,8 @@ fn draw_play_range(
 
     let (start, end) = play_range;
 
-    let frame_to_x = |frame: usize| -> f32 {
-        rect.min.x + (frame as f32 / total_frames as f32) * rect.width()
-    };
+    let frame_to_x =
+        |frame: usize| -> f32 { rect.min.x + (frame as f32 / total_frames as f32) * rect.width() };
 
     let x_start = frame_to_x(start);
     let x_end = frame_to_x(end + 1); // +1 to include end frame
@@ -207,7 +207,11 @@ fn draw_play_range(
     );
 
     // Semi-transparent grey overlay
-    painter.rect_filled(play_rect, 0.0, Color32::from_rgba_premultiplied(120, 120, 120, 80));
+    painter.rect_filled(
+        play_rect,
+        0.0,
+        Color32::from_rgba_premultiplied(120, 120, 120, 80),
+    );
 }
 
 /// Draw vertical divider lines between sequences
@@ -217,9 +221,8 @@ fn draw_seq_dividers(
     sequences: &[SequenceRange],
     total_frames: usize,
 ) {
-    let frame_to_x = |frame: usize| -> f32 {
-        rect.min.x + (frame as f32 / total_frames as f32) * rect.width()
-    };
+    let frame_to_x =
+        |frame: usize| -> f32 { rect.min.x + (frame as f32 / total_frames as f32) * rect.width() };
 
     // Draw dividers at sequence boundaries (except first)
     for seq in sequences.iter().skip(1) {
@@ -239,9 +242,8 @@ fn draw_seq_labels(
     total_frames: usize,
     min_width: f32,
 ) {
-    let frame_to_x = |frame: usize| -> f32 {
-        rect.min.x + (frame as f32 / total_frames as f32) * rect.width()
-    };
+    let frame_to_x =
+        |frame: usize| -> f32 { rect.min.x + (frame as f32 / total_frames as f32) * rect.width() };
 
     for (idx, seq) in sequences.iter().enumerate() {
         let x_start = frame_to_x(seq.start_frame);
@@ -274,12 +276,7 @@ fn draw_seq_labels(
 }
 
 /// Draw playhead indicator at current frame
-fn draw_playhead(
-    painter: &egui::Painter,
-    rect: Rect,
-    current_frame: usize,
-    total_frames: usize,
-) {
+fn draw_playhead(painter: &egui::Painter, rect: Rect, current_frame: usize, total_frames: usize) {
     let x = rect.min.x + (current_frame as f32 / total_frames as f32) * rect.width();
 
     // Draw vertical line
@@ -312,11 +309,7 @@ fn draw_playhead(
 }
 
 /// Handle mouse interaction (click and drag)
-fn handle_interaction(
-    response: &Response,
-    rect: Rect,
-    total_frames: usize,
-) -> Option<usize> {
+fn handle_interaction(response: &Response, rect: Rect, total_frames: usize) -> Option<usize> {
     if response.dragged() || response.clicked() {
         if let Some(pos) = response.interact_pointer_pos() {
             let ratio = ((pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
@@ -375,26 +368,14 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color32 {
 fn extract_filename(pattern: &str) -> String {
     // Get the last path component
     let normalized = pattern.replace('\\', "/");
-    let filename = normalized
-        .split('/')
-        .last()
-        .unwrap_or(pattern);
+    let filename = normalized.split('/').last().unwrap_or(pattern);
 
     // Remove the .* or #### pattern and extension
-    filename
-        .split('.')
-        .next()
-        .unwrap_or(filename)
-        .to_string()
+    filename.split('.').next().unwrap_or(filename).to_string()
 }
 
 /// Draw load indicator showing frame load status
-fn draw_load_indicator(
-    painter: &egui::Painter,
-    rect: Rect,
-    statuses: &[FrameStatus],
-    height: f32,
-) {
+fn draw_load_indicator(painter: &egui::Painter, rect: Rect, statuses: &[FrameStatus], height: f32) {
     let total = statuses.len();
     if total == 0 {
         return;

@@ -70,8 +70,7 @@ pub fn patch_headers() -> Result<()> {
     println!("Found openexr-sys at: {}", openexr_sys_dir.display());
 
     // Find OpenEXR headers directory
-    let headers_dir = openexr_sys_dir
-        .join("thirdparty/openexr/src/lib/OpenEXR");
+    let headers_dir = openexr_sys_dir.join("thirdparty/openexr/src/lib/OpenEXR");
 
     if !headers_dir.exists() {
         anyhow::bail!(
@@ -122,8 +121,8 @@ enum PatchResult {
 /// Patch a single header file
 #[cfg(target_os = "linux")]
 fn patch_header_file(path: &Path) -> Result<PatchResult> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
 
     // Check if already patched
     if content.contains(PATCH_MARKER) {
@@ -141,16 +140,14 @@ fn patch_header_file(path: &Path) -> Result<PatchResult> {
         }
     }
 
-    let insert_index = insert_index
-        .context("Could not find any #include in header file")?;
+    let insert_index = insert_index.context("Could not find any #include in header file")?;
 
     // Insert the new include
     lines.insert(insert_index, INCLUDE_TO_ADD);
 
     // Write back
     let new_content = lines.join("\n") + "\n";
-    fs::write(path, new_content)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    fs::write(path, new_content).with_context(|| format!("Failed to write {}", path.display()))?;
 
     Ok(PatchResult::Patched)
 }
@@ -205,10 +202,7 @@ pub fn patch_zlib_for_macos() -> Result<()> {
     // Patch CMakeLists.txt
     let cmake_file = openexr_sys_dir.join("thirdparty/zlib/CMakeLists.txt");
     if !cmake_file.exists() {
-        anyhow::bail!(
-            "zlib CMakeLists.txt not found at {}",
-            cmake_file.display()
-        );
+        anyhow::bail!("zlib CMakeLists.txt not found at {}", cmake_file.display());
     }
 
     let cmake_patched = patch_cmake_file(&cmake_file)?;
@@ -223,8 +217,22 @@ pub fn patch_zlib_for_macos() -> Result<()> {
 
     println!();
     println!("Zlib patching complete:");
-    println!("  - CMakeLists.txt: {}", if cmake_patched { "patched" } else { "already patched" });
-    println!("  - zutil.h: {}", if zutil_patched { "patched" } else { "already patched" });
+    println!(
+        "  - CMakeLists.txt: {}",
+        if cmake_patched {
+            "patched"
+        } else {
+            "already patched"
+        }
+    );
+    println!(
+        "  - zutil.h: {}",
+        if zutil_patched {
+            "patched"
+        } else {
+            "already patched"
+        }
+    );
 
     Ok(())
 }
@@ -235,8 +243,8 @@ fn patch_cmake_file(path: &std::path::Path) -> Result<bool> {
     use anyhow::Context;
     use std::fs;
 
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
 
     // Check if already patched
     if content.contains("cmake_minimum_required(VERSION 3.5)") {
@@ -246,15 +254,14 @@ fn patch_cmake_file(path: &std::path::Path) -> Result<bool> {
     // Replace version requirement
     let new_content = content.replace(
         "cmake_minimum_required(VERSION 2.4.4)",
-        "cmake_minimum_required(VERSION 3.5)"
+        "cmake_minimum_required(VERSION 3.5)",
     );
 
     if new_content == content {
         anyhow::bail!("Could not find cmake_minimum_required(VERSION 2.4.4) in CMakeLists.txt");
     }
 
-    fs::write(path, new_content)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    fs::write(path, new_content).with_context(|| format!("Failed to write {}", path.display()))?;
 
     Ok(true)
 }
@@ -265,8 +272,8 @@ fn patch_zutil_file(path: &std::path::Path) -> Result<bool> {
     use anyhow::Context;
     use std::fs;
 
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
 
     // Check if already patched
     if content.contains("#      ifndef __APPLE__") {
@@ -283,8 +290,7 @@ fn patch_zutil_file(path: &std::path::Path) -> Result<bool> {
         anyhow::bail!("Could not find fdopen section in zutil.h");
     }
 
-    fs::write(path, new_content)
-        .with_context(|| format!("Failed to write {}", path.display()))?;
+    fs::write(path, new_content).with_context(|| format!("Failed to write {}", path.display()))?;
 
     Ok(true)
 }

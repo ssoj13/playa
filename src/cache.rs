@@ -27,31 +27,31 @@
 use log::{debug, info, warn};
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock, mpsc};
 use std::thread;
 // SystemTime/UNIX_EPOCH removed - LruCache handles access tracking automatically
 use std::path::Path;
 use sysinfo::System;
 
 use crate::frame::{Frame, FrameStatus};
-use crate::sequence::Sequence;
 use crate::progress::LoadProgress;
+use crate::sequence::Sequence;
 use crate::utils::media;
 
 /// Load request for worker threads
 #[derive(Debug)]
 struct LoadRequest {
-    frame: Frame,     // Clone of Arc - cheap!
-    seq_idx: usize,   // For tracking/result
+    frame: Frame,   // Clone of Arc - cheap!
+    seq_idx: usize, // For tracking/result
     frame_idx: usize,
-    epoch: u64,       // For cancelling stale requests
+    epoch: u64, // For cancelling stale requests
 }
 
 /// Lightweight frame info for preload thread
 #[derive(Debug, Clone)]
 struct FramePath {
-    frame: Frame,     // Clone of Arc - cheap!
+    frame: Frame, // Clone of Arc - cheap!
     seq_idx: usize,
     frame_idx: usize,
 }
@@ -68,7 +68,10 @@ struct LoadedFrame {
 #[derive(Debug, Clone)]
 pub enum CacheMessage {
     FrameLoaded,
-    LoadProgress { cached_count: usize, total_count: usize },
+    LoadProgress {
+        cached_count: usize,
+        total_count: usize,
+    },
 }
 
 /// Cache state for serialization/deserialization
@@ -153,7 +156,10 @@ impl Cache {
     /// use playa::cache::Cache;
     /// let (cache, ui_rx) = Cache::new(0.75, None); // 75% of available RAM, default workers
     /// ```
-    pub fn new(max_mem: f64, workers_override: Option<usize>) -> (Self, mpsc::Receiver<CacheMessage>) {
+    pub fn new(
+        max_mem: f64,
+        workers_override: Option<usize>,
+    ) -> (Self, mpsc::Receiver<CacheMessage>) {
         let mut sys = System::new_all();
         sys.refresh_memory();
 
@@ -161,19 +167,27 @@ impl Cache {
         let available_memory = sys.available_memory() as usize;
         let max_memory_bytes = (available_memory as f64 * max_mem) as usize;
 
-        info!("System memory: {} MB total, {} MB available",
-              total_memory / 1024 / 1024,
-              available_memory / 1024 / 1024);
-        info!("Cache limit: {} MB ({}% of available)",
-              max_memory_bytes / 1024 / 1024,
-              max_mem * 100.0);
+        info!(
+            "System memory: {} MB total, {} MB available",
+            total_memory / 1024 / 1024,
+            available_memory / 1024 / 1024
+        );
+        info!(
+            "Cache limit: {} MB ({}% of available)",
+            max_memory_bytes / 1024 / 1024,
+            max_mem * 100.0
+        );
 
         // Calculate worker count first (needed for channel capacity)
-        let num_workers = if let Some(w) = workers_override { w.max(1) } else {
+        let num_workers = if let Some(w) = workers_override {
+            w.max(1)
+        } else {
             (std::thread::available_parallelism()
                 .map(|n| n.get())
-                .unwrap_or(8) * 3 / 4)
-                .max(1)
+                .unwrap_or(8)
+                * 3
+                / 4)
+            .max(1)
         };
 
         info!("Using {} worker threads", num_workers);
@@ -222,13 +236,18 @@ impl Cache {
 
                                 // Load frame - atomic claim prevents duplicates
                                 // Frame.load() will skip if already loading/loaded
-                                let result = req.frame.load()
+                                let result = req
+                                    .frame
+                                    .load()
                                     .map(|_| req.frame.clone())
                                     .map_err(|e| e.to_string());
 
                                 // Log only failures
                                 if let Err(ref e) = result {
-                                    warn!("Worker {}: failed [{},{}]: {}", worker_id, req.seq_idx, req.frame_idx, e);
+                                    warn!(
+                                        "Worker {}: failed [{},{}]: {}",
+                                        worker_id, req.seq_idx, req.frame_idx, e
+                                    );
                                 }
 
                                 let loaded_frame = LoadedFrame {
@@ -245,7 +264,7 @@ impl Cache {
                                 if result.is_ok() {
                                     let _ = ui_sender.send(CacheMessage::FrameLoaded);
                                 }
-                            },
+                            }
                             Err(_) => break,
                         }
                     }
@@ -258,7 +277,8 @@ impl Cache {
         }
 
         // Preload thread
-        let (preload_tx, preload_rx) = mpsc::channel::<(usize, usize, Vec<FramePath>, (usize, usize))>();
+        let (preload_tx, preload_rx) =
+            mpsc::channel::<(usize, usize, Vec<FramePath>, (usize, usize))>();
         let cancel_preload = Arc::new(AtomicBool::new(false));
 
         let preload_sender = load_request_sender.clone();
@@ -283,8 +303,10 @@ impl Cache {
                     // Check if center_frame is within play_range
                     let (play_start, play_end) = play_range;
                     if center_frame < play_start || center_frame > play_end {
-                        debug!("Preload: frame {} outside play_range ({}..{}), skipping request",
-                               center_frame, play_start, play_end);
+                        debug!(
+                            "Preload: frame {} outside play_range ({}..{}), skipping request",
+                            center_frame, play_start, play_end
+                        );
                         continue;
                     }
 
@@ -292,8 +314,10 @@ impl Cache {
                     session_counter += 1;
                     let epoch = session_counter;
                     preload_epoch.store(epoch, Ordering::Relaxed);
-                    debug!("Preload epoch {}: center={}, play_range={}..{}",
-                           epoch, center_frame, play_start, play_end);
+                    debug!(
+                        "Preload epoch {}: center={}, play_range={}..{}",
+                        epoch, center_frame, play_start, play_end
+                    );
 
                     // Reset cancel flag
                     preload_cancel.store(false, Ordering::Relaxed);
@@ -310,9 +334,15 @@ impl Cache {
                         .unwrap_or(false);
 
                     if use_forward_only {
-                        debug!("Preload epoch {}: using forward-only strategy (video detected)", epoch);
+                        debug!(
+                            "Preload epoch {}: using forward-only strategy (video detected)",
+                            epoch
+                        );
                     } else {
-                        debug!("Preload epoch {}: using spiral strategy (image sequence)", epoch);
+                        debug!(
+                            "Preload epoch {}: using spiral strategy (image sequence)",
+                            epoch
+                        );
                     }
 
                     let mut sent = 0;
@@ -345,8 +375,10 @@ impl Cache {
                         for global_idx in center_frame..=play_end {
                             // Check cancel flag
                             if preload_cancel.load(Ordering::Relaxed) {
-                                debug!("Preload epoch {} cancelled at frame {} ({} sent, {} skipped)",
-                                       epoch, global_idx, sent, skipped);
+                                debug!(
+                                    "Preload epoch {} cancelled at frame {} ({} sent, {} skipped)",
+                                    epoch, global_idx, sent, skipped
+                                );
                                 break;
                             }
 
@@ -363,8 +395,10 @@ impl Cache {
                         for offset in 0..=max_offset {
                             // Check cancel flag BEFORE each request
                             if preload_cancel.load(Ordering::Relaxed) {
-                                debug!("Preload epoch {} cancelled at offset {} ({} sent, {} skipped)",
-                                       epoch, offset, sent, skipped);
+                                debug!(
+                                    "Preload epoch {} cancelled at offset {} ({} sent, {} skipped)",
+                                    epoch, offset, sent, skipped
+                                );
                                 break;
                             }
 
@@ -394,7 +428,10 @@ impl Cache {
                         }
                     }
 
-                    debug!("Preload epoch {} finished: {} sent, {} already loaded", epoch, sent, skipped);
+                    debug!(
+                        "Preload epoch {} finished: {} sent, {} already loaded",
+                        epoch, sent, skipped
+                    );
                 }
             }));
 
@@ -456,7 +493,8 @@ impl Cache {
             // Subsequent sequences: only extend end if it was at maximum
             let current_end = self.play_range_end.load(Ordering::Relaxed);
             if current_end == old_global_end {
-                self.play_range_end.store(self.global_end, Ordering::Relaxed);
+                self.play_range_end
+                    .store(self.global_end, Ordering::Relaxed);
             }
         }
 
@@ -464,9 +502,13 @@ impl Cache {
         self.rebuild_frame_paths_cache();
 
         // Increment version to invalidate UI cache
-        self.sequences_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.sequences_version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        info!("Appended sequence: {} frames, global_end={}", seq_len, self.global_end);
+        info!(
+            "Appended sequence: {} frames, global_end={}",
+            seq_len, self.global_end
+        );
 
         // Trigger preload for new sequence
         self.signal_preload();
@@ -495,7 +537,8 @@ impl Cache {
         self.play_range_end.store(0, Ordering::Relaxed);
 
         // Increment version to invalidate UI cache
-        self.sequences_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.sequences_version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Rebuild frame paths cache from current sequences
@@ -609,7 +652,7 @@ impl Cache {
     /// ```
     pub fn get_frame(&mut self, global_idx: usize) -> Option<&Frame> {
         // Note: processing of loaded frames is centralized in the UI loop
-        
+
         let (seq_idx, frame_idx) = self.global_to_local(global_idx)?;
 
         // Check if cached (read lock - allows concurrent access from other threads)
@@ -654,48 +697,56 @@ impl Cache {
             drop(receiver);
             result
         } {
-                    match loaded_frame.result {
-                        Ok(frame) => {
-                            let frame_size = frame.mem();
+            match loaded_frame.result {
+                Ok(frame) => {
+                    let frame_size = frame.mem();
 
-                            let mut lru = self.lru_cache.write().unwrap();
+                    let mut lru = self.lru_cache.write().unwrap();
 
-                            // Ensure space (O(1) eviction with pop_lru)
-                            self.ensure_space_locked(&mut lru, frame_size);
+                    // Ensure space (O(1) eviction with pop_lru)
+                    self.ensure_space_locked(&mut lru, frame_size);
 
-                            // Cache frame (LruCache automatically tracks access order)
-                            let key = (loaded_frame.seq_idx, loaded_frame.frame_idx);
-                            lru.put(key, CacheEntry {
-                                frame: frame.clone(),
-                            });  // O(1) insertion + automatic access tracking!
-                            self.memory_usage.fetch_add(frame_size, Ordering::Relaxed);
+                    // Cache frame (LruCache automatically tracks access order)
+                    let key = (loaded_frame.seq_idx, loaded_frame.frame_idx);
+                    lru.put(
+                        key,
+                        CacheEntry {
+                            frame: frame.clone(),
+                        },
+                    ); // O(1) insertion + automatic access tracking!
+                    self.memory_usage.fetch_add(frame_size, Ordering::Relaxed);
 
-                            // Update sequence frame
-                            if let Some(seq) = self.sequences.get_mut(loaded_frame.seq_idx) {
-                                if let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false) {
-                                    *seq_frame = frame;
-                                }
-                            }
-
-                            // Progress
-                            self.progress.update(loaded_frame.seq_idx, loaded_frame.frame_idx);
-
-                            // Notify UI-side caches that a frame successfully loaded
-                            self.loaded_events_counter.fetch_add(1, Ordering::Relaxed);
-                        }
-                        Err(error_msg) => {
-                            warn!("Failed to load frame ({}, {}): {}",
-                                  loaded_frame.seq_idx, loaded_frame.frame_idx, error_msg);
-
-                            // Reset frame back to Placeholder so playback can continue
-                            if let Some(seq) = self.sequences.get_mut(loaded_frame.seq_idx) {
-                                if let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false) {
-                                    use crate::frame::FrameStatus;
-                                    seq_frame.set_status(FrameStatus::Placeholder);
-                                }
-                            }
+                    // Update sequence frame
+                    if let Some(seq) = self.sequences.get_mut(loaded_frame.seq_idx) {
+                        if let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false)
+                        {
+                            *seq_frame = frame;
                         }
                     }
+
+                    // Progress
+                    self.progress
+                        .update(loaded_frame.seq_idx, loaded_frame.frame_idx);
+
+                    // Notify UI-side caches that a frame successfully loaded
+                    self.loaded_events_counter.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(error_msg) => {
+                    warn!(
+                        "Failed to load frame ({}, {}): {}",
+                        loaded_frame.seq_idx, loaded_frame.frame_idx, error_msg
+                    );
+
+                    // Reset frame back to Placeholder so playback can continue
+                    if let Some(seq) = self.sequences.get_mut(loaded_frame.seq_idx) {
+                        if let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false)
+                        {
+                            use crate::frame::FrameStatus;
+                            seq_frame.set_status(FrameStatus::Placeholder);
+                        }
+                    }
+                }
+            }
         }
 
         // Send progress update to UI after processing all loaded frames
@@ -719,7 +770,8 @@ impl Cache {
         let memory = &self.memory_usage;
 
         while memory.load(Ordering::Relaxed) + new_frame_size > self.max_memory_bytes {
-            if let Some((key, entry)) = lru.pop_lru() {  // O(1) eviction!
+            if let Some((key, entry)) = lru.pop_lru() {
+                // O(1) eviction!
                 let removed_size = entry.frame.mem();
                 memory.fetch_sub(removed_size, Ordering::Relaxed);
                 debug!("Evicted frame {:?} ({} bytes)", key, removed_size);
@@ -793,13 +845,15 @@ impl Cache {
             // Clamp play_range_end if it exceeds new maximum
             let current_end = self.play_range_end.load(Ordering::Relaxed);
             if current_end > self.global_end {
-                self.play_range_end.store(self.global_end, Ordering::Relaxed);
+                self.play_range_end
+                    .store(self.global_end, Ordering::Relaxed);
             }
 
             // Clamp play_range_start as well (safety)
             let current_start = self.play_range_start.load(Ordering::Relaxed);
             if current_start > self.global_end {
-                self.play_range_start.store(self.global_end, Ordering::Relaxed);
+                self.play_range_start
+                    .store(self.global_end, Ordering::Relaxed);
             }
 
             // Reindex cache to reflect new sequence positions
@@ -809,7 +863,8 @@ impl Cache {
             self.rebuild_frame_paths_cache();
 
             // Increment version to invalidate UI cache
-            self.sequences_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.sequences_version
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -877,7 +932,8 @@ impl Cache {
         self.rebuild_frame_paths_cache();
 
         // Increment version to invalidate UI cache
-        self.sequences_version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.sequences_version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Jump to start of sequence
@@ -916,7 +972,10 @@ impl Cache {
         let total = self.global_end;
         let play_range = self.get_play_range();
 
-        if let Err(e) = self.preload_tx.send((center, total, frame_paths, play_range)) {
+        if let Err(e) = self
+            .preload_tx
+            .send((center, total, frame_paths, play_range))
+        {
             warn!("Failed to signal preload: {}", e);
         }
     }
@@ -938,14 +997,17 @@ impl Cache {
             play_range_end: self.play_range_end.load(Ordering::Relaxed),
         };
 
-        let json = serde_json::to_string_pretty(&state)
-            .map_err(|e| format!("Serialize error: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(&state).map_err(|e| format!("Serialize error: {}", e))?;
 
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Write error: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("Write error: {}", e))?;
 
-        info!("Cache state saved to {}: {} sequences, frame {}",
-              path.display(), state.sequences.len(), state.current_frame);
+        info!(
+            "Cache state saved to {}: {} sequences, frame {}",
+            path.display(),
+            state.sequences.len(),
+            state.current_frame
+        );
         Ok(())
     }
 
@@ -953,12 +1015,12 @@ impl Cache {
     /// - append=true: add sequences to existing playlist
     /// - append=false: clear cache before loading
     pub fn from_json(&mut self, path: &Path, append: bool) -> Result<usize, String> {
-        let json = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read playlist: {}", e))?;
+        let json =
+            std::fs::read_to_string(path).map_err(|e| format!("Failed to read playlist: {}", e))?;
 
         // Parse BEFORE clearing cache to avoid data loss on parse error
-        let mut state: CacheState = serde_json::from_str(&json)
-            .map_err(|e| format!("Failed to parse playlist: {}", e))?;
+        let mut state: CacheState =
+            serde_json::from_str(&json).map_err(|e| format!("Failed to parse playlist: {}", e))?;
 
         if !append {
             info!("Clearing cache before loading");
@@ -985,7 +1047,8 @@ impl Cache {
 
         if !append {
             // Replace mode: use play_range from loaded playlist
-            self.play_range_start.store(restored_start, Ordering::Relaxed);
+            self.play_range_start
+                .store(restored_start, Ordering::Relaxed);
             self.play_range_end.store(restored_end, Ordering::Relaxed);
         } else {
             // Append mode: extend play_range if loaded range goes beyond current
@@ -995,17 +1058,21 @@ impl Cache {
             }
         }
 
-        info!("Cache restored: {} sequences, current frame {}, play range {}..{}",
-              state.sequences.len(), self.global_frame,
-              self.play_range_start.load(Ordering::Relaxed),
-              self.play_range_end.load(Ordering::Relaxed));
+        info!(
+            "Cache restored: {} sequences, current frame {}, play range {}..{}",
+            state.sequences.len(),
+            self.global_frame,
+            self.play_range_start.load(Ordering::Relaxed),
+            self.play_range_end.load(Ordering::Relaxed)
+        );
 
         Ok(state.sequences.len())
     }
 
     /// Get current sequences version (incremented when sequences change)
     pub fn sequences_version(&self) -> usize {
-        self.sequences_version.load(std::sync::atomic::Ordering::Relaxed)
+        self.sequences_version
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get status for all frames in global order
@@ -1107,4 +1174,3 @@ mod tests {
         assert_eq!(frame.status(), FrameStatus::Error);
     }
 }
-

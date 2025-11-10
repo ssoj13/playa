@@ -55,17 +55,25 @@ fn parse_video_path(path: &Path) -> (PathBuf, Option<usize>) {
 /// Pixel buffer format - stores different precision levels
 #[derive(Debug, Clone)]
 pub enum PixelBuffer {
-    U8(Vec<u8>),              // LDR formats (PNG, JPEG, TGA) - 8-bit per channel
-    F16(Vec<F16>),            // HDR half-precision (EXR HALF) - 16-bit float per channel
-    F32(Vec<f32>),            // HDR full-precision (EXR FLOAT, HDR) - 32-bit float per channel
+    U8(Vec<u8>),   // LDR formats (PNG, JPEG, TGA) - 8-bit per channel
+    F16(Vec<F16>), // HDR half-precision (EXR HALF) - 16-bit float per channel
+    F32(Vec<f32>), // HDR full-precision (EXR FLOAT, HDR) - 32-bit float per channel
 }
 
 /// Pixel format type
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PixelFormat {
-    Rgba8,     // 8-bit RGBA (LDR)
-    RgbaF16,   // 16-bit half-float RGBA (HDR)
-    RgbaF32,   // 32-bit float RGBA (HDR)
+    Rgba8,   // 8-bit RGBA (LDR)
+    RgbaF16, // 16-bit half-float RGBA (HDR)
+    RgbaF32, // 32-bit float RGBA (HDR)
+}
+
+/// Crop alignment mode
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
+pub enum CropAlign {
+    Center,  // Center-align when cropping or padding
+    LeftTop, // Align to top-left corner (reserved for future use)
 }
 
 /// Frame loading status
@@ -81,7 +89,7 @@ pub enum FrameStatus {
 /// Internal frame data protected by mutex
 #[derive(Debug, Clone)]
 struct FrameData {
-    buffer: Arc<PixelBuffer>,   // Multi-format pixel buffer (Arc for cheap cloning)
+    buffer: Arc<PixelBuffer>, // Multi-format pixel buffer (Arc for cheap cloning)
     pixel_format: PixelFormat,
     width: usize,
     height: usize,
@@ -92,7 +100,7 @@ struct FrameData {
 #[derive(Debug, Clone)]
 pub struct Frame {
     data: Arc<Mutex<FrameData>>, // All mutable data in one mutex
-    filename: Option<PathBuf>,    // Immutable after creation
+    filename: Option<PathBuf>,   // Immutable after creation
 }
 
 /// Frame loading errors
@@ -127,8 +135,8 @@ impl Frame {
         let mut buffer_u8 = Vec::with_capacity(width * height * 4);
         buffer_u8.resize(width * height * 4, 0);
         for px in buffer_u8.chunks_exact_mut(4) {
-            px[1] = 100;  // G channel
-            px[3] = 255;  // A channel (R,B already 0)
+            px[1] = 100; // G channel
+            px[3] = 255; // A channel (R,B already 0)
         }
 
         let data = FrameData {
@@ -196,7 +204,7 @@ impl Frame {
             data.status = FrameStatus::Loading;
             true
         } else {
-            false  // Already loading, loaded, or error
+            false // Already loading, loaded, or error
         }
     }
 
@@ -231,7 +239,11 @@ impl Frame {
     /// }
     /// ```
     pub fn load(&self) -> Result<(), FrameError> {
-        let path = self.filename.as_ref().ok_or(FrameError::NoFilename)?.clone();
+        let path = self
+            .filename
+            .as_ref()
+            .ok_or(FrameError::NoFilename)?
+            .clone();
 
         // Parse video path: "video.mp4@17" -> ("video.mp4", Some(17))
         let (actual_path, frame_num) = parse_video_path(&path);
@@ -243,7 +255,7 @@ impl Frame {
                 FrameStatus::Loaded => Ok(()),
                 // Return a clearer error category instead of UnsupportedFormat
                 FrameStatus::Error => Err(FrameError::Image("Previously failed".into())),
-                _ => Ok(()),  // Loading in progress
+                _ => Ok(()), // Loading in progress
             };
         }
 
@@ -299,8 +311,7 @@ impl Frame {
     fn load_hdr<P: AsRef<Path>>(&self, path: P) -> Result<(), FrameError> {
         debug!("Loading HDR: {}", path.as_ref().display());
 
-        let img = image::open(path.as_ref())
-            .map_err(|e| FrameError::Image(e.to_string()))?;
+        let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
 
         let width = img.width() as usize;
         let height = img.height() as usize;
@@ -315,7 +326,7 @@ impl Frame {
             buffer_f32.push(chunk[0]); // R
             buffer_f32.push(chunk[1]); // G
             buffer_f32.push(chunk[2]); // B
-            buffer_f32.push(1.0);      // A (opaque)
+            buffer_f32.push(1.0); // A (opaque)
         }
 
         // Update frame data atomically - store as native f32 HDR
@@ -333,8 +344,7 @@ impl Frame {
     fn load_image<P: AsRef<Path>>(&self, path: P) -> Result<(), FrameError> {
         debug!("Loading image: {}", path.as_ref().display());
 
-        let img = image::open(path.as_ref())
-            .map_err(|e| FrameError::Image(e.to_string()))?;
+        let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
 
         let width = img.width() as usize;
         let height = img.height() as usize;
@@ -352,9 +362,14 @@ impl Frame {
 
     /// Load video frame
     fn load_video<P: AsRef<Path>>(&self, path: P, frame_num: usize) -> Result<(), FrameError> {
-        debug!("Loading video frame {}: {}", frame_num, path.as_ref().display());
+        debug!(
+            "Loading video frame {}: {}",
+            frame_num,
+            path.as_ref().display()
+        );
 
-        let (buffer, pixel_format, width, height) = crate::video::decode_frame(path.as_ref(), frame_num)?;
+        let (buffer, pixel_format, width, height) =
+            crate::video::decode_frame(path.as_ref(), frame_num)?;
 
         // Update frame data atomically
         let mut data = self.data.lock().unwrap();
@@ -371,9 +386,9 @@ impl Frame {
     pub fn mem(&self) -> usize {
         let data = self.data.lock().unwrap();
         match data.buffer.as_ref() {
-            PixelBuffer::U8(vec) => vec.len(),       // 1 byte per u8
-            PixelBuffer::F16(vec) => vec.len() * 2,  // 2 bytes per f16
-            PixelBuffer::F32(vec) => vec.len() * 4,  // 4 bytes per f32
+            PixelBuffer::U8(vec) => vec.len(),      // 1 byte per u8
+            PixelBuffer::F16(vec) => vec.len() * 2, // 2 bytes per f16
+            PixelBuffer::F32(vec) => vec.len() * 4, // 4 bytes per f32
         }
     }
 
@@ -404,10 +419,10 @@ impl Frame {
         match data.buffer.as_ref() {
             PixelBuffer::U8(vec) => Ok(vec.clone()),
             PixelBuffer::F16(_) => Err(FrameError::UnsupportedFormat(
-                "Frame uses F16 format, use pixel_buffer() for HDR data".into()
+                "Frame uses F16 format, use pixel_buffer() for HDR data".into(),
             )),
             PixelBuffer::F32(_) => Err(FrameError::UnsupportedFormat(
-                "Frame uses F32 format, use pixel_buffer() for HDR data".into()
+                "Frame uses F32 format, use pixel_buffer() for HDR data".into(),
             )),
         }
     }
@@ -432,6 +447,212 @@ impl Frame {
     pub fn resolution(&self) -> (usize, usize) {
         let data = self.data.lock().unwrap();
         (data.width, data.height)
+    }
+
+    /// Crop or pad frame to new dimensions in-place
+    ///
+    /// - If new size > current: pad with green placeholder color
+    /// - If new size < current: center-crop
+    /// - If new size == current: no-op
+    ///
+    /// # Arguments
+    ///
+    /// - `new_w`, `new_h`: Target dimensions
+    /// - `align`: Alignment mode (Center or LeftTop)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use playa::frame::{Frame, CropAlign};
+    /// let mut frame = Frame::new(1920, 1080);
+    /// frame.crop(640, 480, CropAlign::Center); // Center-crop to 640x480
+    /// ```
+    pub fn crop(&self, new_w: usize, new_h: usize, align: CropAlign) {
+        let mut data = self.data.lock().unwrap();
+
+        // Fast path: same size
+        if data.width == new_w && data.height == new_h {
+            return;
+        }
+
+        let old_w = data.width;
+        let old_h = data.height;
+
+        // Calculate offsets based on alignment
+        let (src_offset_x, src_offset_y, dst_offset_x, dst_offset_y) = match align {
+            CropAlign::Center => {
+                let src_x = if old_w > new_w {
+                    (old_w - new_w) / 2
+                } else {
+                    0
+                };
+                let src_y = if old_h > new_h {
+                    (old_h - new_h) / 2
+                } else {
+                    0
+                };
+                let dst_x = if new_w > old_w {
+                    (new_w - old_w) / 2
+                } else {
+                    0
+                };
+                let dst_y = if new_h > old_h {
+                    (new_h - old_h) / 2
+                } else {
+                    0
+                };
+                (src_x, src_y, dst_x, dst_y)
+            }
+            CropAlign::LeftTop => (0, 0, 0, 0),
+        };
+
+        let copy_w = old_w.min(new_w);
+        let copy_h = old_h.min(new_h);
+
+        // Process based on pixel format
+        match data.buffer.as_ref() {
+            PixelBuffer::U8(old_buf) => {
+                // Create new buffer with green placeholder
+                let mut new_buf = Vec::with_capacity(new_w * new_h * 4);
+                new_buf.resize(new_w * new_h * 4, 0);
+                for px in new_buf.chunks_exact_mut(4) {
+                    px[1] = 100; // G channel (placeholder green)
+                    px[3] = 255; // A channel
+                }
+
+                // Copy pixel data
+                for y in 0..copy_h {
+                    let src_y = src_offset_y + y;
+                    let dst_y = dst_offset_y + y;
+
+                    for x in 0..copy_w {
+                        let src_x = src_offset_x + x;
+                        let dst_x = dst_offset_x + x;
+
+                        let src_idx = (src_y * old_w + src_x) * 4;
+                        let dst_idx = (dst_y * new_w + dst_x) * 4;
+
+                        // Copy RGBA
+                        new_buf[dst_idx..dst_idx + 4]
+                            .copy_from_slice(&old_buf[src_idx..src_idx + 4]);
+                    }
+                }
+
+                data.buffer = Arc::new(PixelBuffer::U8(new_buf));
+            }
+
+            PixelBuffer::F16(old_buf) => {
+                // Create new buffer with green placeholder
+                let mut new_buf = vec![F16::ZERO; new_w * new_h * 4];
+                let green = F16::from_f32(100.0 / 255.0);
+                let one = F16::ONE;
+
+                for px in new_buf.chunks_exact_mut(4) {
+                    px[1] = green; // G channel
+                    px[3] = one; // A channel
+                }
+
+                // Copy pixel data
+                for y in 0..copy_h {
+                    let src_y = src_offset_y + y;
+                    let dst_y = dst_offset_y + y;
+
+                    for x in 0..copy_w {
+                        let src_x = src_offset_x + x;
+                        let dst_x = dst_offset_x + x;
+
+                        let src_idx = (src_y * old_w + src_x) * 4;
+                        let dst_idx = (dst_y * new_w + dst_x) * 4;
+
+                        // Copy RGBA
+                        new_buf[dst_idx..dst_idx + 4]
+                            .copy_from_slice(&old_buf[src_idx..src_idx + 4]);
+                    }
+                }
+
+                data.buffer = Arc::new(PixelBuffer::F16(new_buf));
+            }
+
+            PixelBuffer::F32(old_buf) => {
+                // Create new buffer with green placeholder
+                let mut new_buf = vec![0.0f32; new_w * new_h * 4];
+
+                for px in new_buf.chunks_exact_mut(4) {
+                    px[1] = 100.0 / 255.0; // G channel
+                    px[3] = 1.0; // A channel
+                }
+
+                // Copy pixel data
+                for y in 0..copy_h {
+                    let src_y = src_offset_y + y;
+                    let dst_y = dst_offset_y + y;
+
+                    for x in 0..copy_w {
+                        let src_x = src_offset_x + x;
+                        let dst_x = dst_offset_x + x;
+
+                        let src_idx = (src_y * old_w + src_x) * 4;
+                        let dst_idx = (dst_y * new_w + dst_x) * 4;
+
+                        // Copy RGBA
+                        new_buf[dst_idx..dst_idx + 4]
+                            .copy_from_slice(&old_buf[src_idx..src_idx + 4]);
+                    }
+                }
+
+                data.buffer = Arc::new(PixelBuffer::F32(new_buf));
+            }
+        }
+
+        // Update dimensions
+        data.width = new_w;
+        data.height = new_h;
+    }
+}
+
+/// Frame format conversion trait
+///
+/// Provides efficient conversion methods using FFmpeg swscale.
+/// Methods return new Frames to avoid mutating cached data.
+pub trait FrameConversion {
+    /// Convert RGBA8 to RGB24 (removes alpha channel)
+    ///
+    /// Used as intermediate step for YUV conversion or RGB encoding.
+    /// Fast operation: ~1-2ms for 1080p frame.
+    ///
+    /// # Returns
+    /// RGB24 data (width * height * 3 bytes)
+    fn to_rgb24(&self) -> Result<Vec<u8>, FrameError>;
+}
+
+impl FrameConversion for Frame {
+    fn to_rgb24(&self) -> Result<Vec<u8>, FrameError> {
+        let buffer = self.pixel_buffer();
+        match &*buffer {
+            PixelBuffer::U8(rgba) => {
+                let (width, height) = self.resolution();
+                let mut rgb24 = Vec::with_capacity(width * height * 3);
+
+                for chunk in rgba.chunks_exact(4) {
+                    rgb24.push(chunk[0]); // R
+                    rgb24.push(chunk[1]); // G
+                    rgb24.push(chunk[2]); // B
+                    // Skip alpha (chunk[3])
+                }
+
+                Ok(rgb24)
+            }
+            PixelBuffer::F16(_) => {
+                Err(FrameError::UnsupportedFormat(
+                    "F16 to RGB24 conversion not yet implemented. Convert to U8 first.".into()
+                ))
+            }
+            PixelBuffer::F32(_) => {
+                Err(FrameError::UnsupportedFormat(
+                    "F32 to RGB24 conversion not yet implemented. Convert to U8 first.".into()
+                ))
+            }
+        }
     }
 }
 
@@ -467,9 +688,7 @@ mod tests {
     /// Validates: Error handling for non-existent files
     #[test]
     fn test_load_missing_file() {
-        let frame = Frame::new_unloaded(
-            PathBuf::from("/nonexistent/path/test.jpg")
-        );
+        let frame = Frame::new_unloaded(PathBuf::from("/nonexistent/path/test.jpg"));
 
         let result = frame.load();
         assert!(result.is_err());
@@ -520,4 +739,3 @@ mod tests {
         assert_eq!(frame.status(), FrameStatus::Error);
     }
 }
-

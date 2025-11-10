@@ -1,4 +1,4 @@
-use crate::frame::{PixelBuffer, PixelFormat, FrameError};
+use crate::frame::{FrameError, PixelBuffer, PixelFormat};
 use playa_ffmpeg as ffmpeg;
 use std::path::Path;
 use std::sync::Once;
@@ -30,7 +30,8 @@ impl VideoMetadata {
         let ictx = ffmpeg::format::input(path)
             .map_err(|e| FrameError::LoadError(format!("Failed to open video: {}", e)))?;
 
-        let stream = ictx.streams()
+        let stream = ictx
+            .streams()
             .best(ffmpeg::media::Type::Video)
             .ok_or_else(|| FrameError::LoadError("No video stream found".to_string()))?;
 
@@ -38,16 +39,19 @@ impl VideoMetadata {
         let fps_rational = stream.avg_frame_rate();
         let time_base = stream.time_base();
 
-        let duration_secs = duration as f64
-            * time_base.numerator() as f64
-            / time_base.denominator() as f64;
+        let duration_secs =
+            duration as f64 * time_base.numerator() as f64 / time_base.denominator() as f64;
         let fps = fps_rational.numerator() as f64 / fps_rational.denominator() as f64;
         let frame_count = (duration_secs * fps) as usize;
 
         let codec_params = stream.parameters();
-        let decoder_ctx = ffmpeg::codec::context::Context::from_parameters(codec_params)
-            .map_err(|e| FrameError::LoadError(format!("Failed to create decoder context: {}", e)))?;
-        let decoder = decoder_ctx.decoder().video()
+        let decoder_ctx =
+            ffmpeg::codec::context::Context::from_parameters(codec_params).map_err(|e| {
+                FrameError::LoadError(format!("Failed to create decoder context: {}", e))
+            })?;
+        let decoder = decoder_ctx
+            .decoder()
+            .video()
             .map_err(|e| FrameError::LoadError(format!("Failed to create video decoder: {}", e)))?;
 
         Ok(VideoMetadata {
@@ -59,21 +63,34 @@ impl VideoMetadata {
     }
 }
 
-pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(PixelBuffer, PixelFormat, usize, usize), FrameError> {
+pub fn decode_frame(
+    path: &Path,
+    frame_num: usize,
+) -> Result<(PixelBuffer, PixelFormat, usize, usize), FrameError> {
     init_ffmpeg_logging();
 
     let mut ictx = ffmpeg::format::input(path)
         .map_err(|e| FrameError::LoadError(format!("Failed to open video: {}", e)))?;
 
-    let stream = ictx.streams()
+    let stream = ictx
+        .streams()
         .best(ffmpeg::media::Type::Video)
         .ok_or_else(|| FrameError::LoadError("No video stream found".to_string()))?;
     let stream_idx = stream.index();
 
     let codec_params = stream.parameters();
-    let decoder_ctx = ffmpeg::codec::context::Context::from_parameters(codec_params)
+    let mut decoder_ctx = ffmpeg::codec::context::Context::from_parameters(codec_params)
         .map_err(|e| FrameError::LoadError(format!("Failed to create decoder context: {}", e)))?;
-    let mut decoder = decoder_ctx.decoder().video()
+
+    // Enable multi-threaded frame decoding (2-4x speedup)
+    unsafe {
+        (*decoder_ctx.as_mut_ptr()).thread_type = ffmpeg::ffi::FF_THREAD_FRAME as i32;
+        (*decoder_ctx.as_mut_ptr()).thread_count = 0; // Auto-detect CPU cores
+    }
+
+    let mut decoder = decoder_ctx
+        .decoder()
+        .video()
         .map_err(|e| FrameError::LoadError(format!("Failed to create video decoder: {}", e)))?;
 
     let width = decoder.width();
@@ -87,21 +104,24 @@ pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(PixelBuffer, Pixel
         width,
         height,
         ffmpeg::software::scaling::Flags::BILINEAR,
-    ).map_err(|e| FrameError::LoadError(format!("Failed to create scaler: {}", e)))?;
+    )
+    .map_err(|e| FrameError::LoadError(format!("Failed to create scaler: {}", e)))?;
 
     let mut current_frame = 0;
 
     for (stream, packet) in ictx.packets() {
         if stream.index() == stream_idx {
-            decoder.send_packet(&packet)
+            decoder
+                .send_packet(&packet)
                 .map_err(|e| FrameError::LoadError(format!("Failed to send packet: {}", e)))?;
 
             let mut decoded = ffmpeg::util::frame::video::Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
                 if current_frame == frame_num {
                     let mut rgb_frame = ffmpeg::util::frame::video::Video::empty();
-                    scaler.run(&decoded, &mut rgb_frame)
-                        .map_err(|e| FrameError::LoadError(format!("Failed to scale frame: {}", e)))?;
+                    scaler.run(&decoded, &mut rgb_frame).map_err(|e| {
+                        FrameError::LoadError(format!("Failed to scale frame: {}", e))
+                    })?;
 
                     let rgb_data = rgb_frame.data(0);
                     let stride = rgb_frame.stride(0);
@@ -112,10 +132,10 @@ pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(PixelBuffer, Pixel
                             let src_idx = (y * stride as u32 + x * 3) as usize;
                             let dst_idx = (y * width + x) as usize * 4;
 
-                            rgba_data[dst_idx] = rgb_data[src_idx];         // R
+                            rgba_data[dst_idx] = rgb_data[src_idx]; // R
                             rgba_data[dst_idx + 1] = rgb_data[src_idx + 1]; // G
                             rgba_data[dst_idx + 2] = rgb_data[src_idx + 2]; // B
-                            rgba_data[dst_idx + 3] = 255;                   // A
+                            rgba_data[dst_idx + 3] = 255; // A
                         }
                     }
 
@@ -131,5 +151,8 @@ pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(PixelBuffer, Pixel
         }
     }
 
-    Err(FrameError::LoadError(format!("Frame {} not found in video", frame_num)))
+    Err(FrameError::LoadError(format!(
+        "Frame {} not found in video",
+        frame_num
+    )))
 }

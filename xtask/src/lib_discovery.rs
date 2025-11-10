@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use glob::{glob_with, MatchOptions};
+use glob::{MatchOptions, glob_with};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -126,9 +126,7 @@ pub fn find_libraries(profile: &str) -> Result<Vec<PathBuf>> {
     if lib_dir.exists() {
         for pattern in &patterns {
             let full_pattern = lib_dir.join(pattern);
-            let pattern_str = full_pattern
-                .to_str()
-                .context("Invalid pattern path")?;
+            let pattern_str = full_pattern.to_str().context("Invalid pattern path")?;
 
             if let Ok(entries) = glob_with(pattern_str, glob_options) {
                 for entry in entries.flatten() {
@@ -151,9 +149,7 @@ pub fn find_libraries(profile: &str) -> Result<Vec<PathBuf>> {
         for build_dir in entries.flatten() {
             for pattern in &patterns {
                 let full_pattern = build_dir.join(pattern);
-                let pattern_str = full_pattern
-                    .to_str()
-                    .context("Invalid pattern path")?;
+                let pattern_str = full_pattern.to_str().context("Invalid pattern path")?;
 
                 if let Ok(lib_entries) = glob_with(pattern_str, glob_options) {
                     for entry in lib_entries.flatten() {

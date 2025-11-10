@@ -1,23 +1,24 @@
-mod frame;
-mod exr;
-mod video;
-mod sequence;
-mod progress;
-mod player;
 mod cache;
-mod scrub;
-mod viewport;
-mod shaders;
-mod timeslider;
-mod status_bar;
-mod progress_bar;
-mod ui;
-mod prefs;
-mod paths;
-mod utils;
+mod convert;
 mod encode;
-mod ui_encode;
+mod exr;
+mod frame;
+mod paths;
+mod player;
+mod prefs;
+mod progress;
+mod progress_bar;
 mod rgb_cvt;
+mod scrub;
+mod sequence;
+mod shaders;
+mod status_bar;
+mod timeslider;
+mod ui;
+mod ui_encode;
+mod utils;
+mod video;
+mod viewport;
 
 use clap::Parser;
 use eframe::{egui, glow};
@@ -27,9 +28,9 @@ use player::Player;
 use prefs::{AppSettings, render_settings_window};
 use scrub::Scrubber;
 use sequence::Sequence;
+use shaders::Shaders;
 use status_bar::StatusBar;
 use std::path::PathBuf;
-use shaders::Shaders;
 use viewport::{ViewportRenderer, ViewportState};
 
 /// Image sequence player for VFX workflows
@@ -204,7 +205,7 @@ impl PlayaApp {
             // Create dialog on first open with current settings
             if self.show_encode_dialog && self.encode_dialog.is_none() {
                 self.encode_dialog = Some(ui_encode::EncodeDialog::new(
-                    self.settings.encoder_settings.clone()
+                    self.settings.encoder_settings.clone(),
                 ));
             }
         }
@@ -284,7 +285,9 @@ impl PlayaApp {
         // Ctrl+R: reset settings and force exit cinema/fullscreen
         if input.modifiers.ctrl && input.key_pressed(egui::Key::R) {
             self.reset_settings(ctx);
-            if self.is_fullscreen { self.set_cinema_mode(ctx, false); }
+            if self.is_fullscreen {
+                self.set_cinema_mode(ctx, false);
+            }
         }
 
         // Z: toggle cinema/fullscreen
@@ -298,7 +301,8 @@ impl PlayaApp {
             self.viewport_state.set_mode_fit();
         }
 
-        if input.key_pressed(egui::Key::A) || input.key_pressed(egui::Key::Num1)
+        if input.key_pressed(egui::Key::A)
+            || input.key_pressed(egui::Key::Num1)
             || input.key_pressed(egui::Key::Home)
             || input.key_pressed(egui::Key::H)
         {
@@ -319,7 +323,8 @@ impl PlayaApp {
         // Re-apply image-dependent viewport settings if an image is loaded
         if let Some(frame) = &self.frame {
             let (width, height) = frame.resolution();
-            self.viewport_state.set_image_size(egui::vec2(width as f32, height as f32));
+            self.viewport_state
+                .set_image_size(egui::vec2(width as f32, height as f32));
             self.viewport_state.set_mode_fit();
         }
     }
@@ -344,7 +349,8 @@ impl eframe::App for PlayaApp {
         self.handle_keyboard_input(ctx);
 
         // Apply live cache memory budget from settings if changed
-        let desired_mem_fraction = (self.settings.cache_mem_percent as f64 / 100.0).clamp(0.05, 0.95);
+        let desired_mem_fraction =
+            (self.settings.cache_mem_percent as f64 / 100.0).clamp(0.05, 0.95);
         if (desired_mem_fraction - self.applied_mem_fraction).abs() > f64::EPSILON {
             self.player.cache.set_memory_fraction(desired_mem_fraction);
             self.applied_mem_fraction = desired_mem_fraction;
@@ -358,7 +364,9 @@ impl eframe::App for PlayaApp {
         ctx.input(|i| {
             let mut dropped: Vec<std::path::PathBuf> = Vec::new();
             for file in &i.raw.dropped_files {
-                if let Some(path) = &file.path { dropped.push(path.clone()); }
+                if let Some(path) = &file.path {
+                    dropped.push(path.clone());
+                }
             }
             if !dropped.is_empty() {
                 info!("Files dropped: {:?}", dropped);
@@ -429,7 +437,7 @@ impl eframe::App for PlayaApp {
             }
         }
 
-                if !self.is_fullscreen {
+        if !self.is_fullscreen {
             let shader_changed = ui::render_controls(
                 ctx,
                 &mut self.player,
@@ -444,7 +452,7 @@ impl eframe::App for PlayaApp {
             }
         }
 
-                if !self.is_fullscreen {
+        if !self.is_fullscreen {
             self.status_bar.render(
                 ctx,
                 self.frame.as_ref(),
@@ -484,23 +492,20 @@ impl eframe::App for PlayaApp {
             }
         }
 
-        
-        
-        
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
             render_settings_window(ctx, &mut self.show_settings, &mut self.settings);
         }
 
         // Encode dialog (can be shown even in cinema mode)
-        if self.show_encode_dialog {
-            if let Some(ref mut dialog) = self.encode_dialog {
-                let should_stay_open = dialog.render(ctx, &self.player.cache);
-                if !should_stay_open {
-                    self.show_encode_dialog = false;
-                    // Save settings when closing after encoding
-                    self.settings.encoder_settings = dialog.settings.clone();
-                }
+        if self.show_encode_dialog
+            && let Some(ref mut dialog) = self.encode_dialog
+        {
+            let should_stay_open = dialog.render(ctx, &self.player.cache);
+            if !should_stay_open {
+                self.show_encode_dialog = false;
+                // Save settings when closing (build from current UI state)
+                self.settings.encoder_settings = dialog.build_encoder_settings();
             }
         }
     }
@@ -523,9 +528,10 @@ impl eframe::App for PlayaApp {
         // Serialize and save app settings
         if let Ok(json) = serde_json::to_string(self) {
             storage.set_string(eframe::APP_KEY, json);
-            debug!("App state saved: FPS={}, Loop={}, Shader={}",
-                   self.settings.fps, self.settings.loop_enabled,
-                   self.settings.current_shader);
+            debug!(
+                "App state saved: FPS={}, Loop={}, Shader={}",
+                self.settings.fps, self.settings.loop_enabled, self.settings.current_shader
+            );
         }
     }
 
@@ -557,12 +563,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logger based on --log flag
     if let Some(log_path_opt) = &args.log_file {
         // File logging with debug level
-        let log_path = log_path_opt.as_ref()
+        let log_path = log_path_opt
+            .as_ref()
             .cloned()
             .unwrap_or_else(|| paths::data_file("playa.log", &path_config));
 
-        let file = std::fs::File::create(&log_path)
-            .expect("Failed to create log file");
+        let file = std::fs::File::create(&log_path).expect("Failed to create log file");
 
         env_logger::Builder::new()
             .filter_level(log::LevelFilter::Debug)
@@ -582,8 +588,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("Command-line args: {:?}", args);
 
     // Log application paths
-    info!("Config path: {}", paths::config_file("playa.json", &path_config).display());
-    info!("Data path: {}", paths::data_file("playa_cache.json", &path_config).parent().unwrap().display());
+    info!(
+        "Config path: {}",
+        paths::config_file("playa.json", &path_config).display()
+    );
+    info!(
+        "Data path: {}",
+        paths::data_file("playa_cache.json", &path_config)
+            .parent()
+            .unwrap()
+            .display()
+    );
 
     if let Some(ref path) = args.file_path {
         info!("Input file: {}", path.display());
@@ -600,8 +615,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title(&format!("Playa v{} • {} • F1 for help",
-                env!("CARGO_PKG_VERSION"), BACKEND))
+            .with_title(format!(
+                "Playa v{} • {} • F1 for help",
+                env!("CARGO_PKG_VERSION"),
+                BACKEND
+            ))
             .with_resizable(true)
             .with_drag_and_drop(true),
         persist_window: true,
@@ -621,7 +639,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         native_options,
         Box::new(move |cc| {
             // Load persisted app state if available, otherwise create default
-            let mut app = cc.storage
+            let mut app = cc
+                .storage
                 .and_then(|storage| storage.get_string(eframe::APP_KEY))
                 .and_then(|json| serde_json::from_str(&json).ok())
                 .unwrap_or_else(|| {
@@ -631,12 +650,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Recreate Player with CLI- or Settings-configured cache memory/worker settings
             // and rewire status bar + path sender
-            let mem_fraction = args.mem_percent
+            let mem_fraction = args
+                .mem_percent
                 .map(|p| (p / 100.0).clamp(0.05, 0.95))
                 .or_else(|| Some((app.settings.cache_mem_percent as f64 / 100.0).clamp(0.05, 0.95)))
                 .unwrap_or(0.75);
-            let workers = args.workers
-                .or_else(|| if app.settings.workers_override > 0 { Some(app.settings.workers_override as usize) } else { None });
+            let workers = args.workers.or(if app.settings.workers_override > 0 {
+                Some(app.settings.workers_override as usize)
+            } else {
+                None
+            });
             let (player, ui_rx) = Player::new_with_config(mem_fraction, workers);
             app.player = player;
             app.status_bar = StatusBar::new(ui_rx);
@@ -645,7 +668,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.path_config = path_config_for_app;
 
             // Attempt to load shaders from the shaders directory
-            if let Err(e) = app.shader_manager.load_shader_directory(&std::path::PathBuf::from("shaders")) {
+            if let Err(e) = app
+                .shader_manager
+                .load_shader_directory(&std::path::PathBuf::from("shaders"))
+            {
                 log::warn!("Could not load shader directory: {}", e);
                 log::info!("Using default built-in shaders");
             }
@@ -655,9 +681,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.player.loop_enabled = app.settings.loop_enabled;
             app.shader_manager.current_shader = app.settings.current_shader.clone();
             app.show_help = app.settings.show_help;
-            info!("Applied settings: FPS={}, Loop={}, Shader={}, Help={}",
-                  app.settings.fps, app.settings.loop_enabled,
-                  app.settings.current_shader, app.show_help);
+            info!(
+                "Applied settings: FPS={}, Loop={}, Shader={}, Help={}",
+                app.settings.fps,
+                app.settings.loop_enabled,
+                app.settings.current_shader,
+                app.show_help
+            );
 
             // Fast cache restoration (sequences + current frame)
             let cache_path = paths::data_file("playa_cache.json", &path_config);

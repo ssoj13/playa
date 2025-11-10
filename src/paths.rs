@@ -13,11 +13,8 @@ impl PathConfig {
     ///
     /// Priority: CLI args → ENV var (PLAYA_CONFIG_DIR) → None (use defaults)
     pub fn from_env_and_cli(cli_dir: Option<PathBuf>) -> Self {
-        let config_dir = cli_dir.or_else(|| {
-            std::env::var("PLAYA_CONFIG_DIR")
-                .ok()
-                .map(PathBuf::from)
-        });
+        let config_dir =
+            cli_dir.or_else(|| std::env::var("PLAYA_CONFIG_DIR").ok().map(PathBuf::from));
 
         Self { config_dir }
     }
@@ -63,8 +60,12 @@ pub fn ensure_dirs(config: &PathConfig) -> Result<()> {
     let data_dir = get_data_dir(config);
 
     if !config_dir.exists() {
-        std::fs::create_dir_all(&config_dir)
-            .with_context(|| format!("Failed to create config directory: {}", config_dir.display()))?;
+        std::fs::create_dir_all(&config_dir).with_context(|| {
+            format!(
+                "Failed to create config directory: {}",
+                config_dir.display()
+            )
+        })?;
     }
 
     // Only create data_dir if it's different from config_dir
@@ -181,9 +182,18 @@ mod tests {
             config_dir: Some(PathBuf::from("/tmp/playa-test")),
         };
 
-        println!("Config file: {}", config_file("playa.json", &custom_config).display());
-        println!("Cache file:  {}", data_file("playa_cache.json", &custom_config).display());
-        println!("Log file:    {}", data_file("playa.log", &custom_config).display());
+        println!(
+            "Config file: {}",
+            config_file("playa.json", &custom_config).display()
+        );
+        println!(
+            "Cache file:  {}",
+            data_file("playa_cache.json", &custom_config).display()
+        );
+        println!(
+            "Log file:    {}",
+            data_file("playa.log", &custom_config).display()
+        );
     }
 
     #[test]

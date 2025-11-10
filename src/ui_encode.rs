@@ -3,9 +3,9 @@
 //! Provides dialog for configuring and running video encoding.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, channel};
 use std::thread::JoinHandle;
 
 use eframe::egui;
@@ -13,15 +13,23 @@ use log::info;
 
 use crate::cache::Cache;
 use crate::encode::{
-    Container, EncodeError, EncodeProgress, EncodeStage, EncoderImpl, EncoderSettings,
-    QualityMode, VideoCodec,
+    CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
+    ProResProfile, VideoCodec,
 };
 use crate::progress_bar::ProgressBar;
 
 /// Encoding dialog state
 pub struct EncodeDialog {
-    /// Current encoder settings (editable)
-    pub settings: EncoderSettings,
+    /// Output path and container settings
+    pub output_path: PathBuf,
+    pub container: Container,
+    pub fps: f32,
+
+    /// Currently selected codec tab
+    pub selected_codec: VideoCodec,
+
+    /// Per-codec settings
+    pub codec_settings: CodecSettings,
 
     /// Whether encoding is currently in progress
     pub is_encoding: bool,
@@ -49,7 +57,11 @@ impl EncodeDialog {
     /// Create new encode dialog with settings from AppSettings
     pub fn new(settings: EncoderSettings) -> Self {
         Self {
-            settings,
+            output_path: settings.output_path,
+            container: settings.container,
+            fps: settings.fps,
+            selected_codec: settings.codec,
+            codec_settings: CodecSettings::default(),
             is_encoding: false,
             progress: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -57,6 +69,58 @@ impl EncodeDialog {
             encode_thread: None,
             progress_bar: ProgressBar::new(400.0, 20.0),
             encoder_name: String::new(),
+        }
+    }
+
+    /// Build EncoderSettings from current UI state
+    pub fn build_encoder_settings(&self) -> EncoderSettings {
+        let (encoder_impl, quality_mode, quality_value, preset, profile, prores_profile) =
+            match self.selected_codec {
+                VideoCodec::H264 => (
+                    self.codec_settings.h264.encoder_impl,
+                    self.codec_settings.h264.quality_mode,
+                    self.codec_settings.h264.quality_value,
+                    Some(self.codec_settings.h264.preset.clone()),
+                    Some(self.codec_settings.h264.profile.clone()),
+                    None,
+                ),
+                VideoCodec::H265 => (
+                    self.codec_settings.h265.encoder_impl,
+                    self.codec_settings.h265.quality_mode,
+                    self.codec_settings.h265.quality_value,
+                    Some(self.codec_settings.h265.preset.clone()),
+                    None,
+                    None,
+                ),
+                VideoCodec::AV1 => (
+                    self.codec_settings.av1.encoder_impl,
+                    self.codec_settings.av1.quality_mode,
+                    self.codec_settings.av1.quality_value,
+                    Some(self.codec_settings.av1.preset.clone()),
+                    None,
+                    None,
+                ),
+                VideoCodec::ProRes => (
+                    crate::encode::EncoderImpl::Software,
+                    crate::encode::QualityMode::CRF,
+                    0, // ProRes doesn't use quality_value
+                    None,
+                    None,
+                    Some(self.codec_settings.prores.profile),
+                ),
+            };
+
+        EncoderSettings {
+            output_path: self.output_path.clone(),
+            container: self.container,
+            codec: self.selected_codec,
+            encoder_impl,
+            quality_mode,
+            quality_value,
+            fps: self.fps,
+            preset,
+            profile,
+            prores_profile,
         }
     }
 
@@ -92,25 +156,24 @@ impl EncodeDialog {
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.set_width(500.0);
+                ui.set_width(600.0);
 
                 // === Output Path ===
                 ui.horizontal(|ui| {
                     ui.label("Output:");
                     ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        let path_str = self.settings.output_path.display().to_string();
+                        let path_str = self.output_path.display().to_string();
                         let mut edit_path = path_str.clone();
                         if ui.text_edit_singleline(&mut edit_path).changed() {
-                            self.settings.output_path = PathBuf::from(edit_path);
+                            self.output_path = PathBuf::from(edit_path);
                         }
 
-                        if ui.button("Browse").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
+                        if ui.button("Browse").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
                                 .set_file_name("output.mp4")
                                 .save_file()
-                            {
-                                self.settings.output_path = path;
-                            }
+                        {
+                            self.output_path = path;
                         }
                     });
                 });
@@ -123,13 +186,11 @@ impl EncodeDialog {
                     ui.add_enabled_ui(!self.is_encoding, |ui| {
                         for container in Container::all() {
                             if ui
-                                .radio_value(&mut self.settings.container, *container, container.to_string())
+                                .radio_value(&mut self.container, *container, container.to_string())
                                 .changed()
                             {
                                 // Update file extension when container changes
-                                self.settings
-                                    .output_path
-                                    .set_extension(container.extension());
+                                self.output_path.set_extension(container.extension());
                             }
                         }
                     });
@@ -137,67 +198,56 @@ impl EncodeDialog {
 
                 ui.add_space(8.0);
 
-                // === Codec ===
-                ui.label("Codec:");
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        for codec in VideoCodec::all() {
-                            ui.radio_value(&mut self.settings.codec, *codec, codec.to_string());
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                // === Encoder Implementation ===
-                ui.label("Encoder:");
-                ui.add_enabled_ui(!self.is_encoding, |ui| {
-                    for impl_type in EncoderImpl::all() {
-                        ui.radio_value(
-                            &mut self.settings.encoder_impl,
-                            *impl_type,
-                            impl_type.to_string(),
-                        );
-                    }
-                });
-
-                ui.add_space(8.0);
-
-                // === Quality Mode ===
-                ui.label("Quality:");
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        for mode in QualityMode::all() {
-                            ui.radio_value(&mut self.settings.quality_mode, *mode, mode.to_string());
-                        }
-                    });
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Value:");
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        let hint = match self.settings.quality_mode {
-                            QualityMode::CRF => "18=best, 23=default, 28=fast",
-                            QualityMode::Bitrate => "kbps",
-                        };
-                        ui.add(
-                            egui::Slider::new(&mut self.settings.quality_value, 1..=10000)
-                                .text(hint),
-                        );
-                    });
-                });
-
+                // === Framerate ===
                 ui.horizontal(|ui| {
                     ui.label("Framerate:");
                     ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        ui.add(
-                            egui::Slider::new(&mut self.settings.fps, 1.0..=240.0)
-                                .text("fps"),
-                        );
+                        ui.add(egui::Slider::new(&mut self.fps, 1.0..=240.0).text("fps"));
                     });
                 });
 
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // === Codec Tabs ===
+                ui.horizontal(|ui| {
+                    ui.add_enabled_ui(!self.is_encoding, |ui| {
+                        for codec in VideoCodec::all() {
+                            let is_available = codec.is_available();
+                            let is_selected = self.selected_codec == *codec;
+
+                            // Disable tab if codec not available
+                            ui.add_enabled_ui(is_available, |ui| {
+                                let button = egui::Button::new(codec.to_string())
+                                    .selected(is_selected)
+                                    .min_size(egui::vec2(100.0, 0.0));
+
+                                if ui.add(button).clicked() {
+                                    self.selected_codec = *codec;
+                                }
+                            });
+
+                            if !is_available {
+                                ui.label("✗")
+                                    .on_hover_text(format!("{} encoder not available", codec));
+                            }
+                        }
+                    });
+                });
+
+                ui.separator();
                 ui.add_space(8.0);
+
+                // === Per-Codec Settings ===
+                ui.add_enabled_ui(!self.is_encoding, |ui| match self.selected_codec {
+                    VideoCodec::H264 => self.render_h264_settings(ui),
+                    VideoCodec::H265 => self.render_h265_settings(ui),
+                    VideoCodec::AV1 => self.render_av1_settings(ui),
+                    VideoCodec::ProRes => self.render_prores_settings(ui),
+                });
+
+                ui.add_space(12.0);
 
                 // === Frame Range Info ===
                 let (start, end) = cache.get_play_range();
@@ -242,20 +292,60 @@ impl EncodeDialog {
 
                 ui.separator();
 
+                // === Readiness check ===
+                let (start, end) = cache.get_play_range();
+                let stats = cache.get_frame_stats();
+
+                let frames_in_range = stats.iter().skip(start).take(end - start + 1);
+
+                let loading_count = frames_in_range
+                    .clone()
+                    .filter(|s| {
+                        matches!(
+                            s,
+                            crate::frame::FrameStatus::Header | crate::frame::FrameStatus::Loading
+                        )
+                    })
+                    .count();
+
+                let total_in_range = end - start + 1;
+                let loaded_count = total_in_range - loading_count;
+                let ready_to_encode = loading_count == 0;
+
+                if !ready_to_encode {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(200, 150, 0),
+                        format!(
+                            "⚠ Frames loading: {}/{} ready",
+                            loaded_count, total_in_range
+                        ),
+                    );
+                }
+
                 // === Buttons ===
                 ui.horizontal(|ui| {
-                    // Close/Cancel button
-                    let close_text = if self.is_encoding { "Cancel" } else { "Close" };
-                    if ui.button(close_text).clicked() {
+                    // Cancel button (closes window)
+                    if ui.button("Cancel").clicked() {
                         if self.is_encoding {
                             self.cancel_encoding();
                         }
                         should_close = true;
                     }
 
-                    // Encode button (disabled during encoding)
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        if ui.button("Encode").clicked() {
+                    // Stop button (active only during encoding, doesn't close window)
+                    ui.add_enabled_ui(self.is_encoding, |ui| {
+                        if ui.button("Stop").clicked() {
+                            self.stop_encoding_keep_window();
+                        }
+                    });
+
+                    // Encode button (disabled during encoding or if frames not ready)
+                    ui.add_enabled_ui(!self.is_encoding && ready_to_encode, |ui| {
+                        let mut button = ui.button("Encode");
+                        if !ready_to_encode {
+                            button = button.on_disabled_hover_text("Wait for all frames to load");
+                        }
+                        if button.clicked() {
                             self.start_encoding(cache);
                         }
                     });
@@ -268,7 +358,8 @@ impl EncodeDialog {
 
     /// Start encoding process
     fn start_encoding(&mut self, cache: &Cache) {
-        info!("Starting encoding: {:?}", self.settings);
+        let settings = self.build_encoder_settings();
+        info!("Starting encoding: {:?}", settings);
 
         // Reset cancel flag
         self.cancel_flag.store(false, Ordering::Relaxed);
@@ -278,11 +369,9 @@ impl EncodeDialog {
         self.progress_rx = Some(rx);
 
         // Clone data for thread (including play_range)
-        let cache_clone = cache.sequences().iter()
-            .cloned()
-            .collect::<Vec<_>>();
+        let cache_clone = cache.sequences().to_vec();
         let play_range = cache.get_play_range();
-        let settings_clone = self.settings.clone();
+        let settings_clone = self.build_encoder_settings();
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
 
         // Spawn encoder thread
@@ -352,5 +441,181 @@ impl EncodeDialog {
         self.is_encoding = false;
         self.progress_rx = None;
         self.encode_thread = None;
+    }
+
+    /// Render H.264 settings
+    fn render_h264_settings(&mut self, ui: &mut egui::Ui) {
+        use crate::encode::{EncoderImpl, QualityMode};
+
+        // Encoder implementation
+        ui.label("Encoder:");
+        ui.horizontal(|ui| {
+            for impl_type in EncoderImpl::all() {
+                ui.radio_value(
+                    &mut self.codec_settings.h264.encoder_impl,
+                    *impl_type,
+                    impl_type.to_string(),
+                );
+            }
+        });
+
+        ui.add_space(4.0);
+
+        // Quality mode
+        ui.label("Quality Mode:");
+        ui.horizontal(|ui| {
+            for mode in QualityMode::all() {
+                ui.radio_value(
+                    &mut self.codec_settings.h264.quality_mode,
+                    *mode,
+                    mode.to_string(),
+                );
+            }
+        });
+
+        // Quality value
+        ui.horizontal(|ui| {
+            ui.label("Value:");
+            let hint = match self.codec_settings.h264.quality_mode {
+                QualityMode::CRF => "18=best, 23=default, 28=fast",
+                QualityMode::Bitrate => "kbps",
+            };
+            ui.add(
+                egui::Slider::new(&mut self.codec_settings.h264.quality_value, 1..=10000)
+                    .text(hint),
+            );
+        });
+
+        ui.add_space(4.0);
+
+        // Preset
+        ui.horizontal(|ui| {
+            ui.label("Preset:");
+            ui.text_edit_singleline(&mut self.codec_settings.h264.preset);
+        });
+
+        // Profile (libx264 only)
+        ui.horizontal(|ui| {
+            ui.label("Profile:");
+            ui.text_edit_singleline(&mut self.codec_settings.h264.profile);
+        });
+    }
+
+    /// Render H.265 settings
+    fn render_h265_settings(&mut self, ui: &mut egui::Ui) {
+        use crate::encode::{EncoderImpl, QualityMode};
+
+        // Encoder implementation
+        ui.label("Encoder:");
+        ui.horizontal(|ui| {
+            for impl_type in EncoderImpl::all() {
+                ui.radio_value(
+                    &mut self.codec_settings.h265.encoder_impl,
+                    *impl_type,
+                    impl_type.to_string(),
+                );
+            }
+        });
+
+        ui.add_space(4.0);
+
+        // Quality mode
+        ui.label("Quality Mode:");
+        ui.horizontal(|ui| {
+            for mode in QualityMode::all() {
+                ui.radio_value(
+                    &mut self.codec_settings.h265.quality_mode,
+                    *mode,
+                    mode.to_string(),
+                );
+            }
+        });
+
+        // Quality value
+        ui.horizontal(|ui| {
+            ui.label("Value:");
+            let hint = match self.codec_settings.h265.quality_mode {
+                QualityMode::CRF => "28=default (higher than H.264)",
+                QualityMode::Bitrate => "kbps",
+            };
+            ui.add(
+                egui::Slider::new(&mut self.codec_settings.h265.quality_value, 1..=10000)
+                    .text(hint),
+            );
+        });
+
+        ui.add_space(4.0);
+
+        // Preset
+        ui.horizontal(|ui| {
+            ui.label("Preset:");
+            ui.text_edit_singleline(&mut self.codec_settings.h265.preset);
+        });
+    }
+
+    /// Render ProRes settings
+    fn render_prores_settings(&mut self, ui: &mut egui::Ui) {
+        ui.label("Profile:");
+        ui.horizontal(|ui| {
+            for profile in ProResProfile::all() {
+                ui.radio_value(
+                    &mut self.codec_settings.prores.profile,
+                    *profile,
+                    profile.to_string(),
+                );
+            }
+        });
+
+        ui.add_space(4.0);
+        ui.label("ProRes is always software-encoded (prores_ks)");
+    }
+
+    /// Render AV1 settings
+    fn render_av1_settings(&mut self, ui: &mut egui::Ui) {
+        use crate::encode::{EncoderImpl, QualityMode};
+
+        ui.label("Encoder:");
+        ui.horizontal(|ui| {
+            for impl_type in EncoderImpl::all() {
+                ui.radio_value(
+                    &mut self.codec_settings.av1.encoder_impl,
+                    *impl_type,
+                    impl_type.to_string(),
+                );
+            }
+        });
+
+        ui.label("Quality Mode:");
+        ui.horizontal(|ui| {
+            for mode in QualityMode::all() {
+                ui.radio_value(
+                    &mut self.codec_settings.av1.quality_mode,
+                    *mode,
+                    mode.to_string(),
+                );
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Value:");
+            let hint = match self.codec_settings.av1.quality_mode {
+                QualityMode::CRF => "CRF (0-63, lower=better)",
+                QualityMode::Bitrate => "kbps",
+            };
+            ui.add(
+                egui::Slider::new(&mut self.codec_settings.av1.quality_value, 0..=10000).text(hint),
+            );
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Preset:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.codec_settings.av1.preset)
+                    .hint_text("6 (SVT-AV1 0-13, NVENC p1-p7)"),
+            );
+        });
+
+        ui.add_space(4.0);
+        ui.label("💡 AV1: Best compression, slower encoding. HW: RTX 40xx/Arc/RDNA 3");
     }
 }

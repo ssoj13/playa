@@ -3,12 +3,12 @@ mod post_build;
 mod pre_build;
 mod release;
 
-use anyhow::{Result, Context};
-use indicatif::{ProgressBar, ProgressStyle};
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::process::Command;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Parser)]
 #[command(name = "xtask")]
@@ -198,7 +198,11 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Pre => cmd_pre(),
-        Commands::Build { release: _, debug, openexr } => {
+        Commands::Build {
+            release: _,
+            debug,
+            openexr,
+        } => {
             // Default to release if neither flag specified
             // --debug overrides --release if both specified
             let is_release = if debug { false } else { true };
@@ -246,7 +250,14 @@ fn cmd_build(release: bool, openexr: bool) -> Result<()> {
     println!("========================================");
     println!("Building playa");
     println!("Profile: {}", if release { "release" } else { "debug" });
-    println!("Backend: {}", if openexr { "OpenEXR (C++, full DWAA/DWAB support)" } else { "exrs (pure Rust)" });
+    println!(
+        "Backend: {}",
+        if openexr {
+            "OpenEXR (C++, full DWAA/DWAB support)"
+        } else {
+            "exrs (pure Rust)"
+        }
+    );
     println!("========================================");
     println!();
 
@@ -359,10 +370,14 @@ fn cmd_verify(release: bool) -> Result<()> {
 }
 
 /// Command: cargo xtask wipe (non-recursive)
-fn cmd_wipe(verbose: bool, dry_run: bool) -> Result<()>  {
+fn cmd_wipe(verbose: bool, dry_run: bool) -> Result<()> {
     println!("========================================");
-    if verbose { println!("[wipe] scanning target directories"); }
-    println!("Wiping executables, shared libraries, and packager staging from ./target, ./target/release, ./target/debug (non-recursive)");
+    if verbose {
+        println!("[wipe] scanning target directories");
+    }
+    println!(
+        "Wiping executables, shared libraries, and packager staging from ./target, ./target/release, ./target/debug (non-recursive)"
+    );
     println!("This removes platform-specific artifacts left by previous builds or cache restore.");
     println!("========================================");
     println!();
@@ -376,7 +391,12 @@ fn cmd_wipe(verbose: bool, dry_run: bool) -> Result<()>  {
         target_root.join("debug/.cargo-packager"),
     ] {
         if d.exists() {
-            if dry_run { println!("  would remove {}", d.display()); } else { println!("  removing {}", d.display()); let _ = fs::remove_dir_all(&d); }
+            if dry_run {
+                println!("  would remove {}", d.display());
+            } else {
+                println!("  removing {}", d.display());
+                let _ = fs::remove_dir_all(&d);
+            }
         }
     }
 
@@ -389,31 +409,58 @@ fn cmd_wipe(verbose: bool, dry_run: bool) -> Result<()>  {
     let mut removed = 0usize;
 
     for dir in dirs.iter() {
-        if !dir.exists() { continue; }
+        if !dir.exists() {
+            continue;
+        }
         let entries = match fs::read_dir(dir) {
             Ok(it) => it,
-            Err(e) => { println!("Failed to read {}: {}", dir.display(), e); continue; }
+            Err(e) => {
+                println!("Failed to read {}: {}", dir.display(), e);
+                continue;
+            }
         };
         for entry in entries {
             if let Ok(entry) = entry {
                 let path = entry.path();
-                let meta = match fs::symlink_metadata(&path) { Ok(m) => m, Err(_) => continue };
+                let meta = match fs::symlink_metadata(&path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
                 let ftype = meta.file_type();
-                if !(ftype.is_file() || ftype.is_symlink()) { continue; }
+                if !(ftype.is_file() || ftype.is_symlink()) {
+                    continue;
+                }
 
-                let name_lc = path.file_name().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
-                let stem_lc = path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+                let name_lc = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_ascii_lowercase())
+                    .unwrap_or_default();
+                let stem_lc = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_ascii_lowercase())
+                    .unwrap_or_default();
 
                 // Never remove our own helper binary
-                if stem_lc == "xtask" { continue; }
+                if stem_lc == "xtask" {
+                    continue;
+                }
 
-                let is_installer = name_lc.ends_with(".msi") || (name_lc.ends_with(".exe") && name_lc.contains("setup"));
+                let is_installer = name_lc.ends_with(".msi")
+                    || (name_lc.ends_with(".exe") && name_lc.contains("setup"));
                 let is_win_bin = name_lc.ends_with(".exe") || name_lc.ends_with(".dll");
                 let is_unix_lib = name_lc.contains(".so") || name_lc.ends_with(".dylib");
 
                 // Regular files
                 if ftype.is_file() && (is_installer || is_win_bin || is_unix_lib) {
-                    if dry_run { println!("  would remove {}", path.display()); } else { println!("  removing {}", path.display()); let _ = fs::remove_file(&path); } removed += 1;
+                    if dry_run {
+                        println!("  would remove {}", path.display());
+                    } else {
+                        println!("  removing {}", path.display());
+                        let _ = fs::remove_file(&path);
+                    }
+                    removed += 1;
                     continue;
                 }
 
@@ -446,16 +493,30 @@ fn cmd_wipe_wf() -> Result<()> {
     // Ensure gh is available
     let gh_ok = Command::new("gh").arg("--version").output().is_ok();
     if !gh_ok {
-        anyhow::bail!("'gh' CLI not found. Please install GitHub CLI and authenticate (gh auth login)");
+        anyhow::bail!(
+            "'gh' CLI not found. Please install GitHub CLI and authenticate (gh auth login)"
+        );
     }
 
     // List runs (IDs only)
     let out = Command::new("gh")
-        .args(["run", "list", "--limit", "1000", "--json", "databaseId", "--jq", ".[].databaseId"]) // up to 1000
+        .args([
+            "run",
+            "list",
+            "--limit",
+            "1000",
+            "--json",
+            "databaseId",
+            "--jq",
+            ".[].databaseId",
+        ]) // up to 1000
         .output()
         .context("Failed to list workflow runs via 'gh run list'")?;
     if !out.status.success() {
-        anyhow::bail!("gh run list failed: {}", String::from_utf8_lossy(&out.stderr));
+        anyhow::bail!(
+            "gh run list failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     let ids: Vec<String> = String::from_utf8_lossy(&out.stdout)
@@ -469,16 +530,29 @@ fn cmd_wipe_wf() -> Result<()> {
         return Ok(());
     }
 
-    let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8).min(16).max(4);
-    println!("Found {} run(s). Deleting with {} workers...", ids.len(), workers);
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8)
+        .min(16)
+        .max(4);
+    println!(
+        "Found {} run(s). Deleting with {} workers...",
+        ids.len(),
+        workers
+    );
 
     // Progress bar
     let pb = ProgressBar::new(ids.len() as u64);
-    pb.set_style(ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-        .unwrap()
-        .progress_chars("=>-"));
+    pb.set_style(
+        ProgressStyle::with_template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("=>-"),
+    );
 
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     let ids = Arc::new(ids);
     let next = Arc::new(AtomicUsize::new(0));
     let deleted = Arc::new(AtomicUsize::new(0));
@@ -495,10 +569,14 @@ fn cmd_wipe_wf() -> Result<()> {
         handles.push(std::thread::spawn(move || {
             loop {
                 let idx = next_cl.fetch_add(1, Ordering::Relaxed);
-                if idx >= ids_cl.len() { break; }
+                if idx >= ids_cl.len() {
+                    break;
+                }
                 let id = &ids_cl[idx];
                 let endpoint = format!("repos/:owner/:repo/actions/runs/{}", id);
-                let status = Command::new("gh").args(["api", "-X", "DELETE", &endpoint]).status();
+                let status = Command::new("gh")
+                    .args(["api", "-X", "DELETE", &endpoint])
+                    .status();
                 match status {
                     Ok(st) if st.success() => {
                         println!("Deleted run #{}", id);
@@ -513,7 +591,9 @@ fn cmd_wipe_wf() -> Result<()> {
             }
         }));
     }
-    for h in handles { let _ = h.join(); }
+    for h in handles {
+        let _ = h.join();
+    }
     let del = deleted.load(Ordering::Relaxed);
     let fail = failed.load(Ordering::Relaxed);
     pb_arc.finish_with_message(format!("deleted {} failed {}", del, fail));
@@ -642,16 +722,7 @@ fn cmd_pr(version: Option<&str>) -> Result<()> {
     // Create PR using gh CLI
     let status = Command::new("gh")
         .args(&[
-            "pr",
-            "create",
-            "--base",
-            "main",
-            "--head",
-            "dev",
-            "--title",
-            &title,
-            "--body",
-            &body,
+            "pr", "create", "--base", "main", "--head", "dev", "--title", &title, "--body", &body,
         ])
         .status()
         .context("Failed to run 'gh pr create'. Is GitHub CLI installed?")?;
@@ -699,16 +770,14 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
         // Auto-detect based on OS
         if cfg!(target_os = "windows") {
             // Windows: %LOCALAPPDATA%\Programs\playa
-            let local_app_data = env::var("LOCALAPPDATA")
-                .context("LOCALAPPDATA not set")?;
+            let local_app_data = env::var("LOCALAPPDATA").context("LOCALAPPDATA not set")?;
             PathBuf::from(local_app_data).join("Programs").join("playa")
         } else if cfg!(target_os = "macos") {
             // macOS: /Applications/playa.app
             PathBuf::from("/Applications/playa.app/Contents/MacOS")
         } else {
             // Linux: ~/.local/bin
-            let home = env::var("HOME")
-                .context("HOME not set")?;
+            let home = env::var("HOME").context("HOME not set")?;
             PathBuf::from(home).join(".local").join("bin")
         }
     };
@@ -719,13 +788,12 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
     // Create directory if it doesn't exist
     if !target_dir.exists() {
         println!("Creating directory...");
-        std::fs::create_dir_all(&target_dir)
-            .context("Failed to create install directory")?;
+        std::fs::create_dir_all(&target_dir).context("Failed to create install directory")?;
     }
 
     // Build in release mode first
     println!("Building release version...");
-    cmd_build(true, false)?;  // release=true, openexr=false (exrs backend)
+    cmd_build(true, false)?; // release=true, openexr=false (exrs backend)
     println!();
 
     // Copy files
@@ -740,8 +808,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
     let source_exe = PathBuf::from("target/release").join(exe_name);
     let target_exe = target_dir.join(exe_name);
 
-    std::fs::copy(&source_exe, &target_exe)
-        .context("Failed to copy executable")?;
+    std::fs::copy(&source_exe, &target_exe).context("Failed to copy executable")?;
     println!("  ✓ Copied {}", exe_name);
 
     // Copy DLLs/SOs

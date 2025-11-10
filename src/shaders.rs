@@ -138,7 +138,10 @@ impl Shaders {
 
         // Then try to load from directory (external .glsl files can override embedded ones)
         if let Err(e) = manager.load_shader_directory(Path::new("shaders")) {
-            log::info!("No shader directory found ({}), using embedded shaders only", e);
+            log::info!(
+                "No shader directory found ({}), using embedded shaders only",
+                e
+            );
         }
 
         manager
@@ -165,10 +168,10 @@ impl Shaders {
                             // Use the embedded vertex shader for all fragment shaders
                             self.shaders.insert(
                                 filename.to_string(),
-                                (VERTEX_SHADER.to_string(), fragment_shader)
+                                (VERTEX_SHADER.to_string(), fragment_shader),
                             );
                             log::info!("Loaded shader: {}", filename);
-                        },
+                        }
                         Err(e) => {
                             log::warn!("Failed to read shader file {:?}: {}", path, e);
                         }
@@ -192,19 +195,22 @@ impl Shaders {
         // Default shader (simple exposure + gamma)
         self.shaders.insert(
             "default".to_string(),
-            (VERTEX_SHADER.to_string(), FRAGMENT_SHADER.to_string())
+            (VERTEX_SHADER.to_string(), FRAGMENT_SHADER.to_string()),
         );
 
         // Reinhard tonemapping shader
         self.shaders.insert(
             "tonemap_reinhard".to_string(),
-            (VERTEX_SHADER.to_string(), FRAGMENT_SHADER_REINHARD.to_string())
+            (
+                VERTEX_SHADER.to_string(),
+                FRAGMENT_SHADER_REINHARD.to_string(),
+            ),
         );
 
         // ACES Filmic tonemapping shader
         self.shaders.insert(
             "tonemap_aces".to_string(),
-            (VERTEX_SHADER.to_string(), FRAGMENT_SHADER_ACES.to_string())
+            (VERTEX_SHADER.to_string(), FRAGMENT_SHADER_ACES.to_string()),
         );
 
         self.current_shader = "default".to_string();

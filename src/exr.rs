@@ -1,19 +1,18 @@
-///! EXR file loading with pluggable backends
-///!
-///! **Default**: exrs (pure Rust, no external dependencies)
-///! **Feature "openexr"**: openexr-rs (C++ bindings, full DWAA/DWAB support)
-///!
-///! # Architecture
-///!
-///! - `ExrLoader` trait: Common API for both implementations
-///! - `Exr`: exrs-based implementation (default)
-///! - `OpenExr`: openexr-rs-based implementation (feature gated)
-///! - `ExrImpl`: Type alias that selects implementation at compile time
-
-use std::path::Path;
-use log::debug;
-use crate::frame::{PixelBuffer, PixelFormat, FrameError};
+//! EXR file loading with pluggable backends
+//!
+//! **Default**: exrs (pure Rust, no external dependencies)
+//! **Feature "openexr"**: openexr-rs (C++ bindings, full DWAA/DWAB support)
+//!
+//! # Architecture
+//!
+//! - `ExrLoader` trait: Common API for both implementations
+//! - `Exr`: exrs-based implementation (default)
+//! - `OpenExr`: openexr-rs-based implementation (feature gated)
+//! - `ExrImpl`: Type alias that selects implementation at compile time
+use crate::frame::{FrameError, PixelBuffer, PixelFormat};
 use half::f16 as F16;
+use log::debug;
+use std::path::Path;
 
 /// Common trait for EXR loading backends
 pub trait ExrLoader {
@@ -42,18 +41,18 @@ impl ExrLoader for Exr {
         debug!("Loading EXR with exrs: {}", path.display());
 
         // Open and decode EXR using image crate (which uses exrs internally)
-        let img = image::open(path)
-            .map_err(|e| {
-                let err_str = e.to_string();
-                // Check for unsupported compression
-                if err_str.contains("DWAA") || err_str.contains("DWAB") {
-                    return FrameError::UnsupportedFormat(
-                        "DWAA/DWAB compression not supported in default build. \
-                         Build with full support: cargo xtask build --openexr --release".into()
-                    );
-                }
-                FrameError::Image(err_str)
-            })?;
+        let img = image::open(path).map_err(|e| {
+            let err_str = e.to_string();
+            // Check for unsupported compression
+            if err_str.contains("DWAA") || err_str.contains("DWAB") {
+                return FrameError::UnsupportedFormat(
+                    "DWAA/DWAB compression not supported in default build. \
+                         Build with full support: cargo xtask build --openexr --release"
+                        .into(),
+                );
+            }
+            FrameError::Image(err_str)
+        })?;
 
         let width = img.width() as usize;
         let height = img.height() as usize;
@@ -91,27 +90,30 @@ impl ExrLoader for Exr {
             }
         };
 
-        debug!("Loaded EXR with exrs: {}x{} ({:?})", width, height, pixel_format);
+        debug!(
+            "Loaded EXR with exrs: {}x{} ({:?})",
+            width, height, pixel_format
+        );
         Ok((buffer, pixel_format, width, height))
     }
 
     fn header(path: &Path) -> Result<(usize, usize), FrameError> {
         // Use image::ImageReader to get dimensions without loading pixels
-        let reader = image::ImageReader::open(path)
-            .map_err(|e| FrameError::Image(e.to_string()))?;
+        let reader =
+            image::ImageReader::open(path).map_err(|e| FrameError::Image(e.to_string()))?;
 
-        let (width, height) = reader.into_dimensions()
-            .map_err(|e| {
-                let err_str = e.to_string();
-                // Check for unsupported compression
-                if err_str.contains("DWAA") || err_str.contains("DWAB") {
-                    return FrameError::UnsupportedFormat(
-                        "DWAA/DWAB compression not supported in default build. \
-                         Build with full support: cargo xtask build --openexr --release".into()
-                    );
-                }
-                FrameError::Image(err_str)
-            })?;
+        let (width, height) = reader.into_dimensions().map_err(|e| {
+            let err_str = e.to_string();
+            // Check for unsupported compression
+            if err_str.contains("DWAA") || err_str.contains("DWAB") {
+                return FrameError::UnsupportedFormat(
+                    "DWAA/DWAB compression not supported in default build. \
+                         Build with full support: cargo xtask build --openexr --release"
+                        .into(),
+                );
+            }
+            FrameError::Image(err_str)
+        })?;
 
         Ok((width as usize, height as usize))
     }
@@ -132,8 +134,7 @@ impl ExrLoader for OpenExr {
         debug!("Loading EXR with openexr-rs: {}", path.display());
 
         // Open file to read header and detect pixel type
-        let file = RgbaInputFile::new(path, 1)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
+        let file = RgbaInputFile::new(path, 1).map_err(|e| FrameError::Exr(e.to_string()))?;
 
         let header = file.header();
         let data_window = header.data_window::<[i32; 4]>();
@@ -166,8 +167,7 @@ impl ExrLoader for OpenExr {
     fn header(path: &Path) -> Result<(usize, usize), FrameError> {
         use openexr::prelude::*;
 
-        let file = RgbaInputFile::new(path, 1)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
+        let file = RgbaInputFile::new(path, 1).map_err(|e| FrameError::Exr(e.to_string()))?;
 
         let header = file.header();
         let data_window = header.data_window::<[i32; 4]>();
@@ -181,11 +181,14 @@ impl ExrLoader for OpenExr {
 #[cfg(feature = "openexr")]
 impl OpenExr {
     /// Load EXR with HALF pixels (native f16)
-    fn load_half(path: &Path, width: usize, height: usize) -> Result<(PixelBuffer, PixelFormat, usize, usize), FrameError> {
+    fn load_half(
+        path: &Path,
+        width: usize,
+        height: usize,
+    ) -> Result<(PixelBuffer, PixelFormat, usize, usize), FrameError> {
         use openexr::prelude::*;
 
-        let mut file = RgbaInputFile::new(path, 1)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
+        let mut file = RgbaInputFile::new(path, 1).map_err(|e| FrameError::Exr(e.to_string()))?;
 
         let header = file.header();
         let data_window = header.data_window::<[i32; 4]>();
@@ -206,23 +209,34 @@ impl OpenExr {
         // Extract f16 values from Rgba into flat RGBA buffer
         let mut buffer_f16 = Vec::with_capacity(width * height * 4);
         for pixel in pixels_rgba.iter() {
-            buffer_f16.push(pixel.r);  // half::f16
+            buffer_f16.push(pixel.r); // half::f16
             buffer_f16.push(pixel.g);
             buffer_f16.push(pixel.b);
             buffer_f16.push(pixel.a);
         }
 
-        debug!("Loaded EXR HALF with openexr-rs: {}x{} (f16)", width, height);
-        Ok((PixelBuffer::F16(buffer_f16), PixelFormat::RgbaF16, width, height))
+        debug!(
+            "Loaded EXR HALF with openexr-rs: {}x{} (f16)",
+            width, height
+        );
+        Ok((
+            PixelBuffer::F16(buffer_f16),
+            PixelFormat::RgbaF16,
+            width,
+            height,
+        ))
     }
 
     /// Load EXR with FLOAT pixels (native f32, true precision)
-    fn load_float(path: &Path, width: usize, height: usize) -> Result<(PixelBuffer, PixelFormat, usize, usize), FrameError> {
+    fn load_float(
+        path: &Path,
+        width: usize,
+        height: usize,
+    ) -> Result<(PixelBuffer, PixelFormat, usize, usize), FrameError> {
         use openexr::prelude::*;
 
         // Use InputFile + Frame API for true f32 precision (no f16 conversion)
-        let file = InputFile::new(path, 1)
-            .map_err(|e| FrameError::Exr(e.to_string()))?;
+        let file = InputFile::new(path, 1).map_err(|e| FrameError::Exr(e.to_string()))?;
 
         let header = file.header();
         let data_window = *header.data_window::<[i32; 4]>();
@@ -244,8 +258,16 @@ impl OpenExr {
         // Extract flat RGBA f32 buffer
         let buffer_f32: Vec<f32> = frames.remove(0).into_vec();
 
-        debug!("Loaded EXR FLOAT with openexr-rs: {}x{} (f32, native precision)", width, height);
-        Ok((PixelBuffer::F32(buffer_f32), PixelFormat::RgbaF32, width, height))
+        debug!(
+            "Loaded EXR FLOAT with openexr-rs: {}x{} (f32, native precision)",
+            width, height
+        );
+        Ok((
+            PixelBuffer::F32(buffer_f32),
+            PixelFormat::RgbaF32,
+            width,
+            height,
+        ))
     }
 }
 

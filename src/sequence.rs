@@ -29,19 +29,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::exr::{ExrImpl, ExrLoader};
 use crate::frame::{Frame, FrameError};
 use crate::utils::media;
-use crate::exr::{ExrImpl, ExrLoader};
 
 /// Sequence of frames with pattern-based file naming
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sequence {
     #[serde(skip)]
     frames: Vec<Frame>,
-    pattern: String,        // "c:/temp/seq1/aaa.*.exr"
-    start: usize,           // first frame number
-    end: usize,             // last frame number
-    padding: usize,         // number of digits (4 for "0001")
+    pattern: String, // "c:/temp/seq1/aaa.*.exr"
+    start: usize,    // first frame number
+    end: usize,      // last frame number
+    padding: usize,  // number of digits (4 for "0001")
     xres: usize,
     yres: usize,
 }
@@ -73,7 +73,13 @@ impl Sequence {
     /// let seq = Sequence::new("shot.0001.jpg".into(), 1920, 1080, None, None)?;
     /// # Ok::<(), playa::frame::FrameError>(())
     /// ```
-    pub fn new(pattern: String, xres: usize, yres: usize, start: Option<usize>, end: Option<usize>) -> Result<Self, FrameError> {
+    pub fn new(
+        pattern: String,
+        xres: usize,
+        yres: usize,
+        start: Option<usize>,
+        end: Option<usize>,
+    ) -> Result<Self, FrameError> {
         let mut seq = Self {
             frames: Vec::new(),
             pattern: pattern.clone(),
@@ -158,25 +164,26 @@ impl Sequence {
 
     /// Initialize from glob pattern
     fn init_from_glob(&mut self, pattern: &str) -> Result<(), FrameError> {
-        let paths = glob::glob(pattern)
-            .map_err(|e| FrameError::Image(format!("Glob error: {}", e)))?;
+        let paths =
+            glob::glob(pattern).map_err(|e| FrameError::Image(format!("Glob error: {}", e)))?;
 
         let mut files: Vec<PathBuf> = paths.filter_map(Result::ok).collect();
         files.sort();
 
         if files.is_empty() {
-            return Err(FrameError::Image(format!("No files match pattern: {}", pattern)));
+            return Err(FrameError::Image(format!(
+                "No files match pattern: {}",
+                pattern
+            )));
         }
 
         // Extract frame numbers
-        let re = Regex::new(r"(\d+)")
-            .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
+        let re =
+            Regex::new(r"(\d+)").map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
         let mut frame_map: HashMap<usize, PathBuf> = HashMap::new();
 
         for path in files {
-            let stem = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
             // Use last number in filename as frame number
             if let Some(last_match) = re.find_iter(stem).last() {
@@ -200,7 +207,8 @@ impl Sequence {
 
         // Detect padding from first file
         if let Some(first_path) = frame_map.get(&self.start) {
-            let stem = first_path.file_stem()
+            let stem = first_path
+                .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
             if let Some(last_match) = re.find_iter(stem).last() {
@@ -217,8 +225,13 @@ impl Sequence {
             self.frames.push(frame);
         }
 
-        info!("Sequence: {} frames ({}-{}), padding={}",
-              self.frames.len(), self.start, self.end, self.padding);
+        info!(
+            "Sequence: {} frames ({}-{}), padding={}",
+            self.frames.len(),
+            self.start,
+            self.end,
+            self.padding
+        );
 
         Ok(())
     }
@@ -232,13 +245,11 @@ impl Sequence {
         }
 
         // Try to find last digit group in filename
-        let stem = path_buf.file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let stem = path_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
         // Regex to find digit groups (will take last one)
-        let re = Regex::new(r"(\d+)")
-            .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
+        let re =
+            Regex::new(r"(\d+)").map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
 
         if let Some(last_match) = re.find_iter(stem).last() {
             // Found digits → try to detect sequence
@@ -246,16 +257,15 @@ impl Sequence {
             self.padding = frame_num_str.len();
 
             // Replace digits with "*" to create pattern
-            let pattern_stem = stem[..last_match.start()].to_string()
-                + "*"
-                + &stem[last_match.end()..];
+            let pattern_stem =
+                stem[..last_match.start()].to_string() + "*" + &stem[last_match.end()..];
 
-            let ext = path_buf.extension()
+            let ext = path_buf
+                .extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("exr");
 
-            let dir = path_buf.parent()
-                .unwrap_or_else(|| Path::new("."));
+            let dir = path_buf.parent().unwrap_or_else(|| Path::new("."));
 
             let pattern_path = dir.join(format!("{}.{}", pattern_stem, ext));
             let pattern_str = pattern_path.to_string_lossy().to_string();
@@ -416,8 +426,8 @@ impl Sequence {
         let entries = std::fs::read_dir(dir)
             .map_err(|e| FrameError::Image(format!("Failed to read dir: {}", e)))?;
 
-        let re = Regex::new(r"\d+")
-            .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
+        let re =
+            Regex::new(r"\d+").map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
 
         for entry in entries.flatten() {
             let path = entry.path();
@@ -426,17 +436,16 @@ impl Sequence {
             }
 
             // Filter by extension
-            let ext = path.extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
 
-            if !matches!(ext.to_lowercase().as_str(), "exr" | "png" | "jpg" | "jpeg" | "tif" | "tiff") {
+            if !matches!(
+                ext.to_lowercase().as_str(),
+                "exr" | "png" | "jpg" | "jpeg" | "tif" | "tiff"
+            ) {
                 continue;
             }
 
-            let stem = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
             // Replace digits with placeholder
             let pattern_key = re.replace_all(stem, "####").to_string() + "." + ext;
@@ -457,7 +466,13 @@ impl Sequence {
             let (xres, yres) = Self::get_resolution(first_file)?;
 
             // Create sequence from first file
-            let seq = Self::new(first_file.to_string_lossy().to_string(), xres, yres, None, None)?;
+            let seq = Self::new(
+                first_file.to_string_lossy().to_string(),
+                xres,
+                yres,
+                None,
+                None,
+            )?;
             sequences.push(seq);
         }
 
@@ -466,7 +481,8 @@ impl Sequence {
 
     /// Get image resolution without loading full image (header only)
     fn get_resolution(path: &Path) -> Result<(usize, usize), FrameError> {
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|s| s.to_str())
             .map(|s| s.to_lowercase())
             .unwrap_or_default();
@@ -477,9 +493,10 @@ impl Sequence {
                 ExrImpl::header(path)
             }
             "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" => {
-                let reader = image::ImageReader::open(path)
-                    .map_err(|e| FrameError::Image(e.to_string()))?;
-                let (width, height) = reader.into_dimensions()
+                let reader =
+                    image::ImageReader::open(path).map_err(|e| FrameError::Image(e.to_string()))?;
+                let (width, height) = reader
+                    .into_dimensions()
                     .map_err(|e| FrameError::Image(e.to_string()))?;
                 Ok((width as usize, height as usize))
             }

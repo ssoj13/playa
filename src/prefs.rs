@@ -43,8 +43,8 @@ pub struct AppSettings {
     pub font_size: f32,
 
     // Cache/Workers
-    pub cache_mem_percent: f32,     // 5..95; applied live to cache
-    pub workers_override: u32,      // 0 = auto, N = override (applies on restart)
+    pub cache_mem_percent: f32, // 5..95; applied live to cache
+    pub workers_override: u32,  // 0 = auto, N = override (applies on restart)
 
     // Encoding
     pub encoder_settings: crate::encode::EncoderSettings,
@@ -87,7 +87,7 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add(
         egui::Slider::new(&mut settings.font_size, 10.0..=18.0)
             .suffix(" px")
-            .step_by(0.5)
+            .step_by(0.5),
     );
     ui.add_space(16.0);
 
@@ -101,16 +101,18 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add(
         egui::Slider::new(&mut settings.cache_mem_percent, 5.0..=95.0)
             .suffix(" %")
-            .step_by(1.0)
+            .step_by(1.0),
     );
-    ui.label("Applies immediately. Controls the fraction of available RAM used by the frame cache.");
+    ui.label(
+        "Applies immediately. Controls the fraction of available RAM used by the frame cache.",
+    );
 
     ui.add_space(8.0);
     ui.label("Worker Threads Override (0 = Auto):");
     ui.add(
         egui::DragValue::new(&mut settings.workers_override)
             .speed(1.0)
-            .range(0..=256)
+            .range(0..=256),
     );
     ui.label("Takes effect on next launch. Defaults to ~75% of CPU cores.");
 }
@@ -139,44 +141,44 @@ pub fn render_settings_window(
             egui::ScrollArea::both()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                // Left panel: TreeView (200px fixed width)
-                ui.vertical(|ui| {
-                    ui.set_width(200.0);
-                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        // Left panel: TreeView (200px fixed width)
+                        ui.vertical(|ui| {
+                            ui.set_width(200.0);
+                            ui.add_space(4.0);
 
-                    let tree_id = ui.make_persistent_id("settings_tree_view");
-                    let (_response, actions) = TreeView::new(tree_id).show(ui, |builder| {
-                        builder.leaf(0, SettingsCategory::General.as_str());
-                        builder.leaf(1, SettingsCategory::UI.as_str());
-                    });
+                            let tree_id = ui.make_persistent_id("settings_tree_view");
+                            let (_response, actions) = TreeView::new(tree_id).show(ui, |builder| {
+                                builder.leaf(0, SettingsCategory::General.as_str());
+                                builder.leaf(1, SettingsCategory::UI.as_str());
+                            });
 
-                    // Handle selection from actions
-                    for action in actions {
-                        if let egui_ltreeview::Action::SetSelected(node_ids) = action {
-                            if let Some(&node_id) = node_ids.iter().next() {
-                                selected = match node_id {
-                                    0 => SettingsCategory::General,
-                                    1 => SettingsCategory::UI,
-                                    _ => selected,
-                                };
+                            // Handle selection from actions
+                            for action in actions {
+                                if let egui_ltreeview::Action::SetSelected(node_ids) = action {
+                                    if let Some(&node_id) = node_ids.iter().next() {
+                                        selected = match node_id {
+                                            0 => SettingsCategory::General,
+                                            1 => SettingsCategory::UI,
+                                            _ => selected,
+                                        };
+                                    }
+                                }
                             }
-                        }
-                    }
-                });
+                        });
 
-                ui.separator();
+                        ui.separator();
 
-                // Right panel: content for selected category
-                ui.vertical(|ui| {
-                    ui.add_space(8.0);
+                        // Right panel: content for selected category
+                        ui.vertical(|ui| {
+                            ui.add_space(8.0);
 
-                    match selected {
-                        SettingsCategory::General => render_general_settings(ui, settings),
-                        SettingsCategory::UI => render_ui_settings(ui, settings),
-                    }
-                });
-            });
+                            match selected {
+                                SettingsCategory::General => render_general_settings(ui, settings),
+                                SettingsCategory::UI => render_ui_settings(ui, settings),
+                            }
+                        });
+                    });
                 });
         });
 

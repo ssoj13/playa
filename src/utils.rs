@@ -17,8 +17,7 @@ pub mod media {
 
     /// All supported file extensions (video + image)
     pub const ALL_EXTS: &[&str] = &[
-        "exr", "png", "jpg", "jpeg", "tif", "tiff", "tga", "hdr",
-        "mp4", "mov", "avi", "mkv",
+        "exr", "png", "jpg", "jpeg", "tif", "tiff", "tga", "hdr", "mp4", "mov", "avi", "mkv",
     ];
 
     /// Check if file is a video format

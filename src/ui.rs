@@ -7,9 +7,9 @@ use crate::frame::{Frame, FrameStatus};
 use crate::player::Player;
 use crate::scrub::Scrubber;
 use crate::shaders::Shaders;
-use crate::timeslider::{time_slider, SequenceRange, TimeSliderConfig};
-use crate::viewport::{ViewportRenderer, ViewportState};
+use crate::timeslider::{SequenceRange, TimeSliderConfig, time_slider};
 use crate::utils::media;
+use crate::viewport::{ViewportRenderer, ViewportState};
 
 /// Create configured file dialog for image/video selection
 fn create_image_dialog(title: &str) -> rfd::FileDialog {
@@ -59,10 +59,7 @@ pub struct PlaylistActions {
 }
 
 /// Render playlist panel (right side)
-pub fn render_playlist(
-    ctx: &egui::Context,
-    player: &mut Player,
-) -> PlaylistActions {
+pub fn render_playlist(ctx: &egui::Context, player: &mut Player) -> PlaylistActions {
     let mut actions = PlaylistActions {
         load_sequence: None,
         clear_all: false,
@@ -78,100 +75,139 @@ pub fn render_playlist(
             egui::ScrollArea::both()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-            ui.heading("Sequences");
+                    ui.heading("Playlist");
 
-            // Add/Clear buttons on left, Up/Down on right
-            ui.horizontal(|ui| {
-                if ui.button("Add").clicked() {
-                    if let Some(paths) = create_image_dialog("Add Files").pick_files() {
-                        if !paths.is_empty() {
-                            info!("Add button: loading {}", paths[0].display());
-                            actions.load_sequence = Some(paths[0].clone());
-                        }
-                    }
-                }
-                if ui.button("Clear").clicked() {
-                    actions.clear_all = true;
-                }
-
-                // Push Up/Down to the right
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let has_selection = player.selected_seq_idx.is_some();
-                    ui.add_enabled_ui(has_selection, |ui| {
-                        if ui.button("↓ Down").clicked() {
-                            if let Some(idx) = player.selected_seq_idx {
-                                let new_idx = (idx + 1).min(player.cache.sequences().len().saturating_sub(1));
-                                player.cache.move_seq(idx, 1);
-                                player.selected_seq_idx = Some(new_idx);
-                            }
-                        }
-                        if ui.button("↑ Up").clicked() {
-                            if let Some(idx) = player.selected_seq_idx {
-                                let new_idx = idx.saturating_sub(1);
-                                player.cache.move_seq(idx, -1);
-                                player.selected_seq_idx = Some(new_idx);
-                            }
-                        }
-                    });
-                });
-            });
-
-            // Save/Load playlist on separate line
-            ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("JSON Playlist", &["json"])
-                        .set_title("Save Playlist")
-                        .save_file()
-                    {
-                        actions.save_playlist = Some(path);
-                    }
-                }
-                if ui.button("Load").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("JSON Playlist", &["json"])
-                        .set_title("Load Playlist")
-                        .pick_file()
-                    {
-                        actions.load_playlist = Some(path);
-                    }
-                }
-            });
-
-            ui.separator();
-
-            // List of sequences
-            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-                let mut to_remove: Option<usize> = None;
-                let mut to_select: Option<usize> = None;
-
-                for (idx, seq) in player.cache.sequences().iter().enumerate() {
+                    // Add/Clear buttons on left, Up/Down on right
                     ui.horizontal(|ui| {
-                        // Sequence name (clickable) - highlight if selected
-                        let is_selected = player.selected_seq_idx == Some(idx);
-                        if ui.selectable_label(is_selected, seq.pattern()).clicked() {
-                            to_select = Some(idx);
+                        if ui.button("Add").clicked() {
+                            if let Some(paths) = create_image_dialog("Add Files").pick_files() {
+                                if !paths.is_empty() {
+                                    info!("Add button: loading {}", paths[0].display());
+                                    actions.load_sequence = Some(paths[0].clone());
+                                }
+                            }
+                        }
+                        if ui.button("Clear").clicked() {
+                            actions.clear_all = true;
                         }
 
-                        // Frame count
-                        ui.label(format!("{}f", seq.len()));
+                        // Push Up/Down to the right
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let has_selection = player.selected_seq_idx.is_some();
+                            ui.add_enabled_ui(has_selection, |ui| {
+                                if ui.button("↓ Down").clicked() {
+                                    if let Some(idx) = player.selected_seq_idx {
+                                        let new_idx = (idx + 1)
+                                            .min(player.cache.sequences().len().saturating_sub(1));
+                                        player.cache.move_seq(idx, 1);
+                                        player.selected_seq_idx = Some(new_idx);
+                                    }
+                                }
+                                if ui.button("↑ Up").clicked() {
+                                    if let Some(idx) = player.selected_seq_idx {
+                                        let new_idx = idx.saturating_sub(1);
+                                        player.cache.move_seq(idx, -1);
+                                        player.selected_seq_idx = Some(new_idx);
+                                    }
+                                }
+                            });
+                        });
+                    });
 
-                        // Remove button
-                        if ui.small_button("X").clicked() {
-                            to_remove = Some(idx);
+                    // Save/Load playlist on separate line
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("JSON Playlist", &["json"])
+                                .set_title("Save Playlist")
+                                .save_file()
+                            {
+                                actions.save_playlist = Some(path);
+                            }
+                        }
+                        if ui.button("Load").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("JSON Playlist", &["json"])
+                                .set_title("Load Playlist")
+                                .pick_file()
+                            {
+                                actions.load_playlist = Some(path);
+                            }
                         }
                     });
-                }
 
-                // Execute deferred actions
-                if let Some(idx) = to_select {
-                    player.cache.jump_to_seq(idx);
-                    player.selected_seq_idx = Some(idx);
-                }
-                if let Some(idx) = to_remove {
-                    player.cache.remove_seq(idx);
-                }
-            });
+                    ui.separator();
+
+                    // List of sequences
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            let mut to_remove: Option<usize> = None;
+                            let mut to_select: Option<usize> = None;
+
+                            for (idx, seq) in player.cache.sequences().iter().enumerate() {
+                                let is_selected = player.selected_seq_idx == Some(idx);
+
+                                // Use a frame to get better visual separation
+                                let frame = if is_selected {
+                                    egui::Frame::new()
+                                        .fill(ui.style().visuals.selection.bg_fill)
+                                        .inner_margin(4.0)
+                                } else {
+                                    egui::Frame::new().inner_margin(4.0)
+                                };
+
+                                frame.show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        // Clickable area for selection
+                                        let name_label = ui.selectable_label(
+                                            false, // Don't use built-in selection, we handle it with frame
+                                            format!("{}", seq.pattern()),
+                                        );
+
+                                        if name_label.clicked() {
+                                            to_select = Some(idx);
+                                        }
+
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                // Remove button
+                                                if ui.small_button("X").clicked() {
+                                                    to_remove = Some(idx);
+                                                }
+
+                                                // Frame count
+                                                ui.label(format!("{}f", seq.len()));
+
+                                                // Resolution
+                                                ui.label(format!("{}×{}", seq.xres(), seq.yres()));
+                                            },
+                                        );
+                                    });
+                                });
+
+                                ui.add_space(2.0);
+                            }
+
+                            // Execute deferred actions
+                            if let Some(idx) = to_select {
+                                player.cache.jump_to_seq(idx);
+                                player.selected_seq_idx = Some(idx);
+                            }
+                            if let Some(idx) = to_remove {
+                                player.cache.remove_seq(idx);
+                                // Clear selection if removed item was selected
+                                if player.selected_seq_idx == Some(idx) {
+                                    player.selected_seq_idx = None;
+                                } else if let Some(sel) = player.selected_seq_idx {
+                                    // Adjust selection index if it's after removed item
+                                    if sel > idx {
+                                        player.selected_seq_idx = Some(sel - 1);
+                                    }
+                                }
+                            }
+                        });
                 });
         });
 
@@ -198,7 +234,11 @@ pub fn render_controls(
                     player.to_start();
                 }
 
-                let play_text = if player.is_playing { "⏸ Pause" } else { "▶ Play" };
+                let play_text = if player.is_playing {
+                    "⏸ Pause"
+                } else {
+                    "▶ Play"
+                };
                 if ui.button(play_text).clicked() {
                     player.toggle_play_pause();
                 }
@@ -223,7 +263,11 @@ pub fn render_controls(
                 .selected_text(format!("{:.0}", player.fps))
                 .show_ui(ui, |ui| {
                     for &fps_value in &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0] {
-                        ui.selectable_value(&mut player.fps, fps_value, format!("{:.0}", fps_value));
+                        ui.selectable_value(
+                            &mut player.fps,
+                            fps_value,
+                            format!("{:.0}", fps_value),
+                        );
                     }
                 });
 
@@ -231,7 +275,7 @@ pub fn render_controls(
             ui.add(
                 egui::DragValue::new(&mut player.fps)
                     .speed(0.1)
-                    .range(0.00000001..=1000.0)
+                    .range(0.00000001..=1000.0),
             );
 
             ui.separator();
@@ -245,7 +289,7 @@ pub fn render_controls(
                         ui.selectable_value(
                             &mut shader_manager.current_shader,
                             shader_name.clone(),
-                            shader_name
+                            shader_name,
                         );
                     }
                 });
@@ -329,9 +373,7 @@ pub fn render_viewport(
 
     // Use a black background in cinema mode for letterbox effect
     let central = if is_fullscreen {
-        egui::CentralPanel::default().frame(
-            egui::Frame::new().fill(egui::Color32::BLACK)
-        )
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::BLACK))
     } else {
         egui::CentralPanel::default()
     };
@@ -341,12 +383,18 @@ pub fn render_viewport(
         let panel_rect = ui.max_rect();
 
         // Universal interaction zone for double-click and scrubbing (works always)
-        let response = ui.interact(panel_rect, ui.id().with("viewport_interaction"), egui::Sense::click_and_drag());
+        let response = ui.interact(
+            panel_rect,
+            ui.id().with("viewport_interaction"),
+            egui::Sense::click_and_drag(),
+        );
 
         // Check for double-click FIRST (works always - opens file dialog)
-        let double_clicked = response.double_clicked() ||
-            (ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary))
-             && response.hovered());
+        let double_clicked = response.double_clicked()
+            || (ctx.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            }) && response.hovered());
 
         if double_clicked {
             info!("Double-click detected, opening file dialog");
@@ -383,7 +431,9 @@ pub fn render_viewport(
                 if let Some(scrubber) = scrubber {
                     use crate::scrub::Scrubber;
 
-                    if response.clicked_by(egui::PointerButton::Primary) || response.dragged_by(egui::PointerButton::Primary) {
+                    if response.clicked_by(egui::PointerButton::Primary)
+                        || response.dragged_by(egui::PointerButton::Primary)
+                    {
                         if let Some(original_mouse_pos) = response.interact_pointer_pos() {
                             // Start scrubbing - freeze bounds
                             if !scrubber.is_active() {
@@ -391,7 +441,10 @@ pub fn render_viewport(
                                 let current_size = viewport_state.image_size;
 
                                 // Calculate initial normalized position from mouse
-                                let normalized = Scrubber::mouse_to_normalized(original_mouse_pos.x, current_bounds);
+                                let normalized = Scrubber::mouse_to_normalized(
+                                    original_mouse_pos.x,
+                                    current_bounds,
+                                );
                                 scrubber.start_scrubbing(current_bounds, current_size, normalized);
                                 scrubber.set_last_mouse_x(original_mouse_pos.x);
 
@@ -402,12 +455,16 @@ pub fn render_viewport(
                             }
 
                             // Use frozen bounds for entire scrubbing session
-                            let image_bounds = scrubber.frozen_bounds()
+                            let image_bounds = scrubber
+                                .frozen_bounds()
                                 .unwrap_or_else(|| viewport_state.get_image_screen_bounds());
 
                             if scrubber.mouse_moved(original_mouse_pos.x) {
                                 // Mouse moved - recalculate normalized from mouse
-                                let normalized = Scrubber::mouse_to_normalized(original_mouse_pos.x, image_bounds);
+                                let normalized = Scrubber::mouse_to_normalized(
+                                    original_mouse_pos.x,
+                                    image_bounds,
+                                );
                                 scrubber.set_normalized_position(normalized);
                                 scrubber.set_last_mouse_x(original_mouse_pos.x);
 
@@ -416,29 +473,37 @@ pub fn render_viewport(
                                 scrubber.set_clamped(is_clamped);
 
                                 // Calculate frame from new normalized position (clamps to valid range)
-                                let frame_idx = Scrubber::normalized_to_frame(normalized, player.total_frames());
+                                let frame_idx = Scrubber::normalized_to_frame(
+                                    normalized,
+                                    player.total_frames(),
+                                );
                                 player.set_frame(frame_idx);
-                                player.cache.signal_preload();  // Trigger preload (respects play_range)
+                                player.cache.signal_preload(); // Trigger preload (respects play_range)
                                 scrubber.set_current_frame(frame_idx);
 
                                 // Visual line follows mouse everywhere (can be outside image bounds)
                                 scrubber.set_visual_x(original_mouse_pos.x);
                             } else {
                                 // Mouse didn't move - keep saved normalized position
-                                let saved_normalized = scrubber.normalized_position().unwrap_or(0.5);
+                                let saved_normalized =
+                                    scrubber.normalized_position().unwrap_or(0.5);
 
                                 // Check if normalized is outside valid range (clamped)
                                 let is_clamped = saved_normalized < 0.0 || saved_normalized > 1.0;
                                 scrubber.set_clamped(is_clamped);
 
                                 // Update frame from saved normalized (clamps to valid range)
-                                let frame_idx = Scrubber::normalized_to_frame(saved_normalized, player.total_frames());
+                                let frame_idx = Scrubber::normalized_to_frame(
+                                    saved_normalized,
+                                    player.total_frames(),
+                                );
                                 player.set_frame(frame_idx);
-                                player.cache.signal_preload();  // Trigger preload (respects play_range)
+                                player.cache.signal_preload(); // Trigger preload (respects play_range)
                                 scrubber.set_current_frame(frame_idx);
 
                                 // Update visual from saved normalized (converts back to pixel position)
-                                let visual_x = Scrubber::normalized_to_pixel(saved_normalized, image_bounds);
+                                let visual_x =
+                                    Scrubber::normalized_to_pixel(saved_normalized, image_bounds);
                                 scrubber.set_visual_x(visual_x);
                             }
                         }
@@ -467,11 +532,16 @@ pub fn render_viewport(
             let mut needs_upload = texture_needs_upload;
             {
                 let r = renderer.lock().unwrap();
-                if r.needs_texture_update(w, h) { needs_upload = true; }
+                if r.needs_texture_update(w, h) {
+                    needs_upload = true;
+                }
             }
 
             // Only fetch pixel data when we actually need to upload
-            let upload_payload: Option<(std::sync::Arc<crate::frame::PixelBuffer>, crate::frame::PixelFormat)> = if needs_upload {
+            let upload_payload: Option<(
+                std::sync::Arc<crate::frame::PixelBuffer>,
+                crate::frame::PixelFormat,
+            )> = if needs_upload {
                 Some((img.pixel_buffer(), img.pixel_format()))
             } else {
                 None
@@ -479,15 +549,17 @@ pub fn render_viewport(
 
             ui.painter().add(egui::PaintCallback {
                 rect: panel_rect,
-                callback: std::sync::Arc::new(egui_glow::CallbackFn::new(move |_info, painter: &egui_glow::Painter| {
-                    let gl = painter.gl();
-                    let mut r = renderer.lock().unwrap();
+                callback: std::sync::Arc::new(egui_glow::CallbackFn::new(
+                    move |_info, painter: &egui_glow::Painter| {
+                        let gl = painter.gl();
+                        let mut r = renderer.lock().unwrap();
 
-                    if let Some((pixel_buffer, pixel_format)) = &upload_payload {
-                        r.upload_texture(gl, w, h, pixel_buffer, *pixel_format);
-                    }
-                    r.render(gl, &state);
-                })),
+                        if let Some((pixel_buffer, pixel_format)) = &upload_payload {
+                            r.upload_texture(gl, w, h, pixel_buffer, *pixel_format);
+                        }
+                        r.render(gl, &state);
+                    },
+                )),
             });
 
             render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
@@ -503,7 +575,8 @@ pub fn render_viewport(
                         egui::FontId::monospace(12.0),
                         text,
                     );
-                    let rect = egui::Rect::from_min_size(panel_rect.left_top() + margin, galley.size());
+                    let rect =
+                        egui::Rect::from_min_size(panel_rect.left_top() + margin, galley.size());
                     ui.painter().rect_filled(rect.expand(6.0), 4.0, overlay);
                     ui.painter().text(
                         rect.min + egui::vec2(6.0, 2.0),

@@ -54,7 +54,10 @@ impl Player {
     }
 
     /// Create new player with configurable memory budget and worker count
-    pub fn new_with_config(max_mem_fraction: f64, workers: Option<usize>) -> (Self, mpsc::Receiver<CacheMessage>) {
+    pub fn new_with_config(
+        max_mem_fraction: f64,
+        workers: Option<usize>,
+    ) -> (Self, mpsc::Receiver<CacheMessage>) {
         info!("Player initialized with new architecture");
 
         let (cache, ui_rx) = Cache::new(max_mem_fraction, workers); // configurable memory/workers

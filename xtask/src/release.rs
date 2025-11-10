@@ -41,8 +41,7 @@ pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result
     println!("[1/4] Calculating next version...");
 
     // Read current version from Cargo.toml
-    let cargo_toml = std::fs::read_to_string("Cargo.toml")
-        .context("Failed to read Cargo.toml")?;
+    let cargo_toml = std::fs::read_to_string("Cargo.toml").context("Failed to read Cargo.toml")?;
 
     let current_version = cargo_toml
         .lines()
@@ -58,8 +57,12 @@ pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result
 
     let major: u32 = parts[0].parse().context("Invalid major version")?;
     let minor: u32 = parts[1].parse().context("Invalid minor version")?;
-    let patch: u32 = parts[2].split('-').next().unwrap()
-        .parse().context("Invalid patch version")?;
+    let patch: u32 = parts[2]
+        .split('-')
+        .next()
+        .unwrap()
+        .parse()
+        .context("Invalid patch version")?;
 
     // Calculate next version
     let (next_major, next_minor, next_patch) = match level {
@@ -86,9 +89,9 @@ pub fn run_release(level: &str, dry_run: bool, metadata: Option<&str>) -> Result
 
     let mut cmd = Command::new("cargo");
     cmd.arg("release")
-        .arg(&next_version)  // Pass version directly instead of level
+        .arg(&next_version) // Pass version directly instead of level
         .arg("--no-publish")
-        .arg("--no-confirm");  // Skip confirmation prompt
+        .arg("--no-confirm"); // Skip confirmation prompt
 
     if dry_run {
         cmd.arg("--dry-run");

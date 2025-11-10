@@ -41,7 +41,11 @@ pub fn copy_dependencies(profile: &str) -> Result<()> {
 
             match fs::copy(lib_path, &dest_path) {
                 Ok(bytes) => {
-                    println!("  ✓ Copied {} ({} bytes)", file_name.to_string_lossy(), bytes);
+                    println!(
+                        "  ✓ Copied {} ({} bytes)",
+                        file_name.to_string_lossy(),
+                        bytes
+                    );
                     copied_count += 1;
                 }
                 Err(e) => {
@@ -89,10 +93,11 @@ fn copy_shaders(target_dir: &Path) -> Result<()> {
     let shaders_dest = target_dir.join("shaders");
 
     if !shaders_src.exists() {
-        println!("Warning: shaders/ directory not found, creating empty directory for cargo-packager");
+        println!(
+            "Warning: shaders/ directory not found, creating empty directory for cargo-packager"
+        );
         // Create empty shaders directory so cargo-packager doesn't fail
-        fs::create_dir_all(&shaders_dest)
-            .context("Failed to create empty shaders directory")?;
+        fs::create_dir_all(&shaders_dest).context("Failed to create empty shaders directory")?;
         return Ok(());
     }
 
@@ -100,8 +105,7 @@ fn copy_shaders(target_dir: &Path) -> Result<()> {
 
     // Remove existing shaders directory if it exists
     if shaders_dest.exists() {
-        fs::remove_dir_all(&shaders_dest)
-            .context("Failed to remove existing shaders directory")?;
+        fs::remove_dir_all(&shaders_dest).context("Failed to remove existing shaders directory")?;
     }
 
     // Copy shaders directory
@@ -354,6 +358,9 @@ mod macos_tests {
         assert!(symlinks.contains(&"libz.dylib".to_string()));
 
         // No version numbers
-        assert_eq!(extract_dylib_symlinks("libopenexr-c-0_10-shared.dylib"), None);
+        assert_eq!(
+            extract_dylib_symlinks("libopenexr-c-0_10-shared.dylib"),
+            None
+        );
     }
 }

@@ -1,82 +1,106 @@
-//! RGB to YUV pixel format conversion using FFmpeg swscale
+//! RGB frame resizing and padding utilities
 //!
-//! Hardware encoders (NVENC, QSV, AMF) and many software encoders
-//! require YUV pixel formats (YUV420P, NV12) instead of RGB.
+//! Provides CPU-based resize/crop/pad operations for RGB24 data.
+//! For YUV conversion, see `convert` module with SwsContext.
 
-use playa_ffmpeg as ffmpeg;
-
-/// Convert RGB24 data to YUV420P FFmpeg frame
+/// Resize or pad RGB24 frame to target dimensions
 ///
-/// Used for hardware encoders (NVENC, QSV) and codecs that don't accept RGB directly.
+/// Handles mixed resolution sequences by:
+/// - If src > dst: center-crop to target size
+/// - If src < dst: center + letterbox with fill_color
+/// - If src == dst: copy as-is (fast path)
 ///
 /// # Arguments
-/// * `rgb_data` - RGB24 pixel data (width * height * 3 bytes)
-/// * `width` - Frame width in pixels
-/// * `height` - Frame height in pixels
+///
+/// - `src_data`: Source RGB24 data (width * height * 3 bytes)
+/// - `src_w`, `src_h`: Source dimensions
+/// - `dst_w`, `dst_h`: Target dimensions
+/// - `fill_color`: RGB color for letterbox padding [R, G, B]
 ///
 /// # Returns
-/// FFmpeg video frame in YUV420P format, ready for encoding
-pub fn rgb24_to_yuv420p(
-    rgb_data: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<ffmpeg::util::frame::video::Video, String> {
-    // Verify input data size
-    let expected_size = (width * height * 3) as usize;
-    if rgb_data.len() != expected_size {
-        return Err(format!(
-            "Invalid RGB data size: expected {} bytes, got {}",
-            expected_size,
-            rgb_data.len()
-        ));
+///
+/// New RGB24 buffer at target dimensions
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// # use playa::rgb_cvt::resize_or_pad_rgb24;
+/// let src = vec![255u8; 640 * 480 * 3];
+/// // Pad to 1920x1080 with green background
+/// let dst = resize_or_pad_rgb24(&src, 640, 480, 1920, 1080, [0, 100, 0]);
+/// ```
+#[allow(dead_code)]
+pub fn resize_or_pad_rgb24(
+    src_data: &[u8],
+    src_w: u32,
+    src_h: u32,
+    dst_w: u32,
+    dst_h: u32,
+    fill_color: [u8; 3],
+) -> Vec<u8> {
+    // Fast path: same size
+    if src_w == dst_w && src_h == dst_h {
+        return src_data.to_vec();
     }
 
-    // Create source RGB24 frame
-    let mut src_frame = ffmpeg::util::frame::video::Video::new(
-        ffmpeg::format::Pixel::RGB24,
-        width,
-        height,
-    );
+    let mut dst_data = vec![0u8; (dst_w * dst_h * 3) as usize];
 
-    // Copy RGB data to source frame
-    let src_stride = src_frame.stride(0);
-    let row_bytes = (width * 3) as usize;
-
-    {
-        let dst_data = src_frame.data_mut(0);
-        for y in 0..height as usize {
-            let src_offset = y * row_bytes;
-            let dst_offset = y * src_stride;
-            dst_data[dst_offset..dst_offset + row_bytes]
-                .copy_from_slice(&rgb_data[src_offset..src_offset + row_bytes]);
+    // Fill with background color
+    for y in 0..dst_h {
+        for x in 0..dst_w {
+            let dst_idx = ((y * dst_w + x) * 3) as usize;
+            dst_data[dst_idx] = fill_color[0]; // R
+            dst_data[dst_idx + 1] = fill_color[1]; // G
+            dst_data[dst_idx + 2] = fill_color[2]; // B
         }
     }
 
-    // Create destination YUV420P frame
-    let mut dst_frame = ffmpeg::util::frame::video::Video::new(
-        ffmpeg::format::Pixel::YUV420P,
-        width,
-        height,
-    );
+    // Calculate copy region (center-aligned)
+    let copy_w = src_w.min(dst_w);
+    let copy_h = src_h.min(dst_h);
 
-    // Create swscale context for conversion
-    let mut sws_ctx = ffmpeg::software::scaling::Context::get(
-        ffmpeg::format::Pixel::RGB24,
-        width,
-        height,
-        ffmpeg::format::Pixel::YUV420P,
-        width,
-        height,
-        ffmpeg::software::scaling::Flags::BILINEAR,
-    )
-    .map_err(|e| format!("Failed to create swscale context: {}", e))?;
+    let src_offset_x = if src_w > dst_w {
+        (src_w - dst_w) / 2
+    } else {
+        0
+    };
+    let src_offset_y = if src_h > dst_h {
+        (src_h - dst_h) / 2
+    } else {
+        0
+    };
 
-    // Convert RGB24 → YUV420P
-    sws_ctx
-        .run(&src_frame, &mut dst_frame)
-        .map_err(|e| format!("swscale conversion failed: {}", e))?;
+    let dst_offset_x = if dst_w > src_w {
+        (dst_w - src_w) / 2
+    } else {
+        0
+    };
+    let dst_offset_y = if dst_h > src_h {
+        (dst_h - src_h) / 2
+    } else {
+        0
+    };
 
-    Ok(dst_frame)
+    // Copy pixel data
+    for y in 0..copy_h {
+        let src_y = src_offset_y + y;
+        let dst_y = dst_offset_y + y;
+
+        for x in 0..copy_w {
+            let src_x = src_offset_x + x;
+            let dst_x = dst_offset_x + x;
+
+            let src_idx = ((src_y * src_w + src_x) * 3) as usize;
+            let dst_idx = ((dst_y * dst_w + dst_x) * 3) as usize;
+
+            // Copy RGB triplet
+            dst_data[dst_idx] = src_data[src_idx]; // R
+            dst_data[dst_idx + 1] = src_data[src_idx + 1]; // G
+            dst_data[dst_idx + 2] = src_data[src_idx + 2]; // B
+        }
+    }
+
+    dst_data
 }
 
 #[cfg(test)]
@@ -84,40 +108,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rgb_to_yuv_conversion() {
-        playa_ffmpeg::init().expect("FFmpeg init failed");
-
-        // Create simple RGB test pattern (red frame)
-        let width = 64;
-        let height = 48;
-        let mut rgb_data = vec![0u8; (width * height * 3) as usize];
-
-        // Fill with red color
-        for pixel in rgb_data.chunks_exact_mut(3) {
-            pixel[0] = 255; // R
-            pixel[1] = 0;   // G
-            pixel[2] = 0;   // B
-        }
-
-        // Convert to YUV
-        let result = rgb24_to_yuv420p(&rgb_data, width, height);
-        assert!(result.is_ok(), "Conversion failed");
-
-        let yuv_frame = result.unwrap();
-        assert_eq!(yuv_frame.width(), width);
-        assert_eq!(yuv_frame.height(), height);
-        assert_eq!(yuv_frame.format(), ffmpeg::format::Pixel::YUV420P);
+    fn test_resize_same_size() {
+        let src = vec![255u8; 640 * 480 * 3];
+        let dst = resize_or_pad_rgb24(&src, 640, 480, 640, 480, [0, 0, 0]);
+        assert_eq!(src, dst);
     }
 
     #[test]
-    fn test_invalid_data_size() {
-        playa_ffmpeg::init().expect("FFmpeg init failed");
+    fn test_pad_smaller_to_larger() {
+        // 2x2 white image → 4x4 with green padding
+        let src = vec![255u8; 2 * 2 * 3];
+        let dst = resize_or_pad_rgb24(&src, 2, 2, 4, 4, [0, 100, 0]);
 
-        let rgb_data = vec![0u8; 100]; // Wrong size
-        let result = rgb24_to_yuv420p(&rgb_data, 64, 48);
+        // Check center 2x2 is white
+        for y in 1..3 {
+            for x in 1..3 {
+                let idx = ((y * 4 + x) * 3) as usize;
+                assert_eq!(dst[idx], 255, "R at ({}, {})", x, y);
+                assert_eq!(dst[idx + 1], 255, "G at ({}, {})", x, y);
+                assert_eq!(dst[idx + 2], 255, "B at ({}, {})", x, y);
+            }
+        }
 
-        assert!(result.is_err());
-        let err_msg = result.err().unwrap();
-        assert!(err_msg.contains("Invalid RGB data size"));
+        // Check corners are green
+        let corners = [(0, 0), (3, 0), (0, 3), (3, 3)];
+        for (x, y) in corners {
+            let idx = ((y * 4 + x) * 3) as usize;
+            assert_eq!(dst[idx], 0, "R at corner ({}, {})", x, y);
+            assert_eq!(dst[idx + 1], 100, "G at corner ({}, {})", x, y);
+            assert_eq!(dst[idx + 2], 0, "B at corner ({}, {})", x, y);
+        }
+    }
+
+    #[test]
+    fn test_crop_larger_to_smaller() {
+        // 4x4 with specific pattern → center 2x2
+        let mut src = vec![0u8; 4 * 4 * 3];
+
+        // Fill center 2x2 with white
+        for y in 1..3 {
+            for x in 1..3 {
+                let idx = ((y * 4 + x) * 3) as usize;
+                src[idx] = 255; // R
+                src[idx + 1] = 255; // G
+                src[idx + 2] = 255; // B
+            }
+        }
+
+        let dst = resize_or_pad_rgb24(&src, 4, 4, 2, 2, [0, 0, 0]);
+
+        // All pixels should be white (center crop)
+        for y in 0..2 {
+            for x in 0..2 {
+                let idx = ((y * 2 + x) * 3) as usize;
+                assert_eq!(dst[idx], 255, "R at ({}, {})", x, y);
+                assert_eq!(dst[idx + 1], 255, "G at ({}, {})", x, y);
+                assert_eq!(dst[idx + 2], 255, "B at ({}, {})", x, y);
+            }
+        }
     }
 }

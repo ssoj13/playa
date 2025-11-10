@@ -3,8 +3,8 @@ use eframe::glow;
 use eframe::glow::HasContext;
 use log::{debug, error, info};
 
-use crate::shaders::Shaders;
 use crate::frame::{PixelBuffer, PixelFormat};
+use crate::shaders::Shaders;
 
 // Zoom constants
 const ZOOM_STEP: f32 = 0.025;
@@ -122,7 +122,10 @@ impl ViewportState {
         cursor_to_center.y = -cursor_to_center.y;
         self.pan = cursor_to_center - (cursor_to_center - self.pan) * zoom_ratio;
 
-        debug!("Zoom: {:.2}x, Pan: ({:.1}, {:.1})", self.zoom, self.pan.x, self.pan.y);
+        debug!(
+            "Zoom: {:.2}x, Pan: ({:.1}, {:.1})",
+            self.zoom, self.pan.x, self.pan.y
+        );
     }
 
     /// Handle pan (switches to Manual mode)
@@ -189,8 +192,11 @@ impl ViewportState {
         );
 
         // Check bounds
-        if image.x >= 0.0 && image.x <= self.image_size.x &&
-           image.y >= 0.0 && image.y <= self.image_size.y {
+        if image.x >= 0.0
+            && image.x <= self.image_size.x
+            && image.y >= 0.0
+            && image.y <= self.image_size.y
+        {
             Some(image)
         } else {
             None
@@ -258,8 +264,8 @@ pub struct ViewportRenderer {
     texture: Option<glow::Texture>,
     texture_width: usize,
     texture_height: usize,
-    current_pixel_format: PixelFormat,  // Track current format for shader uniforms
-    current_shader_name: String, // Track the current shader to know when to recompile
+    current_pixel_format: PixelFormat, // Track current format for shader uniforms
+    current_shader_name: String,       // Track the current shader to know when to recompile
     current_vertex_shader: String,
     current_fragment_shader: String,
     needs_recompile: bool, // Flag to indicate shader needs recompilation
@@ -268,10 +274,10 @@ pub struct ViewportRenderer {
     pbo_index: usize,
     pbo_width: usize,
     pbo_height: usize,
-    pbo_pixel_format: PixelFormat,  // Track PBO format to detect when recreate is needed
+    pbo_pixel_format: PixelFormat, // Track PBO format to detect when recreate is needed
     // HDR controls
-    pub exposure: f32,  // Exposure multiplier (default 1.0)
-    pub gamma: f32,     // Gamma correction (default 2.2 for sRGB)
+    pub exposure: f32, // Exposure multiplier (default 1.0)
+    pub gamma: f32,    // Gamma correction (default 2.2 for sRGB)
 
     // Scratch buffer to avoid per-frame allocations when converting f16 -> u16
     f16_scratch: Vec<u16>,
@@ -292,7 +298,7 @@ impl ViewportRenderer {
             texture: None,
             texture_width: 0,
             texture_height: 0,
-            current_pixel_format: PixelFormat::Rgba8,  // Default to LDR
+            current_pixel_format: PixelFormat::Rgba8, // Default to LDR
             current_shader_name: default_shader_manager.current_shader.clone(),
             current_vertex_shader: vertex_shader.to_string(),
             current_fragment_shader: fragment_shader.to_string(),
@@ -301,9 +307,9 @@ impl ViewportRenderer {
             pbo_index: 0,
             pbo_width: 0,
             pbo_height: 0,
-            pbo_pixel_format: PixelFormat::Rgba8,  // Default format
-            exposure: 1.0,   // Default exposure
-            gamma: 2.2,      // Default sRGB gamma
+            pbo_pixel_format: PixelFormat::Rgba8, // Default format
+            exposure: 1.0,                        // Default exposure
+            gamma: 2.2,                           // Default sRGB gamma
 
             f16_scratch: Vec::new(),
             last_error: None,
@@ -314,7 +320,10 @@ impl ViewportRenderer {
     pub fn update_shader(&mut self, shader_manager: &Shaders) {
         if self.current_shader_name != shader_manager.current_shader {
             let (vertex_shader, fragment_shader) = shader_manager.get_current_shaders();
-            info!("Switching to shader: {}, recompiling...", shader_manager.current_shader);
+            info!(
+                "Switching to shader: {}, recompiling...",
+                shader_manager.current_shader
+            );
             self.current_shader_name = shader_manager.current_shader.clone();
             self.current_vertex_shader = vertex_shader.to_string();
             self.current_fragment_shader = fragment_shader.to_string();
@@ -323,7 +332,12 @@ impl ViewportRenderer {
     }
 
     /// Initialize OpenGL resources (shaders, VAO, VBO)
-    fn initialize(&mut self, gl: &glow::Context, vertex_shader_src: &str, fragment_shader_src: &str) {
+    fn initialize(
+        &mut self,
+        gl: &glow::Context,
+        vertex_shader_src: &str,
+        fragment_shader_src: &str,
+    ) {
         unsafe {
             // Clean up any existing program
             if let Some(program) = self.program.take() {
@@ -465,8 +479,17 @@ impl ViewportRenderer {
     }
 
     /// Recreate PBOs if image dimensions or pixel format have changed
-    fn recreate_pbos_if_needed(&mut self, gl: &glow::Context, width: usize, height: usize, pixel_format: PixelFormat) {
-        if self.pbo_width == width && self.pbo_height == height && self.pbo_pixel_format == pixel_format {
+    fn recreate_pbos_if_needed(
+        &mut self,
+        gl: &glow::Context,
+        width: usize,
+        height: usize,
+        pixel_format: PixelFormat,
+    ) {
+        if self.pbo_width == width
+            && self.pbo_height == height
+            && self.pbo_pixel_format == pixel_format
+        {
             return; // PBOs are already the correct size and format
         }
 
@@ -503,12 +526,22 @@ impl ViewportRenderer {
             self.pbo_width = width;
             self.pbo_height = height;
             self.pbo_pixel_format = pixel_format;
-            debug!("Recreated PBOs for size {}x{} format {:?} (buffer_size: {} bytes)", width, height, pixel_format, buffer_size);
+            debug!(
+                "Recreated PBOs for size {}x{} format {:?} (buffer_size: {} bytes)",
+                width, height, pixel_format, buffer_size
+            );
         }
     }
 
     /// Upload texture to GPU asynchronously using PBOs
-    pub fn upload_texture(&mut self, gl: &glow::Context, width: usize, height: usize, pixel_buffer: &PixelBuffer, pixel_format: PixelFormat) {
+    pub fn upload_texture(
+        &mut self,
+        gl: &glow::Context,
+        width: usize,
+        height: usize,
+        pixel_buffer: &PixelBuffer,
+        pixel_format: PixelFormat,
+    ) {
         // Save pixel format for shader uniform
         self.current_pixel_format = pixel_format;
 
@@ -517,18 +550,27 @@ impl ViewportRenderer {
             // For F16 we create an owned byte buffer to avoid borrowing self across calls
             let mut owned_bytes: Option<Vec<u8>> = None;
             let (pixels_bytes, gl_internal_format, gl_format, gl_type) = match pixel_buffer {
-                PixelBuffer::U8(vec) => {
-                    (vec.as_slice(), glow::RGBA as i32, glow::RGBA, glow::UNSIGNED_BYTE)
-                }
+                PixelBuffer::U8(vec) => (
+                    vec.as_slice(),
+                    glow::RGBA as i32,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                ),
                 PixelBuffer::F16(_) => {
                     // Convert F16 → u16 → bytes (reuse scratch buffer)
                     if let PixelBuffer::F16(src) = pixel_buffer {
                         self.f16_scratch.clear();
                         self.f16_scratch.extend(src.iter().map(|f| f.to_bits()));
                     }
-                    let bytes_u8: Vec<u8> = bytemuck::cast_slice(self.f16_scratch.as_slice()).to_vec();
+                    let bytes_u8: Vec<u8> =
+                        bytemuck::cast_slice(self.f16_scratch.as_slice()).to_vec();
                     owned_bytes = Some(bytes_u8);
-                    (owned_bytes.as_ref().unwrap().as_slice(), glow::RGBA16F as i32, glow::RGBA, glow::HALF_FLOAT)
+                    (
+                        owned_bytes.as_ref().unwrap().as_slice(),
+                        glow::RGBA16F as i32,
+                        glow::RGBA,
+                        glow::HALF_FLOAT,
+                    )
                 }
                 PixelBuffer::F32(vec) => {
                     let bytes = bytemuck::cast_slice(vec.as_slice());
@@ -536,7 +578,9 @@ impl ViewportRenderer {
                 }
             };
 
-            let is_initial_upload = self.texture.is_none() || self.texture_width != width || self.texture_height != height;
+            let is_initial_upload = self.texture.is_none()
+                || self.texture_width != width
+                || self.texture_height != height;
 
             // Ensure texture exists and is the correct size
             if is_initial_upload {
@@ -546,17 +590,43 @@ impl ViewportRenderer {
                 let texture = self.texture.unwrap();
                 gl.bind_texture(glow::TEXTURE_2D, Some(texture));
                 gl.tex_image_2d(
-                    glow::TEXTURE_2D, 0, gl_internal_format, width as i32, height as i32,
-                    0, gl_format, gl_type, eframe::glow::PixelUnpackData::Slice(None), // Allocate texture memory
+                    glow::TEXTURE_2D,
+                    0,
+                    gl_internal_format,
+                    width as i32,
+                    height as i32,
+                    0,
+                    gl_format,
+                    gl_type,
+                    eframe::glow::PixelUnpackData::Slice(None), // Allocate texture memory
                 );
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-                gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MIN_FILTER,
+                    glow::LINEAR as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_MAG_FILTER,
+                    glow::LINEAR as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_WRAP_S,
+                    glow::CLAMP_TO_EDGE as i32,
+                );
+                gl.tex_parameter_i32(
+                    glow::TEXTURE_2D,
+                    glow::TEXTURE_WRAP_T,
+                    glow::CLAMP_TO_EDGE as i32,
+                );
 
                 self.texture_width = width;
                 self.texture_height = height;
-                debug!("Recreated texture for size {}x{} format {:?}", width, height, pixel_format);
+                debug!(
+                    "Recreated texture for size {}x{} format {:?}",
+                    width, height, pixel_format
+                );
             }
 
             // Ensure PBOs are the correct size and format
@@ -572,10 +642,16 @@ impl ViewportRenderer {
             if let Some(write_pbo) = self.pbos[write_pbo_index] {
                 gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(write_pbo));
                 // Orphan previous data to avoid stalls
-                gl.buffer_data_size(glow::PIXEL_UNPACK_BUFFER, pixels_bytes.len() as i32, glow::STREAM_DRAW);
+                gl.buffer_data_size(
+                    glow::PIXEL_UNPACK_BUFFER,
+                    pixels_bytes.len() as i32,
+                    glow::STREAM_DRAW,
+                );
                 let ptr = gl.map_buffer_range(
-                    glow::PIXEL_UNPACK_BUFFER, 0, pixels_bytes.len() as i32,
-                    glow::MAP_WRITE_BIT | glow::MAP_INVALIDATE_BUFFER_BIT
+                    glow::PIXEL_UNPACK_BUFFER,
+                    0,
+                    pixels_bytes.len() as i32,
+                    glow::MAP_WRITE_BIT | glow::MAP_INVALIDATE_BUFFER_BIT,
                 );
 
                 if !ptr.is_null() {
@@ -595,8 +671,15 @@ impl ViewportRenderer {
                 if let Some(write_pbo) = self.pbos[write_pbo_index] {
                     gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(write_pbo));
                     gl.tex_sub_image_2d(
-                        glow::TEXTURE_2D, 0, 0, 0, width as i32, height as i32,
-                        gl_format, gl_type, glow::PixelUnpackData::BufferOffset(0),
+                        glow::TEXTURE_2D,
+                        0,
+                        0,
+                        0,
+                        width as i32,
+                        height as i32,
+                        gl_format,
+                        gl_type,
+                        glow::PixelUnpackData::BufferOffset(0),
                     );
                     gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
                 }
@@ -606,8 +689,15 @@ impl ViewportRenderer {
                 if let Some(transfer_pbo) = self.pbos[transfer_pbo_index] {
                     gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(transfer_pbo));
                     gl.tex_sub_image_2d(
-                        glow::TEXTURE_2D, 0, 0, 0, width as i32, height as i32,
-                        gl_format, gl_type, glow::PixelUnpackData::BufferOffset(0),
+                        glow::TEXTURE_2D,
+                        0,
+                        0,
+                        0,
+                        width as i32,
+                        height as i32,
+                        gl_format,
+                        gl_type,
+                        glow::PixelUnpackData::BufferOffset(0),
                     );
                     gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
                 }
@@ -660,11 +750,19 @@ impl ViewportRenderer {
             let proj_matrix = viewport_state.get_projection_matrix();
 
             if let Some(loc) = gl.get_uniform_location(program, "u_view") {
-                gl.uniform_matrix_4_f32_slice(Some(&loc), false, bytemuck::cast_slice(&view_matrix));
+                gl.uniform_matrix_4_f32_slice(
+                    Some(&loc),
+                    false,
+                    bytemuck::cast_slice(&view_matrix),
+                );
             }
 
             if let Some(loc) = gl.get_uniform_location(program, "u_projection") {
-                gl.uniform_matrix_4_f32_slice(Some(&loc), false, bytemuck::cast_slice(&proj_matrix));
+                gl.uniform_matrix_4_f32_slice(
+                    Some(&loc),
+                    false,
+                    bytemuck::cast_slice(&proj_matrix),
+                );
             }
 
             // Bind texture
@@ -686,9 +784,9 @@ impl ViewportRenderer {
             // Set u_is_hdr based on pixel format (0 for LDR/U8, 1 for HDR/F16/F32)
             if let Some(loc) = gl.get_uniform_location(program, "u_is_hdr") {
                 let is_hdr = match self.current_pixel_format {
-                    PixelFormat::Rgba8 => 0,      // LDR - already in sRGB
-                    PixelFormat::RgbaF16 => 1,    // HDR - needs processing
-                    PixelFormat::RgbaF32 => 1,    // HDR - needs processing
+                    PixelFormat::Rgba8 => 0,   // LDR - already in sRGB
+                    PixelFormat::RgbaF16 => 1, // HDR - needs processing
+                    PixelFormat::RgbaF32 => 1, // HDR - needs processing
                 };
                 gl.uniform_1_i32(Some(&loc), is_hdr);
             }

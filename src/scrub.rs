@@ -9,13 +9,13 @@ const SCRUB_OUTSIDE: (f32, f32, f32, f32) = (0.75, 0.0, 0.0, 0.5);
 /// Scrubbing control for timeline navigation via mouse
 pub struct Scrubber {
     is_active: bool,
-    normalized_position: Option<f32>,       // Normalized position along timeline (can be outside 0.0..1.0)
-    visual_x: Option<f32>,                  // Pixel X coordinate for drawing
+    normalized_position: Option<f32>, // Normalized position along timeline (can be outside 0.0..1.0)
+    visual_x: Option<f32>,            // Pixel X coordinate for drawing
     current_frame: Option<usize>,
-    is_clamped: bool,                       // True when normalized is outside 0.0..1.0 (frame is clamped)
-    frozen_bounds: Option<egui::Rect>,      // Frozen image bounds during scrubbing
-    frozen_image_size: Option<egui::Vec2>,  // Frozen image size for detecting changes
-    last_mouse_x: Option<f32>,              // Last mouse X position for movement detection
+    is_clamped: bool, // True when normalized is outside 0.0..1.0 (frame is clamped)
+    frozen_bounds: Option<egui::Rect>, // Frozen image bounds during scrubbing
+    frozen_image_size: Option<egui::Vec2>, // Frozen image size for detecting changes
+    last_mouse_x: Option<f32>, // Last mouse X position for movement detection
 }
 
 impl Scrubber {
@@ -43,7 +43,11 @@ impl Scrubber {
             let painter = ui.painter();
 
             // Select color based on clamped state
-            let (r, g, b, a) = if self.is_clamped { SCRUB_OUTSIDE } else { SCRUB_NORMAL };
+            let (r, g, b, a) = if self.is_clamped {
+                SCRUB_OUTSIDE
+            } else {
+                SCRUB_NORMAL
+            };
             let line_color = egui::Color32::from_rgba_unmultiplied(
                 (r * 255.0) as u8,
                 (g * 255.0) as u8,
@@ -54,10 +58,7 @@ impl Scrubber {
             // Draw vertical line
             let line_top = egui::pos2(visual_x, panel_rect.top());
             let line_bottom = egui::pos2(visual_x, panel_rect.bottom());
-            painter.line_segment(
-                [line_top, line_bottom],
-                egui::Stroke::new(1.0, line_color),
-            );
+            painter.line_segment([line_top, line_bottom], egui::Stroke::new(1.0, line_color));
 
             // Draw frame number overlay (same color as line)
             if let Some(frame) = self.current_frame {
@@ -80,7 +81,12 @@ impl Scrubber {
     }
 
     /// Start scrubbing with frozen image bounds, size, and initial normalized position
-    pub fn start_scrubbing(&mut self, image_bounds: egui::Rect, image_size: egui::Vec2, normalized: f32) {
+    pub fn start_scrubbing(
+        &mut self,
+        image_bounds: egui::Rect,
+        image_size: egui::Vec2,
+        normalized: f32,
+    ) {
         self.is_active = true;
         self.frozen_bounds = Some(image_bounds);
         self.frozen_image_size = Some(image_size);
@@ -139,7 +145,7 @@ impl Scrubber {
         if let Some(last_x) = self.last_mouse_x {
             (current_mouse_x - last_x).abs() > 0.1
         } else {
-            true  // First mouse position always counts as "moved"
+            true // First mouse position always counts as "moved"
         }
     }
 

@@ -1,10 +1,10 @@
-use eframe::egui;
-use std::sync::mpsc;
 use crate::cache::CacheMessage;
 use crate::frame::{Frame, PixelFormat};
 use crate::player::Player;
 use crate::progress_bar::ProgressBar;
 use crate::viewport::ViewportState;
+use eframe::egui;
+use std::sync::mpsc;
 
 /// Status bar component that receives updates from cache via messages
 pub struct StatusBar {
@@ -32,7 +32,10 @@ impl StatusBar {
 
         while let Ok(msg) = self.message_rx.try_recv() {
             match msg {
-                CacheMessage::LoadProgress { cached_count, total_count } => {
+                CacheMessage::LoadProgress {
+                    cached_count,
+                    total_count,
+                } => {
                     self.cached_count = cached_count;
                     self.total_count = total_count;
                     self.progress_bar.set_progress(cached_count, total_count);

@@ -43,26 +43,21 @@ impl ProgressBar {
         };
 
         // Reserve space for the progress bar
-        let (rect, _response) = ui.allocate_exact_size(
-            egui::vec2(self.width, self.height),
-            egui::Sense::hover(),
-        );
+        let (rect, _response) =
+            ui.allocate_exact_size(egui::vec2(self.width, self.height), egui::Sense::hover());
 
         // Draw background (dark)
         let bg_color = egui::Color32::from_gray(40);
         ui.painter().rect_filled(
-            rect,
-            2.0, // rounding
+            rect, 2.0, // rounding
             bg_color,
         );
 
         // Draw progress fill
         if progress > 0.0 {
             let fill_width = rect.width() * progress.clamp(0.0, 1.0);
-            let fill_rect = egui::Rect::from_min_size(
-                rect.min,
-                egui::vec2(fill_width, rect.height()),
-            );
+            let fill_rect =
+                egui::Rect::from_min_size(rect.min, egui::vec2(fill_width, rect.height()));
 
             ui.painter().rect_filled(
                 fill_rect,
