@@ -624,6 +624,32 @@ impl Cache {
         None
     }
 
+    /// Convert local (seq_idx, frame_idx) to global frame index
+    pub fn local_to_global(&self, seq_idx: usize, frame_idx: usize) -> Option<usize> {
+        if seq_idx >= self.sequences.len() {
+            return None;
+        }
+
+        let mut offset = 0;
+        for (idx, seq) in self.sequences.iter().enumerate() {
+            if idx == seq_idx {
+                if frame_idx < seq.len() {
+                    return Some(offset + frame_idx);
+                } else {
+                    return None;
+                }
+            }
+            offset += seq.len();
+        }
+
+        None
+    }
+
+    /// Get sequence index and local frame index for current global frame
+    pub fn current_sequence(&self) -> Option<(usize, usize)> {
+        self.global_to_local(self.global_frame)
+    }
+
     /// Get cached frame for display (non-blocking read)
     ///
     /// **Why**: UI needs fast frame lookup without blocking other readers

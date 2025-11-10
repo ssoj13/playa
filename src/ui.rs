@@ -28,21 +28,28 @@ pub fn help_text() -> &'static str {
     F7 - Video Encoding\n\
     ESC - Exit Fullscreen / Quit\n\n\
     Z - Toggle Fullscreen\n\
-    Ctrl+R - Reset Settings\n\n\
+    Ctrl+R - Reset Settings\n\
+    Backspace - Toggle Frame Numbers\n\n\
     ' / ` - Toggle Loop\n\
     B - Set Play Range Start\n\
     N - Set Play Range End\n\
     Ctrl+B - Reset Play Range\n\n\
     Playback:\n\
-    Space - Play/Pause\n\
-    J / , / ← - Backward\n\
-    K / ↓ - Stop/Dec FPS\n\
-    L / . / → - Forward\n\
-    Ctrl+← / ↑ - Go Start\n\
-    Ctrl+→ - Go End\n\n\
+    Space / K / ↑ - Play/Pause\n\
+    J / , / ← - Jog Backward\n\
+    L / . / → - Jog Forward\n\
+    ↓ - Decrease Play Speed\n\
+    1 / Home - Jump to Start\n\
+    2 / End - Jump to End\n\
+    Ctrl+← - Jump to Start\n\
+    Ctrl+→ - Jump to End\n\
+    [ - Previous Sequence Start\n\
+    ] - Next Sequence Start\n\n\
+    FPS Control:\n\
+    - - Decrease Base FPS\n\
+    = / + - Increase Base FPS\n\n\
     View:\n\
-    A / 1 - 100% Zoom\n\
-    Home / H - Fit to View\n\
+    A / H - 100% Zoom\n\
     F - Fit to View\n\
     Mouse:\n\
     Mouse Wheel - Zoom\n\
@@ -221,6 +228,7 @@ pub fn render_controls(
     shader_manager: &mut Shaders,
     cached_seq_ranges: &mut Vec<SequenceRange>,
     last_seq_version: &mut usize,
+    show_frame_numbers: bool,
 ) -> bool {
     let old_shader = shader_manager.current_shader.clone();
 
@@ -257,14 +265,14 @@ pub fn render_controls(
 
             ui.separator();
 
-            ui.label("FPS:");
+            ui.label("Base FPS:");
             // FPS Combobox with predefined values
             egui::ComboBox::from_id_salt("fps_combo")
-                .selected_text(format!("{:.0}", player.fps))
+                .selected_text(format!("{:.0}", player.fps_base))
                 .show_ui(ui, |ui| {
                     for &fps_value in &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0] {
                         ui.selectable_value(
-                            &mut player.fps,
+                            &mut player.fps_base,
                             fps_value,
                             format!("{:.0}", fps_value),
                         );
@@ -273,10 +281,15 @@ pub fn render_controls(
 
             // FPS DragValue for custom input
             ui.add(
-                egui::DragValue::new(&mut player.fps)
+                egui::DragValue::new(&mut player.fps_base)
                     .speed(0.1)
                     .range(0.00000001..=1000.0),
             );
+
+            // Always show play FPS if different from base (to avoid UI jumping)
+            if (player.fps_play - player.fps_base).abs() > 0.01 {
+                ui.label(format!("Play FPS: {:.0}", player.fps_play));
+            }
 
             ui.separator();
 
@@ -310,7 +323,8 @@ pub fn render_controls(
             *last_seq_version = player.cache.sequences_version();
         }
 
-        let config = TimeSliderConfig::default();
+        let mut config = TimeSliderConfig::default();
+        config.show_frame_numbers = show_frame_numbers;
         if let Some(new_frame) = time_slider(
             ui,
             player.current_frame(),

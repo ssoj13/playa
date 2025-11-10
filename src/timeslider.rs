@@ -31,6 +31,7 @@ pub struct TimeSliderConfig {
     pub label_min_width: f32,
     pub show_load_indicator: bool,
     pub load_indicator_height: f32,
+    pub show_frame_numbers: bool,
 }
 
 impl Default for TimeSliderConfig {
@@ -42,6 +43,7 @@ impl Default for TimeSliderConfig {
             label_min_width: 60.0,
             show_load_indicator: true,
             load_indicator_height: 4.0,
+            show_frame_numbers: false,
         }
     }
 }
@@ -131,6 +133,11 @@ pub fn time_slider(
 
         // Draw playhead (current frame indicator)
         draw_playhead(painter, rect, current_frame, total_frames);
+
+        // Draw frame numbers if enabled
+        if config.show_frame_numbers {
+            draw_frame_numbers(painter, rect, sequences, total_frames, cache.get_play_range());
+        }
 
         // Draw load indicator
         if config.show_load_indicator {
@@ -390,5 +397,90 @@ fn draw_load_indicator(painter: &egui::Painter, rect: Rect, statuses: &[FrameSta
         );
 
         painter.rect_filled(block_rect, 0.0, color);
+    }
+}
+
+/// Draw frame numbers at important positions
+/// Positions: global start/end, sequence starts, play range start/end
+fn draw_frame_numbers(
+    painter: &egui::Painter,
+    rect: Rect,
+    sequences: &[SequenceRange],
+    total_frames: usize,
+    play_range: (usize, usize),
+) {
+    if total_frames == 0 {
+        return;
+    }
+
+    let frame_to_x = |frame: usize| -> f32 {
+        rect.min.x + (frame as f32 / total_frames as f32) * rect.width()
+    };
+
+    let text_color = Color32::from_rgba_unmultiplied(255, 255, 255, 200);
+    let font_id = egui::FontId::monospace(8.0);
+    let offset = 3.0; // Offset from marker position to avoid overlap
+
+    // Global start (0) - offset to the right
+    let global_start_x = frame_to_x(0) + offset;
+    painter.text(
+        Pos2::new(global_start_x, rect.min.y + 2.0),
+        egui::Align2::LEFT_TOP,
+        "0",
+        font_id.clone(),
+        text_color,
+    );
+
+    // Global end - offset to the left
+    let global_end_frame = total_frames.saturating_sub(1);
+    let global_end_x = frame_to_x(global_end_frame) - offset;
+    painter.text(
+        Pos2::new(global_end_x, rect.min.y + 2.0),
+        egui::Align2::RIGHT_TOP,
+        &format!("{}", global_end_frame),
+        font_id.clone(),
+        text_color,
+    );
+
+    // Sequence starts - offset to the right
+    let mut current_offset = 0;
+    for (idx, seq) in sequences.iter().enumerate() {
+        // Skip first sequence (already handled as global start)
+        if idx > 0 {
+            let seq_start_x = frame_to_x(current_offset) + offset;
+            painter.text(
+                Pos2::new(seq_start_x, rect.min.y + 2.0),
+                egui::Align2::LEFT_TOP,
+                &format!("{}", current_offset),
+                font_id.clone(),
+                text_color,
+            );
+        }
+        current_offset += seq.end_frame - seq.start_frame + 1;
+    }
+
+    // Play range start - offset to the right (if not at global start)
+    let (play_start, play_end) = play_range;
+    if play_start > 0 {
+        let play_start_x = frame_to_x(play_start) + offset;
+        painter.text(
+            Pos2::new(play_start_x, rect.max.y - 2.0),
+            egui::Align2::LEFT_BOTTOM,
+            &format!("{}", play_start),
+            font_id.clone(),
+            Color32::from_rgba_unmultiplied(255, 255, 0, 200),
+        );
+    }
+
+    // Play range end - offset to the left (if not at global end)
+    if play_end < global_end_frame {
+        let play_end_x = frame_to_x(play_end) - offset;
+        painter.text(
+            Pos2::new(play_end_x, rect.max.y - 2.0),
+            egui::Align2::RIGHT_BOTTOM,
+            &format!("{}", play_end),
+            font_id.clone(),
+            Color32::from_rgba_unmultiplied(255, 255, 0, 200),
+        );
     }
 }

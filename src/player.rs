@@ -39,7 +39,8 @@ const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0,
 pub struct Player {
     pub cache: Cache,
     pub is_playing: bool,
-    pub fps: f32,
+    pub fps_base: f32,       // Base FPS (persistent setting)
+    pub fps_play: f32,       // Current playback FPS (temporary, resets on stop)
     pub loop_enabled: bool,
     pub play_direction: f32, // 1.0 forward, -1.0 backward
     last_frame_time: Option<Instant>,
@@ -65,7 +66,8 @@ impl Player {
         let player = Self {
             cache,
             is_playing: false,
-            fps: 24.0,
+            fps_base: 24.0,
+            fps_play: 24.0,
             loop_enabled: true,
             play_direction: 1.0,
             last_frame_time: None,
@@ -91,7 +93,7 @@ impl Player {
 
         if let Some(last_time) = self.last_frame_time {
             let elapsed = now.duration_since(last_time).as_secs_f32();
-            let frame_duration = 1.0 / self.fps;
+            let frame_duration = 1.0 / self.fps_play;
 
             if elapsed >= frame_duration {
                 self.advance_frame();
@@ -143,7 +145,7 @@ impl Player {
         }
     }
 
-    /// Toggle play/pause
+    /// Toggle play/pause (Space, K, ArrowUp)
     pub fn toggle_play_pause(&mut self) {
         self.is_playing = !self.is_playing;
         if self.is_playing {
@@ -154,6 +156,8 @@ impl Player {
         } else {
             debug!("Playback paused at frame {}", self.cache.frame());
             self.last_frame_time = None;
+            // Reset fps_play to fps_base on stop
+            self.fps_play = self.fps_base;
         }
     }
 
@@ -196,65 +200,174 @@ impl Player {
         self.cache.total_frames()
     }
 
-    /// Jog forward (L key)
+    /// Jog forward (L, >, ArrowRight)
     pub fn jog_forward(&mut self) {
         if !self.is_playing {
             self.play_direction = 1.0;
             self.is_playing = true;
+            self.fps_play = self.fps_base; // Start with base FPS
             self.last_frame_time = Some(Instant::now());
         } else if self.play_direction < 0.0 {
-            self.play_direction = 1.0;
+            self.play_direction = 1.0; // Change direction
+            self.fps_play = self.fps_base; // Reset on direction change
         } else {
-            self.increase_fps();
+            self.increase_fps_play(); // Increase play speed
         }
     }
 
-    /// Jog backward (J key)
+    /// Jog backward (J, <, ArrowLeft)
     pub fn jog_backward(&mut self) {
         if !self.is_playing {
             self.play_direction = -1.0;
             self.is_playing = true;
+            self.fps_play = self.fps_base; // Start with base FPS
             self.last_frame_time = Some(Instant::now());
         } else if self.play_direction > 0.0 {
-            self.play_direction = -1.0;
+            self.play_direction = -1.0; // Change direction
+            self.fps_play = self.fps_base; // Reset on direction change
         } else {
-            self.increase_fps();
+            self.increase_fps_play(); // Increase play speed
         }
     }
 
-    /// Increase FPS to next preset
-    fn increase_fps(&mut self) {
-        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps) {
+    /// Increase base FPS to next preset (-/+ keys, Keypad)
+    pub fn increase_fps_base(&mut self) {
+        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps_base) {
             if idx + 1 < FPS_PRESETS.len() {
-                self.fps = FPS_PRESETS[idx + 1];
+                self.fps_base = FPS_PRESETS[idx + 1];
+                // If not playing, update fps_play too
+                if !self.is_playing {
+                    self.fps_play = self.fps_base;
+                }
+                debug!("Base FPS increased to {}", self.fps_base);
             }
         }
     }
 
-    /// Decrease FPS to previous preset
-    fn decrease_fps(&mut self) {
-        if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f < self.fps) {
-            self.fps = FPS_PRESETS[idx];
-        } else {
-            self.fps = FPS_PRESETS[0];
+    /// Decrease base FPS to previous preset (-/+ keys, Keypad)
+    pub fn decrease_fps_base(&mut self) {
+        if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f <= self.fps_base) {
+            if idx > 0 {
+                self.fps_base = FPS_PRESETS[idx - 1];
+                // If not playing, update fps_play too
+                if !self.is_playing {
+                    self.fps_play = self.fps_base;
+                }
+                debug!("Base FPS decreased to {}", self.fps_base);
+            }
         }
     }
 
-    /// Stop or decrease FPS (K key)
-    pub fn stop_or_decrease_fps(&mut self) {
-        if self.is_playing {
-            debug!("Playback stopped at frame {}", self.cache.frame());
-            self.is_playing = false;
-            self.last_frame_time = None;
-        } else {
-            self.decrease_fps();
-            debug!("FPS decreased to {}", self.fps);
+    /// Increase play FPS to next preset (J/L when playing)
+    fn increase_fps_play(&mut self) {
+        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps_play) {
+            if idx + 1 < FPS_PRESETS.len() {
+                self.fps_play = FPS_PRESETS[idx + 1];
+                debug!("Play FPS increased to {}", self.fps_play);
+            }
         }
+    }
+
+    /// Decrease play FPS to previous preset (ArrowDown when playing)
+    pub fn decrease_fps_play(&mut self) {
+        if self.is_playing {
+            if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f <= self.fps_play) {
+                if idx > 0 {
+                    self.fps_play = FPS_PRESETS[idx - 1];
+                    debug!("Play FPS decreased to {}", self.fps_play);
+                }
+            }
+        }
+    }
+
+    /// Jump to next sequence start (] key)
+    /// If within sequence -> jump to next sequence start
+    /// If on last sequence -> jump to end of range
+    /// If at end and loop enabled -> jump to first sequence start
+    pub fn jump_next_sequence(&mut self) {
+        let sequences = self.cache.sequences();
+        if sequences.is_empty() {
+            return;
+        }
+
+        let (global_start, global_end) = self.cache.range();
+        let current_frame = self.cache.frame();
+
+        // Check if we're already at the end
+        if current_frame >= global_end {
+            if self.loop_enabled {
+                // Loop to first sequence start
+                self.cache.set_frame(global_start);
+                debug!("Looped from end to start: frame {}", global_start);
+            }
+            // If loop disabled, stay at end
+        } else if let Some((seq_idx, _local_frame)) = self.cache.current_sequence() {
+            // We're inside a sequence
+            if seq_idx + 1 < sequences.len() {
+                // Jump to start of next sequence
+                if let Some(next_start) = self.cache.local_to_global(seq_idx + 1, 0) {
+                    self.cache.set_frame(next_start);
+                    debug!("Jumped to next sequence start: frame {}", next_start);
+                }
+            } else {
+                // We're on last sequence, jump to end
+                self.cache.set_frame(global_end);
+                debug!("Jumped to end: frame {}", global_end);
+            }
+        }
+
+        self.last_frame_time = None;
+        self.cache.signal_preload();
+    }
+
+    /// Jump to previous sequence start ([ key)
+    /// If within sequence -> jump to current sequence start
+    /// If already at current sequence start -> jump to previous sequence start
+    /// If on first sequence start and loop enabled -> jump to end
+    pub fn jump_prev_sequence(&mut self) {
+        let sequences = self.cache.sequences();
+        if sequences.is_empty() {
+            return;
+        }
+
+        let (_, global_end) = self.cache.range();
+        let current_frame = self.cache.frame();
+
+        if let Some((seq_idx, local_frame)) = self.cache.current_sequence() {
+            // We're inside a sequence
+            if local_frame == 0 {
+                // Already at sequence start, jump to previous sequence
+                if seq_idx > 0 {
+                    if let Some(prev_start) = self.cache.local_to_global(seq_idx - 1, 0) {
+                        self.cache.set_frame(prev_start);
+                        debug!("Jumped to previous sequence start: frame {}", prev_start);
+                    }
+                } else if self.loop_enabled {
+                    // We're at first sequence start, loop to end
+                    self.cache.set_frame(global_end);
+                    debug!("Looped to end: frame {}", global_end);
+                }
+            } else {
+                // Not at sequence start, jump to current sequence start
+                if let Some(cur_start) = self.cache.local_to_global(seq_idx, 0) {
+                    self.cache.set_frame(cur_start);
+                    debug!("Jumped to current sequence start: frame {}", cur_start);
+                }
+            }
+        } else if current_frame >= global_end && self.loop_enabled {
+            // We're at the end, position at end
+            self.cache.set_frame(global_end);
+            debug!("At end, positioned at frame {}", global_end);
+        }
+
+        self.last_frame_time = None;
+        self.cache.signal_preload();
     }
 
     /// Reset settings
     pub fn reset_settings(&mut self) {
-        self.fps = 24.0;
+        self.fps_base = 24.0;
+        self.fps_play = 24.0;
         self.loop_enabled = true;
         info!("Player settings reset");
     }

@@ -275,17 +275,36 @@ impl PlayaApp {
             }
         }
 
-        // Play/Pause
-        if input.key_pressed(egui::Key::Space) {
+        // Play/Pause (Space, K, ArrowUp)
+        if input.key_pressed(egui::Key::Space)
+            || input.key_pressed(egui::Key::K)
+            || input.key_pressed(egui::Key::ArrowUp)
+        {
             self.player.toggle_play_pause();
         }
 
         // Only process playback hotkeys when no widget has keyboard focus
         // (prevents arrow keys from triggering playback while editing text fields)
         if !ctx.wants_keyboard_input() {
-            // Rewind to start
-            if input.key_pressed(egui::Key::ArrowUp) {
+            // Jump to start (1, Home)
+            if input.key_pressed(egui::Key::Num1) || input.key_pressed(egui::Key::Home) {
                 self.player.to_start();
+            }
+
+            // Jump to end (2, End)
+            if input.key_pressed(egui::Key::Num2) || input.key_pressed(egui::Key::End) {
+                self.player.to_end();
+            }
+
+            // Base FPS controls
+            // Decrease base FPS (-)
+            if input.key_pressed(egui::Key::Minus) {
+                self.player.decrease_fps_base();
+            }
+
+            // Increase base FPS (=, +)
+            if input.key_pressed(egui::Key::Equals) || input.key_pressed(egui::Key::Plus) {
+                self.player.increase_fps_base();
             }
 
             // J, <, Left Arrow - jog backward
@@ -296,11 +315,6 @@ impl PlayaApp {
                 self.player.jog_backward();
             }
 
-            // K, Down Arrow - stop playback or decrease fps
-            if input.key_pressed(egui::Key::K) || input.key_pressed(egui::Key::ArrowDown) {
-                self.player.stop_or_decrease_fps();
-            }
-
             // L, >, Right Arrow - jog forward
             if input.key_pressed(egui::Key::L)
                 || (!input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowRight))
@@ -309,9 +323,30 @@ impl PlayaApp {
                 self.player.jog_forward();
             }
 
+            // ArrowDown - decrease play FPS (only when playing)
+            if input.key_pressed(egui::Key::ArrowDown) {
+                self.player.decrease_fps_play();
+            }
+
+            // Sequence navigation
+            // Jump to previous sequence start ([)
+            if input.key_pressed(egui::Key::OpenBracket) {
+                self.player.jump_prev_sequence();
+            }
+
+            // Jump to next sequence start (])
+            if input.key_pressed(egui::Key::CloseBracket) {
+                self.player.jump_next_sequence();
+            }
+
             // Toggle Loop with ' and `
             if input.key_pressed(egui::Key::Quote) || input.key_pressed(egui::Key::Backtick) {
                 self.player.loop_enabled = !self.player.loop_enabled;
+            }
+
+            // Toggle frame numbers on timeslider (Backspace)
+            if input.key_pressed(egui::Key::Backspace) {
+                self.settings.show_frame_numbers = !self.settings.show_frame_numbers;
             }
 
             // Set play range start (B = Begin)
@@ -360,11 +395,8 @@ impl PlayaApp {
                 self.viewport_state.set_mode_fit();
             }
 
-            if input.key_pressed(egui::Key::A)
-                || input.key_pressed(egui::Key::Num1)
-                || input.key_pressed(egui::Key::Home)
-                || input.key_pressed(egui::Key::H)
-            {
+            // 100% zoom (A, H only - 1/Home now used for jump to start)
+            if input.key_pressed(egui::Key::A) || input.key_pressed(egui::Key::H) {
                 self.viewport_state.set_mode_100();
             }
         } // End of !ctx.wants_keyboard_input()
@@ -504,6 +536,7 @@ impl eframe::App for PlayaApp {
                 &mut self.shader_manager,
                 &mut self.cached_seq_ranges,
                 &mut self.last_seq_version,
+                self.settings.show_frame_numbers,
             );
             if shader_changed {
                 let mut renderer = self.viewport_renderer.lock().unwrap();
@@ -574,7 +607,7 @@ impl eframe::App for PlayaApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // Gather all settings from components
-        self.settings.fps = self.player.fps;
+        self.settings.fps_base = self.player.fps_base;
         self.settings.loop_enabled = self.player.loop_enabled;
         self.settings.current_shader = self.shader_manager.current_shader.clone();
         self.settings.show_help = self.show_help;
@@ -592,7 +625,7 @@ impl eframe::App for PlayaApp {
             storage.set_string(eframe::APP_KEY, json);
             debug!(
                 "App state saved: FPS={}, Loop={}, Shader={}",
-                self.settings.fps, self.settings.loop_enabled, self.settings.current_shader
+                self.settings.fps_base, self.settings.loop_enabled, self.settings.current_shader
             );
         }
     }
@@ -779,13 +812,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Apply persisted settings to components
-            app.player.fps = app.settings.fps;
+            app.player.fps_base = app.settings.fps_base;
+            app.player.fps_play = app.settings.fps_base; // Initialize fps_play from base
             app.player.loop_enabled = app.settings.loop_enabled;
             app.shader_manager.current_shader = app.settings.current_shader.clone();
             app.show_help = app.settings.show_help;
             info!(
                 "Applied settings: FPS={}, Loop={}, Shader={}, Help={}",
-                app.settings.fps,
+                app.settings.fps_base,
                 app.settings.loop_enabled,
                 app.settings.current_shader,
                 app.show_help

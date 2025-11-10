@@ -30,7 +30,7 @@ impl SettingsCategory {
 #[serde(default)]
 pub struct AppSettings {
     // Playback
-    pub fps: f32,
+    pub fps_base: f32,  // Base FPS (persistent)
     pub loop_enabled: bool,
 
     // Shader
@@ -39,6 +39,7 @@ pub struct AppSettings {
     // UI
     pub show_help: bool,
     pub show_playlist: bool,
+    pub show_frame_numbers: bool, // Show frame numbers on timeslider
     pub dark_mode: bool,
     pub font_size: f32,
 
@@ -56,11 +57,12 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            fps: 24.0,
+            fps_base: 24.0,
             loop_enabled: true,
             current_shader: "default".to_string(),
             show_help: true,
             show_playlist: true,
+            show_frame_numbers: true,
             dark_mode: true,
             font_size: 13.0,
             cache_mem_percent: 75.0,

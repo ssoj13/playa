@@ -1056,18 +1056,27 @@ playa --version
 ### Keyboard Shortcuts
 
 **Playback Controls:**
-- `Space` - Play/Pause
-- `J` / `,` / `←` - Jog backward / decrease speed
-- `K` / `↓` - Stop playback / decrease FPS
-- `L` / `.` / `→` - Jog forward / increase speed
-- `↑` - Go to start
+- `Space` / `K` / `↑` - Play/Pause (unified control)
+- `J` / `,` / `←` - Jog backward (starts playback, increases speed if already playing)
+- `L` / `.` / `→` - Jog forward (starts playback, increases speed if already playing)
+- `↓` - Decrease play speed (only when playing)
+- `1` / `Home` - Jump to start
+- `2` / `End` - Jump to end
 - `Ctrl+←` - Jump to start
 - `Ctrl+→` - Jump to end
+- `[` - Jump to previous sequence start
+- `]` - Jump to next sequence start
 - `'` / `` ` `` - Toggle loop
+
+**FPS Control:**
+- `-` - Decrease base FPS (persistent setting)
+- `=` / `+` - Increase base FPS (persistent setting)
+- Base FPS steps through presets: 1, 2, 4, 8, 12, 24, 30, 60, 120, 240
+- Play speed (J/L) resets to base FPS on stop
 
 **Viewport:**
 - `F` - Fit to window (auto-fit mode)
-- `A` / `1` / `Home` / `H` - 100% zoom
+- `A` / `H` - 100% zoom
 - `Mouse Wheel` - Zoom in/out (center on cursor)
 - `Middle Mouse Drag` - Pan
 - `Left Click + Drag` - Scrub timeline
@@ -1090,6 +1099,7 @@ playa --version
 - `ESC` - Exit fullscreen / Quit
 - `Q` - Quit
 - `Ctrl+R` - Reset settings to default
+- `Backspace` - Toggle frame numbers on timeline (shows global range, sequence starts, play range)
 
 ### Visual Sequence Navigation
 
