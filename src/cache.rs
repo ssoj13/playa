@@ -1,36 +1,32 @@
-//! Multi-sequence frame cache with LRU eviction and concurrent access
+//! Multi-sequence frame cache with background loading
 //!
 //! **Why**: Smooth playback requires keeping decoded frames in RAM. With 4K EXR sequences
-//! at ~64MB/frame, we need intelligent eviction and fast concurrent reads.
+//! at ~64MB/frame, we need intelligent frame management.
 //!
 //! **Used by**: Player (frame display), UI (timeline scrubbing), Viewport (rendering)
 //!
 //! # Architecture
 //!
-//! - **LruCache**: O(1) access and eviction via `lru` crate
-//! - **RwLock**: Multiple concurrent readers, single writer for cache operations
-//! - **AtomicUsize**: Lock-free memory tracking across threads
+//! - **Status-based management**: Frames transition Placeholder → Header → Loading → Loaded
+//! - **Play range optimization**: Auto-unload frames outside work area
 //! - **Worker pool**: 75% of CPU cores for parallel frame loading
 //! - **Adaptive preload**: Spiral (0, ±1, ±2...) for images, forward-only for video
 //!
 //! # Memory Management
 //!
-//! Default 4GB limit (configurable via `max_memory_mb`). LRU eviction removes
-//! least-recently-accessed frames when limit reached.
+//! Frames outside play_range are unloaded to Header state (metadata only).
+//! Memory tracking via atomic counters.
 //!
 //! # Concurrency
 //!
-//! Read operations (`get_frame`, `contains`) use read locks - multiple threads simultaneously.
-//! Write operations (`insert`, evict) use write locks - exclusive access.
 //! Atomic frame claiming prevents duplicate loads (TOCTOU race).
+//! Background workers process load queue independently.
 
 use log::{debug, info, warn};
-use lru::LruCache;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-// SystemTime/UNIX_EPOCH removed - LruCache handles access tracking automatically
 use std::path::Path;
 use sysinfo::System;
 
@@ -83,13 +79,6 @@ struct CacheState {
     play_range_end: usize,
 }
 
-/// Cache entry with access tracking
-#[derive(Debug, Clone)]
-struct CacheEntry {
-    frame: Frame,
-    // Note: LruCache automatically tracks access order, no manual timestamp needed
-}
-
 /// Main cache with multiple sequences
 #[derive(Debug)]
 pub struct Cache {
@@ -98,9 +87,7 @@ pub struct Cache {
     global_end: usize,
     global_frame: usize,
 
-    // LRU cache for loaded frames (O(1) access, eviction, insertion)
-    // RwLock allows multiple concurrent readers or single writer
-    lru_cache: Arc<RwLock<LruCache<(usize, usize), CacheEntry>>>, // (seq_idx, frame_idx) -> Frame
+    // Memory tracking
     memory_usage: Arc<AtomicUsize>,
     max_memory_bytes: usize,
 
@@ -200,9 +187,6 @@ impl Cache {
         let (ui_message_sender, ui_message_receiver) = mpsc::channel::<CacheMessage>();
 
         // Shared structures
-        // LruCache with unbounded capacity (we use memory-based eviction instead)
-        // RwLock allows multiple concurrent readers for better performance
-        let lru_cache_shared = Arc::new(RwLock::new(LruCache::unbounded()));
         let memory_usage_shared = Arc::new(AtomicUsize::new(0));
         let current_epoch_shared = Arc::new(AtomicU64::new(0));
 
@@ -283,7 +267,6 @@ impl Cache {
 
         let preload_sender = load_request_sender.clone();
         let preload_cancel = Arc::clone(&cancel_preload);
-        let preload_lru = Arc::clone(&lru_cache_shared);
         let preload_epoch = Arc::clone(&current_epoch_shared);
 
         thread::spawn(move || {
@@ -351,12 +334,11 @@ impl Cache {
                     // Helper to send request if not already loaded
                     let try_send = |global_idx: usize| -> bool {
                         if let Some(fp) = frame_paths.get(global_idx) {
-                            // Check if already loaded (read lock - concurrent access OK)
-                            let lru = preload_lru.read().unwrap();
-                            if lru.contains(&(fp.seq_idx, fp.frame_idx)) {
-                                return false; // Already loaded, skip
+                            // Check if frame needs loading (status should be Header or Placeholder)
+                            let status = fp.frame.status();
+                            if status == FrameStatus::Loaded || status == FrameStatus::Loading {
+                                return false; // Already loaded/loading, skip
                             }
-                            drop(lru);
 
                             let req = LoadRequest {
                                 frame: fp.frame.clone(), // Clone Arc - cheap!
@@ -446,7 +428,6 @@ impl Cache {
             global_end: 0,
             global_frame: 0,
 
-            lru_cache: lru_cache_shared,
             memory_usage: memory_usage_shared,
             max_memory_bytes,
 
@@ -521,9 +502,7 @@ impl Cache {
         self.global_end = 0;
         self.global_frame = 0;
 
-        // Clear cache
-        let mut lru = self.lru_cache.write().unwrap();
-        lru.clear();
+        // Reset memory usage (frames will be cleared when sequences are cleared)
         self.memory_usage.store(0, Ordering::Relaxed);
 
         // Clear frame paths cache
@@ -683,22 +662,12 @@ impl Cache {
 
         let (seq_idx, frame_idx) = self.global_to_local(global_idx)?;
 
-        // Check if cached (read lock - allows concurrent access from other threads)
-        {
-            let lru = self.lru_cache.read().unwrap();
-            if lru.contains(&(seq_idx, frame_idx)) {
-                drop(lru);
-                // No need to update access time here - LruCache already tracks order
-                // and we don't want write locks on hot path (UI frame display)
-                return self.sequences.get(seq_idx)?.idx(frame_idx as isize, false);
-            }
-        }
-
-        // Not cached, trigger load ONLY if not already loaded AND within play_range
+        // Get frame from sequence
         if let Some(seq) = self.sequences.get(seq_idx) {
             if let Some(frame) = seq.idx(frame_idx as isize, false) {
-                // Check if frame needs loading (Header status = file set but not loaded)
-                if matches!(frame.status(), FrameStatus::Header) {
+                // Trigger load if needed (Header/Placeholder status = not loaded yet)
+                let status = frame.status();
+                if status == FrameStatus::Header || status == FrameStatus::Placeholder {
                     // Only trigger load if within play_range (second line of defense)
                     let (play_start, play_end) = self.get_play_range();
                     if global_idx >= play_start && global_idx <= play_end {
@@ -729,28 +698,10 @@ impl Cache {
                 Ok(frame) => {
                     let frame_size = frame.mem();
 
-                    let mut lru = self.lru_cache.write().unwrap();
-
-                    // Ensure space (O(1) eviction with pop_lru)
-                    self.ensure_space_locked(&mut lru, frame_size);
-
-                    // Cache frame (LruCache automatically tracks access order)
-                    let key = (loaded_frame.seq_idx, loaded_frame.frame_idx);
-                    lru.put(
-                        key,
-                        CacheEntry {
-                            frame: frame.clone(),
-                        },
-                    ); // O(1) insertion + automatic access tracking!
+                    // Update memory usage
                     self.memory_usage.fetch_add(frame_size, Ordering::Relaxed);
 
-                    // Update sequence frame
-                    if let Some(seq) = self.sequences.get_mut(loaded_frame.seq_idx) {
-                        if let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false)
-                        {
-                            *seq_frame = frame;
-                        }
-                    }
+                    // Frame already updated via shared Arc, no need to update sequence
 
                     // Progress
                     self.progress
@@ -789,27 +740,6 @@ impl Cache {
     // Note: update_access_time() removed - LruCache automatically maintains access order
     // No need for manual timestamp tracking or write locks on read path
 
-    /// Ensure space for new frame (LRU eviction with O(1) pop_lru)
-    fn ensure_space_locked(
-        &self,
-        lru: &mut LruCache<(usize, usize), CacheEntry>,
-        new_frame_size: usize,
-    ) {
-        let memory = &self.memory_usage;
-
-        while memory.load(Ordering::Relaxed) + new_frame_size > self.max_memory_bytes {
-            if let Some((key, entry)) = lru.pop_lru() {
-                // O(1) eviction!
-                let removed_size = entry.frame.mem();
-                memory.fetch_sub(removed_size, Ordering::Relaxed);
-                debug!("Evicted frame {:?} ({} bytes)", key, removed_size);
-            } else {
-                // No more entries in cache
-                break;
-            }
-        }
-    }
-
     /// Get memory usage
     pub fn mem(&self) -> (usize, usize) {
         let usage = self.memory_usage.load(Ordering::Relaxed);
@@ -817,34 +747,29 @@ impl Cache {
     }
 
     /// Update memory limit as a fraction of currently available system memory
-    /// and immediately enforce the new limit by evicting least-recently-used frames.
     pub fn set_memory_fraction(&mut self, max_mem: f64) {
         let mut sys = System::new_all();
         sys.refresh_memory();
         let available_memory = sys.available_memory() as usize;
         self.max_memory_bytes = (available_memory as f64 * max_mem) as usize;
 
-        // Evict if over the new budget
-        self.enforce_memory_limit();
+        // Note: Memory is now managed via play_range unloading
+        // Frames outside play_range are automatically unloaded to Header state
     }
 
-    /// Evict LRU frames until usage <= max_memory_bytes
-    pub fn enforce_memory_limit(&mut self) {
-        let mut lru = self.lru_cache.write().unwrap();
-        while self.memory_usage.load(Ordering::Relaxed) > self.max_memory_bytes {
-            if let Some((_key, entry)) = lru.pop_lru() {
-                let removed_size = entry.frame.mem();
-                self.memory_usage.fetch_sub(removed_size, Ordering::Relaxed);
-            } else {
-                break;
+    /// Get count of cached frames (Loaded status) in memory
+    pub fn cached_frames_count(&self) -> usize {
+        let mut count = 0;
+        for seq in &self.sequences {
+            for i in 0..seq.len() {
+                if let Some(frame) = seq.idx(i as isize, false) {
+                    if frame.status() == FrameStatus::Loaded {
+                        count += 1;
+                    }
+                }
             }
         }
-    }
-
-    /// Get count of cached frames in memory
-    pub fn cached_frames_count(&self) -> usize {
-        let lru = self.lru_cache.read().unwrap();
-        lru.len()
+        count
     }
 
     /// Get sequences (returns reference for zero-copy access)
@@ -884,9 +809,6 @@ impl Cache {
                     .store(self.global_end, Ordering::Relaxed);
             }
 
-            // Reindex cache to reflect new sequence positions
-            self.reindex();
-
             // Rebuild frame paths cache
             self.rebuild_frame_paths_cache();
 
@@ -897,34 +819,6 @@ impl Cache {
     }
 
     /// Reindex entire cache based on current sequences state
-    /// Uses frame paths as source of truth for correct indices
-    fn reindex(&mut self) {
-        let mut lru = self.lru_cache.write().unwrap();
-
-        // Build path -> (seq_idx, frame_idx) mapping from current state
-        let mut path_to_idx = std::collections::HashMap::new();
-        for fp in &self.frame_paths_cache {
-            if let Some(path) = fp.frame.file() {
-                path_to_idx.insert(path.clone(), (fp.seq_idx, fp.frame_idx));
-            }
-        }
-
-        // Rebuild LRU cache with correct indices (avoid intermediate tuple copy)
-        let mut new_lru = lru::LruCache::unbounded();
-
-        // Drain old cache and rebuild with updated indices
-        while let Some((_, entry)) = lru.pop_lru() {
-            if let Some(path) = entry.frame.file() {
-                if let Some(&(new_seq, new_frame)) = path_to_idx.get(path) {
-                    new_lru.push((new_seq, new_frame), entry);
-                }
-            }
-            // If path not found, frame was removed - skip
-        }
-
-        *lru = new_lru;
-    }
-
     /// Move sequence by offset (-1 = up, +1 = down, etc.)
     pub fn move_seq(&mut self, seq_idx: usize, offset: isize) {
         if offset == 0 || self.sequences.is_empty() {
@@ -953,9 +847,6 @@ impl Cache {
 
         // Insert at new position
         self.sequences.insert(new_idx, seq);
-
-        // Reindex cache to reflect new sequence positions
-        self.reindex();
 
         self.rebuild_frame_paths_cache();
 
@@ -1143,32 +1034,6 @@ mod tests {
         assert_eq!(cache.memory_usage.load(Ordering::Relaxed), 0);
     }
 
-    /// Test: Concurrent reads don't block each other
-    /// Validates: RwLock allows multiple simultaneous readers
-    #[test]
-    fn test_concurrent_reads() {
-        let (cache, _ui_rx) = Cache::new(0.1, None);
-        let cache = Arc::new(cache);
-
-        let mut handles = vec![];
-
-        // Spawn 10 reader threads
-        for _ in 0..10 {
-            let cache_clone = Arc::clone(&cache);
-            let handle = thread::spawn(move || {
-                // Read lock - should not block other readers
-                let lru = cache_clone.lru_cache.read().unwrap();
-                thread::sleep(std::time::Duration::from_millis(10));
-                drop(lru);
-            });
-            handles.push(handle);
-        }
-
-        // All threads should complete without deadlock
-        for handle in handles {
-            handle.join().unwrap();
-        }
-    }
 
     /// Test: Concurrent load attempts don't panic
     /// Validates: Multiple threads can safely attempt frame loading

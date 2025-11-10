@@ -5,13 +5,6 @@ use std::hash::{Hash, Hasher};
 use crate::cache::Cache;
 use crate::frame::FrameStatus;
 
-// Load indicator colors
-const COLOR_PLACEHOLDER: Color32 = Color32::from_rgb(40, 40, 45); // Тёмно-серый
-const COLOR_HEADER: Color32 = Color32::from_rgb(60, 100, 180); // Синий
-const COLOR_LOADING: Color32 = Color32::from_rgb(220, 160, 60); // Оранжевый
-const COLOR_LOADED: Color32 = Color32::from_rgb(80, 200, 120); // Зелёный
-const COLOR_ERROR: Color32 = Color32::from_rgb(200, 60, 60); // Красный
-
 /// Cache for load indicator state
 #[derive(Clone, Debug)]
 struct LoadIndicatorCache {
@@ -389,13 +382,7 @@ fn draw_load_indicator(painter: &egui::Painter, rect: Rect, statuses: &[FrameSta
         let x_start = indicator_rect.min.x + (idx as f32 * block_width);
         let x_end = x_start + block_width;
 
-        let color = match status {
-            FrameStatus::Placeholder => COLOR_PLACEHOLDER,
-            FrameStatus::Header => COLOR_HEADER,
-            FrameStatus::Loading => COLOR_LOADING,
-            FrameStatus::Loaded => COLOR_LOADED,
-            FrameStatus::Error => COLOR_ERROR,
-        };
+        let color = status.color();
 
         let block_rect = Rect::from_min_max(
             Pos2::new(x_start, indicator_rect.min.y),

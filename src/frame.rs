@@ -86,6 +86,20 @@ pub enum FrameStatus {
     Error,       // Loading failed
 }
 
+impl FrameStatus {
+    /// Get UI color for this status (for load indicator)
+    pub fn color(&self) -> eframe::egui::Color32 {
+        use eframe::egui::Color32;
+        match self {
+            FrameStatus::Placeholder => Color32::from_rgb(40, 40, 45),  // Dark grey
+            FrameStatus::Header => Color32::from_rgb(60, 100, 180),      // Blue
+            FrameStatus::Loading => Color32::from_rgb(220, 160, 60),     // Orange
+            FrameStatus::Loaded => Color32::from_rgb(80, 200, 120),      // Green
+            FrameStatus::Error => Color32::from_rgb(200, 60, 60),        // Red
+        }
+    }
+}
+
 /// Internal frame data protected by mutex
 #[derive(Debug, Clone)]
 struct FrameData {
