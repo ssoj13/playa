@@ -40,6 +40,42 @@ struct Args {
     #[arg(value_name = "FILE")]
     file_path: Option<PathBuf>,
 
+    /// Additional files to load (can be specified multiple times)
+    #[arg(short = 'f', long = "file", value_name = "FILE")]
+    files: Vec<PathBuf>,
+
+    /// Load playlist from JSON file
+    #[arg(short = 'p', long = "playlist", value_name = "PLAYLIST")]
+    playlist: Option<PathBuf>,
+
+    /// Start in fullscreen mode
+    #[arg(short = 'F', long = "fullscreen")]
+    fullscreen: bool,
+
+    /// Start frame number (0-based)
+    #[arg(long = "frame", value_name = "N")]
+    start_frame: Option<usize>,
+
+    /// Auto-play on startup
+    #[arg(short = 'a', long = "autoplay")]
+    autoplay: bool,
+
+    /// Enable looping (default: true)
+    #[arg(short = 'o', long = "loop", value_name = "0|1", default_value = "1")]
+    loop_playback: u8,
+
+    /// Play range start frame
+    #[arg(long = "start", value_name = "N")]
+    range_start: Option<usize>,
+
+    /// Play range end frame
+    #[arg(long = "end", value_name = "N")]
+    range_end: Option<usize>,
+
+    /// Play range (shorthand for --start and --end)
+    #[arg(long = "range", value_names = ["START", "END"], num_args = 2)]
+    range: Option<Vec<usize>>,
+
     /// Enable debug logging to file (default: playa.log)
     #[arg(short = 'l', long = "log", value_name = "LOG_FILE")]
     log_file: Option<Option<PathBuf>>,
@@ -714,19 +750,78 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Fast cache restoration (sequences + current frame)
             let cache_path = paths::data_file("playa_cache.json", &path_config);
 
-            // CLI argument has priority
-            if let Some(file_path) = args.file_path {
-                info!("CLI argument provided, loading sequence");
-                match Sequence::detect(vec![file_path.clone()]) {
-                    Ok(sequences) => {
-                        for seq in sequences {
-                            app.player.cache.append_seq(seq);
+            // CLI arguments have priority
+            let has_cli_input = args.file_path.is_some() || !args.files.is_empty() || args.playlist.is_some();
+
+            if has_cli_input {
+                info!("CLI arguments provided, loading sequences");
+
+                // Collect all file paths in order: positional arg, -f flags, -p playlist
+                let mut all_files = Vec::new();
+
+                if let Some(ref path) = args.file_path {
+                    all_files.push(path.clone());
+                }
+
+                all_files.extend(args.files.iter().cloned());
+
+                // Load files
+                if !all_files.is_empty() {
+                    match Sequence::detect(all_files.clone()) {
+                        Ok(sequences) => {
+                            for seq in sequences {
+                                app.player.cache.append_seq(seq);
+                            }
+                            info!("Loaded {} files", all_files.len());
+                        }
+                        Err(e) => {
+                            warn!("Failed to load files: {}", e);
                         }
                     }
-                    Err(e) => {
-                        warn!("Failed to load {}: {}", file_path.display(), e);
+                }
+
+                // Load playlist
+                if let Some(ref playlist_path) = args.playlist {
+                    info!("Loading playlist: {}", playlist_path.display());
+                    match app.player.cache.from_json(playlist_path, false) {
+                        Ok(count) => {
+                            info!("Playlist loaded: {} sequences", count);
+                        }
+                        Err(e) => {
+                            warn!("Failed to load playlist {}: {}", playlist_path.display(), e);
+                        }
                     }
                 }
+
+                // Apply CLI options
+                if let Some(frame) = args.start_frame {
+                    app.player.cache.set_frame(frame);
+                }
+
+                if args.autoplay {
+                    app.player.is_playing = true;
+                }
+
+                app.player.loop_enabled = args.loop_playback != 0;
+
+                // Set play range
+                let (range_start, range_end) = if let Some(ref range) = args.range {
+                    (Some(range[0]), Some(range[1]))
+                } else {
+                    (args.range_start, args.range_end)
+                };
+
+                if let (Some(start), Some(end)) = (range_start, range_end) {
+                    app.player.cache.set_play_range(start, end);
+                }
+
+                // Set fullscreen
+                if args.fullscreen {
+                    app.set_cinema_mode(&cc.egui_ctx, true);
+                }
+
+                // Trigger preload
+                app.player.cache.signal_preload();
             } else if cache_path.exists() {
                 // Restore cache state (instant UI, no I/O)
                 info!("Restoring cache from {}", cache_path.display());

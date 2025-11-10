@@ -190,10 +190,10 @@ fn draw_play_range(
     let x_start = frame_to_x(start);
     let x_end = frame_to_x(end + 1); // +1 to include end frame
 
-    // Full height bar
+    // 4-pixel height bar at the top
     let play_rect = Rect::from_min_max(
         Pos2::new(x_start, rect.min.y),
-        Pos2::new(x_end, rect.max.y),
+        Pos2::new(x_end, rect.min.y + 4.0),
     );
 
     // Semi-transparent grey overlay (75% opacity = 191 alpha)
