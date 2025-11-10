@@ -122,12 +122,41 @@ impl EncodeDialog {
 
     /// Create new encode dialog with settings from AppSettings
     pub fn new(settings: EncoderSettings) -> Self {
+        // Convert flat EncoderSettings to per-codec CodecSettings
+        let mut codec_settings = CodecSettings::default();
+
+        // Apply settings based on selected codec
+        match settings.codec {
+            VideoCodec::H264 => {
+                codec_settings.h264.encoder_impl = settings.encoder_impl;
+                codec_settings.h264.quality_mode = settings.quality_mode;
+                codec_settings.h264.quality_value = settings.quality_value;
+                codec_settings.h264.preset = settings.preset.clone().unwrap_or_default();
+                codec_settings.h264.profile = settings.profile.clone().unwrap_or_default();
+            }
+            VideoCodec::H265 => {
+                codec_settings.h265.encoder_impl = settings.encoder_impl;
+                codec_settings.h265.quality_mode = settings.quality_mode;
+                codec_settings.h265.quality_value = settings.quality_value;
+                codec_settings.h265.preset = settings.preset.clone().unwrap_or_default();
+            }
+            VideoCodec::AV1 => {
+                codec_settings.av1.encoder_impl = settings.encoder_impl;
+                codec_settings.av1.quality_mode = settings.quality_mode;
+                codec_settings.av1.quality_value = settings.quality_value;
+                codec_settings.av1.preset = settings.preset.clone().unwrap_or_else(|| "p4".to_string());
+            }
+            VideoCodec::ProRes => {
+                codec_settings.prores.profile = settings.prores_profile.unwrap_or(ProResProfile::Standard);
+            }
+        }
+
         Self {
             output_path: settings.output_path,
             container: settings.container,
             fps: settings.fps,
             selected_codec: settings.codec,
-            codec_settings: CodecSettings::default(),
+            codec_settings,
             is_encoding: false,
             progress: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -140,6 +169,7 @@ impl EncodeDialog {
 
     /// Build EncoderSettings from current UI state
     pub fn build_encoder_settings(&self) -> EncoderSettings {
+        // self.output_path is already normalized (kept in sync with container changes)
         let (encoder_impl, quality_mode, quality_value, preset, profile, prores_profile) =
             match self.selected_codec {
                 VideoCodec::H264 => (
@@ -190,6 +220,16 @@ impl EncodeDialog {
         }
     }
 
+    /// Check if encoding is currently in progress
+    pub fn is_encoding(&self) -> bool {
+        self.is_encoding
+    }
+
+    /// Stop encoding (public interface for ESC key handling)
+    pub fn stop_encoding(&mut self) {
+        self.stop_encoding_keep_window();
+    }
+
     /// Render the encode dialog
     ///
     /// Returns: true if dialog should remain open, false if closed
@@ -209,11 +249,11 @@ impl EncodeDialog {
                 match &progress.stage {
                     EncodeStage::Complete => {
                         info!("Encoding completed successfully");
-                        self.stop_encoding();
+                        self.reset_encoding_state();
                     }
                     EncodeStage::Error(msg) => {
                         info!("Encoding failed: {}", msg);
-                        self.stop_encoding();
+                        self.reset_encoding_state();
                     }
                     _ => {}
                 }
@@ -514,13 +554,13 @@ impl EncodeDialog {
         }
 
         // Force reset to clean state
-        self.stop_encoding();
+        self.reset_encoding_state();
         self.progress = None;
         self.cancel_flag = Arc::new(AtomicBool::new(false));
     }
 
     /// Stop encoding (cleanup after completion or error)
-    fn stop_encoding(&mut self) {
+    fn reset_encoding_state(&mut self) {
         self.is_encoding = false;
         self.progress_rx = None;
         self.encode_thread = None;
@@ -574,13 +614,49 @@ impl EncodeDialog {
         // Preset
         ui.horizontal(|ui| {
             ui.label("Preset:");
-            ui.text_edit_singleline(&mut self.codec_settings.h264.preset);
+
+            // Presets for H.264 encoders
+            let presets = match self.codec_settings.h264.encoder_impl {
+                EncoderImpl::Hardware => {
+                    // NVENC/QSV/AMF
+                    vec!["default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6", "p7"]
+                }
+                EncoderImpl::Software | EncoderImpl::Auto => {
+                    // libx264
+                    vec!["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"]
+                }
+            };
+
+            egui::ComboBox::from_id_salt("h264_preset")
+                .selected_text(&self.codec_settings.h264.preset)
+                .show_ui(ui, |ui| {
+                    for preset in presets {
+                        ui.selectable_value(
+                            &mut self.codec_settings.h264.preset,
+                            preset.to_string(),
+                            preset,
+                        );
+                    }
+                });
         });
 
         // Profile (libx264 only)
         ui.horizontal(|ui| {
             ui.label("Profile:");
-            ui.text_edit_singleline(&mut self.codec_settings.h264.profile);
+
+            let profiles = vec!["baseline", "main", "high", "high10", "high422", "high444"];
+
+            egui::ComboBox::from_id_salt("h264_profile")
+                .selected_text(&self.codec_settings.h264.profile)
+                .show_ui(ui, |ui| {
+                    for profile in profiles {
+                        ui.selectable_value(
+                            &mut self.codec_settings.h264.profile,
+                            profile.to_string(),
+                            profile,
+                        );
+                    }
+                });
         });
 
         ui.add_space(4.0);
@@ -635,7 +711,30 @@ impl EncodeDialog {
         // Preset
         ui.horizontal(|ui| {
             ui.label("Preset:");
-            ui.text_edit_singleline(&mut self.codec_settings.h265.preset);
+
+            // Presets for H.265 encoders (same as H.264)
+            let presets = match self.codec_settings.h265.encoder_impl {
+                EncoderImpl::Hardware => {
+                    // NVENC/QSV/AMF
+                    vec!["default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6", "p7"]
+                }
+                EncoderImpl::Software | EncoderImpl::Auto => {
+                    // libx265
+                    vec!["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"]
+                }
+            };
+
+            egui::ComboBox::from_id_salt("h265_preset")
+                .selected_text(&self.codec_settings.h265.preset)
+                .show_ui(ui, |ui| {
+                    for preset in presets {
+                        ui.selectable_value(
+                            &mut self.codec_settings.h265.preset,
+                            preset.to_string(),
+                            preset,
+                        );
+                    }
+                });
         });
 
         // Empty lines for vertical alignment with H264 tab
@@ -713,10 +812,63 @@ impl EncodeDialog {
 
         ui.horizontal(|ui| {
             ui.label("Preset:");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.codec_settings.av1.preset)
-                    .hint_text("6 (SVT-AV1 0-13, NVENC p1-p7)"),
-            );
+
+            // Determine available presets based on encoder
+            let (presets, descriptions): (Vec<&str>, Vec<&str>) = match self.codec_settings.av1.encoder_impl {
+                EncoderImpl::Hardware => {
+                    // NVENC/QSV/AMF: p1-p7 + named presets
+                    (
+                        vec!["p1", "p2", "p3", "p4", "p5", "p6", "p7", "default", "slow", "medium", "fast"],
+                        vec![
+                            "P1 (fastest, lowest quality)",
+                            "P2 (faster, lower quality)",
+                            "P3 (fast, low quality)",
+                            "P4 (medium, default)",
+                            "P5 (slow, good quality)",
+                            "P6 (slower, better quality)",
+                            "P7 (slowest, best quality)",
+                            "Default",
+                            "Slow (HQ 2 passes)",
+                            "Medium (HQ 1 pass)",
+                            "Fast (HP 1 pass)",
+                        ],
+                    )
+                }
+                EncoderImpl::Software | EncoderImpl::Auto => {
+                    // SVT-AV1/libaom: numeric 0-13 presets
+                    (
+                        vec!["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"],
+                        vec![
+                            "0 (slowest, best)",
+                            "1",
+                            "2",
+                            "3",
+                            "4",
+                            "5",
+                            "6 (balanced)",
+                            "7",
+                            "8",
+                            "9",
+                            "10",
+                            "11",
+                            "12",
+                            "13 (fastest)",
+                        ],
+                    )
+                }
+            };
+
+            egui::ComboBox::from_id_salt("av1_preset")
+                .selected_text(&self.codec_settings.av1.preset)
+                .show_ui(ui, |ui| {
+                    for (preset, desc) in presets.iter().zip(descriptions.iter()) {
+                        ui.selectable_value(
+                            &mut self.codec_settings.av1.preset,
+                            preset.to_string(),
+                            format!("{} - {}", preset, desc),
+                        );
+                    }
+                });
         });
 
         ui.add_space(4.0);

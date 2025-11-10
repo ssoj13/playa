@@ -172,7 +172,7 @@ impl Default for AV1Settings {
             encoder_impl: EncoderImpl::Auto,
             quality_mode: QualityMode::CRF,
             quality_value: 30, // AV1 default (roughly equivalent to H.264 CRF 23)
-            preset: "6".to_string(), // Medium speed for SVT-AV1 (0=slowest, 13=fastest)
+            preset: "p4".to_string(), // Default preset (p4=medium for NVENC, or use "6" for SVT-AV1)
         }
     }
 }
@@ -731,6 +731,13 @@ pub fn encode_sequence(
         width,
         height
     );
+
+    // Log all encoder options for debugging
+    info!("Encoder options:");
+    for (key, value) in opts.iter() {
+        info!("  {} = {}", key, value);
+    }
+
     let mut encoder = encoder.open_with(opts).map_err(|e| {
         EncodeError::OutputCreateFailed(format!("Failed to open encoder '{}': {}", encoder_name, e))
     })?;

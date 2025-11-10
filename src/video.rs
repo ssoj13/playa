@@ -63,6 +63,12 @@ impl VideoMetadata {
     }
 }
 
+/// Get video dimensions without decoding frames
+pub fn get_video_dimensions(path: &Path) -> Result<(usize, usize), FrameError> {
+    let metadata = VideoMetadata::from_file(path)?;
+    Ok((metadata.width as usize, metadata.height as usize))
+}
+
 pub fn decode_frame(
     path: &Path,
     frame_num: usize,

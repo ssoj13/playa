@@ -234,11 +234,11 @@ impl Cache {
                                     continue; // Skip stale request
                                 }
 
-                                // Load frame - atomic claim prevents duplicates
-                                // Frame.load() will skip if already loading/loaded
+                                // Load frame using smart status management
+                                // set_status(Loaded) will call load() internally
                                 let result = req
                                     .frame
-                                    .load()
+                                    .set_status(FrameStatus::Loaded)
                                     .map(|_| req.frame.clone())
                                     .map_err(|e| e.to_string());
 
@@ -566,7 +566,7 @@ impl Cache {
 
     /// Set play range (work area) for encoding and playback loop
     /// Validates that start <= end and both are within global range
-    /// Triggers cache preload for new range
+    /// Triggers cache preload for new range and unloads frames outside range
     pub fn set_play_range(&self, start: usize, end: usize) {
         let total = self.total_frames();
 
@@ -576,6 +576,9 @@ impl Cache {
 
         self.play_range_start.store(valid_start, Ordering::Relaxed);
         self.play_range_end.store(valid_end, Ordering::Relaxed);
+
+        // Unload frames outside new range
+        self.unload_frames_outside_range(valid_start, valid_end);
 
         // Trigger preload for new range
         self.signal_preload();
@@ -587,6 +590,31 @@ impl Cache {
         let start = self.play_range_start.load(Ordering::Relaxed);
         let end = self.play_range_end.load(Ordering::Relaxed);
         (start, end)
+    }
+
+    /// Unload frames outside the specified range to Header state
+    /// This frees pixel data while preserving metadata
+    fn unload_frames_outside_range(&self, range_start: usize, range_end: usize) {
+        let mut global_idx = 0;
+
+        for seq in &self.sequences {
+            let seq_len = seq.len();
+
+            for local_idx in 0..seq_len {
+                // Check if this frame is outside play_range
+                if global_idx < range_start || global_idx > range_end {
+                    if let Some(frame) = seq.idx(local_idx as isize, false) {
+                        // Only unload if currently Loaded
+                        if frame.status() == FrameStatus::Loaded {
+                            if let Err(e) = frame.set_status(FrameStatus::Header) {
+                                debug!("Failed to unload frame {}: {:?}", global_idx, e);
+                            }
+                        }
+                    }
+                }
+                global_idx += 1;
+            }
+        }
     }
 
     /// Reset play range to full sequence range
@@ -742,7 +770,7 @@ impl Cache {
                         if let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false)
                         {
                             use crate::frame::FrameStatus;
-                            seq_frame.set_status(FrameStatus::Placeholder);
+                            let _ = seq_frame.set_status(FrameStatus::Placeholder);
                         }
                     }
                 }

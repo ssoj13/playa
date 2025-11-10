@@ -199,7 +199,7 @@ impl PlayaApp {
             self.show_settings = !self.show_settings;
         }
 
-        if input.key_pressed(egui::Key::F7) {
+        if input.key_pressed(egui::Key::F4) {
             self.show_encode_dialog = !self.show_encode_dialog;
             // Create dialog on first open with current settings
             if self.show_encode_dialog && self.encode_dialog.is_none() {
@@ -209,11 +209,28 @@ impl PlayaApp {
             }
         }
 
-        // ESC/Q: one handler. ESC leaves cinema/fullscreen first; Q always quits.
+        // ESC/Q: Priority-based handler. ESC: fullscreen -> encode dialog -> settings -> quit. Q: always quit.
         if input.key_pressed(egui::Key::Escape) || input.key_pressed(egui::Key::Q) {
+            // Priority 1: Fullscreen/Cinema mode (highest priority - most immersive state)
             if input.key_pressed(egui::Key::Escape) && self.is_fullscreen {
                 self.set_cinema_mode(ctx, false);
-            } else {
+            }
+            // Priority 2: Encode dialog (modal dialog should be dismissed before app closes)
+            else if input.key_pressed(egui::Key::Escape) && self.show_encode_dialog {
+                // Close encode dialog (stop encoding if in progress)
+                if let Some(ref mut dialog) = self.encode_dialog {
+                    if dialog.is_encoding() {
+                        dialog.stop_encoding();
+                    }
+                }
+                self.show_encode_dialog = false;
+            }
+            // Priority 3: Settings dialog (preferences window)
+            else if input.key_pressed(egui::Key::Escape) && self.show_settings {
+                self.show_settings = false;
+            }
+            // Priority 4: Quit application (default action when nothing else to dismiss)
+            else {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
@@ -505,10 +522,12 @@ impl eframe::App for PlayaApp {
             && let Some(ref mut dialog) = self.encode_dialog
         {
             let should_stay_open = dialog.render(ctx, &self.player.cache);
+
+            // Always save current settings (for persistence across sessions)
+            self.settings.encoder_settings = dialog.build_encoder_settings();
+
             if !should_stay_open {
                 self.show_encode_dialog = false;
-                // Save settings when closing (build from current UI state)
-                self.settings.encoder_settings = dialog.build_encoder_settings();
             }
         }
     }

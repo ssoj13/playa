@@ -178,7 +178,7 @@ fn draw_seq_backgrounds(
     }
 }
 
-/// Draw play range (work area) indicator - grey bar in middle 50% height
+/// Draw play range (work area) indicator - grey bar at full height with 75% opacity
 fn draw_play_range(
     painter: &egui::Painter,
     rect: Rect,
@@ -197,20 +197,17 @@ fn draw_play_range(
     let x_start = frame_to_x(start);
     let x_end = frame_to_x(end + 1); // +1 to include end frame
 
-    // Position bar in middle 50% of height
-    let bar_height = rect.height() * 0.5;
-    let bar_y_offset = rect.height() * 0.25; // Center vertically
-
+    // Full height bar
     let play_rect = Rect::from_min_max(
-        Pos2::new(x_start, rect.min.y + bar_y_offset),
-        Pos2::new(x_end, rect.min.y + bar_y_offset + bar_height),
+        Pos2::new(x_start, rect.min.y),
+        Pos2::new(x_end, rect.max.y),
     );
 
-    // Semi-transparent grey overlay
+    // Semi-transparent grey overlay (75% opacity = 191 alpha)
     painter.rect_filled(
         play_rect,
         0.0,
-        Color32::from_rgba_premultiplied(120, 120, 120, 80),
+        Color32::from_rgba_premultiplied(90, 90, 90, 191),
     );
 }
 

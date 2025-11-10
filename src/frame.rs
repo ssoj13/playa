@@ -77,7 +77,7 @@ pub enum CropAlign {
 }
 
 /// Frame loading status
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FrameStatus {
     Placeholder, // No filename, green placeholder
     Header,      // Filename set, header loaded (resolution known), buffer is green placeholder
@@ -175,7 +175,7 @@ impl Frame {
     /// Set filename but don't load yet (sets status to Header)
     pub fn set_file(&mut self, path: PathBuf) {
         self.filename = Some(path);
-        self.data.lock().unwrap().status = FrameStatus::Header;
+        let _ = self.set_status(FrameStatus::Header);
     }
 
     /// Get filename if set
@@ -206,6 +206,66 @@ impl Frame {
         } else {
             false // Already loading, loaded, or error
         }
+    }
+
+    /// Load only header (width/height) from any image format
+    ///
+    /// **Why**: Fast metadata loading without decoding pixels
+    ///
+    /// **Used by**: Initial frame setup, play_range cache management
+    ///
+    /// Supports: EXR, PNG, JPG, TIFF, HDR, TGA
+    pub fn load_header(&self) -> Result<(), FrameError> {
+        let path = self
+            .filename
+            .as_ref()
+            .ok_or(FrameError::NoFilename)?
+            .clone();
+
+        // Parse video path: "video.mp4@17" -> ("video.mp4", Some(17))
+        let (actual_path, _frame_num) = parse_video_path(&path);
+
+        // For video files, get dimensions from video metadata
+        if media::is_video(&actual_path) {
+            let (width, height) = crate::video::get_video_dimensions(&actual_path)?;
+
+            let mut data = self.data.lock().unwrap();
+            data.width = width;
+            data.height = height;
+            data.status = FrameStatus::Header;
+
+            debug!("Loaded video header: {}x{}", width, height);
+            return Ok(());
+        }
+
+        // For images, use ExrImpl::header (works for all formats via image crate)
+        let ext = actual_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        let (width, height) = match ext.as_str() {
+            "exr" => ExrImpl::header(&actual_path)?,
+            "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" | "hdr" => {
+                // Use ImageReader for fast header reading without decoding pixels
+                let reader = image::ImageReader::open(&actual_path)
+                    .map_err(|e| FrameError::Image(e.to_string()))?;
+                let (w, h) = reader
+                    .into_dimensions()
+                    .map_err(|e| FrameError::Image(e.to_string()))?;
+                (w as usize, h as usize)
+            }
+            _ => return Err(FrameError::UnsupportedFormat(format!(".{}", ext))),
+        };
+
+        let mut data = self.data.lock().unwrap();
+        data.width = width;
+        data.height = height;
+        data.status = FrameStatus::Header;
+
+        debug!("Loaded header: {}x{}", width, height);
+        Ok(())
     }
 
     /// Load frame from disk (JPG/PNG/EXR) into pixel buffer
@@ -397,9 +457,91 @@ impl Frame {
         self.data.lock().unwrap().status.clone()
     }
 
-    /// Set status
-    pub fn set_status(&self, status: FrameStatus) {
-        self.data.lock().unwrap().status = status;
+    /// Smart status transition with automatic state management
+    ///
+    /// Handles state transitions intelligently:
+    /// - Loaded → Header: Unloads pixel data, keeps metadata (width/height/filename)
+    /// - Placeholder → Header: Loads metadata from file
+    /// - Header → Loaded: Loads full pixel data
+    /// - Error → Header: Resets to header state for retry
+    /// - Error → Loaded: Attempts full reload
+    /// - Loading → Header: Cancels load, keeps/loads metadata
+    pub fn set_status(&self, new_status: FrameStatus) -> Result<(), FrameError> {
+        let current_status = self.status();
+
+        // Same status - no-op
+        if current_status == new_status {
+            return Ok(());
+        }
+
+        match (current_status, new_status) {
+            // === Unload: Loaded → Header ===
+            // Drop pixel data, keep metadata
+            (FrameStatus::Loaded, FrameStatus::Header) => {
+                let mut data = self.data.lock().unwrap();
+
+                // Create green placeholder buffer with current dimensions
+                let size = data.width * data.height * 4;
+                let mut buffer_u8 = Vec::with_capacity(size);
+                buffer_u8.resize(size, 0);
+                for px in buffer_u8.chunks_exact_mut(4) {
+                    px[1] = 100; // G channel
+                    px[3] = 255; // A channel
+                }
+
+                data.buffer = Arc::new(PixelBuffer::U8(buffer_u8));
+                data.pixel_format = PixelFormat::Rgba8;
+                data.status = FrameStatus::Header;
+
+                debug!("Unloaded frame to Header: {}x{}", data.width, data.height);
+                Ok(())
+            }
+
+            // === Load metadata: Placeholder → Header ===
+            (FrameStatus::Placeholder, FrameStatus::Header) => self.load_header(),
+
+            // === Load full data: Header/Error → Loaded ===
+            (FrameStatus::Header | FrameStatus::Error, FrameStatus::Loaded) => {
+                // Call existing load() method
+                self.load()
+            }
+
+            // === Reset error: Error → Header ===
+            (FrameStatus::Error, FrameStatus::Header) => {
+                let mut data = self.data.lock().unwrap();
+
+                // Create green placeholder buffer with current dimensions
+                let size = data.width * data.height * 4;
+                let mut buffer_u8 = Vec::with_capacity(size);
+                buffer_u8.resize(size, 0);
+                for px in buffer_u8.chunks_exact_mut(4) {
+                    px[1] = 100; // G channel
+                    px[3] = 255; // A channel
+                }
+
+                data.buffer = Arc::new(PixelBuffer::U8(buffer_u8));
+                data.pixel_format = PixelFormat::Rgba8;
+                data.status = FrameStatus::Header;
+
+                debug!("Reset error to Header: {}x{}", data.width, data.height);
+                Ok(())
+            }
+
+            // === Cancel loading: Loading → Header ===
+            // Can't actually cancel async load, but mark as Header for retry
+            (FrameStatus::Loading, FrameStatus::Header) => {
+                let mut data = self.data.lock().unwrap();
+                data.status = FrameStatus::Header;
+                debug!("Cancelled loading, marked as Header");
+                Ok(())
+            }
+
+            // === Direct status change (other transitions) ===
+            _ => {
+                self.data.lock().unwrap().status = new_status;
+                Ok(())
+            }
+        }
     }
 
     /// Get pixel buffer (returns Arc for efficient sharing)
