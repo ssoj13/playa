@@ -910,6 +910,8 @@ playa
 ## Usage
 
 ### Launch
+
+#### Basic Usage
 ```bash
 # Start with empty player (drag-and-drop or file dialog)
 playa
@@ -917,13 +919,88 @@ playa
 # Load specific file or sequence
 playa path/to/image.0001.exr
 
-# Use custom config directory
-playa --config-dir ~/.playa path/to/image.0001.exr
-
-# Enable file logging
-playa --log                          # Logs to playa.log
-playa --log custom.log               # Logs to custom file
+# Load multiple files (detects sequences automatically)
+playa file1.exr file2.exr
 ```
+
+#### Command-Line Arguments
+
+**File Loading:**
+```bash
+# Load single file (positional argument)
+playa image.0001.exr
+
+# Load multiple files (detects sequences for each)
+playa -f seq1.0001.exr -f seq2.0001.exr
+
+# Load saved playlist
+playa -p playlist.json
+
+# Combine files and playlist (loaded in command-line order)
+playa image.exr -f seq1.exr -f seq2.exr -p playlist.json
+```
+
+**Playback Control:**
+```bash
+# Start in fullscreen (cinema mode)
+playa -F image.exr
+
+# Set starting frame (0-based)
+playa --frame 100 image.exr
+
+# Auto-start playback
+playa -a image.exr
+
+# Disable looping
+playa -o 0 image.exr
+
+# Set play range (work area)
+playa --start 10 --end 50 image.exr
+playa --range 10 50 image.exr        # Shorthand
+```
+
+**Configuration:**
+```bash
+# Use custom config directory
+playa --config-dir ~/.playa
+
+# Override memory budget (percentage of system RAM)
+playa --mem 75
+
+# Set worker thread count
+playa --workers 8
+```
+
+**Logging:**
+```bash
+# Enable file logging (default: playa.log)
+playa --log
+
+# Log to custom file
+playa --log custom.log
+
+# Increase verbosity (default: warn)
+playa -v              # Info level
+playa -vv             # Debug level
+playa -vvv            # Trace level (maximum detail)
+```
+
+**Full Example:**
+```bash
+# Load sequence, start at frame 50, auto-play in fullscreen with debug logging
+playa -f render.0001.exr --frame 50 -a -F --range 0 100 -vv --log
+```
+
+**Help:**
+```bash
+# Show all available options
+playa --help
+
+# Show version
+playa --version
+```
+
+**Note:** When starting without any arguments, help text is automatically printed to console before launching the GUI.
 
 ### Keyboard Shortcuts
 

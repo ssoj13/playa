@@ -80,6 +80,10 @@ struct Args {
     #[arg(short = 'l', long = "log", value_name = "LOG_FILE")]
     log_file: Option<Option<PathBuf>>,
 
+    /// Increase logging verbosity (default: warn, -v: info, -vv: debug, -vvv+: trace)
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    verbosity: u8,
+
     /// Custom configuration directory (overrides default platform paths)
     #[arg(short = 'c', long = "config-dir", value_name = "DIR")]
     config_dir: Option<PathBuf>,
@@ -610,6 +614,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments first (needed for log setup)
     let args = Args::parse();
 
+    // Check if running without arguments (GUI mode) and print help
+    let has_any_args = args.file_path.is_some()
+        || !args.files.is_empty()
+        || args.playlist.is_some()
+        || args.fullscreen
+        || args.start_frame.is_some()
+        || args.autoplay
+        || args.loop_playback != 1
+        || args.range_start.is_some()
+        || args.range_end.is_some()
+        || args.range.is_some()
+        || args.log_file.is_some()
+        || args.verbosity > 0
+        || args.config_dir.is_some()
+        || args.mem_percent.is_some()
+        || args.workers.is_some();
+
+    if !has_any_args {
+        // Print help in GUI mode (no CLI arguments provided)
+        use clap::CommandFactory;
+        let mut cmd = Args::command();
+        let _ = cmd.print_help();
+        println!("\n");
+    }
+
     // Create path configuration from CLI args and environment
     let path_config = paths::PathConfig::from_env_and_cli(args.config_dir.clone());
 
@@ -618,9 +647,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Warning: Failed to create application directories: {}", e);
     }
 
+    // Determine log level based on verbosity flags
+    // 0 (default) = warn, 1 (-v) = info, 2 (-vv) = debug, 3+ (-vvv) = trace
+    let log_level = match args.verbosity {
+        0 => log::LevelFilter::Warn,
+        1 => log::LevelFilter::Info,
+        2 => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Trace,
+    };
+
     // Initialize logger based on --log flag
     if let Some(log_path_opt) = &args.log_file {
-        // File logging with debug level
+        // File logging with specified verbosity level
         let log_path = log_path_opt
             .as_ref()
             .cloned()
@@ -629,15 +667,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let file = std::fs::File::create(&log_path).expect("Failed to create log file");
 
         env_logger::Builder::new()
-            .filter_level(log::LevelFilter::Debug)
+            .filter_level(log_level)
             .format_timestamp_millis()
             .target(env_logger::Target::Pipe(Box::new(file)))
             .init();
 
-        info!("Debug logging enabled to file: {}", log_path.display());
+        info!("Logging to file: {} (level: {:?})", log_path.display(), log_level);
     } else {
-        // Normal console logging (set RUST_LOG env var to control level)
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        // Console logging with specified verbosity level (respects RUST_LOG if set)
+        let default_level = match args.verbosity {
+            0 => "warn",
+            1 => "info",
+            2 => "debug",
+            _ => "trace",
+        };
+
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
             .format_timestamp_millis()
             .init();
     }
@@ -726,12 +771,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.path_config = path_config_for_app;
 
             // Attempt to load shaders from the shaders directory
-            if let Err(e) = app
+            if let Err(_) = app
                 .shader_manager
                 .load_shader_directory(&std::path::PathBuf::from("shaders"))
             {
-                log::warn!("Could not load shader directory: {}", e);
-                log::info!("Using default built-in shaders");
+                log::info!("Shaders folder does not exist, skipping external shader loading");
             }
 
             // Apply persisted settings to components

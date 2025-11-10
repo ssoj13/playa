@@ -137,11 +137,8 @@ impl Shaders {
         manager.load_embedded_shaders();
 
         // Then try to load from directory (external .glsl files can override embedded ones)
-        if let Err(e) = manager.load_shader_directory(Path::new("shaders")) {
-            log::info!(
-                "No shader directory found ({}), using embedded shaders only",
-                e
-            );
+        if let Err(_) = manager.load_shader_directory(Path::new("shaders")) {
+            log::info!("Shaders folder does not exist, using embedded shaders only");
         }
 
         manager
