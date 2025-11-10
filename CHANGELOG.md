@@ -1,3 +1,29 @@
+## [0.1.127] - 2025-11-10
+
+### 🚀 Features
+
+- Improve video encoding with frame conversion, GOP settings, and UI fixes
+- Add timeline support, fix AV1/ProRes encoding, improve encoding UI
+- Add smart frame status management and play range cache optimization
+
+### 🐛 Bug Fixes
+
+- Fix MP4 timeline and improve encode cancellation
+
+### 🚜 Refactor
+
+- Remove LRU cache, use status-based frame management
+
+### 📚 Documentation
+
+- Add CLAUDE.md for AI-assisted development
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Sun 11/09/2025 - 17:51:52.86
+- WIP Sun 11/09/2025 - 20:21:00.01
+- WIP Sun 11/09/2025 - 21:44:14.83
+- WIP Sun 11/09/2025 - 23:07:29.37
 ## [0.1.126] - 2025-11-09
 
 ### 🚀 Features
