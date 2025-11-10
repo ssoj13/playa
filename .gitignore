@@ -4,6 +4,7 @@
 *.pdb
 *.mp4
 *.json
+*.md
 temp_log.txt
 
 # IDE
