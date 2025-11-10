@@ -224,90 +224,94 @@ impl PlayaApp {
             self.player.toggle_play_pause();
         }
 
-        // Rewind to start
-        if input.key_pressed(egui::Key::ArrowUp) {
-            self.player.to_start();
-        }
-
-        // J, <, Left Arrow - jog backward
-        if input.key_pressed(egui::Key::J)
-            || (!input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowLeft))
-            || input.key_pressed(egui::Key::Comma)
-        {
-            self.player.jog_backward();
-        }
-
-        // K, Down Arrow - stop playback or decrease fps
-        if input.key_pressed(egui::Key::K) || input.key_pressed(egui::Key::ArrowDown) {
-            self.player.stop_or_decrease_fps();
-        }
-
-        // L, >, Right Arrow - jog forward
-        if input.key_pressed(egui::Key::L)
-            || (!input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowRight))
-            || input.key_pressed(egui::Key::Period)
-        {
-            self.player.jog_forward();
-        }
-
-        // Toggle Loop with ' and `
-        if input.key_pressed(egui::Key::Quote) || input.key_pressed(egui::Key::Backtick) {
-            self.player.loop_enabled = !self.player.loop_enabled;
-        }
-
-        // Set play range start (B = Begin)
-        if !input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
-            let current = self.player.cache.frame();
-            let (_, end) = self.player.cache.get_play_range();
-            self.player.cache.set_play_range(current, end);
-        }
-
-        // Set play range end (N = eNd)
-        if input.key_pressed(egui::Key::N) {
-            let current = self.player.cache.frame();
-            let (start, _) = self.player.cache.get_play_range();
-            self.player.cache.set_play_range(start, current);
-        }
-
-        // Reset play range to full sequence (Ctrl+B)
-        if input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
-            self.player.cache.reset_play_range();
-        }
-
-        // Skip to start/end (Ctrl modifiers)
-        if input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowLeft) {
-            self.player.to_start();
-        }
-        if input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowRight) {
-            self.player.to_end();
-        }
-
-        // Ctrl+R: reset settings and force exit cinema/fullscreen
-        if input.modifiers.ctrl && input.key_pressed(egui::Key::R) {
-            self.reset_settings(ctx);
-            if self.is_fullscreen {
-                self.set_cinema_mode(ctx, false);
+        // Only process playback hotkeys when no widget has keyboard focus
+        // (prevents arrow keys from triggering playback while editing text fields)
+        if !ctx.wants_keyboard_input() {
+            // Rewind to start
+            if input.key_pressed(egui::Key::ArrowUp) {
+                self.player.to_start();
             }
-        }
 
-        // Z: toggle cinema/fullscreen
-        if input.key_pressed(egui::Key::Z) {
-            let enable = !self.is_fullscreen;
-            self.set_cinema_mode(ctx, enable);
-        }
+            // J, <, Left Arrow - jog backward
+            if input.key_pressed(egui::Key::J)
+                || (!input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowLeft))
+                || input.key_pressed(egui::Key::Comma)
+            {
+                self.player.jog_backward();
+            }
 
-        // Viewport controls
-        if input.key_pressed(egui::Key::F) {
-            self.viewport_state.set_mode_fit();
-        }
+            // K, Down Arrow - stop playback or decrease fps
+            if input.key_pressed(egui::Key::K) || input.key_pressed(egui::Key::ArrowDown) {
+                self.player.stop_or_decrease_fps();
+            }
 
-        if input.key_pressed(egui::Key::A)
-            || input.key_pressed(egui::Key::Num1)
-            || input.key_pressed(egui::Key::Home)
-            || input.key_pressed(egui::Key::H)
-        {
-            self.viewport_state.set_mode_100();
-        }
+            // L, >, Right Arrow - jog forward
+            if input.key_pressed(egui::Key::L)
+                || (!input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowRight))
+                || input.key_pressed(egui::Key::Period)
+            {
+                self.player.jog_forward();
+            }
+
+            // Toggle Loop with ' and `
+            if input.key_pressed(egui::Key::Quote) || input.key_pressed(egui::Key::Backtick) {
+                self.player.loop_enabled = !self.player.loop_enabled;
+            }
+
+            // Set play range start (B = Begin)
+            if !input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
+                let current = self.player.cache.frame();
+                let (_, end) = self.player.cache.get_play_range();
+                self.player.cache.set_play_range(current, end);
+            }
+
+            // Set play range end (N = eNd)
+            if input.key_pressed(egui::Key::N) {
+                let current = self.player.cache.frame();
+                let (start, _) = self.player.cache.get_play_range();
+                self.player.cache.set_play_range(start, current);
+            }
+
+            // Reset play range to full sequence (Ctrl+B)
+            if input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
+                self.player.cache.reset_play_range();
+            }
+
+            // Skip to start/end (Ctrl modifiers)
+            if input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowLeft) {
+                self.player.to_start();
+            }
+            if input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowRight) {
+                self.player.to_end();
+            }
+
+            // Ctrl+R: reset settings and force exit cinema/fullscreen
+            if input.modifiers.ctrl && input.key_pressed(egui::Key::R) {
+                self.reset_settings(ctx);
+                if self.is_fullscreen {
+                    self.set_cinema_mode(ctx, false);
+                }
+            }
+
+            // Z: toggle cinema/fullscreen
+            if input.key_pressed(egui::Key::Z) {
+                let enable = !self.is_fullscreen;
+                self.set_cinema_mode(ctx, enable);
+            }
+
+            // Viewport controls
+            if input.key_pressed(egui::Key::F) {
+                self.viewport_state.set_mode_fit();
+            }
+
+            if input.key_pressed(egui::Key::A)
+                || input.key_pressed(egui::Key::Num1)
+                || input.key_pressed(egui::Key::Home)
+                || input.key_pressed(egui::Key::H)
+            {
+                self.viewport_state.set_mode_100();
+            }
+        } // End of !ctx.wants_keyboard_input()
     }
 
     fn reset_settings(&mut self, ctx: &egui::Context) {

@@ -362,11 +362,6 @@ pub enum EncodeStage {
 #[derive(Debug)]
 pub enum EncodeError {
     NoFrames,
-    InconsistentFrameSizes {
-        expected: (u32, u32),
-        found: (u32, u32),
-        frame: usize,
-    },
     EncoderNotFound,
     HardwareEncoderUnavailable,
     OutputCreateFailed(String),
@@ -378,17 +373,6 @@ impl std::fmt::Display for EncodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EncodeError::NoFrames => write!(f, "No frames to encode"),
-            EncodeError::InconsistentFrameSizes {
-                expected,
-                found,
-                frame,
-            } => {
-                write!(
-                    f,
-                    "Frame {} has different size {}x{} (expected {}x{})",
-                    frame, found.0, found.1, expected.0, expected.1
-                )
-            }
             EncodeError::EncoderNotFound => write!(f, "Encoder not found"),
             EncodeError::HardwareEncoderUnavailable => {
                 write!(f, "Hardware encoder not available")
@@ -490,36 +474,6 @@ fn get_encoder_name(
     }
 }
 
-/// Validate that all sequences have same dimensions
-///
-/// Uses sequence metadata (xres/yres) without loading frames.
-/// Returns (width, height) if valid, error otherwise
-fn validate_frame_sizes(cache: &Cache, _range: (usize, usize)) -> Result<(u32, u32), EncodeError> {
-    let sequences = cache.sequences();
-
-    if sequences.is_empty() {
-        return Err(EncodeError::NoFrames);
-    }
-
-    // Get dimensions from first sequence
-    let first_seq = &sequences[0];
-    let width = first_seq.xres();
-    let height = first_seq.yres();
-
-    // Verify all sequences have same dimensions
-    for (idx, seq) in sequences.iter().enumerate().skip(1) {
-        if seq.xres() != width || seq.yres() != height {
-            return Err(EncodeError::InconsistentFrameSizes {
-                expected: (width as u32, height as u32),
-                found: (seq.xres() as u32, seq.yres() as u32),
-                frame: idx,
-            });
-        }
-    }
-
-    Ok((width as u32, height as u32))
-}
-
 /// Main encoding function
 ///
 /// Encodes sequence from play_range to output file.
@@ -539,15 +493,28 @@ pub fn encode_sequence(
         total_frames, play_range.0, play_range.1, settings.output_path
     );
 
-    // Stage 1: Validate frame sizes
+    // Stage 1: Get target dimensions from first frame
     let _ = progress_tx.send(EncodeProgress {
         current_frame: 0,
         total_frames,
         stage: EncodeStage::Validating,
     });
 
-    let (width, height) = validate_frame_sizes(cache, play_range)?;
-    info!("Frame validation passed: {}x{}", width, height);
+    // Get first frame to determine target dimensions
+    let first_frame = cache.get_frame(play_range.0).ok_or_else(|| {
+        EncodeError::EncodeFrameFailed(format!("First frame {} not in cache", play_range.0))
+    })?;
+
+    // Ensure first frame is loaded
+    if first_frame.status() == FrameStatus::Header {
+        first_frame.load().map_err(|e| {
+            EncodeError::EncodeFrameFailed(format!("Failed to load first frame: {}", e))
+        })?;
+    }
+
+    let (width, height) = first_frame.resolution();
+    let (width, height) = (width as u32, height as u32);
+    info!("Using first frame dimensions as target: {}x{}", width, height);
 
     // Check for cancellation
     if cancel_flag.load(Ordering::Relaxed) {
@@ -629,6 +596,11 @@ pub fn encode_sequence(
     encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(fps_num, 1)));
     encoder.set_time_base(ffmpeg::util::rational::Rational::new(1, fps_num));
 
+    // Set GOP size (keyframe interval) for seekability
+    // GOP = 10 seconds (fps * 10) ensures keyframes for timeline scrubbing
+    let gop_size = (fps_num * 10).max(1);
+    encoder.set_gop(gop_size as u32);
+
     // Set quality parameters
     let mut opts = ffmpeg::Dictionary::new();
     match settings.quality_mode {
@@ -641,6 +613,9 @@ pub fn encode_sequence(
                 if let Some(ref preset) = settings.preset {
                     opts.set("preset", preset); // NVENC preset (p1-p7)
                 }
+                // Force regular keyframes for seekability
+                opts.set("forced-idr", "1"); // Force IDR frames at GOP boundaries
+                opts.set("no-scenecut", "1"); // Disable scene change detection (consistent GOP)
             } else if encoder_name == "libx264" {
                 // libx264 with customizable preset and profile
                 opts.set("crf", &settings.quality_value.to_string());
@@ -650,12 +625,18 @@ pub fn encode_sequence(
                 if let Some(ref profile) = settings.profile {
                     opts.set("profile", profile);
                 }
+                // Force keyframes for seekability
+                opts.set("keyint", &gop_size.to_string()); // Maximum GOP size
+                opts.set("sc_threshold", "0"); // Disable scene change detection
             } else if encoder_name == "libx265" {
                 // libx265 with customizable preset
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset {
                     opts.set("preset", preset);
                 }
+                // Force keyframes for seekability
+                opts.set("keyint", &gop_size.to_string()); // Maximum GOP size
+                opts.set("scenecut", "0"); // Disable scene change detection
             } else if encoder_name == "h264_qsv" || encoder_name == "hevc_qsv" {
                 // QSV uses global_quality
                 opts.set("global_quality", &settings.quality_value.to_string());
@@ -784,21 +765,30 @@ pub fn encode_sequence(
         stage: EncodeStage::Encoding,
     });
 
+    info!("Starting encoding loop for {} frames", total_frames);
+
     // Create reusable swscale context for RGB→YUV conversion
     let mut sws_ctx = if needs_yuv {
+        info!("Creating SwsContext for YUV conversion");
         Some(SwsContext::new_rgb_to_yuv(width, height)
             .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create swscale context: {}", e)))?)
     } else {
+        info!("Using RGB24 directly (no YUV conversion)");
         None
     };
 
     let mut pts = 0i64;
+    info!("Entering frame encoding loop...");
 
     #[allow(clippy::explicit_counter_loop)]
     for frame_idx in play_range.0..=play_range.1 {
         // Check for cancellation
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(EncodeError::Cancelled);
+        }
+
+        if frame_idx % 10 == 0 {
+            info!("Processing frame {}/{}", frame_idx - play_range.0, total_frames);
         }
 
         // Get frame from cache
@@ -815,16 +805,18 @@ pub fn encode_sequence(
 
         // STEP 1: Crop to target dimensions if needed (handles mixed resolutions)
         let (frame_width, frame_height) = frame.resolution();
-        if frame_width != width as usize || frame_height != height as usize {
+        let frame_to_encode = if frame_width != width as usize || frame_height != height as usize {
             info!(
                 "Cropping frame {} from {}x{} to {}x{}",
                 frame_idx, frame_width, frame_height, width, height
             );
-            frame.crop(width as usize, height as usize, CropAlign::Center);
-        }
+            frame.crop_copy(width as usize, height as usize, CropAlign::Center)
+        } else {
+            frame.clone()
+        };
 
         // STEP 2: Convert RGBA8 → RGB24 (using trait method)
-        let rgb24_data = frame.to_rgb24().map_err(|e| {
+        let rgb24_data = frame_to_encode.to_rgb24().map_err(|e| {
             EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB24 conversion failed: {}", frame_idx, e))
         })?;
 

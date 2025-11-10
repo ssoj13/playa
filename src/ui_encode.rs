@@ -137,18 +137,20 @@ impl EncodeDialog {
             }
         }
 
-        // Check if encoding completed
-        if let Some(ref progress) = self.progress {
-            match &progress.stage {
-                EncodeStage::Complete => {
-                    info!("Encoding completed successfully");
-                    self.stop_encoding();
+        // Check if encoding completed (only process once while encoding)
+        if self.is_encoding {
+            if let Some(ref progress) = self.progress {
+                match &progress.stage {
+                    EncodeStage::Complete => {
+                        info!("Encoding completed successfully");
+                        self.stop_encoding();
+                    }
+                    EncodeStage::Error(msg) => {
+                        info!("Encoding failed: {}", msg);
+                        self.stop_encoding();
+                    }
+                    _ => {}
                 }
-                EncodeStage::Error(msg) => {
-                    info!("Encoding failed: {}", msg);
-                    self.stop_encoding();
-                }
-                _ => {}
             }
         }
 
@@ -324,10 +326,10 @@ impl EncodeDialog {
 
                 // === Buttons ===
                 ui.horizontal(|ui| {
-                    // Cancel button (closes window)
-                    if ui.button("Cancel").clicked() {
+                    // Close button (stops encoding if running, then closes window)
+                    if ui.button("Close").clicked() {
                         if self.is_encoding {
-                            self.cancel_encoding();
+                            self.stop_encoding_and_close();
                         }
                         should_close = true;
                     }
@@ -396,9 +398,20 @@ impl EncodeDialog {
         self.is_encoding = true;
     }
 
-    /// Cancel encoding with timeout and force reset
-    fn cancel_encoding(&mut self) {
-        info!("Cancelling encoding");
+    /// Stop encoding and close window
+    fn stop_encoding_and_close(&mut self) {
+        info!("Stopping encoding (closing window)");
+        self.stop_encoding_internal();
+    }
+
+    /// Stop encoding but keep window open
+    fn stop_encoding_keep_window(&mut self) {
+        info!("Stopping encoding (keeping window open)");
+        self.stop_encoding_internal();
+    }
+
+    /// Internal: Stop encoding thread with timeout
+    fn stop_encoding_internal(&mut self) {
         self.cancel_flag.store(true, Ordering::Relaxed);
 
         // Wait for thread with timeout
@@ -413,7 +426,9 @@ impl EncodeDialog {
                 if handle.is_finished() {
                     match handle.join() {
                         Ok(Ok(())) => info!("Encode thread stopped cleanly"),
-                        Ok(Err(e)) => info!("Encode thread stopped with error: {}", e),
+                        Ok(Err(e)) => {
+                            info!("Encode thread stopped with error: {}", e);
+                        }
                         Err(_) => info!("Encode thread panicked"),
                     }
                     break;

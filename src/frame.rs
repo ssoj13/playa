@@ -449,10 +449,51 @@ impl Frame {
         (data.width, data.height)
     }
 
-    /// Crop or pad frame to new dimensions in-place
+    /// Create cropped copy of frame without modifying original
+    ///
+    /// Returns new Frame with target dimensions. Does not mutate cached data.
     ///
     /// - If new size > current: pad with green placeholder color
-    /// - If new size < current: center-crop
+    /// - If new size < current: crop according to alignment
+    /// - If new size == current: returns copy
+    ///
+    /// # Arguments
+    ///
+    /// - `new_w`, `new_h`: Target dimensions
+    /// - `align`: Alignment mode (Center or LeftTop)
+    ///
+    /// # Returns
+    ///
+    /// New Frame with cropped/padded dimensions
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use playa::frame::{Frame, CropAlign};
+    /// let frame = Frame::new(1920, 1080);
+    /// let cropped = frame.crop_copy(640, 480, CropAlign::Center);
+    /// // Original frame unchanged, cropped is 640x480
+    /// ```
+    pub fn crop_copy(&self, new_w: usize, new_h: usize, align: CropAlign) -> Frame {
+        // Create new frame with same data
+        let cropped = Frame {
+            data: Arc::new(Mutex::new(self.data.lock().unwrap().clone())),
+            filename: self.filename.clone(),
+        };
+
+        // Crop the copy in-place
+        cropped.crop(new_w, new_h, align);
+
+        cropped
+    }
+
+    /// Crop or pad frame to new dimensions in-place
+    ///
+    /// **WARNING**: Mutates frame data. For encoding, use `crop_copy()` to avoid
+    /// modifying cached frames.
+    ///
+    /// - If new size > current: pad with green placeholder color
+    /// - If new size < current: crop according to alignment
     /// - If new size == current: no-op
     ///
     /// # Arguments
@@ -465,7 +506,7 @@ impl Frame {
     /// ```rust,no_run
     /// # use playa::frame::{Frame, CropAlign};
     /// let mut frame = Frame::new(1920, 1080);
-    /// frame.crop(640, 480, CropAlign::Center); // Center-crop to 640x480
+    /// frame.crop(640, 480, CropAlign::Center); // Mutates frame to 640x480
     /// ```
     pub fn crop(&self, new_w: usize, new_h: usize, align: CropAlign) {
         let mut data = self.data.lock().unwrap();
