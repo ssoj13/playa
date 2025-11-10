@@ -8,7 +8,6 @@ mod player;
 mod prefs;
 mod progress;
 mod progress_bar;
-mod rgb_cvt;
 mod scrub;
 mod sequence;
 mod shaders;

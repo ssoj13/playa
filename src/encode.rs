@@ -201,10 +201,6 @@ impl Container {
             Container::MOV => "mov",
         }
     }
-
-    pub fn all() -> &'static [Container] {
-        &[Container::MP4, Container::MOV]
-    }
 }
 
 impl std::fmt::Display for Container {
@@ -234,6 +230,16 @@ impl VideoCodec {
             VideoCodec::AV1,
             VideoCodec::ProRes,
         ]
+    }
+
+    /// Get preferred container for this codec
+    pub fn preferred_container(&self) -> Container {
+        match self {
+            VideoCodec::H264 => Container::MP4,
+            VideoCodec::H265 => Container::MP4,
+            VideoCodec::AV1 => Container::MP4,
+            VideoCodec::ProRes => Container::MOV, // ProRes typically uses MOV
+        }
     }
 
     /// Check if any encoder is available for this codec
@@ -361,7 +367,6 @@ pub enum EncodeStage {
 /// Encoding errors
 #[derive(Debug)]
 pub enum EncodeError {
-    NoFrames,
     EncoderNotFound,
     HardwareEncoderUnavailable,
     OutputCreateFailed(String),
@@ -372,7 +377,6 @@ pub enum EncodeError {
 impl std::fmt::Display for EncodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EncodeError::NoFrames => write!(f, "No frames to encode"),
             EncodeError::EncoderNotFound => write!(f, "Encoder not found"),
             EncodeError::HardwareEncoderUnavailable => {
                 write!(f, "Hardware encoder not available")
@@ -566,7 +570,7 @@ pub fn encode_sequence(
     encoder.set_height(height);
 
     // Determine pixel format based on encoder
-    // Hardware encoders (NVENC, QSV, AMF) and AV1 encoders need YUV420P
+    // Hardware encoders (NVENC, QSV, AMF), AV1, and ProRes need YUV
     // Only libx264/libx265 can accept RGB24 directly
     let needs_yuv = matches!(
         encoder_name,
@@ -583,9 +587,13 @@ pub fn encode_sequence(
             | "hevc_videotoolbox"
             | "libsvtav1"
             | "libaom-av1"
+            | "prores_ks"
     );
 
-    let pixel_format = if needs_yuv {
+    // ProRes uses YUV422P10 (10-bit 4:2:2), others use YUV420P (8-bit 4:2:0)
+    let pixel_format = if encoder_name == "prores_ks" {
+        ffmpeg::format::Pixel::YUV422P10LE
+    } else if needs_yuv {
         ffmpeg::format::Pixel::YUV420P
     } else {
         ffmpeg::format::Pixel::RGB24
@@ -611,7 +619,9 @@ pub fn encode_sequence(
                 opts.set("rc", "constqp"); // Rate control mode
                 opts.set("cq", &settings.quality_value.to_string()); // Quality (0-51, lower is better)
                 if let Some(ref preset) = settings.preset {
-                    opts.set("preset", preset); // NVENC preset (p1-p7)
+                    if !preset.is_empty() {
+                        opts.set("preset", preset); // NVENC preset (p1-p7)
+                    }
                 }
                 // Force regular keyframes for seekability
                 opts.set("forced-idr", "1"); // Force IDR frames at GOP boundaries
@@ -620,7 +630,9 @@ pub fn encode_sequence(
                 // libx264 with customizable preset and profile
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset {
-                    opts.set("preset", preset);
+                    if !preset.is_empty() {
+                        opts.set("preset", preset);
+                    }
                 }
                 if let Some(ref profile) = settings.profile {
                     opts.set("profile", profile);
@@ -632,7 +644,9 @@ pub fn encode_sequence(
                 // libx265 with customizable preset
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset {
-                    opts.set("preset", preset);
+                    if !preset.is_empty() {
+                        opts.set("preset", preset);
+                    }
                 }
                 // Force keyframes for seekability
                 opts.set("keyint", &gop_size.to_string()); // Maximum GOP size
@@ -656,11 +670,13 @@ pub fn encode_sequence(
                 };
                 encoder.set_bit_rate(bitrate_kbps * 1000);
             } else if encoder_name == "av1_nvenc" {
-                // NVENC AV1 uses -cq (constant quantizer) like H.264/H.265
+                // NVENC AV1: use qp (not cq) for constqp mode
                 opts.set("rc", "constqp");
-                opts.set("cq", &settings.quality_value.to_string()); // CQ 0-51
+                opts.set("qp", &settings.quality_value.to_string()); // QP 0-255
                 if let Some(ref preset) = settings.preset {
-                    opts.set("preset", preset); // p1-p7
+                    if !preset.is_empty() {
+                        opts.set("preset", preset); // 0-18 or named presets
+                    }
                 }
             } else if encoder_name == "av1_qsv" {
                 // QSV AV1 uses global_quality
@@ -673,13 +689,17 @@ pub fn encode_sequence(
                 // SVT-AV1: CRF 0-63, preset 0-13 (0=slowest/best, 13=fastest)
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset {
-                    opts.set("preset", preset); // 0-13
+                    if !preset.is_empty() {
+                        opts.set("preset", preset); // 0-13
+                    }
                 }
             } else if encoder_name == "libaom-av1" {
                 // libaom-av1: CRF 0-63, cpu-used 0-8 (0=slowest, 8=fastest)
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset {
-                    opts.set("cpu-used", preset); // Map preset to cpu-used
+                    if !preset.is_empty() {
+                        opts.set("cpu-used", preset); // Map preset to cpu-used
+                    }
                 }
             } else if encoder_name == "prores_ks" {
                 // ProRes profile from settings or default to Standard
@@ -748,9 +768,13 @@ pub fn encode_sequence(
     octx.write_header_with(container_opts)
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to write header: {}", e)))?;
 
+    // Get stream time_base AFTER write_header (it may be adjusted by the muxer)
+    let stream_tb = octx.stream(0).unwrap().time_base();
+    let encoder_tb = encoder.time_base();
+
     info!(
-        "Encoder initialized: {}x{} @ {} fps, quality mode: {:?}",
-        width, height, settings.fps, settings.quality_mode
+        "Encoder initialized: {}x{} @ {} fps, quality mode: {:?}, time_base: encoder={:?} stream={:?}",
+        width, height, settings.fps, settings.quality_mode, encoder_tb, stream_tb
     );
 
     // Check for cancellation
@@ -769,8 +793,8 @@ pub fn encode_sequence(
 
     // Create reusable swscale context for RGB→YUV conversion
     let mut sws_ctx = if needs_yuv {
-        info!("Creating SwsContext for YUV conversion");
-        Some(SwsContext::new_rgb_to_yuv(width, height)
+        info!("Creating SwsContext for RGB→{:?} conversion", pixel_format);
+        Some(SwsContext::new(ffmpeg::format::Pixel::RGB24, pixel_format, width, height)
             .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create swscale context: {}", e)))?)
     } else {
         info!("Using RGB24 directly (no YUV conversion)");
@@ -820,11 +844,11 @@ pub fn encode_sequence(
             EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB24 conversion failed: {}", frame_idx, e))
         })?;
 
-        // STEP 3: Convert to FFmpeg frame (RGB24 or YUV420P depending on encoder)
+        // STEP 3: Convert to FFmpeg frame (RGB24 or YUV depending on encoder)
         let mut ffmpeg_frame = if needs_yuv {
-            // Convert RGB24 → YUV420P using reusable swscale context
+            // Convert RGB24 → YUV (YUV420P/YUV422P10) using reusable swscale context
             sws_ctx.as_mut().unwrap()
-                .convert_rgb24_to_yuv420p(&rgb24_data, width, height)
+                .convert(&rgb24_data, width, height)
                 .map_err(|e| {
                     EncodeError::EncodeFrameFailed(format!("RGB→YUV conversion failed: {}", e))
                 })?
@@ -874,12 +898,38 @@ pub fn encode_sequence(
             }
             encoded.set_stream(0);
 
+            // Rescale packet timestamps from encoder time_base to stream time_base
+            // This is CRITICAL for proper MP4 timeline and seeking
+            encoded.rescale_ts(encoder_tb, stream_tb);
+
+            // Set packet stream index
+            encoded.set_stream(0);
+
             // Set packet duration (1 frame in time_base units)
             encoded.set_duration(1);
 
-            // Set DTS equal to PTS for I-frame sequences (no B-frames)
-            if encoded.dts().is_none() {
-                encoded.set_dts(encoded.pts());
+            // Ensure DTS is set (NVENC sometimes doesn't set it)
+            let pts_val = encoded.pts();
+            let dts_val = encoded.dts();
+
+            if dts_val.is_none() {
+                if let Some(pts) = pts_val {
+                    encoded.set_dts(Some(pts));
+                }
+            }
+
+            // Debug: log first few packets
+            if frame_idx - play_range.0 < 3 {
+                info!(
+                    "Packet {}: pts={:?}, dts={:?}, duration={}, keyframe={}, tb={:?}→{:?}",
+                    frame_idx - play_range.0,
+                    encoded.pts(),
+                    encoded.dts(),
+                    encoded.duration(),
+                    encoded.is_key(),
+                    encoder_tb,
+                    stream_tb
+                );
             }
 
             encoded.write_interleaved(&mut octx).map_err(|e| {
@@ -922,14 +972,20 @@ pub fn encode_sequence(
             return Err(EncodeError::Cancelled);
         }
 
+        // Rescale packet timestamps from encoder time_base to stream time_base
+        encoded.rescale_ts(encoder_tb, stream_tb);
+
+        // Set packet stream index
         encoded.set_stream(0);
 
         // Set packet duration (1 frame in time_base units)
         encoded.set_duration(1);
 
-        // Set DTS equal to PTS for I-frame sequences (no B-frames)
+        // Ensure DTS is set
         if encoded.dts().is_none() {
-            encoded.set_dts(encoded.pts());
+            if let Some(pts) = encoded.pts() {
+                encoded.set_dts(Some(pts));
+            }
         }
 
         encoded.write_interleaved(&mut octx).map_err(|e| {
@@ -937,9 +993,13 @@ pub fn encode_sequence(
         })?;
     }
 
-    // Write container trailer
+    info!("Flushed {} remaining packets", total_frames - (play_range.1 - play_range.0 + 1));
+
+    // Write container trailer (CRITICAL: without this, no moov atom = no timeline)
+    info!("Writing trailer...");
     octx.write_trailer()
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to write trailer: {}", e)))?;
+    info!("Trailer written successfully");
 
     // Stage 5: Complete
     let _ = progress_tx.send(EncodeProgress {

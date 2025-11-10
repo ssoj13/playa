@@ -54,6 +54,72 @@ pub struct EncodeDialog {
 }
 
 impl EncodeDialog {
+    /// Increment the last number in filename
+    /// Examples: aaa001.mp4 -> aaa002.mp4, test999.mp4 -> test1000.mp4
+    fn increment_filename(&mut self) {
+        let file_stem = self.output_path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("output");
+
+        let extension = self.output_path.extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("mp4");
+
+        // Find last number in filename using regex-like approach
+        let mut last_num_start = None;
+        let mut last_num_end = None;
+        let mut in_number = false;
+
+        for (i, c) in file_stem.chars().enumerate() {
+            if c.is_ascii_digit() {
+                if !in_number {
+                    last_num_start = Some(i);
+                    in_number = true;
+                }
+                last_num_end = Some(i + 1);
+            } else {
+                in_number = false;
+            }
+        }
+
+        let new_stem = if let (Some(start), Some(end)) = (last_num_start, last_num_end) {
+            let prefix = &file_stem[..start];
+            let num_str = &file_stem[start..end];
+            let suffix = &file_stem[end..];
+
+            // Parse number and increment
+            if let Ok(num) = num_str.parse::<u32>() {
+                let new_num = num + 1;
+                let old_width = num_str.len();
+
+                // Calculate how many digits the new number has
+                let new_num_digits = if new_num == 0 {
+                    1
+                } else {
+                    ((new_num as f64).log10().floor() as usize) + 1
+                };
+
+                // Use original width if new number fits, otherwise use natural width
+                let width = old_width.max(new_num_digits);
+
+                format!("{}{:0width$}{}", prefix, new_num, suffix, width = width)
+            } else {
+                // If parse fails, just append 001
+                format!("{}001", file_stem)
+            }
+        } else {
+            // No number found, append 001
+            format!("{}001", file_stem)
+        };
+
+        // Update path with new filename
+        if let Some(parent) = self.output_path.parent() {
+            self.output_path = parent.join(format!("{}.{}", new_stem, extension));
+        } else {
+            self.output_path = PathBuf::from(format!("{}.{}", new_stem, extension));
+        }
+    }
+
     /// Create new encode dialog with settings from AppSettings
     pub fn new(settings: EncoderSettings) -> Self {
         Self {
@@ -170,30 +236,20 @@ impl EncodeDialog {
                             self.output_path = PathBuf::from(edit_path);
                         }
 
+                        // Increment filename button
+                        if ui.button("+")
+                            .on_hover_text("Increment number in filename (e.g., file001.mp4 → file002.mp4)")
+                            .clicked()
+                        {
+                            self.increment_filename();
+                        }
+
                         if ui.button("Browse").clicked()
                             && let Some(path) = rfd::FileDialog::new()
                                 .set_file_name("output.mp4")
                                 .save_file()
                         {
                             self.output_path = path;
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                // === Container ===
-                ui.label("Container:");
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        for container in Container::all() {
-                            if ui
-                                .radio_value(&mut self.container, *container, container.to_string())
-                                .changed()
-                            {
-                                // Update file extension when container changes
-                                self.output_path.set_extension(container.extension());
-                            }
                         }
                     });
                 });
@@ -227,6 +283,11 @@ impl EncodeDialog {
 
                                 if ui.add(button).clicked() {
                                     self.selected_codec = *codec;
+
+                                    // Auto-update container and file extension based on codec
+                                    let preferred_container = codec.preferred_container();
+                                    self.container = preferred_container;
+                                    self.output_path.set_extension(preferred_container.extension());
                                 }
                             });
 

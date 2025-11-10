@@ -15,16 +15,6 @@ pub struct SwsContext {
 }
 
 impl SwsContext {
-    /// Create new swscale context for RGB24 → YUV420P conversion
-    pub fn new_rgb_to_yuv(width: u32, height: u32) -> Result<Self, String> {
-        Self::new(
-            ffmpeg::format::Pixel::RGB24,
-            ffmpeg::format::Pixel::YUV420P,
-            width,
-            height,
-        )
-    }
-
     /// Create new swscale context with custom formats
     pub fn new(
         src_format: ffmpeg::format::Pixel,
@@ -52,8 +42,9 @@ impl SwsContext {
         })
     }
 
-    /// Convert RGB24 data to YUV420P FFmpeg frame
+    /// Convert RGB24 data to destination format (YUV420P, YUV422P10, etc.)
     ///
+    /// Uses the destination format specified during SwsContext creation.
     /// Reuses internal swscale context. Recreates if dimensions change.
     ///
     /// # Arguments
@@ -62,8 +53,8 @@ impl SwsContext {
     /// * `height` - Frame height
     ///
     /// # Returns
-    /// YUV420P FFmpeg video frame ready for encoding
-    pub fn convert_rgb24_to_yuv420p(
+    /// FFmpeg video frame in destination format ready for encoding
+    pub fn convert(
         &mut self,
         rgb24_data: &[u8],
         width: u32,
@@ -86,7 +77,7 @@ impl SwsContext {
 
         // Create source RGB24 frame
         let mut src_frame = ffmpeg::util::frame::video::Video::new(
-            ffmpeg::format::Pixel::RGB24,
+            self.src_format,
             width,
             height,
         );
@@ -105,9 +96,9 @@ impl SwsContext {
             }
         }
 
-        // Create destination YUV420P frame
+        // Create destination frame with configured format
         let mut dst_frame = ffmpeg::util::frame::video::Video::new(
-            ffmpeg::format::Pixel::YUV420P,
+            self.dst_format,
             width,
             height,
         );
