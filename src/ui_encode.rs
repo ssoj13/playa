@@ -142,6 +142,7 @@ impl EncodeDialog {
                 codec_settings.h265.quality_mode = settings.quality_mode;
                 codec_settings.h265.quality_value = settings.quality_value;
                 codec_settings.h265.preset = settings.preset.clone().unwrap_or_default();
+                codec_settings.h265.profile = settings.profile.clone().unwrap_or_else(|| "main".to_string());
             }
             VideoCodec::AV1 => {
                 codec_settings.av1.encoder_impl = settings.encoder_impl;
@@ -474,7 +475,9 @@ impl EncodeDialog {
     /// Start encoding process
     fn start_encoding(&mut self, cache: &Cache) {
         let settings = self.build_encoder_settings();
-        info!("Starting encoding: {:?}", settings);
+        info!("========== STARTING ENCODING ==========");
+        info!("Codec: {:?}, Container: {:?}", settings.codec, settings.container);
+        info!("Settings: {:?}", settings);
 
         // Reset cancel flag
         self.cancel_flag.store(false, Ordering::Relaxed);
@@ -494,16 +497,23 @@ impl EncodeDialog {
         use std::thread;
 
         let handle = thread::spawn(move || {
+            info!("Encoder thread started");
+
             // Create temporary cache with cloned sequences
+            info!("Creating temporary cache...");
             let (mut temp_cache, _rx) = Cache::new(0.75, None);
+
+            info!("Appending {} sequences...", cache_clone.len());
             for seq in cache_clone {
                 temp_cache.append_seq(seq);
             }
 
             // Set play range from original cache (append_seq sets full range by default)
+            info!("Setting play range: {:?}", play_range);
             temp_cache.set_play_range(play_range.0, play_range.1);
 
             // Run encoding
+            info!("Calling encode_sequence()...");
             encode_sequence(&mut temp_cache, &settings_clone, tx, cancel_flag_clone)
         });
 

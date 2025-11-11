@@ -522,10 +522,13 @@ pub fn encode_sequence(
     progress_tx: Sender<EncodeProgress>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<(), EncodeError> {
+    info!("========== encode_sequence() ENTERED ==========");
+
     // Get play range
     let play_range = cache.get_play_range();
     let total_frames = play_range.1 - play_range.0 + 1;
 
+    info!("Play range: {:?}, total frames: {}", play_range, total_frames);
     info!(
         "Starting encode: {} frames ({}..{}) to {:?}",
         total_frames, play_range.0, play_range.1, settings.output_path
@@ -935,12 +938,16 @@ pub fn encode_sequence(
         // STEP 3: Convert to RGB24 (8-bit) or RGB48 (10-bit)
         let mut ffmpeg_frame = if needs_10bit {
             // 10-bit path: RGBA → RGB48 (u16) → YUV10
+            if frame_idx % 10 == 0 {
+                info!("Frame {}: Converting RGBA → RGB48 (10-bit path)", frame_idx);
+            }
             let rgb48_data = frame_for_encode.to_rgb48().map_err(|e| {
                 EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB48 conversion failed: {}", frame_idx, e))
             })?;
 
-            // Convert RGB48 → YUV10 using swscale (TODO: implement convert_rgb48 in SwsContext)
-            // For now, this will fail - need to implement convert_rgb48()
+            if frame_idx % 10 == 0 {
+                info!("Frame {}: RGB48 conversion OK, calling swscale RGB48→YUV10", frame_idx);
+            }
             sws_ctx.as_mut().unwrap()
                 .convert_rgb48(&rgb48_data, width, height)
                 .map_err(|e| {
