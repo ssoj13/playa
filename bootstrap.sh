@@ -7,6 +7,7 @@
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
 #   ./bootstrap.sh test               # Run encoding integration test
+#   ./bootstrap.sh flamegraph         # Install and run flamegraph profiler
 #   ./bootstrap.sh install            # Install playa from crates.io (checks FFmpeg dependencies)
 #   ./bootstrap.sh publish            # Publish crate to crates.io
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
@@ -96,6 +97,27 @@ if [ ! -f "target/debug/xtask" ]; then
 fi
 
 # Handle special commands
+if [ "$1" = "flamegraph" ]; then
+    # Install and run flamegraph profiling
+    echo "Installing and running flamegraph profiler..."
+    echo ""
+
+    # Check if flamegraph is installed
+    if ! cargo flamegraph --version &> /dev/null; then
+        echo "Installing flamegraph..."
+        cargo install flamegraph
+        echo "✓ flamegraph installed"
+    else
+        echo "✓ flamegraph already installed"
+    fi
+
+    echo ""
+    echo "Running flamegraph profiler in release mode..."
+    echo ""
+    cargo flamegraph --release --bin playa
+    exit 0
+fi
+
 if [ "$1" = "test" ]; then
     # Run encoding integration test
     echo "Running encoding integration test..."

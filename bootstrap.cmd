@@ -7,6 +7,7 @@
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
 ::   bootstrap.cmd test               # Run encoding integration test
+::   bootstrap.cmd flamegraph         # Install and run flamegraph profiler (requires Windows Performance Toolkit)
 ::   bootstrap.cmd install            # Install playa from crates.io (checks FFmpeg dependencies)
 ::   bootstrap.cmd publish            # Publish crate to crates.io
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
@@ -135,6 +136,33 @@ if "%~1"=="publish" (
     echo Publishing crate to crates.io...
     echo.
     cargo publish
+    goto :end
+)
+
+if "%~1"=="flamegraph" (
+    :: Install and run flamegraph profiling
+    echo Installing and running flamegraph profiler...
+    echo.
+
+    :: Check if flamegraph is installed
+    cargo flamegraph --version >nul 2>&1
+    if errorlevel 1 (
+        echo Installing flamegraph...
+        cargo install flamegraph
+        if errorlevel 1 (
+            echo Error: Failed to install flamegraph
+            exit /b 1
+        )
+        echo ✓ flamegraph installed
+    ) else (
+        echo ✓ flamegraph already installed
+    )
+
+    echo.
+    echo Running flamegraph profiler in release mode...
+    echo Note: On Windows, this requires Windows Performance Toolkit (WPT)
+    echo.
+    cargo flamegraph --release --bin playa
     goto :end
 )
 
