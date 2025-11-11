@@ -32,7 +32,7 @@ use status_bar::StatusBar;
 use std::path::PathBuf;
 use viewport::{ViewportRenderer, ViewportState};
 
-/// Image sequence player for VFX workflows
+/// Image sequence player
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {

@@ -8,7 +8,7 @@
 [![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
-Playa is an image sequence player for VFX workflows. Async loading, OpenGL rendering, Video encoding, simple UI, single binary.
+Playa is an image sequence player. Async loading, OpenGL rendering, Video encoding, simple UI, single binary.
 
 ![Screenshot](.github/screenshot.jpg)
 
