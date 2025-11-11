@@ -522,7 +522,8 @@ pub fn encode_sequence(
     progress_tx: Sender<EncodeProgress>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<(), EncodeError> {
-    info!("========== encode_sequence() ENTERED ==========");
+    let start_time = std::time::Instant::now();
+    info!("========== encode_sequence() ENTERED at {:?} ==========", start_time);
 
     // Get play range
     let play_range = cache.get_play_range();
@@ -587,17 +588,19 @@ pub fn encode_sequence(
     let encoder_name = get_encoder_name(settings.codec, settings.encoder_impl)?;
     info!("Looking for encoder: {}", encoder_name);
 
+    info!("[{:?}] Looking for encoder '{}'...", start_time.elapsed(), encoder_name);
     let codec = ffmpeg::encoder::find_by_name(encoder_name).ok_or_else(|| {
         info!("Encoder '{}' not found", encoder_name);
         EncodeError::EncoderNotFound
     })?;
 
     info!(
-        "Using encoder: {} for codec {:?}",
-        encoder_name, settings.codec
+        "[{:?}] Using encoder: {} for codec {:?}",
+        start_time.elapsed(), encoder_name, settings.codec
     );
 
     // Create encoder context
+    info!("[{:?}] Creating encoder context...", start_time.elapsed());
     let mut encoder = ffmpeg::codec::context::Context::new_with_codec(codec)
         .encoder()
         .video()
@@ -783,7 +786,8 @@ pub fn encode_sequence(
 
     // Open encoder with options
     info!(
-        "Opening encoder '{}' with pixel_format={:?}, size={}x{}",
+        "[{:?}] Opening encoder '{}' with pixel_format={:?}, size={}x{}",
+        start_time.elapsed(),
         encoder_name,
         encoder.format(),
         width,
