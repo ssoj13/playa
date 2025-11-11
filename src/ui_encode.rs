@@ -51,6 +51,9 @@ pub struct EncodeDialog {
 
     /// Last encoder name (for display)
     encoder_name: String,
+
+    /// Tonemapping mode for HDR→LDR conversion
+    pub tonemap_mode: crate::frame::TonemapMode,
 }
 
 impl EncodeDialog {
@@ -164,6 +167,7 @@ impl EncodeDialog {
             encode_thread: None,
             progress_bar: ProgressBar::new(400.0, 20.0),
             encoder_name: String::new(),
+            tonemap_mode: settings.tonemap_mode,
         }
     }
 
@@ -185,7 +189,7 @@ impl EncodeDialog {
                     self.codec_settings.h265.quality_mode,
                     self.codec_settings.h265.quality_value,
                     Some(self.codec_settings.h265.preset.clone()),
-                    None,
+                    Some(self.codec_settings.h265.profile.clone()),
                     None,
                 ),
                 VideoCodec::AV1 => (
@@ -217,6 +221,7 @@ impl EncodeDialog {
             preset,
             profile,
             prores_profile,
+            tonemap_mode: self.tonemap_mode,
         }
     }
 
@@ -737,9 +742,28 @@ impl EncodeDialog {
                 });
         });
 
-        // Empty lines for vertical alignment with H264 tab
         ui.add_space(4.0);
-        ui.label("");
+
+        // Profile (main or main10)
+        ui.horizontal(|ui| {
+            ui.label("Profile:");
+
+            let profiles = vec!["main", "main10"];
+
+            egui::ComboBox::from_id_salt("h265_profile")
+                .selected_text(&self.codec_settings.h265.profile)
+                .show_ui(ui, |ui| {
+                    for profile in profiles {
+                        ui.selectable_value(
+                            &mut self.codec_settings.h265.profile,
+                            profile.to_string(),
+                            profile,
+                        );
+                    }
+                });
+        });
+
+        // Empty lines for vertical alignment with H264 tab
         ui.add_space(4.0);
         ui.label("");
     }

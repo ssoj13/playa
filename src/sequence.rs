@@ -218,7 +218,7 @@ impl Sequence {
 
         // Create frames
         for i in self.start..=self.end {
-            let mut frame = Frame::new(self.xres, self.yres);
+            let mut frame = Frame::new_u8(self.xres, self.yres);
             if let Some(path) = frame_map.get(&i) {
                 frame.set_file(path.clone());
             }
@@ -280,7 +280,7 @@ impl Sequence {
             self.padding = 0;
             self.pattern = path.to_string();
 
-            let mut frame = Frame::new(self.xres, self.yres);
+            let mut frame = Frame::new_u8(self.xres, self.yres);
             frame.set_file(path_buf);
             self.frames.push(frame);
 
@@ -536,9 +536,9 @@ mod tests {
     fn test_idx_wrap() {
         let seq = Sequence {
             frames: vec![
-                Frame::new(100, 100),
-                Frame::new(100, 100),
-                Frame::new(100, 100),
+                Frame::new_u8(100, 100),
+                Frame::new_u8(100, 100),
+                Frame::new_u8(100, 100),
             ],
             pattern: "test".to_string(),
             start: 0,

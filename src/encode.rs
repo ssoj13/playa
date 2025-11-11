@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 
 use crate::cache::Cache;
 use crate::convert::SwsContext;
-use crate::frame::{CropAlign, FrameConversion, FrameStatus};
+use crate::frame::{CropAlign, FrameConversion, FrameStatus, TonemapMode, PixelFormat};
 use playa_ffmpeg as ffmpeg;
 
 /// Encoder settings (persistent via AppSettings)
@@ -30,9 +30,13 @@ pub struct EncoderSettings {
     #[serde(default)]
     pub preset: Option<String>, // H.264/H.265 preset (e.g. "medium", "p4")
     #[serde(default)]
-    pub profile: Option<String>, // H.264 profile (e.g. "high")
+    pub profile: Option<String>, // H.264/H.265 profile (e.g. "high", "main", "main10")
     #[serde(default)]
     pub prores_profile: Option<ProResProfile>, // ProRes profile
+
+    // HDR → LDR conversion settings
+    #[serde(default)]
+    pub tonemap_mode: TonemapMode, // Tonemapping mode for HDR sources (when encoding 8-bit)
 }
 
 impl Default for EncoderSettings {
@@ -46,8 +50,9 @@ impl Default for EncoderSettings {
             quality_value: 23, // Default CRF for H.264
             fps: 24.0,         // Default framerate
             preset: Some("medium".to_string()),
-            profile: Some("high".to_string()),
+            profile: Some("high".to_string()), // H.264: "high", H.265: "main" or "main10"
             prores_profile: Some(ProResProfile::Standard),
+            tonemap_mode: TonemapMode::default(), // ACES by default
         }
     }
 }
@@ -81,6 +86,8 @@ pub struct H265Settings {
     pub quality_mode: QualityMode,
     pub quality_value: u32, // CRF 0-51 or bitrate kbps
     pub preset: String,     // ultrafast/fast/medium/slow/veryslow (libx265) or p1-p7 (nvenc)
+    #[serde(default)]
+    pub profile: String,    // "main" (8-bit) or "main10" (10-bit)
 }
 
 impl Default for H265Settings {
@@ -90,6 +97,7 @@ impl Default for H265Settings {
             quality_mode: QualityMode::CRF,
             quality_value: 28, // H.265 default is higher than H.264
             preset: "medium".to_string(),
+            profile: "main".to_string(), // 8-bit by default
         }
     }
 }
@@ -405,59 +413,80 @@ fn get_encoder_name(
             // Priority: VideoToolbox (macOS) > NVENC (NVIDIA) > QSV (Intel) > AMF (AMD) > Software
             #[cfg(target_os = "macos")]
             if ffmpeg::encoder::find_by_name("h264_videotoolbox").is_some() {
+                info!("H.264: Selected h264_videotoolbox (Apple VideoToolbox)");
                 return Ok("h264_videotoolbox");
             }
 
             if ffmpeg::encoder::find_by_name("h264_nvenc").is_some() {
+                info!("H.264: Selected h264_nvenc (NVIDIA NVENC)");
                 Ok("h264_nvenc")
             } else if ffmpeg::encoder::find_by_name("h264_qsv").is_some() {
+                info!("H.264: Selected h264_qsv (Intel QuickSync)");
                 Ok("h264_qsv")
             } else if ffmpeg::encoder::find_by_name("h264_amf").is_some() {
+                info!("H.264: Selected h264_amf (AMD AMF)");
                 Ok("h264_amf")
             } else if encoder_impl == EncoderImpl::Auto {
+                info!("H.264: Selected libx264 (Software, fallback)");
                 Ok("libx264") // Fallback to software
             } else {
                 Err(EncodeError::HardwareEncoderUnavailable)
             }
         }
-        (VideoCodec::H264, EncoderImpl::Software) => Ok("libx264"),
+        (VideoCodec::H264, EncoderImpl::Software) => {
+            info!("H.264: Selected libx264 (Software)");
+            Ok("libx264")
+        }
 
         // H.265 encoders
         (VideoCodec::H265, EncoderImpl::Hardware) | (VideoCodec::H265, EncoderImpl::Auto) => {
             // Priority: VideoToolbox (macOS) > NVENC (NVIDIA) > QSV (Intel) > AMF (AMD) > Software
             #[cfg(target_os = "macos")]
             if ffmpeg::encoder::find_by_name("hevc_videotoolbox").is_some() {
+                info!("H.265: Selected hevc_videotoolbox (Apple VideoToolbox)");
                 return Ok("hevc_videotoolbox");
             }
 
             if ffmpeg::encoder::find_by_name("hevc_nvenc").is_some() {
+                info!("H.265: Selected hevc_nvenc (NVIDIA NVENC)");
                 Ok("hevc_nvenc")
             } else if ffmpeg::encoder::find_by_name("hevc_qsv").is_some() {
+                info!("H.265: Selected hevc_qsv (Intel QuickSync)");
                 Ok("hevc_qsv")
             } else if ffmpeg::encoder::find_by_name("hevc_amf").is_some() {
+                info!("H.265: Selected hevc_amf (AMD AMF)");
                 Ok("hevc_amf")
             } else if encoder_impl == EncoderImpl::Auto {
+                info!("H.265: Selected libx265 (Software, fallback)");
                 Ok("libx265") // Fallback to software
             } else {
                 Err(EncodeError::HardwareEncoderUnavailable)
             }
         }
-        (VideoCodec::H265, EncoderImpl::Software) => Ok("libx265"),
+        (VideoCodec::H265, EncoderImpl::Software) => {
+            info!("H.265: Selected libx265 (Software)");
+            Ok("libx265")
+        }
 
         // AV1 encoders
         (VideoCodec::AV1, EncoderImpl::Hardware) | (VideoCodec::AV1, EncoderImpl::Auto) => {
             // Priority: NVENC (RTX 40xx) > QSV (Arc) > AMF (RDNA 3) > SVT-AV1 (software)
             if ffmpeg::encoder::find_by_name("av1_nvenc").is_some() {
+                info!("AV1: Selected av1_nvenc (NVIDIA NVENC, RTX 40xx+)");
                 Ok("av1_nvenc")
             } else if ffmpeg::encoder::find_by_name("av1_qsv").is_some() {
+                info!("AV1: Selected av1_qsv (Intel QuickSync, Arc+)");
                 Ok("av1_qsv")
             } else if ffmpeg::encoder::find_by_name("av1_amf").is_some() {
+                info!("AV1: Selected av1_amf (AMD AMF, RDNA 3+)");
                 Ok("av1_amf")
             } else if encoder_impl == EncoderImpl::Auto {
                 // Fallback to software: SVT-AV1 (faster) > libaom (better quality)
                 if ffmpeg::encoder::find_by_name("libsvtav1").is_some() {
+                    info!("AV1: Selected libsvtav1 (Software, fast)");
                     Ok("libsvtav1")
                 } else {
+                    info!("AV1: Selected libaom-av1 (Software, high quality)");
                     Ok("libaom-av1")
                 }
             } else {
@@ -467,14 +496,19 @@ fn get_encoder_name(
         (VideoCodec::AV1, EncoderImpl::Software) => {
             // Software fallback: prefer SVT-AV1 for speed
             if ffmpeg::encoder::find_by_name("libsvtav1").is_some() {
+                info!("AV1: Selected libsvtav1 (Software)");
                 Ok("libsvtav1")
             } else {
+                info!("AV1: Selected libaom-av1 (Software)");
                 Ok("libaom-av1")
             }
         }
 
         // ProRes (software only)
-        (VideoCodec::ProRes, _) => Ok("prores_ks"),
+        (VideoCodec::ProRes, _) => {
+            info!("ProRes: Selected prores_ks (Software, Apple ProRes)");
+            Ok("prores_ks")
+        }
     }
 }
 
@@ -590,13 +624,27 @@ pub fn encode_sequence(
             | "prores_ks"
     );
 
-    // ProRes uses YUV422P10 (10-bit 4:2:2), others use YUV420P (8-bit 4:2:0)
+    // Determine pixel format based on encoder and profile
     let pixel_format = if encoder_name == "prores_ks" {
+        // ProRes always uses YUV422P10 (10-bit 4:2:2)
         ffmpeg::format::Pixel::YUV422P10LE
+    } else if encoder_name == "libx265" || encoder_name == "hevc_nvenc" || encoder_name == "hevc_qsv" || encoder_name == "hevc_amf" || encoder_name == "hevc_videotoolbox" {
+        // HEVC: check profile for 10-bit (main10)
+        let hevc_10bit = settings
+            .profile
+            .as_ref()
+            .map(|p| p == "main10")
+            .unwrap_or(false);
+
+        if hevc_10bit {
+            ffmpeg::format::Pixel::YUV420P10LE // 10-bit 4:2:0
+        } else {
+            ffmpeg::format::Pixel::YUV420P // 8-bit 4:2:0
+        }
     } else if needs_yuv {
-        ffmpeg::format::Pixel::YUV420P
+        ffmpeg::format::Pixel::YUV420P // 8-bit 4:2:0 for other YUV encoders
     } else {
-        ffmpeg::format::Pixel::RGB24
+        ffmpeg::format::Pixel::RGB24 // libx264 can use RGB24 directly
     };
 
     encoder.set_format(pixel_format);
@@ -651,6 +699,13 @@ pub fn encode_sequence(
                 // Force keyframes for seekability
                 opts.set("keyint", &gop_size.to_string()); // Maximum GOP size
                 opts.set("scenecut", "0"); // Disable scene change detection
+
+                // Set profile (main or main10)
+                if let Some(ref profile) = settings.profile {
+                    if !profile.is_empty() {
+                        opts.set("profile", profile); // "main" (8-bit) or "main10" (10-bit)
+                    }
+                }
             } else if encoder_name == "h264_qsv" || encoder_name == "hevc_qsv" {
                 // QSV uses global_quality
                 opts.set("global_quality", &settings.quality_value.to_string());
@@ -799,9 +854,17 @@ pub fn encode_sequence(
     info!("Starting encoding loop for {} frames", total_frames);
 
     // Create reusable swscale context for RGB→YUV conversion
+    let needs_10bit = pixel_format == ffmpeg::format::Pixel::YUV422P10LE
+        || pixel_format == ffmpeg::format::Pixel::YUV420P10LE;
+
     let mut sws_ctx = if needs_yuv {
-        info!("Creating SwsContext for RGB→{:?} conversion", pixel_format);
-        Some(SwsContext::new(ffmpeg::format::Pixel::RGB24, pixel_format, width, height)
+        let src_format = if needs_10bit {
+            ffmpeg::format::Pixel::RGB48LE // 10-bit: RGB48LE → YUV10
+        } else {
+            ffmpeg::format::Pixel::RGB24 // 8-bit: RGB24 → YUV420P
+        };
+        info!("Creating SwsContext for {:?} → {:?} conversion", src_format, pixel_format);
+        Some(SwsContext::new(src_format, pixel_format, width, height)
             .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create swscale context: {}", e)))?)
     } else {
         info!("Using RGB24 directly (no YUV conversion)");
@@ -836,7 +899,7 @@ pub fn encode_sequence(
 
         // STEP 1: Crop to target dimensions if needed (handles mixed resolutions)
         let (frame_width, frame_height) = frame.resolution();
-        let frame_to_encode = if frame_width != width as usize || frame_height != height as usize {
+        let frame_cropped = if frame_width != width as usize || frame_height != height as usize {
             info!(
                 "Cropping frame {} from {}x{} to {}x{}",
                 frame_idx, frame_width, frame_height, width, height
@@ -846,21 +909,60 @@ pub fn encode_sequence(
             frame.clone()
         };
 
-        // STEP 2: Convert RGBA8 → RGB24 (using trait method)
-        let rgb24_data = frame_to_encode.to_rgb24().map_err(|e| {
-            EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB24 conversion failed: {}", frame_idx, e))
-        })?;
+        // Detect if source is HDR (F16/F32 pixel format)
+        let source_is_hdr = matches!(
+            frame_cropped.pixel_format(),
+            PixelFormat::RgbaF16 | PixelFormat::RgbaF32
+        );
 
-        // STEP 3: Convert to FFmpeg frame (RGB24 or YUV depending on encoder)
-        let mut ffmpeg_frame = if needs_yuv {
-            // Convert RGB24 → YUV (YUV420P/YUV422P10) using reusable swscale context
+        // STEP 2: Tonemap HDR → LDR if encoding 8-bit from HDR source
+        let frame_for_encode = if !needs_10bit && source_is_hdr {
+            // HDR → 8-bit: apply tonemapping
+            info!(
+                "Frame {}: Tonemapping {:?} → LDR using {:?}",
+                frame_idx,
+                frame_cropped.pixel_format(),
+                settings.tonemap_mode
+            );
+            frame_cropped.tonemap(settings.tonemap_mode).map_err(|e| {
+                EncodeError::EncodeFrameFailed(format!("Frame {} tonemapping failed: {}", frame_idx, e))
+            })?
+        } else {
+            // No tonemapping needed (either 10-bit encoding or source is already LDR)
+            frame_cropped
+        };
+
+        // STEP 3: Convert to RGB24 (8-bit) or RGB48 (10-bit)
+        let mut ffmpeg_frame = if needs_10bit {
+            // 10-bit path: RGBA → RGB48 (u16) → YUV10
+            let rgb48_data = frame_for_encode.to_rgb48().map_err(|e| {
+                EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB48 conversion failed: {}", frame_idx, e))
+            })?;
+
+            // Convert RGB48 → YUV10 using swscale (TODO: implement convert_rgb48 in SwsContext)
+            // For now, this will fail - need to implement convert_rgb48()
+            sws_ctx.as_mut().unwrap()
+                .convert_rgb48(&rgb48_data, width, height)
+                .map_err(|e| {
+                    EncodeError::EncodeFrameFailed(format!("RGB48→YUV10 conversion failed: {}", e))
+                })?
+        } else if needs_yuv {
+            // 8-bit YUV path: RGBA8 → RGB24 → YUV420P
+            let rgb24_data = frame_for_encode.to_rgb24().map_err(|e| {
+                EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB24 conversion failed: {}", frame_idx, e))
+            })?;
+
             sws_ctx.as_mut().unwrap()
                 .convert(&rgb24_data, width, height)
                 .map_err(|e| {
-                    EncodeError::EncodeFrameFailed(format!("RGB→YUV conversion failed: {}", e))
+                    EncodeError::EncodeFrameFailed(format!("RGB24→YUV conversion failed: {}", e))
                 })?
         } else {
-            // Use RGB24 directly for libx264/libx265
+            // 8-bit RGB24 direct path (libx264/libx265)
+            let rgb24_data = frame_for_encode.to_rgb24().map_err(|e| {
+                EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB24 conversion failed: {}", frame_idx, e))
+            })?;
+
             let mut ffmpeg_frame =
                 ffmpeg::util::frame::video::Video::new(ffmpeg::format::Pixel::RGB24, width, height);
 
@@ -880,7 +982,6 @@ pub fn encode_sequence(
 
             ffmpeg_frame
         };
-        // rgb24_data dropped here, memory freed
 
         // Set PTS (presentation timestamp)
         ffmpeg_frame.set_pts(Some(pts));
@@ -1076,7 +1177,7 @@ mod tests {
 
         // Create sequence with 100 placeholder frames (no files)
         // Placeholders are green RGBA [0,100,0,255] by default
-        let frames: Vec<Frame> = (0..100).map(|_| Frame::new(640, 480)).collect();
+        let frames: Vec<Frame> = (0..100).map(|_| Frame::new_u8(640, 480)).collect();
         let seq = Sequence::from_frames(frames, "test_placeholder.*.rgb".to_string(), 640, 480);
 
         cache.append_seq(seq);
@@ -1123,6 +1224,11 @@ mod tests {
             encoder_impl,
             quality_mode: QualityMode::Bitrate,
             quality_value: 2000, // 2 Mbps
+            fps: 24.0,
+            preset: None,
+            profile: None,
+            prores_profile: None,
+            tonemap_mode: TonemapMode::default(),
         };
 
         // Create progress channel

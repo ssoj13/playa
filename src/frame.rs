@@ -76,6 +76,30 @@ pub enum CropAlign {
     LeftTop, // Align to top-left corner (reserved for future use)
 }
 
+/// Pixel bit depth for Frame construction
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PixelDepth {
+    U8,  // 8-bit RGBA (LDR)
+    #[allow(dead_code)] // Created automatically by EXR loader (exr.rs), not via Frame::new()
+    F16, // 16-bit half-float RGBA (HDR)
+    #[allow(dead_code)] // Created automatically by EXR loader (exr.rs), not via Frame::new()
+    F32, // 32-bit float RGBA (HDR)
+}
+
+/// Tonemapping mode for HDR→LDR conversion
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum TonemapMode {
+    Clamp,    // Simple clamp to [0,1] range
+    ACES,     // ACES filmic tone mapping curve
+    Reinhard, // Reinhard tone mapping (photographic)
+}
+
+impl Default for TonemapMode {
+    fn default() -> Self {
+        TonemapMode::ACES // ACES provides best filmic results for VFX
+    }
+}
+
 /// Frame loading status
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FrameStatus {
@@ -144,27 +168,96 @@ impl std::error::Error for FrameError {}
 
 impl Frame {
     /// Create new frame with green placeholder
-    pub fn new(width: usize, height: usize) -> Self {
-        // Efficiently create repeated RGBA pattern [0,100,0,255] without double initialization
-        let mut buffer_u8 = Vec::with_capacity(width * height * 4);
-        buffer_u8.resize(width * height * 4, 0);
-        for px in buffer_u8.chunks_exact_mut(4) {
-            px[1] = 100; // G channel
-            px[3] = 255; // A channel (R,B already 0)
-        }
+    pub fn new(width: usize, height: usize, depth: PixelDepth) -> Self {
+        match depth {
+            PixelDepth::U8 => {
+                // Efficiently create repeated RGBA pattern [0,100,0,255]
+                let mut buffer_u8 = Vec::with_capacity(width * height * 4);
+                buffer_u8.resize(width * height * 4, 0);
+                for px in buffer_u8.chunks_exact_mut(4) {
+                    px[1] = 100; // G channel
+                    px[3] = 255; // A channel (R,B already 0)
+                }
 
-        let data = FrameData {
-            buffer: Arc::new(PixelBuffer::U8(buffer_u8)),
-            pixel_format: PixelFormat::Rgba8,
-            width,
-            height,
-            status: FrameStatus::Placeholder,
-        };
+                let data = FrameData {
+                    buffer: Arc::new(PixelBuffer::U8(buffer_u8)),
+                    pixel_format: PixelFormat::Rgba8,
+                    width,
+                    height,
+                    status: FrameStatus::Placeholder,
+                };
 
-        Self {
-            data: Arc::new(Mutex::new(data)),
-            filename: None,
+                Self {
+                    data: Arc::new(Mutex::new(data)),
+                    filename: None,
+                }
+            }
+            PixelDepth::F16 => {
+                // Create F16 green placeholder
+                let mut buffer_f16 = vec![F16::ZERO; width * height * 4];
+                let green = F16::from_f32(100.0 / 255.0);
+                let one = F16::ONE;
+
+                for px in buffer_f16.chunks_exact_mut(4) {
+                    px[1] = green; // G channel
+                    px[3] = one; // A channel
+                }
+
+                let data = FrameData {
+                    buffer: Arc::new(PixelBuffer::F16(buffer_f16)),
+                    pixel_format: PixelFormat::RgbaF16,
+                    width,
+                    height,
+                    status: FrameStatus::Placeholder,
+                };
+
+                Self {
+                    data: Arc::new(Mutex::new(data)),
+                    filename: None,
+                }
+            }
+            PixelDepth::F32 => {
+                // Create F32 green placeholder
+                let mut buffer_f32 = vec![0.0f32; width * height * 4];
+
+                for px in buffer_f32.chunks_exact_mut(4) {
+                    px[1] = 100.0 / 255.0; // G channel
+                    px[3] = 1.0; // A channel
+                }
+
+                let data = FrameData {
+                    buffer: Arc::new(PixelBuffer::F32(buffer_f32)),
+                    pixel_format: PixelFormat::RgbaF32,
+                    width,
+                    height,
+                    status: FrameStatus::Placeholder,
+                };
+
+                Self {
+                    data: Arc::new(Mutex::new(data)),
+                    filename: None,
+                }
+            }
         }
+    }
+
+    /// Convenience method: Create 8-bit U8 frame
+    pub fn new_u8(width: usize, height: usize) -> Self {
+        Self::new(width, height, PixelDepth::U8)
+    }
+
+    /// Convenience method: Create 16-bit half-float F16 frame
+    /// Note: Rarely used - EXR loader creates F16 frames directly via PixelBuffer
+    #[allow(dead_code)]
+    pub fn new_f16(width: usize, height: usize) -> Self {
+        Self::new(width, height, PixelDepth::F16)
+    }
+
+    /// Convenience method: Create 32-bit float F32 frame
+    /// Note: Rarely used - EXR loader creates F32 frames directly via PixelBuffer
+    #[allow(dead_code)]
+    pub fn new_f32(width: usize, height: usize) -> Self {
+        Self::new(width, height, PixelDepth::F32)
     }
 
     /// Create unloaded frame placeholder with path (for deserialization/caching)
@@ -805,6 +898,140 @@ impl Frame {
         data.width = new_w;
         data.height = new_h;
     }
+
+    /// Tonemap HDR frame to LDR (returns new U8 frame)
+    ///
+    /// Converts F16/F32 HDR data to U8 LDR using specified tonemapping curve.
+    /// For U8 frames, returns cloned frame (no conversion needed).
+    ///
+    /// # Arguments
+    ///
+    /// - `mode`: Tonemapping algorithm (Clamp, ACES, Reinhard)
+    ///
+    /// # Returns
+    ///
+    /// New Frame with U8 pixel buffer (0-255 range)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use playa::frame::{Frame, TonemapMode, PixelDepth};
+    /// let hdr_frame = Frame::new_f16(1920, 1080);
+    /// let ldr_frame = hdr_frame.tonemap(TonemapMode::ACES).unwrap();
+    /// assert_eq!(ldr_frame.pixel_format(), playa::frame::PixelFormat::Rgba8);
+    /// ```
+    pub fn tonemap(&self, mode: TonemapMode) -> Result<Frame, FrameError> {
+        let data = self.data.lock().unwrap();
+        let (width, height) = (data.width, data.height);
+
+        match data.buffer.as_ref() {
+            PixelBuffer::U8(_) => {
+                // Already LDR, just clone
+                drop(data); // Release lock before cloning
+                Ok(self.clone())
+            }
+            PixelBuffer::F16(hdr_data) => {
+                let mut ldr_buf = Vec::with_capacity(width * height * 4);
+
+                for chunk in hdr_data.chunks_exact(4) {
+                    let r = chunk[0].to_f32();
+                    let g = chunk[1].to_f32();
+                    let b = chunk[2].to_f32();
+                    let a = chunk[3].to_f32();
+
+                    let (r_tm, g_tm, b_tm) = match mode {
+                        TonemapMode::Clamp => (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)),
+                        TonemapMode::ACES => {
+                            // ACES filmic tone mapping (Narkowicz 2015)
+                            let tonemap_aces = |x: f32| {
+                                let a = 2.51;
+                                let b = 0.03;
+                                let c = 2.43;
+                                let d = 0.59;
+                                let e = 0.14;
+                                ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
+                            };
+                            (tonemap_aces(r), tonemap_aces(g), tonemap_aces(b))
+                        }
+                        TonemapMode::Reinhard => {
+                            // Reinhard photographic tone mapping
+                            let tonemap_reinhard = |x: f32| (x / (1.0 + x)).clamp(0.0, 1.0);
+                            (tonemap_reinhard(r), tonemap_reinhard(g), tonemap_reinhard(b))
+                        }
+                    };
+
+                    // Convert [0,1] float → [0,255] u8
+                    ldr_buf.push((r_tm * 255.0) as u8);
+                    ldr_buf.push((g_tm * 255.0) as u8);
+                    ldr_buf.push((b_tm * 255.0) as u8);
+                    ldr_buf.push((a.clamp(0.0, 1.0) * 255.0) as u8); // Alpha unchanged
+                }
+
+                let ldr_data = FrameData {
+                    buffer: Arc::new(PixelBuffer::U8(ldr_buf)),
+                    pixel_format: PixelFormat::Rgba8,
+                    width,
+                    height,
+                    status: data.status,
+                };
+
+                Ok(Frame {
+                    data: Arc::new(Mutex::new(ldr_data)),
+                    filename: self.filename.clone(),
+                })
+            }
+            PixelBuffer::F32(hdr_data) => {
+                let mut ldr_buf = Vec::with_capacity(width * height * 4);
+
+                for chunk in hdr_data.chunks_exact(4) {
+                    let r = chunk[0];
+                    let g = chunk[1];
+                    let b = chunk[2];
+                    let a = chunk[3];
+
+                    let (r_tm, g_tm, b_tm) = match mode {
+                        TonemapMode::Clamp => (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)),
+                        TonemapMode::ACES => {
+                            // ACES filmic tone mapping (Narkowicz 2015)
+                            let tonemap_aces = |x: f32| {
+                                let a = 2.51;
+                                let b = 0.03;
+                                let c = 2.43;
+                                let d = 0.59;
+                                let e = 0.14;
+                                ((x * (a * x + b)) / (x * (c * x + d) + e)).clamp(0.0, 1.0)
+                            };
+                            (tonemap_aces(r), tonemap_aces(g), tonemap_aces(b))
+                        }
+                        TonemapMode::Reinhard => {
+                            // Reinhard photographic tone mapping
+                            let tonemap_reinhard = |x: f32| (x / (1.0 + x)).clamp(0.0, 1.0);
+                            (tonemap_reinhard(r), tonemap_reinhard(g), tonemap_reinhard(b))
+                        }
+                    };
+
+                    // Convert [0,1] float → [0,255] u8
+                    ldr_buf.push((r_tm * 255.0) as u8);
+                    ldr_buf.push((g_tm * 255.0) as u8);
+                    ldr_buf.push((b_tm * 255.0) as u8);
+                    ldr_buf.push((a.clamp(0.0, 1.0) * 255.0) as u8); // Alpha unchanged
+                }
+
+                let ldr_data = FrameData {
+                    buffer: Arc::new(PixelBuffer::U8(ldr_buf)),
+                    pixel_format: PixelFormat::Rgba8,
+                    width,
+                    height,
+                    status: data.status,
+                };
+
+                Ok(Frame {
+                    data: Arc::new(Mutex::new(ldr_data)),
+                    filename: self.filename.clone(),
+                })
+            }
+        }
+    }
 }
 
 /// Frame format conversion trait
@@ -817,9 +1044,24 @@ pub trait FrameConversion {
     /// Used as intermediate step for YUV conversion or RGB encoding.
     /// Fast operation: ~1-2ms for 1080p frame.
     ///
+    /// **Note**: Only works with U8 format. HDR formats (F16/F32) require
+    /// tonemapping first or use `to_rgb48()` for 10-bit encoding.
+    ///
     /// # Returns
     /// RGB24 data (width * height * 3 bytes)
     fn to_rgb24(&self) -> Result<Vec<u8>, FrameError>;
+
+    /// Convert any pixel format to RGB48 (16-bit per channel, removes alpha)
+    ///
+    /// Supports all pixel formats (U8/F16/F32):
+    /// - U8: Scale 0-255 → 0-65535
+    /// - F16/F32: Map 0.0-1.0 → 0-65535 (clamp out-of-range values)
+    ///
+    /// Used for 10-bit encoding pipeline (RGB48 → YUV422P10/YUV420P10).
+    ///
+    /// # Returns
+    /// RGB48 data (width * height * 3 u16 values, little-endian)
+    fn to_rgb48(&self) -> Result<Vec<u16>, FrameError>;
 }
 
 impl FrameConversion for Frame {
@@ -841,13 +1083,69 @@ impl FrameConversion for Frame {
             }
             PixelBuffer::F16(_) => {
                 Err(FrameError::UnsupportedFormat(
-                    "F16 to RGB24 conversion not yet implemented. Convert to U8 first.".into()
+                    "Internal error: F16 format in RGB24 conversion path. Encoder should tonemap HDR→LDR first.".into()
                 ))
             }
             PixelBuffer::F32(_) => {
                 Err(FrameError::UnsupportedFormat(
-                    "F32 to RGB24 conversion not yet implemented. Convert to U8 first.".into()
+                    "Internal error: F32 format in RGB24 conversion path. Encoder should tonemap HDR→LDR first.".into()
                 ))
+            }
+        }
+    }
+
+    fn to_rgb48(&self) -> Result<Vec<u16>, FrameError> {
+        let buffer = self.pixel_buffer();
+        let (width, height) = self.resolution();
+
+        match &*buffer {
+            PixelBuffer::U8(rgba) => {
+                // U8: Scale 0-255 → 0-65535
+                let mut rgb48 = Vec::with_capacity(width * height * 3);
+
+                for chunk in rgba.chunks_exact(4) {
+                    // Scale from 8-bit to 16-bit: value * 257 (65535 / 255)
+                    rgb48.push((chunk[0] as u16) * 257); // R
+                    rgb48.push((chunk[1] as u16) * 257); // G
+                    rgb48.push((chunk[2] as u16) * 257); // B
+                    // Skip alpha (chunk[3])
+                }
+
+                Ok(rgb48)
+            }
+            PixelBuffer::F16(rgba) => {
+                // F16: Map 0.0-1.0 → 0-65535 (clamp out-of-range)
+                let mut rgb48 = Vec::with_capacity(width * height * 3);
+
+                for chunk in rgba.chunks_exact(4) {
+                    let r = chunk[0].to_f32().clamp(0.0, 1.0);
+                    let g = chunk[1].to_f32().clamp(0.0, 1.0);
+                    let b = chunk[2].to_f32().clamp(0.0, 1.0);
+
+                    rgb48.push((r * 65535.0) as u16); // R
+                    rgb48.push((g * 65535.0) as u16); // G
+                    rgb48.push((b * 65535.0) as u16); // B
+                    // Skip alpha
+                }
+
+                Ok(rgb48)
+            }
+            PixelBuffer::F32(rgba) => {
+                // F32: Map 0.0-1.0 → 0-65535 (clamp out-of-range)
+                let mut rgb48 = Vec::with_capacity(width * height * 3);
+
+                for chunk in rgba.chunks_exact(4) {
+                    let r = chunk[0].clamp(0.0, 1.0);
+                    let g = chunk[1].clamp(0.0, 1.0);
+                    let b = chunk[2].clamp(0.0, 1.0);
+
+                    rgb48.push((r * 65535.0) as u16); // R
+                    rgb48.push((g * 65535.0) as u16); // G
+                    rgb48.push((b * 65535.0) as u16); // B
+                    // Skip alpha
+                }
+
+                Ok(rgb48)
             }
         }
     }
@@ -862,7 +1160,7 @@ mod tests {
     /// Validates: Initial state is correct
     #[test]
     fn test_frame_creation() {
-        let frame = Frame::new(1920, 1080);
+        let frame = Frame::new_u8(1920, 1080);
 
         assert_eq!(frame.width(), 1920);
         assert_eq!(frame.height(), 1080);
@@ -924,7 +1222,7 @@ mod tests {
     /// Validates: Status lifecycle is correct
     #[test]
     fn test_status_transitions() {
-        let frame = Frame::new(100, 100);
+        let frame = Frame::new_u8(100, 100);
         assert_eq!(frame.status(), FrameStatus::Placeholder);
 
         // Set filename → Header

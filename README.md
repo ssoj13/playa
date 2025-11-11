@@ -36,7 +36,7 @@ Playa is an image sequence player for VFX workflows. Async loading, OpenGL rende
 I'm really excited to discover the Rust universe and AI agents are helping to quickly grasp things.  
 I know what I want to build and supposed app architecture, but implementing that alone would take months.  
 Also now open source community have a half-decent cross-platform image sequence player made of a single binary.  
-I really wanted to express my gratitude towards creators and maintainers of `exrs` and `openexr-rs` crates and of course the rest - Rust is amazing!
+I really wanted to express my gratitude towards creators and maintainers of `exrs`, `openexr-rs`, `rust-ffmpeg` crates (and of course the rest) - Rust is amazing!
 
 
 ## Video Support
@@ -72,6 +72,7 @@ Playa includes built-in video encoding (F4 hotkey) for exporting image sequences
 2. **(Optional)** Set play range with **B** (begin) and **N** (end) markers
    - Press **B** to mark the start frame
    - Press **N** to mark the end frame
+   - Press **Ctrl-B** reset the play range
    - Visual indicators appear on the timeline showing the active range
    - Clear markers to encode the entire sequence
 3. Press **F4** to open encoding dialog
@@ -399,50 +400,6 @@ cargo xtask deploy [--install-dir PATH]    # Install to system
   # Linux/macOS: ~/.local/bin/playa
 ```
 
-##### 🧪 Testing
-```bash
-bootstrap.cmd test     # Windows: Run encoding integration test
-./bootstrap.sh test    # Linux/macOS: Run encoding integration test
-```
-
-**What `bootstrap test` does:**
-- Runs `cargo test --release test_encode_placeholder_frames -- --nocapture`
-- Creates 100 placeholder frames (640x480, green color)
-- Sets play range to frames 10-49 (40 frames)
-- Detects available encoder (NVENC/libx264/mpeg4)
-- Encodes to `test_encode_output.mp4` in current directory
-- Verifies RGB24→YUV420P conversion for hardware encoders
-- Shows encoder type, output path, file size, and frame count
-
-**Example output:**
-```
-🎬 Using NVENC hardware encoder
-Play range set: 10..49 (40 frames)
-Encoding frames 10..49 to: C:\projects\playa\test_encode_output.mp4
-✓ Encoding test passed!
-  Encoder: h264_nvenc
-  Output: C:\projects\playa\test_encode_output.mp4
-  Size: 2817 bytes (2.75 KB)
-  Frames: 40/40 (play range: 10..49)
-```
-
-**Test file location:** `./test_encode_output.mp4` (in project root)
-
-**Additional video tests:**
-```bash
-# List all video-related tests
-cargo test --release -- --list | grep video
-
-# Run specific video test
-cargo test --release test_video_decoder_basic -- --nocapture
-```
-
-##### 🧹 Maintenance
-```bash
-cargo xtask wipe [-v] [--dry-run]    # Remove executables/libs from ./target
-cargo xtask wipe-wf                  # Delete ALL GitHub Actions runs (parallel)
-```
-
 ##### 🚀 Release Management
 ```bash
 cargo xtask tag-dev [patch|minor|major]  # Create v0.1.x-dev tag → trigger Build workflow
@@ -490,20 +447,6 @@ cargo xtask deploy
 # Now available as: playa
 ```
 
-### Development Dependencies
-
-**Auto-installed by bootstrap script:**
-- `cargo-release` - Version bumping and tag creation
-- `cargo-packager` - Cross-platform installer generation (v0.11.7)
-
-**Required for PR workflow:**
-- `gh` - GitHub CLI (used by `cargo xtask pr`) - [Installation](https://cli.github.com/)
-
-**Optional tools:**
-- `git-cliff` - Changelog generation (used by `cargo xtask changelog`)
-- `cargo-audit` - Security vulnerability scanning
-- `cargo-llvm-cov` - Code coverage
-
 #### Linux-Specific Build Notes
 
 **Note:** These instructions apply only to the OpenEXR C++ backend (`--openexr` feature). The default exrs backend requires no external dependencies.
@@ -543,41 +486,6 @@ All macOS DMG releases are **code-signed** with Developer ID and **notarized** b
 - ✅ No "unidentified developer" dialogs
 - ✅ Double-click DMG → drag to Applications → works immediately
 
-
-## Configuration
-
-### Configuration Files
-
-Playa uses platform-specific configuration directories with flexible override options.
-
-**Priority order:**
-1. **CLI argument**: `--config-dir /custom/path`
-2. **Environment variable**: `PLAYA_CONFIG_DIR=/custom/path`
-3. **Local folder** (backward compatibility): Uses current directory IF any config files already exist
-4. **Platform defaults** (new installations):
-   - **Linux**: `~/.config/playa/` (config), `~/.local/share/playa/` (data)
-   - **macOS**: `~/Library/Application Support/playa/`
-   - **Windows**: `%APPDATA%\playa\`
-
-**Files:**
-- `playa.json` - Settings (FPS, theme, viewport, etc.)
-- `playa_cache.json` - Cache state (sequences, current frame)
-- `playa.log` - Log file (when `--log` flag is used)
-
-**Examples:**
-```bash
-# Use custom directory
-playa --config-dir ~/.playa
-
-# Use environment variable
-export PLAYA_CONFIG_DIR=~/my-playa-config
-playa
-
-# Default behavior:
-# - Existing users: Uses current directory (if files found)
-# - New users: Uses platform-specific location
-playa
-```
 
 ## Usage
 
