@@ -1,3 +1,21 @@
+## [0.1.129] - 2025-11-11
+
+### 🚀 Features
+
+- Add H.265 profile support and fix ProRes HDR encoding
+- Add flamegraph profiling support to bootstrap scripts
+- Improve FPS control and playback workflow
+
+### 💼 Other
+
+- Add extensive logging for ProRes encoding investigation
+- Add timestamp logging for performance profiling
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Mon 11/10/2025 - 21:46:33.22
+- WIP Mon 11/10/2025 - 23:29:05.42
+- WIP Tue 11/11/2025 -  0:26:53.66
 ## [0.1.128] - 2025-11-10
 
 ### 🚀 Features
