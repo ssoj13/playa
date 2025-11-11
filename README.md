@@ -10,7 +10,7 @@
 
 Playa is an image sequence player for VFX workflows. Async loading, OpenGL rendering, Video encoding, simple UI, single binary.
 
-![Screenshot](.github/screenshot.png)
+![Screenshot](.github/screenshot.jpg)
 
 
 ## Features
