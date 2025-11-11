@@ -123,44 +123,40 @@ impl EncodeDialog {
         }
     }
 
-    /// Create new encode dialog with settings from AppSettings
-    pub fn new(settings: EncoderSettings) -> Self {
-        // Convert flat EncoderSettings to per-codec CodecSettings
-        let mut codec_settings = CodecSettings::default();
-
-        // Apply settings based on selected codec
-        match settings.codec {
-            VideoCodec::H264 => {
-                codec_settings.h264.encoder_impl = settings.encoder_impl;
-                codec_settings.h264.quality_mode = settings.quality_mode;
-                codec_settings.h264.quality_value = settings.quality_value;
-                codec_settings.h264.preset = settings.preset.clone().unwrap_or_default();
-                codec_settings.h264.profile = settings.profile.clone().unwrap_or_default();
-            }
-            VideoCodec::H265 => {
-                codec_settings.h265.encoder_impl = settings.encoder_impl;
-                codec_settings.h265.quality_mode = settings.quality_mode;
-                codec_settings.h265.quality_value = settings.quality_value;
-                codec_settings.h265.preset = settings.preset.clone().unwrap_or_default();
-                codec_settings.h265.profile = settings.profile.clone().unwrap_or_else(|| "main".to_string());
-            }
-            VideoCodec::AV1 => {
-                codec_settings.av1.encoder_impl = settings.encoder_impl;
-                codec_settings.av1.quality_mode = settings.quality_mode;
-                codec_settings.av1.quality_value = settings.quality_value;
-                codec_settings.av1.preset = settings.preset.clone().unwrap_or_else(|| "p4".to_string());
-            }
-            VideoCodec::ProRes => {
-                codec_settings.prores.profile = settings.prores_profile.unwrap_or(ProResProfile::Standard);
-            }
-        }
+    /// Load dialog state from AppSettings (called when opening dialog)
+    pub fn load_from_settings(settings: &crate::encode::EncodeDialogSettings) -> Self {
+        log::debug!("========== LOADING ENCODE DIALOG SETTINGS ==========");
+        log::debug!("  Output: {}", settings.output_path.display());
+        log::debug!("  Container: {:?}, FPS: {}, Codec: {:?}", settings.container, settings.fps, settings.selected_codec);
+        log::debug!("  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+            settings.codec_settings.h264.encoder_impl,
+            settings.codec_settings.h264.quality_mode,
+            settings.codec_settings.h264.quality_value,
+            settings.codec_settings.h264.preset,
+            settings.codec_settings.h264.profile
+        );
+        log::debug!("  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+            settings.codec_settings.h265.encoder_impl,
+            settings.codec_settings.h265.quality_mode,
+            settings.codec_settings.h265.quality_value,
+            settings.codec_settings.h265.preset,
+            settings.codec_settings.h265.profile
+        );
+        log::debug!("  ProRes: profile={:?}", settings.codec_settings.prores.profile);
+        log::debug!("  AV1: impl={:?}, mode={:?}, value={}, preset={}",
+            settings.codec_settings.av1.encoder_impl,
+            settings.codec_settings.av1.quality_mode,
+            settings.codec_settings.av1.quality_value,
+            settings.codec_settings.av1.preset
+        );
+        log::debug!("  Tonemap: {:?}", settings.tonemap_mode);
 
         Self {
-            output_path: settings.output_path,
+            output_path: settings.output_path.clone(),
             container: settings.container,
             fps: settings.fps,
-            selected_codec: settings.codec,
-            codec_settings,
+            selected_codec: settings.selected_codec,
+            codec_settings: settings.codec_settings.clone(),
             is_encoding: false,
             progress: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -169,6 +165,44 @@ impl EncodeDialog {
             progress_bar: ProgressBar::new(400.0, 20.0),
             encoder_name: String::new(),
             tonemap_mode: settings.tonemap_mode,
+        }
+    }
+
+    /// Save current dialog state to AppSettings (called when closing dialog or starting encode)
+    pub fn save_to_settings(&self) -> crate::encode::EncodeDialogSettings {
+        log::debug!("========== SAVING ENCODE DIALOG SETTINGS ==========");
+        log::debug!("  Output: {}", self.output_path.display());
+        log::debug!("  Container: {:?}, FPS: {}, Codec: {:?}", self.container, self.fps, self.selected_codec);
+        log::debug!("  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+            self.codec_settings.h264.encoder_impl,
+            self.codec_settings.h264.quality_mode,
+            self.codec_settings.h264.quality_value,
+            self.codec_settings.h264.preset,
+            self.codec_settings.h264.profile
+        );
+        log::debug!("  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+            self.codec_settings.h265.encoder_impl,
+            self.codec_settings.h265.quality_mode,
+            self.codec_settings.h265.quality_value,
+            self.codec_settings.h265.preset,
+            self.codec_settings.h265.profile
+        );
+        log::debug!("  ProRes: profile={:?}", self.codec_settings.prores.profile);
+        log::debug!("  AV1: impl={:?}, mode={:?}, value={}, preset={}",
+            self.codec_settings.av1.encoder_impl,
+            self.codec_settings.av1.quality_mode,
+            self.codec_settings.av1.quality_value,
+            self.codec_settings.av1.preset
+        );
+        log::debug!("  Tonemap: {:?}", self.tonemap_mode);
+
+        crate::encode::EncodeDialogSettings {
+            output_path: self.output_path.clone(),
+            container: self.container,
+            fps: self.fps,
+            selected_codec: self.selected_codec,
+            tonemap_mode: self.tonemap_mode,
+            codec_settings: self.codec_settings.clone(),
         }
     }
 
@@ -479,8 +513,9 @@ impl EncodeDialog {
         info!("Codec: {:?}, Container: {:?}", settings.codec, settings.container);
         info!("Settings: {:?}", settings);
 
-        // Reset cancel flag
+        // Reset state for new encoding
         self.cancel_flag.store(false, Ordering::Relaxed);
+        self.progress = None; // Clear old progress
 
         // Create progress channel
         let (tx, rx) = channel();
@@ -578,7 +613,19 @@ impl EncodeDialog {
     fn reset_encoding_state(&mut self) {
         self.is_encoding = false;
         self.progress_rx = None;
-        self.encode_thread = None;
+
+        // CRITICAL: Wait for encoder thread to actually finish
+        if let Some(handle) = self.encode_thread.take() {
+            // Thread should already be finished (we're here because of Complete/Error)
+            // But we still need to join() to clean up properly
+            if handle.is_finished() {
+                let _ = handle.join(); // Ignore result, we already know it completed
+            } else {
+                // Thread still running (shouldn't happen) - log warning
+                info!("Warning: encoder thread still running during reset_encoding_state");
+                let _ = handle.join(); // Wait for it anyway
+            }
+        }
     }
 
     /// Render H.264 settings

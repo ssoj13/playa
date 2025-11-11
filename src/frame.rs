@@ -652,7 +652,7 @@ impl Frame {
     }
 
     /// Get pixel buffer (returns Arc for efficient sharing)
-    pub fn pixel_buffer(&self) -> Arc<PixelBuffer> {
+    pub fn buffer(&self) -> Arc<PixelBuffer> {
         Arc::clone(&self.data.lock().unwrap().buffer)
     }
 
@@ -676,12 +676,6 @@ impl Frame {
         }
     }
 
-    /// Get buffer (deprecated - use pixel_buffer() instead)
-    #[allow(dead_code)]
-    pub fn buffer(&self) -> Arc<Mutex<Vec<u8>>> {
-        // This method is deprecated and will panic if called on non-U8 format
-        Arc::new(Mutex::new(self.pixels().unwrap()))
-    }
 
     /// Get dimensions
     pub fn width(&self) -> usize {
@@ -1066,7 +1060,7 @@ pub trait FrameConversion {
 
 impl FrameConversion for Frame {
     fn to_rgb24(&self) -> Result<Vec<u8>, FrameError> {
-        let buffer = self.pixel_buffer();
+        let buffer = self.buffer();
         match &*buffer {
             PixelBuffer::U8(rgba) => {
                 let (width, height) = self.resolution();
@@ -1095,7 +1089,7 @@ impl FrameConversion for Frame {
     }
 
     fn to_rgb48(&self) -> Result<Vec<u16>, FrameError> {
-        let buffer = self.pixel_buffer();
+        let buffer = self.buffer();
         let (width, height) = self.resolution();
 
         match &*buffer {

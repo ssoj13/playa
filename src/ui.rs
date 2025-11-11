@@ -556,7 +556,7 @@ pub fn render_viewport(
                 std::sync::Arc<crate::frame::PixelBuffer>,
                 crate::frame::PixelFormat,
             )> = if needs_upload {
-                Some((img.pixel_buffer(), img.pixel_format()))
+                Some((img.buffer(), img.pixel_format()))
             } else {
                 None
             };

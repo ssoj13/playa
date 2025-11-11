@@ -3,8 +3,10 @@
 **/*.rs.bk
 *.pdb
 *.mp4
+*.mov
 *.json
 *.md
+*.svg
 temp_log.txt
 
 # IDE

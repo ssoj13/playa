@@ -15,7 +15,44 @@ use crate::convert::SwsContext;
 use crate::frame::{CropAlign, FrameConversion, FrameStatus, TonemapMode, PixelFormat};
 use playa_ffmpeg as ffmpeg;
 
-/// Encoder settings (persistent via AppSettings)
+/// Encode dialog settings (persistent via AppSettings)
+/// Contains all codec settings + dialog state
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EncodeDialogSettings {
+    // Dialog state
+    pub output_path: PathBuf,
+    pub container: Container,
+    pub fps: f32,
+    pub selected_codec: VideoCodec,
+
+    // HDR → LDR conversion settings
+    #[serde(default)]
+    pub tonemap_mode: TonemapMode,
+
+    // Per-codec settings (all preserved when switching codecs)
+    #[serde(default)]
+    pub codec_settings: CodecSettings,
+}
+
+impl Default for EncodeDialogSettings {
+    fn default() -> Self {
+        Self {
+            output_path: PathBuf::from("output.mp4"),
+            container: Container::MP4,
+            fps: 24.0,
+            selected_codec: VideoCodec::H264,
+            tonemap_mode: TonemapMode::default(),
+            codec_settings: CodecSettings::default(),
+        }
+    }
+}
+
+/// Encoder input settings (transport DTO for encode_sequence)
+///
+/// This is a simple flat structure containing settings for ONE selected codec.
+/// The UI uses EncodeDialogSettings which stores settings for ALL codecs (H.264/H.265/ProRes/AV1).
+/// When starting encoding, build_encoder_settings() converts EncodeDialogSettings → EncoderSettings
+/// by extracting only the settings for the currently selected codec.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EncoderSettings {
     pub output_path: PathBuf,

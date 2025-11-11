@@ -241,10 +241,11 @@ impl PlayaApp {
 
         if input.key_pressed(egui::Key::F4) {
             self.show_encode_dialog = !self.show_encode_dialog;
-            // Create dialog on first open with current settings
+            // Load dialog state from settings when opening
             if self.show_encode_dialog && self.encode_dialog.is_none() {
-                self.encode_dialog = Some(ui_encode::EncodeDialog::new(
-                    self.settings.encoder_settings.clone(),
+                debug!("[F4] Opening encode dialog, loading settings from AppSettings");
+                self.encode_dialog = Some(ui_encode::EncodeDialog::load_from_settings(
+                    &self.settings.encode_dialog,
                 ));
             }
         }
@@ -596,10 +597,11 @@ impl eframe::App for PlayaApp {
         {
             let should_stay_open = dialog.render(ctx, &self.player.cache);
 
-            // Always save current settings (for persistence across sessions)
-            self.settings.encoder_settings = dialog.build_encoder_settings();
+            // Save dialog state (on every render - cheap clone)
+            self.settings.encode_dialog = dialog.save_to_settings();
 
             if !should_stay_open {
+                debug!("Encode dialog closed, settings saved to AppSettings");
                 self.show_encode_dialog = false;
             }
         }
