@@ -89,6 +89,12 @@ impl Player {
             return;
         }
 
+        // Ensure play_fps is not lower than base_fps
+        // base_fps acts as a "floor" that pushes play_fps from below
+        if self.fps_play < self.fps_base {
+            self.fps_play = self.fps_base;
+        }
+
         let now = Instant::now();
 
         if let Some(last_time) = self.last_frame_time {

@@ -296,14 +296,21 @@ pub fn render_controls(
                     // During playback: ensure play_fps is not lower than base_fps
                     // base_fps "pushes" play_fps from below
                     if player.fps_play < player.fps_base {
+                        log::debug!(
+                            "Base FPS changed from {:.1} to {:.1}, pushing play_fps from {:.1} to {:.1}",
+                            old_fps,
+                            player.fps_base,
+                            player.fps_play,
+                            player.fps_base
+                        );
                         player.fps_play = player.fps_base;
                     }
                 }
                 // fps_base is already updated by the widgets above
             }
 
-            // Always show play FPS if different from base (to avoid UI jumping)
-            if (player.fps_play - player.fps_base).abs() > 0.01 {
+            // Show play FPS during playback
+            if player.is_playing {
                 ui.label(format!("Play FPS: {:.0}", player.fps_play));
             }
 

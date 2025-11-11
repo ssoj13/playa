@@ -103,15 +103,6 @@ impl StatusBar {
 
                 ui.separator();
 
-                // FPS (show play FPS if different from base)
-                if player.is_playing && (player.fps_play - player.fps_base).abs() > 0.01 {
-                    ui.monospace(format!("{:>5.1}▶", player.fps_play));
-                } else {
-                    ui.monospace(format!("{:>5.1}", player.fps_base));
-                }
-
-                ui.separator();
-
                 // Memory usage
                 let (used_bytes, max_bytes) = player.cache.mem();
                 let used_mb = used_bytes / 1024 / 1024;
