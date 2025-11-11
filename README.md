@@ -8,32 +8,36 @@
 [![Lines of Code](https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/ssoj13/playa/badge?filter=.rs$&style=flat&label=Lines%20of%20Code)](https://github.com/ssoj13/playa)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
-**Small note**: This is a learning project. I'm really excited to discover the Rust universe and the rise of AI agentic coding techniques to quickly learn a new stack. I perfectly know what I want to build and supposed app architecture, but implementing that alone would be probably not possible within some reasonable timeframe (not within a week, definitely). Well, also now Rust users and open source community now have a half-decent cross-platform image sequence player made of a single binary. I really wanted to express my gratitude towards creators and maintainers of `exrs` and `openexr-rs` crates and of course the rest - Rust is amazing!
-
-Short list of things resolved while building this tool:
-
+Playa is an image sequence player for VFX workflows. Async loading, OpenGL rendering, Video encoding, simple UI, single binary.
 
 ![Screenshot](.github/screenshot.png)
 
-Image sequence player for VFX workflows. Async loading, LRU caching, OpenGL rendering.
 
 ## Features
 
 - **Dual EXR backends**: Choose between pure Rust (exrs) for fast builds or OpenEXR C++ for full DWAA/DWAB compression support
-- **Native Rust Multi-format support**: EXR, PNG, JPEG, TIFF, TGA with fast parallel loading
-- **HDR pixel precision**: Support for 8 / 16 / half-float / 32-bit float images
-- **Drag-and-drop**: Drop any image file - automatically detects and loads the entire sequence
+- **FFmpeg-based decoding/encoding** via `playa-ffmpeg` crate and with hardware acceleration: NVENC (NVIDIA), QSV (Intel), AMF (AMD)
+- **Native Rust Multi-format support**: EXR, PNG, JPEG, TIFF, TGA with fast parallel loading.
+- **Pixel format**: Supports u8 / f16 (half-float) / f32 images
 - **Smart sequence detection**: Load one frame (e.g., `render.0001.exr`) - finds all frames automatically
-- **Persistent playlist**: Load multiple sequences, auto-saves and restores between sessions
+- **Persistent playlist**: persistent between sessions, i.e. it starts where you left the app
 - **Color-coded timeline**: Visual sequence boundaries with real-time frame load indicators
-- **Responsive scrubbing**: Instant frame navigation - always responsive even during fast scrubbing, cancels stale loads automatically
+- **Responsive scrubbing**: Instant frame navigation - always responsive even during fast scrubbing
+- **Play range support**: Plays/Encodes just selected play range (B/N markers)
 - **Playback controls**: Standard transport controls (play/pause, JKL shuttle, loop)
-- **Viewport controls**: Zoom, pan, fit-to-window, 100% pixel-perfect view, cursor-centered zoom
-- **Custom GLSL shaders**: Load display shaders from `shaders/` directory - LUTs, color transforms, custom effects
+- **Viewport controls**: Zoom, pan, fit-to-window, 100% pixel-perfect view, cursor-centered zoom, full screen mode
+- **Custom GLSL shaders**: Uses preset shaders plus looks for extra in `shaders/` folder - LUTs, color transforms, custom effects
 - **Smart memory management**: Automatically manages cache size - never runs out of memory
-- **Settings dialog**: Theme switching, font size, preferences (F3)
-- **Cinema mode**: Fullscreen playback with hidden UI
-- **Persistent settings**: Everything saves automatically - window layout, zoom level, shader selection
+- **Persistent settings**: Settings automatically stored and restored between sessions
+- **Rich CLI arguments support**: Load separate files and playlists from command line
+- **Supports different resolution**: on encoding they will be just cropped
+
+**Small note**: This is a learning project.  
+I'm really excited to discover the Rust universe and AI agents are helping to quickly grasp things.  
+I know what I want to build and supposed app architecture, but implementing that alone would take months.  
+Also now open source community have a half-decent cross-platform image sequence player made of a single binary.  
+I really wanted to express my gratitude towards creators and maintainers of `exrs` and `openexr-rs` crates and of course the rest - Rust is amazing!
+
 
 ## Video Support
 
@@ -41,40 +45,13 @@ Playa now supports video playback alongside image sequences:
 
 **Supported formats**: MP4, MOV, AVI, MKV
 
-**Features**:
-- Frame-by-frame video playback with seek support
-- Automatic frame count detection
-- Cached decoding with worker pool (same as image sequences)
-- FFmpeg-based decoding via `playa-ffmpeg` crate
-
-**Usage**:
-- Open video file via drag-and-drop or file browser
-- Videos appear in playlist with detected frame count
-- Scrub timeline to seek through video frames
-- All playback controls work identically to image sequences
-
-**Technical details**:
-- Videos internally use `@N` suffix notation (e.g., `video.mp4@17` for frame 17)
-- Each frame decoded on-demand with YUV→RGB→RGBA conversion
-- FFmpeg logging suppressed to avoid console spam
-- Playlist serialization preserves video sequences correctly
-
 **Requirements**:
-- FFmpeg libraries (auto-detected via vcpkg on Windows)
+- Vcpkg with FFmpeg libraries (auto-detected via vcpkg on Windows)
 - `playa-ffmpeg` crate handles all FFmpeg bindings
 
 ## Video Encoding
 
-Playa includes built-in video encoding (F7 hotkey) for exporting image sequences and play ranges to video files.
-
-**Features**:
-- **F7 hotkey**: Opens encoding dialog with codec/quality settings
-- **Play range support**: Encode only selected frames (B/N markers)
-- **Hardware acceleration**: NVENC (NVIDIA), QSV (Intel), AMF (AMD)
-- **Software codecs**: H.264, H.265, MPEG4
-- **Containers**: MP4, MOV
-- **Quality modes**: CRF (constant quality) or Bitrate
-- **Progress tracking**: Real-time encoding progress with cancel support
+Playa includes built-in video encoding (F4 hotkey) for exporting image sequences and play ranges to video files.
 
 **Supported Encoders**:
 
@@ -97,7 +74,7 @@ Playa includes built-in video encoding (F7 hotkey) for exporting image sequences
    - Press **N** to mark the end frame
    - Visual indicators appear on the timeline showing the active range
    - Clear markers to encode the entire sequence
-3. Press **F7** to open encoding dialog
+3. Press **F4** to open encoding dialog
 4. Select codec, quality settings, and output path
 5. Click "Encode" - progress shown in real-time with cancel option
 6. Output file written to selected location
@@ -330,18 +307,6 @@ vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,
 **Hardware encoders on Linux**:
 - `nvcodec` - NVIDIA NVENC (requires CUDA drivers)
 
-**Alternative: System FFmpeg**
-```bash
-# Ubuntu/Debian
-sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
-
-# Fedora
-sudo dnf install ffmpeg-devel
-
-# Arch
-sudo pacman -S ffmpeg
-```
-
 #### macOS
 
 ```bash
@@ -363,10 +328,6 @@ export PKG_CONFIG_PATH=$VCPKG_ROOT/installed/x64-osx-release/lib/pkgconfig
 vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:x64-osx-release
 ```
 
-**Alternative: Homebrew**
-```bash
-brew install ffmpeg
-```
 
 **Note**: macOS hardware encoding (VideoToolbox) requires system FFmpeg or manual FFmpeg build with `--enable-videotoolbox`.
 
@@ -383,27 +344,6 @@ ffmpeg -encoders | grep -E "(nvenc|qsv|amf|264|265)"
 bootstrap.cmd test    # Windows
 ./bootstrap.sh test   # Linux/macOS
 ```
-
-### CI/CD Runner Requirements
-
-GitHub Actions runners need FFmpeg for video support:
-
-**Windows runners**:
-- Install vcpkg during workflow
-- Cache: `~\vcpkg` and `~\AppData\Local\vcpkg`
-- Required features: `ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec,qsv,vpl]:x64-windows-static-md`
-
-**Linux runners**:
-- Install vcpkg during workflow OR use system FFmpeg
-- Cache: `~/vcpkg`
-- Required features: `ffmpeg[core,avcodec,avformat,avutil,swscale,nvcodec]:x64-linux`
-
-**macOS runners**:
-- Use Homebrew FFmpeg (faster than vcpkg)
-- Cache: Homebrew bottles
-- Command: `brew install ffmpeg`
-
-See `.github/workflows/warm-cache.yml` for reference implementation.
 
 ## Quick Start (New Contributors)
 
@@ -550,155 +490,11 @@ cargo xtask deploy
 # Now available as: playa
 ```
 
-**Release workflow:**
-```bash
-# 1. Create PR from dev to main
-cargo xtask pr v0.2.0
-
-# 2. Merge PR on GitHub
-
-# 3. Tag release on main
-git checkout main && git pull
-cargo xtask tag-rel patch
-
-# 4. GitHub Actions builds installers and creates Release
-```
-
-## CI/CD Workflows
-
-### Complete Workflow
-
-**1. Development on main branch:**
-- Commits to `main` → push triggers `warm-cache.yml`
-- `warm-cache.yml` checks cache age (threshold: 12 hours)
-- If cache is stale/missing → warms cache for all platforms (Windows, Linux, macOS)
-- Cache is saved under `refs/heads/main`
-
-**2. Creating a release:**
-- Create git tag: `git tag v0.1.109` → `git push origin v0.1.109`
-- Triggers `release.yml` → verifies tag is on `main` branch
-- Runs builds for all platforms via `_build-platform.yml`
-- **Cache is read from main** (automatic fallback via `actions/cache@v4`)
-- For macOS: imports Developer ID certificate, signs `.app`
-- Builds installers: `.msi` (Windows), `.deb`/`.AppImage` (Linux), `.dmg`/`.app.tar.gz` (macOS)
-- Creates GitHub Release with artifacts
-
-**3. Manual cache warming:**
-- Actions → Warm Cache → Run workflow
-- Choose backends: `openexr`, `exrs`, or `both`
-
-**Cache strategy:**
-- Cache is created **only on main**
-- Tags **read** cache from main (don't create their own)
-- No duplication, no isolation between tags
-
-**macOS code signing:**
-- Certificate: Developer ID Application (stored in GitHub Secrets)
-- Workflow imports into temporary keychain
-- `cargo-packager` uses `signing-identity` from `Cargo.toml`
-- Verification: logs show `✅ App is signed with Developer ID`
-
-### Technical Details
-
-**Release Workflow:**
-- Trigger: pushing a tag matching `v*` or manual run
-- Behavior:
-  - If tag points to commit on `main` → release path (publishes GitHub Release)
-  - If tag not on `main` → dev path (builds artifacts without publishing)
-- Manual run supports `build_type: auto | release | dev`
-
-**Warm Cache Workflow:**
-- Trigger: push to `main` or manual dispatch
-- Gate: only executes automatically from `main` branch
-- Cooldown: skips if successful run happened within last 12 hours
-- Manual run ignores cooldown and always executes
-- Backends: `openexr` (default), `exrs`, or `both`
-
-**macOS Packaging:**
-- Pre-packaging cleanup: detaches stale `/Volumes/Playa` mount, removes leftover `*.dmg`
-- Retries up to 3 times with short delay to avoid `hdiutil: create failed - Resource busy`
-
-**Permissions:**
-- Unified workflow configured with `contents: write` for publishing releases
-
-### Static FFmpeg Linking Strategy
-
-All CI builds use static FFmpeg linking via custom vcpkg triplets for portable, self-contained binaries:
-
-**Platform-specific triplets:**
-
-| Platform | Triplet | Configuration | Benefits |
-|----------|---------|---------------|----------|
-| **Windows** | `x64-windows-static-md-release` | Static libraries + dynamic CRT | No FFmpeg DLLs required, smaller installer |
-| **macOS** | `arm64-osx-release` / `x64-osx-release` | Static FFmpeg | Universal binary support, portable `.app` |
-| **Linux** | `x64-linux-release` | Static FFmpeg where possible | Reduces runtime dependencies |
-
-**Key advantages:**
-- **Portability**: Binaries work without installing FFmpeg separately
-- **Version consistency**: Bundled FFmpeg version guaranteed to work
-- **Reduced installer size**: No need to package separate FFmpeg DLLs
-- **Faster CI builds**: vcpkg FFmpeg cache reduces build time from ~20 minutes to ~30 seconds
-
-**Technical implementation:**
-1. Custom vcpkg triplets are created **before** cache check
-2. FFmpeg is installed with triplet-specific configuration
-3. `VCPKGRS_TRIPLET` environment variable guides Rust's vcpkg integration
-4. Cache includes FFmpeg binaries, headers, and pkg-config files
-5. Subsequent builds reuse cached FFmpeg (cache key includes triplet name)
-
-**Cache optimization:**
-- **Cache paths**: `vcpkg/installed`, `vcpkg/buildtrees`, `vcpkg/downloads`, `vcpkg/packages`
-- **Cache keys**: Include OS, triplet, and FFmpeg feature set
-- **Hit rate**: ~95% on subsequent builds (assuming no dependency updates)
-- **Storage**: ~500MB per platform (compressed)
-
-### Cargo Features
-
-Playa uses Cargo features to provide flexible EXR backend selection:
-
-| Feature | Default | Description | Use Case |
-|---------|---------|-------------|----------|
-| (none) | ✅ Yes | Pure Rust `exrs` backend | Fast builds, no external dependencies |
-| `openexr` | ❌ No | C++ OpenEXR backend via `openexr-rs` | Full DWAA/DWAB compression support |
-
-**Build commands:**
-```bash
-# Default (exrs backend)
-cargo build --release
-
-# OpenEXR backend (full compression support)
-cargo build --release --features openexr
-
-# Using xtask (handles dependencies automatically)
-cargo xtask build              # exrs backend
-cargo xtask build --openexr    # OpenEXR backend
-```
-
-**Backend comparison:**
-- **exrs (default)**:
-  - ✅ Pure Rust, fast compilation (~2-3 minutes)
-  - ✅ No external dependencies
-  - ❌ No DWAA/DWAB compression support
-  - Use for: Development, quick iterations
-
-- **openexr (feature flag)**:
-  - ✅ Full OpenEXR feature support (DWAA/DWAB/etc)
-  - ✅ Battle-tested C++ implementation
-  - ❌ Requires C++ compiler, CMake
-  - ❌ Slower compilation (~3-4 minutes)
-  - Use for: Production builds, full compatibility
-
 ### Development Dependencies
 
 **Auto-installed by bootstrap script:**
 - `cargo-release` - Version bumping and tag creation
 - `cargo-packager` - Cross-platform installer generation (v0.11.7)
-
-**Standard Rust tools (usually pre-installed):**
-- `rustup` - Rust toolchain manager
-- `cargo` - Rust package manager
-- `clippy` - Linter (`rustup component add clippy`)
-- `rustfmt` - Code formatter (`rustup component add rustfmt`)
 
 **Required for PR workflow:**
 - `gh` - GitHub CLI (used by `cargo xtask pr`) - [Installation](https://cli.github.com/)
@@ -707,29 +503,6 @@ cargo xtask build --openexr    # OpenEXR backend
 - `git-cliff` - Changelog generation (used by `cargo xtask changelog`)
 - `cargo-audit` - Security vulnerability scanning
 - `cargo-llvm-cov` - Code coverage
-
-### Standard Rust Development
-
-```bash
-# Testing
-cargo test                           # Run all unit tests
-cargo test --release                 # Run tests in release mode
-
-# Documentation
-cargo doc --open                     # Generate and open rustdoc documentation
-cargo doc --no-deps --open           # Only document this crate
-
-# Code quality
-cargo clippy                         # Run linter
-cargo clippy -- -D warnings          # Treat warnings as errors
-cargo fmt                            # Format code
-cargo fmt -- --check                 # Check formatting without modifying
-
-# Build variants
-cargo build                          # Debug build
-cargo build --release                # Release build (optimized)
-cargo clean                          # Clean build artifacts
-```
 
 #### Linux-Specific Build Notes
 
@@ -760,83 +533,6 @@ See: https://github.com/AcademySoftwareFoundation/openexr/issues/1157
 | Zlib | Compression |
 | OpenEXR-C | C API wrapper from openexr-sys |
 
-**Library Copy Process (`cargo xtask post`):**
-
-1. **Locate libraries** compiled by `openexr-sys`:
-   - Searches `target/release/build/openexr-sys-*/out/` for versioned `.so` files
-   - Example: `libOpenEXR-3_2.so.31.0.0`, `libImath-3_1.so.29.9.0`
-
-2. **Copy to target directory**:
-   - Destination: `target/release/` (next to `playa` binary)
-   - Preserves original versioned filenames
-
-3. **Create SONAME symlinks**:
-   - `libOpenEXR-3_2.so -> libOpenEXR-3_2.so.31.0.0`
-   - `libOpenEXRCore-3_2.so -> libOpenEXRCore-3_2.so.31.0.0`
-   - `libOpenEXRUtil-3_2.so -> libOpenEXRUtil-3_2.so.31.0.0`
-   - `libImath-3_1.so -> libImath-3_1.so.29.9.0`
-   - Plus OpenEXR-C wrapper lib
-
-**Why this is needed:**
-- `openexr-sys` build creates libraries with full SONAME versions
-- Rust linker expects generic `.so` names without version suffixes
-- Without symlinks: `error while loading shared libraries: libOpenEXR-3_2.so: cannot open shared object file`
-
-**RPATH Configuration:**
-
-`.cargo/config.toml` sets RPATH to `$ORIGIN`, so the executable searches for `.so` files in its own directory:
-```toml
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-arg=-Wl,-rpath,$ORIGIN"]
-```
-
-No `LD_LIBRARY_PATH` needed! Combined with symlinks from `cargo xtask post`, the binary is fully self-contained.
-
-**Troubleshooting:**
-
-Build fails with "uint64_t has not been declared":
-```bash
-cargo xtask pre
-cargo build --release
-```
-
-Libraries not found when running:
-```bash
-cargo xtask verify --release
-cargo xtask post --release  # If missing
-```
-
-After `cargo clean`:
-```bash
-cargo xtask build --release  # Re-patches automatically
-```
-
-#### Windows-Specific Build Notes
-
-**Note:** These instructions apply only to the OpenEXR C++ backend (`--openexr` feature). The default exrs backend requires no external DLLs.
-
-**Native Libraries (DLL Management):**
-
-Windows requires `.dll` files alongside the executable. The same 7 OpenEXR/Imath/zlib libraries are needed, just as `.dll` instead of `.so`.
-
-**Library Copy Process (`cargo xtask post`):**
-
-1. **Locate DLLs** compiled by `openexr-sys`:
-   - Searches `target/release/build/openexr-sys-*/out/bin/` for `.dll` files
-   - Example: `OpenEXR-3_2.dll`, `Imath-3_1.dll`, `zlib.dll`
-
-2. **Copy to target directory**:
-   - Destination: `target/release/` (next to `playa.exe`)
-   - Windows DLLs don't use versioned SONAME - simpler than Linux
-
-**Why this is needed:**
-- Windows searches for DLLs in the same directory as the executable
-- Without DLLs: `The code execution cannot proceed because OpenEXR-3_2.dll was not found`
-- No PATH modification needed - self-contained binary
-
-**No RPATH equivalent:**
-- Windows automatically searches the executable's directory first
-- No special linker flags required (unlike Linux `$ORIGIN`)
 
 ## macOS Code Signing & Notarization
 
@@ -847,67 +543,6 @@ All macOS DMG releases are **code-signed** with Developer ID and **notarized** b
 - ✅ No "unidentified developer" dialogs
 - ✅ Double-click DMG → drag to Applications → works immediately
 
-### For Maintainers: CI/CD Setup
-
-**How it works in CI (`_build-backend.yml`):**
-
-**1. Certificate Import**
-- Decodes `APPLE_CERTIFICATE` secret (base64 .p12 file)
-- Creates temporary keychain
-- Imports Developer ID Application certificate
-- Unlocks keychain for build process
-
-**2. Signing** (automatic via `cargo-packager`)
-- Reads `signing-identity` from `Cargo.toml`:
-  ```toml
-  [package.metadata.packager.macos]
-  signing-identity = "Developer ID Application: Name (TEAM_ID)"
-  ```
-- Signs all executables and frameworks in `.app` bundle
-- Verifies signature with `codesign -dv`
-
-**3. Notarization** (automatic via `cargo-packager`)
-- Requires environment variables:
-  - `APPLE_ID` - Apple ID email
-  - `APPLE_PASSWORD` - App-specific password (NOT iCloud password!)
-  - `APPLE_TEAM_ID` - Team ID from Developer Portal
-- Submits signed `.app` to Apple notarization service
-- Waits for approval (~1-5 minutes)
-- Staples notarization ticket to DMG
-
-**4. Verification Logs Show:**
-```
-✅ Certificate imported: Developer ID Application: Name (TEAM_ID)
-✅ App signed successfully
-✅ Notarization submitted (request ID: ...)
-✅ Notarization approved
-✅ Ticket stapled to DMG
-```
-
-**Setting Up Secrets (One-Time):**
-
-Run helper script:
-```bash
-./apple_cert.sh  # Exports certificate and uploads to GitHub Secrets
-```
-
-Or manually:
-```bash
-gh secret set APPLE_CERTIFICATE          # Base64 .p12 file
-gh secret set APPLE_CERTIFICATE_PASSWORD # Certificate password
-gh secret set APPLE_ID                   # your-email@example.com
-gh secret set APPLE_PASSWORD             # App-specific password (NOT iCloud!)
-gh secret set APPLE_TEAM_ID              # Y8PQ7YASU9
-```
-
-**Certificate Details:**
-- Type: "Developer ID Application" (NOT "Apple Development")
-- Source: [Apple Developer Portal](https://developer.apple.com/account/resources/certificates/list)
-- App-specific password: https://appleid.apple.com → Security → App-Specific Passwords
-
-**Workflow Skip Behavior:**
-- If `APPLE_CERTIFICATE` secret is empty → adhoc signature (for testing)
-- If any notarization secret missing → builds but skips notarization
 
 ## Configuration
 
@@ -943,20 +578,6 @@ playa
 # - New users: Uses platform-specific location
 playa
 ```
-
-**Settings auto-saved to `playa.json`:**
-- FPS
-- Loop mode
-- Shader selection
-- Font size (global UI)
-- Dark/light theme
-- Viewport state (zoom/pan/mode)
-- Playlist (sequence references)
-- Window position/size
-- Panel widths (playlist)
-- Settings dialog state (selected category)
-
-**Cache state auto-saved to `playa_cache.json`** for instant restoration on restart.
 
 ## Usage
 
