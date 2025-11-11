@@ -161,6 +161,17 @@ impl Player {
         }
     }
 
+    /// Stop playback (always stops, doesn't toggle)
+    pub fn stop(&mut self) {
+        if self.is_playing {
+            self.is_playing = false;
+            debug!("Playback stopped at frame {}", self.cache.frame());
+            self.last_frame_time = None;
+            // Reset fps_play to fps_base on stop
+            self.fps_play = self.fps_base;
+        }
+    }
+
     /// Rewind to start
     pub fn to_start(&mut self) {
         debug!("Rewinding to frame 0");

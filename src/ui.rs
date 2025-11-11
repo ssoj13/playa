@@ -266,6 +266,10 @@ pub fn render_controls(
             ui.separator();
 
             ui.label("Base FPS:");
+
+            // Save old value to detect changes
+            let old_fps = player.fps_base;
+
             // FPS Combobox with predefined values
             egui::ComboBox::from_id_salt("fps_combo")
                 .selected_text(format!("{:.0}", player.fps_base))
@@ -285,6 +289,18 @@ pub fn render_controls(
                     .speed(0.1)
                     .range(0.00000001..=1000.0),
             );
+
+            // Apply FPS change: base_fps is the minimum floor for play_fps
+            if (player.fps_base - old_fps).abs() > 0.001 {
+                if player.is_playing {
+                    // During playback: ensure play_fps is not lower than base_fps
+                    // base_fps "pushes" play_fps from below
+                    if player.fps_play < player.fps_base {
+                        player.fps_play = player.fps_base;
+                    }
+                }
+                // fps_base is already updated by the widgets above
+            }
 
             // Always show play FPS if different from base (to avoid UI jumping)
             if (player.fps_play - player.fps_base).abs() > 0.01 {

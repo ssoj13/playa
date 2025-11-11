@@ -662,19 +662,6 @@ impl Frame {
     }
 
     /// Get pixels as u8 slice (for backward compatibility, only works with Rgba8 format)
-    /// Returns error if the pixel format is not U8 (e.g., HDR formats F16/F32)
-    pub fn pixels(&self) -> Result<Vec<u8>, FrameError> {
-        let data = self.data.lock().unwrap();
-        match data.buffer.as_ref() {
-            PixelBuffer::U8(vec) => Ok(vec.clone()),
-            PixelBuffer::F16(_) => Err(FrameError::UnsupportedFormat(
-                "Frame uses F16 format, use pixel_buffer() for HDR data".into(),
-            )),
-            PixelBuffer::F32(_) => Err(FrameError::UnsupportedFormat(
-                "Frame uses F32 format, use pixel_buffer() for HDR data".into(),
-            )),
-        }
-    }
 
 
     /// Get dimensions

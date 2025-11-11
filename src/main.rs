@@ -276,12 +276,14 @@ impl PlayaApp {
             }
         }
 
-        // Play/Pause (Space, K, ArrowUp)
-        if input.key_pressed(egui::Key::Space)
-            || input.key_pressed(egui::Key::K)
-            || input.key_pressed(egui::Key::ArrowUp)
-        {
+        // Play/Pause (Space, ArrowUp)
+        if input.key_pressed(egui::Key::Space) || input.key_pressed(egui::Key::ArrowUp) {
             self.player.toggle_play_pause();
+        }
+
+        // Stop (K)
+        if input.key_pressed(egui::Key::K) {
+            self.player.stop();
         }
 
         // Only process playback hotkeys when no widget has keyboard focus
