@@ -36,16 +36,16 @@ pub fn help_text() -> &'static str {
     Ctrl+B - Reset Play Range\n\n\
     Playback:\n\
     Space / ↑ - Play/Pause Toggle\n\
-    K - Stop\n\
-    J / , / ← - Jog Backward\n\
-    L / . / → - Jog Forward\n\
-    ↓ - Decrease Play Speed\n\n\
+    K / . / ↓ - Stop\n\
+    J / , - Jog Backward\n\
+    L / / - Jog Forward\n\n\
     Frame Navigation:\n\
+    ←/→ - Step ±1 frame\n\
     PgUp/PgDn - Step ±1 frame\n\
-    Shift+PgUp/PgDn - Step ±25 frames\n\
     Shift+←/→ - Step ±25 frames\n\
-    Ctrl+PgUp/PgDn - Jump to Start/End\n\
+    Shift+PgUp/PgDn - Step ±25 frames\n\
     Ctrl+←/→ - Jump to Start/End\n\
+    Ctrl+PgUp/PgDn - Jump to Start/End\n\
     1 / Home - Jump to Start\n\
     2 / End - Jump to End\n\
     [ - Previous Sequence Start\n\

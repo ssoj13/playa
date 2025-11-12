@@ -281,8 +281,8 @@ impl PlayaApp {
             self.player.toggle_play_pause();
         }
 
-        // Stop (K)
-        if input.key_pressed(egui::Key::K) {
+        // Stop (K, .)
+        if input.key_pressed(egui::Key::K) || input.key_pressed(egui::Key::Period) {
             self.player.stop();
         }
 
@@ -341,6 +341,7 @@ impl PlayaApp {
                 self.player.increase_fps_base();
             }
 
+            // Arrow navigation
             // Shift+ArrowLeft - step 25 frames backward
             if input.modifiers.shift && input.key_pressed(egui::Key::ArrowLeft) {
                 self.player.step(-crate::player::FRAME_JUMP_STEP);
@@ -349,24 +350,28 @@ impl PlayaApp {
             else if input.modifiers.shift && input.key_pressed(egui::Key::ArrowRight) {
                 self.player.step(crate::player::FRAME_JUMP_STEP);
             }
-            // J, <, Left Arrow - jog backward (no modifiers)
-            else if input.key_pressed(egui::Key::J)
-                || (!input.modifiers.any() && input.key_pressed(egui::Key::ArrowLeft))
-                || input.key_pressed(egui::Key::Comma)
-            {
-                self.player.jog_backward();
+            // ArrowLeft - step 1 frame backward (no modifiers)
+            else if !input.modifiers.any() && input.key_pressed(egui::Key::ArrowLeft) {
+                self.player.step(-1);
             }
-            // L, >, Right Arrow - jog forward (no modifiers)
-            else if input.key_pressed(egui::Key::L)
-                || (!input.modifiers.any() && input.key_pressed(egui::Key::ArrowRight))
-                || input.key_pressed(egui::Key::Period)
-            {
-                self.player.jog_forward();
+            // ArrowRight - step 1 frame forward (no modifiers)
+            else if !input.modifiers.any() && input.key_pressed(egui::Key::ArrowRight) {
+                self.player.step(1);
             }
 
-            // ArrowDown - decrease play FPS (only when playing)
+            // ArrowDown - stop playback
             if input.key_pressed(egui::Key::ArrowDown) {
-                self.player.decrease_fps_play();
+                self.player.stop();
+            }
+
+            // J, , - jog backward
+            if input.key_pressed(egui::Key::J) || input.key_pressed(egui::Key::Comma) {
+                self.player.jog_backward();
+            }
+
+            // L, / - jog forward
+            if input.key_pressed(egui::Key::L) || input.key_pressed(egui::Key::Slash) {
+                self.player.jog_forward();
             }
 
             // Sequence navigation
