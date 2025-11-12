@@ -1,3 +1,14 @@
+## [0.1.131] - 2025-11-12
+
+### 🚀 Features
+
+- Add frame stepping with loop/clamp support
+- Remap arrow keys and JKL shortcuts
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Tue 11/11/2025 -  8:02:45.31
+- Remove unused decrease_fps_play method
 ## [0.1.130] - 2025-11-11
 
 ### ⚙️ Miscellaneous Tasks
