@@ -35,6 +35,9 @@ use crate::frame::Frame;
 /// FPS presets for jog/shuttle control
 const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0];
 
+/// Frame step size for Shift+Arrow and Shift+PageUp/PageDown
+pub const FRAME_JUMP_STEP: i32 = 25;
+
 /// Playback state manager with new architecture
 pub struct Player {
     pub cache: Cache,
@@ -203,6 +206,52 @@ impl Player {
         self.last_frame_time = None;
 
         // Start preloading from new position
+        self.cache.signal_preload();
+    }
+
+    /// Step by N frames (positive = forward, negative = backward)
+    /// Respects play range and loop_enabled setting
+    pub fn step(&mut self, count: i32) {
+        if count == 0 {
+            return;
+        }
+
+        let current = self.cache.frame();
+        let (play_start, play_end) = self.cache.get_play_range();
+
+        // Calculate target frame with saturating arithmetic
+        let target = if count > 0 {
+            current.saturating_add(count as usize)
+        } else {
+            current.saturating_sub(count.unsigned_abs() as usize)
+        };
+
+        // Apply loop/clamp logic based on loop_enabled
+        let final_frame = if target > play_end {
+            if self.loop_enabled {
+                // Loop: wrap around to play_start
+                let overflow = target - play_end;
+                let range_size = play_end - play_start + 1;
+                play_start + ((overflow - 1) % range_size)
+            } else {
+                // Clamp to play_end
+                play_end
+            }
+        } else if target < play_start {
+            if self.loop_enabled {
+                // Loop: wrap around to play_end
+                let underflow = play_start - target;
+                let range_size = play_end - play_start + 1;
+                play_end - ((underflow - 1) % range_size)
+            } else {
+                // Clamp to play_start
+                play_start
+            }
+        } else {
+            target
+        };
+
+        self.cache.set_frame(final_frame);
         self.cache.signal_preload();
     }
 

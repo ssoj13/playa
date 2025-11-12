@@ -35,14 +35,19 @@ pub fn help_text() -> &'static str {
     N - Set Play Range End\n\
     Ctrl+B - Reset Play Range\n\n\
     Playback:\n\
-    Space / K / ↑ - Play/Pause\n\
+    Space / ↑ - Play/Pause Toggle\n\
+    K - Stop\n\
     J / , / ← - Jog Backward\n\
     L / . / → - Jog Forward\n\
-    ↓ - Decrease Play Speed\n\
+    ↓ - Decrease Play Speed\n\n\
+    Frame Navigation:\n\
+    PgUp/PgDn - Step ±1 frame\n\
+    Shift+PgUp/PgDn - Step ±25 frames\n\
+    Shift+←/→ - Step ±25 frames\n\
+    Ctrl+PgUp/PgDn - Jump to Start/End\n\
+    Ctrl+←/→ - Jump to Start/End\n\
     1 / Home - Jump to Start\n\
     2 / End - Jump to End\n\
-    Ctrl+← - Jump to Start\n\
-    Ctrl+→ - Jump to End\n\
     [ - Previous Sequence Start\n\
     ] - Next Sequence Start\n\n\
     FPS Control:\n\

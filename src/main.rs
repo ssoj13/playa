@@ -299,6 +299,37 @@ impl PlayaApp {
                 self.player.to_end();
             }
 
+            // Frame stepping
+            // PageDown - step 1 frame forward (or 25 with Shift)
+            if input.key_pressed(egui::Key::PageDown) {
+                let step = if input.modifiers.shift {
+                    crate::player::FRAME_JUMP_STEP
+                } else {
+                    1
+                };
+                self.player.step(step);
+            }
+
+            // PageUp - step 1 frame backward (or 25 with Shift)
+            if input.key_pressed(egui::Key::PageUp) {
+                let step = if input.modifiers.shift {
+                    -crate::player::FRAME_JUMP_STEP
+                } else {
+                    -1
+                };
+                self.player.step(step);
+            }
+
+            // Ctrl+PageDown - jump to end
+            if input.modifiers.ctrl && input.key_pressed(egui::Key::PageDown) {
+                self.player.to_end();
+            }
+
+            // Ctrl+PageUp - jump to start
+            if input.modifiers.ctrl && input.key_pressed(egui::Key::PageUp) {
+                self.player.to_start();
+            }
+
             // Base FPS controls
             // Decrease base FPS (-)
             if input.key_pressed(egui::Key::Minus) {
@@ -310,17 +341,24 @@ impl PlayaApp {
                 self.player.increase_fps_base();
             }
 
-            // J, <, Left Arrow - jog backward
-            if input.key_pressed(egui::Key::J)
-                || (!input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowLeft))
+            // Shift+ArrowLeft - step 25 frames backward
+            if input.modifiers.shift && input.key_pressed(egui::Key::ArrowLeft) {
+                self.player.step(-crate::player::FRAME_JUMP_STEP);
+            }
+            // Shift+ArrowRight - step 25 frames forward
+            else if input.modifiers.shift && input.key_pressed(egui::Key::ArrowRight) {
+                self.player.step(crate::player::FRAME_JUMP_STEP);
+            }
+            // J, <, Left Arrow - jog backward (no modifiers)
+            else if input.key_pressed(egui::Key::J)
+                || (!input.modifiers.any() && input.key_pressed(egui::Key::ArrowLeft))
                 || input.key_pressed(egui::Key::Comma)
             {
                 self.player.jog_backward();
             }
-
-            // L, >, Right Arrow - jog forward
-            if input.key_pressed(egui::Key::L)
-                || (!input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowRight))
+            // L, >, Right Arrow - jog forward (no modifiers)
+            else if input.key_pressed(egui::Key::L)
+                || (!input.modifiers.any() && input.key_pressed(egui::Key::ArrowRight))
                 || input.key_pressed(egui::Key::Period)
             {
                 self.player.jog_forward();
