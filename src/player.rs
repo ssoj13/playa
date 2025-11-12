@@ -334,18 +334,6 @@ impl Player {
         }
     }
 
-    /// Decrease play FPS to previous preset (ArrowDown when playing)
-    pub fn decrease_fps_play(&mut self) {
-        if self.is_playing {
-            if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f <= self.fps_play) {
-                if idx > 0 {
-                    self.fps_play = FPS_PRESETS[idx - 1];
-                    debug!("Play FPS decreased to {}", self.fps_play);
-                }
-            }
-        }
-    }
-
     /// Jump to next sequence start (] key)
     /// If within sequence -> jump to next sequence start
     /// If on last sequence -> jump to end of range
