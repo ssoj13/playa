@@ -322,7 +322,9 @@ impl Frame {
     /// **Used by**: Initial frame setup, play_range cache management
     ///
     /// Supports: EXR, PNG, JPG, TIFF, HDR, TGA
-    pub fn load_header(&self) -> Result<(), FrameError> {
+    ///
+    /// Returns: Always 0 (no memory allocated for header-only loads)
+    pub fn load_header(&self) -> Result<usize, FrameError> {
         let path = self
             .filename
             .as_ref()
@@ -342,7 +344,7 @@ impl Frame {
             data.status = FrameStatus::Header;
 
             debug!("Loaded video header: {}x{}", width, height);
-            return Ok(());
+            return Ok(0);
         }
 
         // For images, use ExrImpl::header (works for all formats via image crate)
@@ -372,7 +374,7 @@ impl Frame {
         data.status = FrameStatus::Header;
 
         debug!("Loaded header: {}x{}", width, height);
-        Ok(())
+        Ok(0)
     }
 
     /// Load frame from disk (JPG/PNG/EXR) into pixel buffer
@@ -401,11 +403,13 @@ impl Frame {
     /// # use std::path::Path;
     /// let frame = Frame::new_with_file(Path::new("render.0001.exr"), 1920, 1080);
     /// match frame.load() {
-    ///     Ok(()) => println!("Loaded: {}x{}", frame.width(), frame.height()),
+    ///     Ok(bytes) => println!("Loaded: {}x{}, {} bytes", frame.width(), frame.height(), bytes),
     ///     Err(e) => eprintln!("Load failed: {:?}", e),
     /// }
     /// ```
-    pub fn load(&self) -> Result<(), FrameError> {
+    ///
+    /// Returns: Size in bytes of allocated pixel data
+    pub fn load(&self) -> Result<usize, FrameError> {
         let path = self
             .filename
             .as_ref()
@@ -417,12 +421,12 @@ impl Frame {
 
         // Atomically claim frame for loading (prevents duplicate loads)
         if !self.try_claim_for_loading() {
-            // Already loading/loaded/error - just return current status
+            // Already loading/loaded/error - return current memory usage or 0
             return match self.status() {
-                FrameStatus::Loaded => Ok(()),
+                FrameStatus::Loaded => Ok(self.mem()),
                 // Return a clearer error category instead of UnsupportedFormat
                 FrameStatus::Error => Err(FrameError::Image("Previously failed".into())),
-                _ => Ok(()), // Loading in progress
+                _ => Ok(0), // Loading in progress
             };
         }
 
@@ -445,9 +449,9 @@ impl Frame {
         };
 
         match result {
-            Ok(()) => {
+            Ok(mem_size) => {
                 self.data.lock().unwrap().status = FrameStatus::Loaded;
-                Ok(())
+                Ok(mem_size)
             }
             Err(e) => {
                 self.data.lock().unwrap().status = FrameStatus::Error;
@@ -457,11 +461,18 @@ impl Frame {
     }
 
     /// Load EXR file - delegate to ExrImpl (exrs or openexr-rs)
-    fn load_exr<P: AsRef<Path>>(&self, path: P) -> Result<(), FrameError> {
+    fn load_exr<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
         debug!("Loading EXR: {}", path.as_ref().display());
 
         // Delegate to ExrImpl (compile-time selected backend)
         let (buffer, pixel_format, width, height) = ExrImpl::load(path.as_ref())?;
+
+        // Calculate memory size before moving buffer
+        let mem_size = match &buffer {
+            PixelBuffer::U8(vec) => vec.len(),
+            PixelBuffer::F16(vec) => vec.len() * 2,
+            PixelBuffer::F32(vec) => vec.len() * 4,
+        };
 
         // Update frame data
         let mut data = self.data.lock().unwrap();
@@ -470,12 +481,15 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        debug!("Loaded EXR: {}x{} ({:?})", width, height, pixel_format);
-        Ok(())
+        debug!(
+            "Loaded EXR: {}x{} ({:?}), {} bytes",
+            width, height, pixel_format, mem_size
+        );
+        Ok(mem_size)
     }
 
     /// Load Radiance HDR format
-    fn load_hdr<P: AsRef<Path>>(&self, path: P) -> Result<(), FrameError> {
+    fn load_hdr<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
         debug!("Loading HDR: {}", path.as_ref().display());
 
         let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
@@ -496,6 +510,8 @@ impl Frame {
             buffer_f32.push(1.0); // A (opaque)
         }
 
+        let mem_size = buffer_f32.len() * 4; // f32 = 4 bytes
+
         // Update frame data atomically - store as native f32 HDR
         let mut data = self.data.lock().unwrap();
         data.buffer = Arc::new(PixelBuffer::F32(buffer_f32));
@@ -503,12 +519,12 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        info!("Loaded HDR: {}x{} (HDR f32)", width, height);
-        Ok(())
+        info!("Loaded HDR: {}x{} (HDR f32), {} bytes", width, height, mem_size);
+        Ok(mem_size)
     }
 
     /// Load standard image formats
-    fn load_image<P: AsRef<Path>>(&self, path: P) -> Result<(), FrameError> {
+    fn load_image<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
         debug!("Loading image: {}", path.as_ref().display());
 
         let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
@@ -516,19 +532,21 @@ impl Frame {
         let width = img.width() as usize;
         let height = img.height() as usize;
         let rgba = img.to_rgba8();
+        let buffer_u8 = rgba.into_raw();
+        let mem_size = buffer_u8.len();
 
         // Update frame data atomically
         let mut data = self.data.lock().unwrap();
-        data.buffer = Arc::new(PixelBuffer::U8(rgba.into_raw()));
+        data.buffer = Arc::new(PixelBuffer::U8(buffer_u8));
         data.pixel_format = PixelFormat::Rgba8;
         data.width = width;
         data.height = height;
 
-        Ok(())
+        Ok(mem_size)
     }
 
     /// Load video frame
-    fn load_video<P: AsRef<Path>>(&self, path: P, frame_num: usize) -> Result<(), FrameError> {
+    fn load_video<P: AsRef<Path>>(&self, path: P, frame_num: usize) -> Result<usize, FrameError> {
         debug!(
             "Loading video frame {}: {}",
             frame_num,
@@ -538,6 +556,13 @@ impl Frame {
         let (buffer, pixel_format, width, height) =
             crate::video::decode_frame(path.as_ref(), frame_num)?;
 
+        // Calculate memory size before moving buffer
+        let mem_size = match &buffer {
+            PixelBuffer::U8(vec) => vec.len(),
+            PixelBuffer::F16(vec) => vec.len() * 2,
+            PixelBuffer::F32(vec) => vec.len() * 4,
+        };
+
         // Update frame data atomically
         let mut data = self.data.lock().unwrap();
         data.buffer = Arc::new(buffer);
@@ -545,8 +570,11 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        debug!("Loaded video frame {}: {}x{}", frame_num, width, height);
-        Ok(())
+        debug!(
+            "Loaded video frame {}: {}x{}, {} bytes",
+            frame_num, width, height, mem_size
+        );
+        Ok(mem_size)
     }
 
     /// Memory size in bytes
@@ -573,12 +601,14 @@ impl Frame {
     /// - Error → Header: Resets to header state for retry
     /// - Error → Loaded: Attempts full reload
     /// - Loading → Header: Cancels load, keeps/loads metadata
-    pub fn set_status(&self, new_status: FrameStatus) -> Result<(), FrameError> {
+    ///
+    /// Returns: Size in bytes of memory freed (only for Loaded → Header transition)
+    pub fn set_status(&self, new_status: FrameStatus) -> Result<usize, FrameError> {
         let current_status = self.status();
 
         // Same status - no-op
         if current_status == new_status {
-            return Ok(());
+            return Ok(0);
         }
 
         match (current_status, new_status) {
@@ -586,6 +616,13 @@ impl Frame {
             // Drop pixel data, keep metadata
             (FrameStatus::Loaded, FrameStatus::Header) => {
                 let mut data = self.data.lock().unwrap();
+
+                // Calculate freed memory BEFORE replacing buffer
+                let freed_bytes = match data.buffer.as_ref() {
+                    PixelBuffer::U8(vec) => vec.len(),
+                    PixelBuffer::F16(vec) => vec.len() * 2,
+                    PixelBuffer::F32(vec) => vec.len() * 4,
+                };
 
                 // Create green placeholder buffer with current dimensions
                 let size = data.width * data.height * 4;
@@ -600,17 +637,24 @@ impl Frame {
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
-                debug!("Unloaded frame to Header: {}x{}", data.width, data.height);
-                Ok(())
+                debug!(
+                    "Unloaded frame to Header: {}x{}, freed {} bytes",
+                    data.width, data.height, freed_bytes
+                );
+                Ok(freed_bytes)
             }
 
             // === Load metadata: Placeholder → Header ===
-            (FrameStatus::Placeholder, FrameStatus::Header) => self.load_header(),
+            (FrameStatus::Placeholder, FrameStatus::Header) => {
+                self.load_header()?;
+                Ok(0)
+            }
 
             // === Load full data: Header/Error → Loaded ===
             (FrameStatus::Header | FrameStatus::Error, FrameStatus::Loaded) => {
                 // Call existing load() method
-                self.load()
+                self.load()?;
+                Ok(0)
             }
 
             // === Reset error: Error → Header ===
@@ -631,7 +675,7 @@ impl Frame {
                 data.status = FrameStatus::Header;
 
                 debug!("Reset error to Header: {}x{}", data.width, data.height);
-                Ok(())
+                Ok(0)
             }
 
             // === Cancel loading: Loading → Header ===
@@ -640,13 +684,13 @@ impl Frame {
                 let mut data = self.data.lock().unwrap();
                 data.status = FrameStatus::Header;
                 debug!("Cancelled loading, marked as Header");
-                Ok(())
+                Ok(0)
             }
 
             // === Direct status change (other transitions) ===
             _ => {
                 self.data.lock().unwrap().status = new_status;
-                Ok(())
+                Ok(0)
             }
         }
     }

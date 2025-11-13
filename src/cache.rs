@@ -585,8 +585,18 @@ impl Cache {
                     if let Some(frame) = seq.idx(local_idx as isize, false) {
                         // Only unload if currently Loaded
                         if frame.status() == FrameStatus::Loaded {
-                            if let Err(e) = frame.set_status(FrameStatus::Header) {
-                                debug!("Failed to unload frame {}: {:?}", global_idx, e);
+                            match frame.set_status(FrameStatus::Header) {
+                                Ok(freed_bytes) => {
+                                    // Decrement memory usage
+                                    self.memory_usage.fetch_sub(freed_bytes, Ordering::Relaxed);
+                                    debug!(
+                                        "Unloaded frame {} outside range, freed {} bytes",
+                                        global_idx, freed_bytes
+                                    );
+                                }
+                                Err(e) => {
+                                    debug!("Failed to unload frame {}: {:?}", global_idx, e);
+                                }
                             }
                         }
                     }

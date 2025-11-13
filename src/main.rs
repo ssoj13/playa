@@ -32,6 +32,7 @@ use status_bar::StatusBar;
 use std::path::PathBuf;
 use viewport::{ViewportRenderer, ViewportState};
 
+
 /// Image sequence player
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -178,6 +179,37 @@ impl Default for PlayaApp {
 }
 
 impl PlayaApp {
+    /// Load sequences from file paths and append to cache
+    ///
+    /// Detects sequences from provided paths, appends them to the player cache,
+    /// and clears any error messages on success.
+    ///
+    /// # Arguments
+    /// * `paths` - Vector of file paths to detect sequences from
+    ///
+    /// # Returns
+    /// * `Ok(())` - Sequences loaded successfully
+    /// * `Err(String)` - Detection or loading failed with error message
+    fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
+        match Sequence::detect(paths.clone()) {
+            Ok(sequences) => {
+                for seq in sequences {
+                    self.player.cache.append_seq(seq);
+                }
+                // Clear error message on successful load
+                self.error_msg = None;
+                info!("Loaded {} path(s)", paths.len());
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to load sequence: {}", e);
+                warn!("{}", error_msg);
+                self.error_msg = Some(error_msg.clone());
+                Err(error_msg)
+            }
+        }
+    }
+
     /// Enable or disable "cinema mode": borderless fullscreen, hidden UI, black background.
     fn set_cinema_mode(&mut self, ctx: &egui::Context, enabled: bool) {
         self.is_fullscreen = enabled;
@@ -508,21 +540,7 @@ impl eframe::App for PlayaApp {
             }
             if !dropped.is_empty() {
                 info!("Files dropped: {:?}", dropped);
-                for path in dropped {
-                    // Validate and load sequence directly
-                    match Sequence::detect(vec![path.clone()]) {
-                        Ok(sequences) => {
-                            for seq in sequences {
-                                self.player.cache.append_seq(seq);
-                            }
-                            // Clear error message on successful load
-                            self.error_msg = None;
-                        }
-                        Err(e) => {
-                            warn!("Failed to load {}: {}", path.display(), e);
-                        }
-                    }
-                }
+                let _ = self.load_sequences(dropped);
             }
         });
 
@@ -546,19 +564,7 @@ impl eframe::App for PlayaApp {
         if !self.is_fullscreen && self.show_playlist {
             let playlist_actions = ui::render_playlist(ctx, &mut self.player);
             if let Some(path) = playlist_actions.load_sequence {
-                // Validate and load sequence directly
-                match Sequence::detect(vec![path.clone()]) {
-                    Ok(sequences) => {
-                        for seq in sequences {
-                            self.player.cache.append_seq(seq);
-                        }
-                        // Clear error message on successful load
-                        self.error_msg = None;
-                    }
-                    Err(e) => {
-                        warn!("Failed to load {}: {}", path.display(), e);
-                    }
-                }
+                let _ = self.load_sequences(vec![path]);
             }
             if playlist_actions.clear_all {
                 self.frame = None;
@@ -616,19 +622,7 @@ impl eframe::App for PlayaApp {
         );
         self.last_render_time_ms = render_time;
         if let Some(path) = viewport_actions.load_sequence {
-            // Validate and load sequence directly
-            match Sequence::detect(vec![path.clone()]) {
-                Ok(sequences) => {
-                    for seq in sequences {
-                        self.player.cache.append_seq(seq);
-                    }
-                    // Clear error message on successful load
-                    self.error_msg = None;
-                }
-                Err(e) => {
-                    warn!("Failed to load {}: {}", path.display(), e);
-                }
-            }
+            let _ = self.load_sequences(vec![path]);
         }
 
         // Settings window (can be shown even in cinema mode)
@@ -892,17 +886,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Load files
                 if !all_files.is_empty() {
-                    match Sequence::detect(all_files.clone()) {
-                        Ok(sequences) => {
-                            for seq in sequences {
-                                app.player.cache.append_seq(seq);
-                            }
-                            info!("Loaded {} files", all_files.len());
-                        }
-                        Err(e) => {
-                            warn!("Failed to load files: {}", e);
-                        }
-                    }
+                    let _ = app.load_sequences(all_files);
                 }
 
                 // Load playlist
