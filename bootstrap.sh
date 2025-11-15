@@ -198,8 +198,39 @@ fi
 
 # Run xtask with all arguments
 if [ $# -eq 0 ]; then
-    # No arguments - show help
-    cargo xtask --help
+    # No arguments - show bootstrap help
+    cat << 'EOF'
+Bootstrap script for playa project
+
+USAGE:
+  ./bootstrap.sh [COMMAND] [OPTIONS]
+
+SPECIAL COMMANDS:
+  test               Run encoding integration test
+  install            Install playa from crates.io (checks FFmpeg deps)
+  publish            Publish crate to crates.io
+
+XTASK COMMANDS (forwarded to cargo xtask):
+  build              Build playa (use --openexr for full EXR support)
+  post               Copy native libraries (OpenEXR builds only)
+  verify             Verify dependencies present
+  deploy             Install to system
+  tag-dev            Create dev tag (triggers Build workflow)
+  tag-rel            Create release tag (triggers Release workflow)
+  pr                 Create PR: dev -> main
+  changelog          Preview unreleased CHANGELOG.md
+  wipe               Clean target directory from stale binaries
+  wipe-wf            Delete all GitHub workflow runs
+  pre                Linux only: Patch OpenEXR headers
+
+EXAMPLES:
+  ./bootstrap.sh                    # Show this help
+  ./bootstrap.sh build --release    # Build release binary
+  ./bootstrap.sh test               # Run encoding test
+  ./bootstrap.sh tag-dev patch      # Create v0.1.x-dev tag
+
+For xtask command details, run: ./bootstrap.sh [command] --help
+EOF
 else
     # Pass all arguments to xtask
     cargo xtask "$@"

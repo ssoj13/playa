@@ -207,8 +207,38 @@ if "%~1"=="install" (
 
 :: Run xtask with all arguments
 if "%~1"=="" (
-    :: No arguments - show help
-    cargo xtask --help
+    :: No arguments - show bootstrap help
+    echo Bootstrap script for playa project
+    echo.
+    echo USAGE:
+    echo   bootstrap.cmd [COMMAND] [OPTIONS]
+    echo.
+    echo SPECIAL COMMANDS:
+    echo   test               Run encoding integration test
+    echo   install            Install playa from crates.io (checks FFmpeg deps)
+    echo   publish            Publish crate to crates.io
+    echo.
+    echo XTASK COMMANDS (forwarded to cargo xtask):
+    echo   build              Build playa (use --openexr for full EXR support)
+    echo   post               Copy native libraries (OpenEXR builds only)
+    echo   verify             Verify dependencies present
+    echo   deploy             Install to system
+    echo   tag-dev            Create dev tag (triggers Build workflow)
+    echo   tag-rel            Create release tag (triggers Release workflow)
+    echo   pr                 Create PR: dev -^> main
+    echo   changelog          Preview unreleased CHANGELOG.md
+    echo   wipe               Clean target directory from stale binaries
+    echo   wipe-wf            Delete all GitHub workflow runs
+    echo   pre                Linux only: Patch OpenEXR headers
+    echo.
+    echo EXAMPLES:
+    echo   bootstrap.cmd                    # Show this help
+    echo   bootstrap.cmd build --release    # Build release binary
+    echo   bootstrap.cmd test               # Run encoding test
+    echo   bootstrap.cmd tag-dev patch      # Create v0.1.x-dev tag
+    echo.
+    echo For xtask command details, run: bootstrap.cmd [command] --help
+    goto :end
 ) else (
     :: Pass all arguments to xtask
     cargo xtask %*
