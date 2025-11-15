@@ -612,10 +612,23 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Extract Changelog
+        if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.cache_only != true
+        id: changelog
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Extract changelog section for this version
+          awk "/^## \[$VERSION\]/,/^## \[/{if(/^## \[/ && !/^## \[$VERSION\]/)exit;print}" CHANGELOG.md > release_notes.md
+          # Remove the version header line
+          tail -n +2 release_notes.md > release_notes_clean.md
+          echo "path=release_notes_clean.md" >> "$GITHUB_OUTPUT"
+
       - name: Upload Release Assets (Windows)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
         with:
+          body_path: ${{ steps.changelog.outputs.path }}
           files: |
             ${{ steps.windows-artifacts.outputs.installer_path }}
             ${{ steps.windows-artifacts.outputs.msi_path }}
@@ -638,6 +651,7 @@ jobs:
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
         with:
+          body_path: ${{ steps.changelog.outputs.path }}
           files: |
             ${{ steps.linux-artifacts.outputs.appimage_path }}
             ${{ steps.linux-artifacts.outputs.deb_path }}
@@ -656,6 +670,7 @@ jobs:
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
         with:
+          body_path: ${{ steps.changelog.outputs.path }}
           files: |
             ${{ steps.macos-artifacts.outputs.dmg_path }}
             ${{ steps.macos-artifacts.outputs.binstall_path }}
