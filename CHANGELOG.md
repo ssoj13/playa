@@ -1,3 +1,26 @@
+## [0.1.133] - 2025-11-15
+
+### 🚀 Features
+
+- Add `cargo xtask test` command for unified test execution
+- Add PowerShell bootstrap script with VCPKG_ROOT support
+
+### 🐛 Bug Fixes
+
+- Bootstrap scripts now show their own help instead of xtask help
+
+### 🚜 Refactor
+
+- Move test command from bootstrap to xtask
+- Sync bootstrap.sh with bootstrap.ps1 VCPKG_ROOT logic
+
+### 📚 Documentation
+
+- Update bootstrap help text for test command
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Sat 11/15/2025 - 11:34:02.18
 ## [0.1.132] - 2025-11-15
 
 ### 🐛 Bug Fixes
