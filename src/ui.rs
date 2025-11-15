@@ -91,14 +91,12 @@ pub fn render_playlist(ctx: &egui::Context, player: &mut Player) -> PlaylistActi
 
                     // Add/Clear buttons on left, Up/Down on right
                     ui.horizontal(|ui| {
-                        if ui.button("Add").clicked() {
-                            if let Some(paths) = create_image_dialog("Add Files").pick_files() {
-                                if !paths.is_empty() {
+                        if ui.button("Add").clicked()
+                            && let Some(paths) = create_image_dialog("Add Files").pick_files()
+                                && !paths.is_empty() {
                                     info!("Add button: loading {}", paths[0].display());
                                     actions.load_sequence = Some(paths[0].clone());
                                 }
-                            }
-                        }
                         if ui.button("Clear").clicked() {
                             actions.clear_all = true;
                         }
@@ -107,45 +105,41 @@ pub fn render_playlist(ctx: &egui::Context, player: &mut Player) -> PlaylistActi
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let has_selection = player.selected_seq_idx.is_some();
                             ui.add_enabled_ui(has_selection, |ui| {
-                                if ui.button("↓ Down").clicked() {
-                                    if let Some(idx) = player.selected_seq_idx {
+                                if ui.button("↓ Down").clicked()
+                                    && let Some(idx) = player.selected_seq_idx {
                                         let new_idx = (idx + 1)
                                             .min(player.cache.sequences().len().saturating_sub(1));
                                         player.cache.move_seq(idx, 1);
                                         player.selected_seq_idx = Some(new_idx);
                                     }
-                                }
-                                if ui.button("↑ Up").clicked() {
-                                    if let Some(idx) = player.selected_seq_idx {
+                                if ui.button("↑ Up").clicked()
+                                    && let Some(idx) = player.selected_seq_idx {
                                         let new_idx = idx.saturating_sub(1);
                                         player.cache.move_seq(idx, -1);
                                         player.selected_seq_idx = Some(new_idx);
                                     }
-                                }
                             });
                         });
                     });
 
                     // Save/Load playlist on separate line
                     ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
+                        if ui.button("Save").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
                                 .add_filter("JSON Playlist", &["json"])
                                 .set_title("Save Playlist")
                                 .save_file()
                             {
                                 actions.save_playlist = Some(path);
                             }
-                        }
-                        if ui.button("Load").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
+                        if ui.button("Load").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
                                 .add_filter("JSON Playlist", &["json"])
                                 .set_title("Load Playlist")
                                 .pick_file()
                             {
                                 actions.load_playlist = Some(path);
                             }
-                        }
                     });
 
                     ui.separator();
@@ -174,7 +168,7 @@ pub fn render_playlist(ctx: &egui::Context, player: &mut Player) -> PlaylistActi
                                         // Clickable area for selection
                                         let name_label = ui.selectable_label(
                                             false, // Don't use built-in selection, we handle it with frame
-                                            format!("{}", seq.pattern()),
+                                            seq.pattern().to_string(),
                                         );
 
                                         if name_label.clicked() {
@@ -296,8 +290,8 @@ pub fn render_controls(
             );
 
             // Apply FPS change: base_fps is the minimum floor for play_fps
-            if (player.fps_base - old_fps).abs() > 0.001 {
-                if player.is_playing {
+            if (player.fps_base - old_fps).abs() > 0.001
+                && player.is_playing {
                     // During playback: ensure play_fps is not lower than base_fps
                     // base_fps "pushes" play_fps from below
                     if player.fps_play < player.fps_base {
@@ -312,7 +306,6 @@ pub fn render_controls(
                     }
                 }
                 // fps_base is already updated by the widgets above
-            }
 
             // Show play FPS during playback
             if player.is_playing {
@@ -324,7 +317,7 @@ pub fn render_controls(
             ui.label("Shader:");
             // Shader combobox
             egui::ComboBox::from_id_salt("shader_combo")
-                .selected_text(format!("{}", shader_manager.current_shader))
+                .selected_text(shader_manager.current_shader.to_string())
                 .show_ui(ui, |ui| {
                     for shader_name in shader_manager.get_shader_names() {
                         ui.selectable_value(
@@ -469,14 +462,13 @@ pub fn render_viewport(
             handle_viewport_input(ctx, ui, panel_rect, viewport_state);
 
             // Handle scrubbing input (only if NOT double-clicking and frame exists)
-            if !double_clicked {
-                if let Some(scrubber) = scrubber {
+            if !double_clicked
+                && let Some(scrubber) = scrubber {
                     use crate::scrub::Scrubber;
 
-                    if response.clicked_by(egui::PointerButton::Primary)
-                        || response.dragged_by(egui::PointerButton::Primary)
-                    {
-                        if let Some(original_mouse_pos) = response.interact_pointer_pos() {
+                    if (response.clicked_by(egui::PointerButton::Primary)
+                        || response.dragged_by(egui::PointerButton::Primary))
+                        && let Some(original_mouse_pos) = response.interact_pointer_pos() {
                             // Start scrubbing - freeze bounds
                             if !scrubber.is_active() {
                                 let current_bounds = viewport_state.get_image_screen_bounds();
@@ -511,7 +503,7 @@ pub fn render_viewport(
                                 scrubber.set_last_mouse_x(original_mouse_pos.x);
 
                                 // Check if normalized is outside valid range (clamped)
-                                let is_clamped = normalized < 0.0 || normalized > 1.0;
+                                let is_clamped = !(0.0..=1.0).contains(&normalized);
                                 scrubber.set_clamped(is_clamped);
 
                                 // Calculate frame from new normalized position (clamps to valid range)
@@ -531,7 +523,7 @@ pub fn render_viewport(
                                     scrubber.normalized_position().unwrap_or(0.5);
 
                                 // Check if normalized is outside valid range (clamped)
-                                let is_clamped = saved_normalized < 0.0 || saved_normalized > 1.0;
+                                let is_clamped = !(0.0..=1.0).contains(&saved_normalized);
                                 scrubber.set_clamped(is_clamped);
 
                                 // Update frame from saved normalized (clamps to valid range)
@@ -549,7 +541,6 @@ pub fn render_viewport(
                                 scrubber.set_visual_x(visual_x);
                             }
                         }
-                    }
 
                     // Reset scrubbing when mouse released
                     if scrubber.is_active()
@@ -563,7 +554,6 @@ pub fn render_viewport(
                         ctx.set_cursor_icon(egui::CursorIcon::None);
                     }
                 }
-            }
 
             // Measure render time
             let render_start = std::time::Instant::now();
@@ -607,8 +597,8 @@ pub fn render_viewport(
             render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
 
             // Show shader error overlay if any
-            if let Ok(r) = viewport_renderer.lock() {
-                if let Some(err) = r.shader_error() {
+            if let Ok(r) = viewport_renderer.lock()
+                && let Some(err) = r.shader_error() {
                     let overlay = egui::Color32::from_rgba_unmultiplied(50, 0, 0, 180);
                     let text = egui::Color32::from_rgb(255, 220, 220);
                     let margin = egui::vec2(10.0, 10.0);
@@ -628,7 +618,6 @@ pub fn render_viewport(
                         text,
                     );
                 }
-            }
 
             // Draw loading/error indicator
             match frame_state {
@@ -685,14 +674,13 @@ fn handle_viewport_input(
     let scroll_delta = ctx.input(|i| i.raw_scroll_delta);
     if scroll_delta.y.abs() > 0.1 {
         let cursor_pos = ctx.input(|i| i.pointer.hover_pos());
-        if let Some(cursor_pos) = cursor_pos {
-            if rect.contains(cursor_pos) {
+        if let Some(cursor_pos) = cursor_pos
+            && rect.contains(cursor_pos) {
                 // Convert cursor to viewport-relative coords
                 let relative_pos = cursor_pos - rect.left_top();
                 viewport_state.handle_zoom(scroll_delta.y, relative_pos);
                 ctx.request_repaint();
             }
-        }
     }
 
     // Handle middle mouse pan

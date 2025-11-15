@@ -137,7 +137,7 @@ impl Shaders {
         manager.load_embedded_shaders();
 
         // Then try to load from directory (external .glsl files can override embedded ones)
-        if let Err(_) = manager.load_shader_directory(Path::new("shaders")) {
+        if manager.load_shader_directory(Path::new("shaders")).is_err() {
             log::info!("Shaders folder does not exist, using embedded shaders only");
         }
 
@@ -158,8 +158,8 @@ impl Shaders {
             let entry = entry.map_err(|e| e.to_string())?;
             let path = entry.path();
 
-            if path.extension().and_then(|s| s.to_str()) == Some("glsl") {
-                if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
+            if path.extension().and_then(|s| s.to_str()) == Some("glsl")
+                && let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
                     match fs::read_to_string(&path) {
                         Ok(fragment_shader) => {
                             // Use the embedded vertex shader for all fragment shaders
@@ -174,7 +174,6 @@ impl Shaders {
                         }
                     }
                 }
-            }
         }
 
         // Set default shader if available

@@ -88,17 +88,14 @@ pub enum PixelDepth {
 
 /// Tonemapping mode for HDR→LDR conversion
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum TonemapMode {
     Clamp,    // Simple clamp to [0,1] range
+    #[default]
     ACES,     // ACES filmic tone mapping curve
     Reinhard, // Reinhard tone mapping (photographic)
 }
 
-impl Default for TonemapMode {
-    fn default() -> Self {
-        TonemapMode::ACES // ACES provides best filmic results for VFX
-    }
-}
 
 /// Frame loading status
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -172,8 +169,7 @@ impl Frame {
         match depth {
             PixelDepth::U8 => {
                 // Efficiently create repeated RGBA pattern [0,100,0,255]
-                let mut buffer_u8 = Vec::with_capacity(width * height * 4);
-                buffer_u8.resize(width * height * 4, 0);
+                let mut buffer_u8 = vec![0; width * height * 4];
                 for px in buffer_u8.chunks_exact_mut(4) {
                     px[1] = 100; // G channel
                     px[3] = 255; // A channel (R,B already 0)
@@ -589,7 +585,7 @@ impl Frame {
 
     /// Get status
     pub fn status(&self) -> FrameStatus {
-        self.data.lock().unwrap().status.clone()
+        self.data.lock().unwrap().status
     }
 
     /// Smart status transition with automatic state management
@@ -626,8 +622,7 @@ impl Frame {
 
                 // Create green placeholder buffer with current dimensions
                 let size = data.width * data.height * 4;
-                let mut buffer_u8 = Vec::with_capacity(size);
-                buffer_u8.resize(size, 0);
+                let mut buffer_u8 = vec![0; size];
                 for px in buffer_u8.chunks_exact_mut(4) {
                     px[1] = 100; // G channel
                     px[3] = 255; // A channel
@@ -663,8 +658,7 @@ impl Frame {
 
                 // Create green placeholder buffer with current dimensions
                 let size = data.width * data.height * 4;
-                let mut buffer_u8 = Vec::with_capacity(size);
-                buffer_u8.resize(size, 0);
+                let mut buffer_u8 = vec![0; size];
                 for px in buffer_u8.chunks_exact_mut(4) {
                     px[1] = 100; // G channel
                     px[3] = 255; // A channel
@@ -828,8 +822,7 @@ impl Frame {
         match data.buffer.as_ref() {
             PixelBuffer::U8(old_buf) => {
                 // Create new buffer with green placeholder
-                let mut new_buf = Vec::with_capacity(new_w * new_h * 4);
-                new_buf.resize(new_w * new_h * 4, 0);
+                let mut new_buf = vec![0; new_w * new_h * 4];
                 for px in new_buf.chunks_exact_mut(4) {
                     px[1] = 100; // G channel (placeholder green)
                     px[3] = 255; // A channel

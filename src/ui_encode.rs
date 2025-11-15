@@ -284,8 +284,8 @@ impl EncodeDialog {
         }
 
         // Check if encoding completed (only process once while encoding)
-        if self.is_encoding {
-            if let Some(ref progress) = self.progress {
+        if self.is_encoding
+            && let Some(ref progress) = self.progress {
                 match &progress.stage {
                     EncodeStage::Complete => {
                         info!("Encoding completed successfully");
@@ -298,7 +298,6 @@ impl EncodeDialog {
                     _ => {}
                 }
             }
-        }
 
         egui::Window::new("Video Encoder")
             .resizable(false)

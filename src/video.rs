@@ -90,7 +90,7 @@ pub fn decode_frame(
 
     // Enable multi-threaded frame decoding (2-4x speedup)
     unsafe {
-        (*decoder_ctx.as_mut_ptr()).thread_type = ffmpeg::ffi::FF_THREAD_FRAME as i32;
+        (*decoder_ctx.as_mut_ptr()).thread_type = ffmpeg::ffi::FF_THREAD_FRAME;
         (*decoder_ctx.as_mut_ptr()).thread_count = 0; // Auto-detect CPU cores
     }
 

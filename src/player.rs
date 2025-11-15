@@ -266,72 +266,67 @@ impl Player {
         self.cache.total_frames()
     }
 
-    /// Jog forward (L, >, ArrowRight)
-    pub fn jog_forward(&mut self) {
+    /// Internal helper to start jogging in the specified direction
+    fn start_jog(&mut self, direction: f32) {
         if !self.is_playing {
-            self.play_direction = 1.0;
+            // Start playing in specified direction
+            self.play_direction = direction;
             self.is_playing = true;
             self.fps_play = self.fps_base; // Start with base FPS
             self.last_frame_time = Some(Instant::now());
-        } else if self.play_direction < 0.0 {
-            self.play_direction = 1.0; // Change direction
+        } else if self.play_direction.signum() != direction.signum() {
+            // Change direction
+            self.play_direction = direction;
             self.fps_play = self.fps_base; // Reset on direction change
         } else {
-            self.increase_fps_play(); // Increase play speed
+            // Already playing in same direction, increase speed
+            self.increase_fps_play();
         }
+    }
+
+    /// Jog forward (L, >, ArrowRight)
+    pub fn jog_forward(&mut self) {
+        self.start_jog(1.0);
     }
 
     /// Jog backward (J, <, ArrowLeft)
     pub fn jog_backward(&mut self) {
-        if !self.is_playing {
-            self.play_direction = -1.0;
-            self.is_playing = true;
-            self.fps_play = self.fps_base; // Start with base FPS
-            self.last_frame_time = Some(Instant::now());
-        } else if self.play_direction > 0.0 {
-            self.play_direction = -1.0; // Change direction
-            self.fps_play = self.fps_base; // Reset on direction change
-        } else {
-            self.increase_fps_play(); // Increase play speed
-        }
+        self.start_jog(-1.0);
     }
 
     /// Increase base FPS to next preset (-/+ keys, Keypad)
     pub fn increase_fps_base(&mut self) {
-        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps_base) {
-            if idx + 1 < FPS_PRESETS.len() {
-                self.fps_base = FPS_PRESETS[idx + 1];
-                // If not playing, update fps_play too
-                if !self.is_playing {
-                    self.fps_play = self.fps_base;
-                }
-                debug!("Base FPS increased to {}", self.fps_base);
+        // Find first preset strictly greater than current FPS
+        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f > self.fps_base) {
+            self.fps_base = FPS_PRESETS[idx];
+            // If not playing, update fps_play too
+            if !self.is_playing {
+                self.fps_play = self.fps_base;
             }
+            debug!("Base FPS increased to {}", self.fps_base);
         }
     }
 
     /// Decrease base FPS to previous preset (-/+ keys, Keypad)
     pub fn decrease_fps_base(&mut self) {
-        if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f <= self.fps_base) {
-            if idx > 0 {
-                self.fps_base = FPS_PRESETS[idx - 1];
-                // If not playing, update fps_play too
-                if !self.is_playing {
-                    self.fps_play = self.fps_base;
-                }
-                debug!("Base FPS decreased to {}", self.fps_base);
+        // Find last preset strictly less than current FPS
+        if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f < self.fps_base) {
+            self.fps_base = FPS_PRESETS[idx];
+            // If not playing, update fps_play too
+            if !self.is_playing {
+                self.fps_play = self.fps_base;
             }
+            debug!("Base FPS decreased to {}", self.fps_base);
         }
     }
 
     /// Increase play FPS to next preset (J/L when playing)
     fn increase_fps_play(&mut self) {
-        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps_play) {
-            if idx + 1 < FPS_PRESETS.len() {
+        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps_play)
+            && idx + 1 < FPS_PRESETS.len() {
                 self.fps_play = FPS_PRESETS[idx + 1];
                 debug!("Play FPS increased to {}", self.fps_play);
             }
-        }
     }
 
     /// Jump to next sequence start (] key)

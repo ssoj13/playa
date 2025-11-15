@@ -709,22 +709,20 @@ pub fn encode_sequence(
                 // NVENC uses -cq (constant quantizer) instead of -crf
                 opts.set("rc", "constqp"); // Rate control mode
                 opts.set("cq", &settings.quality_value.to_string()); // Quality (0-51, lower is better)
-                if let Some(ref preset) = settings.preset {
-                    if !preset.is_empty() {
+                if let Some(ref preset) = settings.preset
+                    && !preset.is_empty() {
                         opts.set("preset", preset); // NVENC preset (p1-p7)
                     }
-                }
                 // Force regular keyframes for seekability
                 opts.set("forced-idr", "1"); // Force IDR frames at GOP boundaries
                 opts.set("no-scenecut", "1"); // Disable scene change detection (consistent GOP)
             } else if encoder_name == "libx264" {
                 // libx264 with customizable preset and profile
                 opts.set("crf", &settings.quality_value.to_string());
-                if let Some(ref preset) = settings.preset {
-                    if !preset.is_empty() {
+                if let Some(ref preset) = settings.preset
+                    && !preset.is_empty() {
                         opts.set("preset", preset);
                     }
-                }
                 if let Some(ref profile) = settings.profile {
                     opts.set("profile", profile);
                 }
@@ -734,21 +732,19 @@ pub fn encode_sequence(
             } else if encoder_name == "libx265" {
                 // libx265 with customizable preset
                 opts.set("crf", &settings.quality_value.to_string());
-                if let Some(ref preset) = settings.preset {
-                    if !preset.is_empty() {
+                if let Some(ref preset) = settings.preset
+                    && !preset.is_empty() {
                         opts.set("preset", preset);
                     }
-                }
                 // Force keyframes for seekability
                 opts.set("keyint", &gop_size.to_string()); // Maximum GOP size
                 opts.set("scenecut", "0"); // Disable scene change detection
 
                 // Set profile (main or main10)
-                if let Some(ref profile) = settings.profile {
-                    if !profile.is_empty() {
+                if let Some(ref profile) = settings.profile
+                    && !profile.is_empty() {
                         opts.set("profile", profile); // "main" (8-bit) or "main10" (10-bit)
                     }
-                }
             } else if encoder_name == "h264_qsv" || encoder_name == "hevc_qsv" {
                 // QSV uses global_quality
                 opts.set("global_quality", &settings.quality_value.to_string());
@@ -771,11 +767,10 @@ pub fn encode_sequence(
                 // NVENC AV1: use qp (not cq) for constqp mode
                 opts.set("rc", "constqp");
                 opts.set("qp", &settings.quality_value.to_string()); // QP 0-255
-                if let Some(ref preset) = settings.preset {
-                    if !preset.is_empty() {
+                if let Some(ref preset) = settings.preset
+                    && !preset.is_empty() {
                         opts.set("preset", preset); // 0-18 or named presets
                     }
-                }
             } else if encoder_name == "av1_qsv" {
                 // QSV AV1 uses global_quality
                 opts.set("global_quality", &settings.quality_value.to_string());
@@ -786,19 +781,17 @@ pub fn encode_sequence(
             } else if encoder_name == "libsvtav1" {
                 // SVT-AV1: CRF 0-63, preset 0-13 (0=slowest/best, 13=fastest)
                 opts.set("crf", &settings.quality_value.to_string());
-                if let Some(ref preset) = settings.preset {
-                    if !preset.is_empty() {
+                if let Some(ref preset) = settings.preset
+                    && !preset.is_empty() {
                         opts.set("preset", preset); // 0-13
                     }
-                }
             } else if encoder_name == "libaom-av1" {
                 // libaom-av1: CRF 0-63, cpu-used 0-8 (0=slowest, 8=fastest)
                 opts.set("crf", &settings.quality_value.to_string());
-                if let Some(ref preset) = settings.preset {
-                    if !preset.is_empty() {
+                if let Some(ref preset) = settings.preset
+                    && !preset.is_empty() {
                         opts.set("cpu-used", preset); // Map preset to cpu-used
                     }
-                }
             } else if encoder_name == "prores_ks" {
                 // ProRes profile from settings or default to Standard
                 let profile = settings
@@ -1068,11 +1061,10 @@ pub fn encode_sequence(
             let pts_val = encoded.pts();
             let dts_val = encoded.dts();
 
-            if dts_val.is_none() {
-                if let Some(pts) = pts_val {
+            if dts_val.is_none()
+                && let Some(pts) = pts_val {
                     encoded.set_dts(Some(pts));
                 }
-            }
 
             // Debug: log first few packets
             if frame_idx - play_range.0 < 3 {
@@ -1138,11 +1130,10 @@ pub fn encode_sequence(
         encoded.set_duration(1);
 
         // Ensure DTS is set
-        if encoded.dts().is_none() {
-            if let Some(pts) = encoded.pts() {
+        if encoded.dts().is_none()
+            && let Some(pts) = encoded.pts() {
                 encoded.set_dts(Some(pts));
             }
-        }
 
         encoded.write_interleaved(&mut octx).map_err(|e| {
             EncodeError::EncodeFrameFailed(format!("Failed to write packet: {}", e))
@@ -1248,13 +1239,13 @@ mod tests {
             } else if ffmpeg::encoder::find_by_name("libx264").is_some() {
                 println!("\n🎬 Using libx264 software encoder");
                 (VideoCodec::H264, EncoderImpl::Software, "libx264")
-            } else if ffmpeg::encoder::find_by_name("mpeg4").is_some() {
-                println!("\n🎬 Using mpeg4 encoder");
-                (VideoCodec::MPEG4, EncoderImpl::Software, "mpeg4")
+            } else if ffmpeg::encoder::find_by_name("libx265").is_some() {
+                println!("\n🎬 Using libx265 encoder");
+                (VideoCodec::H265, EncoderImpl::Software, "libx265")
             } else {
                 println!("\n⚠ No compatible encoder available, skipping encoding test");
                 println!("   Available: {}", found_encoder.unwrap());
-                println!("   Need: libx264, h264_nvenc, or mpeg4");
+                println!("   Need: libx264, h264_nvenc, or libx265");
                 println!("\n✓ Test infrastructure verified:");
                 println!("  - Cache with 100 placeholder frames created");
                 println!("  - Encoder discovery working");

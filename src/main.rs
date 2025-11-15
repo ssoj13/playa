@@ -291,11 +291,10 @@ impl PlayaApp {
             // Priority 2: Encode dialog (modal dialog should be dismissed before app closes)
             else if input.key_pressed(egui::Key::Escape) && self.show_encode_dialog {
                 // Close encode dialog (stop encoding if in progress)
-                if let Some(ref mut dialog) = self.encode_dialog {
-                    if dialog.is_encoding() {
+                if let Some(ref mut dialog) = self.encode_dialog
+                    && dialog.is_encoding() {
                         dialog.stop_encoding();
                     }
-                }
                 self.show_encode_dialog = false;
             }
             // Priority 3: Settings dialog (preferences window)
@@ -845,9 +844,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.path_config = path_config_for_app;
 
             // Attempt to load shaders from the shaders directory
-            if let Err(_) = app
+            if app
                 .shader_manager
-                .load_shader_directory(&std::path::PathBuf::from("shaders"))
+                .load_shader_directory(&std::path::PathBuf::from("shaders")).is_err()
             {
                 log::info!("Shaders folder does not exist, skipping external shader loading");
             }

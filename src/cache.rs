@@ -90,6 +90,10 @@ pub struct Cache {
     // Memory tracking
     memory_usage: Arc<AtomicUsize>,
     max_memory_bytes: usize,
+    system_info: std::sync::Mutex<System>, // Cached for set_memory_fraction
+
+    // Frame count tracking (optimization to avoid O(n) iteration)
+    cached_frames_count: Arc<AtomicUsize>,
 
     // Async loading (bounded channels for backpressure)
     load_request_sender: mpsc::SyncSender<LoadRequest>,
@@ -166,14 +170,13 @@ impl Cache {
         );
 
         // Calculate worker count first (needed for channel capacity)
+        // Use 75% of available cores with proper rounding up: (cores * 3 + 3) / 4
         let num_workers = if let Some(w) = workers_override {
             w.max(1)
         } else {
             (std::thread::available_parallelism()
                 .map(|n| n.get())
-                .unwrap_or(8)
-                * 3
-                / 4)
+                .unwrap_or(8) * 3).div_ceil(4)
             .max(1)
         };
 
@@ -430,6 +433,9 @@ impl Cache {
 
             memory_usage: memory_usage_shared,
             max_memory_bytes,
+            system_info: std::sync::Mutex::new(sys), // Reuse System instance
+
+            cached_frames_count: Arc::new(AtomicUsize::new(0)),
 
             load_request_sender,
             loaded_frame_receiver: Arc::new(Mutex::new(loaded_frame_receiver)),
@@ -525,15 +531,14 @@ impl Cache {
         self.frame_paths_cache.clear();
         for (seq_idx, seq) in self.sequences.iter().enumerate() {
             for frame_idx in 0..seq.len() {
-                if let Some(frame) = seq.idx(frame_idx as isize, false) {
-                    if frame.file().is_some() {
+                if let Some(frame) = seq.idx(frame_idx as isize, false)
+                    && frame.file().is_some() {
                         self.frame_paths_cache.push(FramePath {
                             frame: frame.clone(), // Clone Arc - cheap!
                             seq_idx,
                             frame_idx,
                         });
                     }
-                }
             }
         }
     }
@@ -581,14 +586,16 @@ impl Cache {
 
             for local_idx in 0..seq_len {
                 // Check if this frame is outside play_range
-                if global_idx < range_start || global_idx > range_end {
-                    if let Some(frame) = seq.idx(local_idx as isize, false) {
+                if (global_idx < range_start || global_idx > range_end)
+                    && let Some(frame) = seq.idx(local_idx as isize, false) {
                         // Only unload if currently Loaded
                         if frame.status() == FrameStatus::Loaded {
                             match frame.set_status(FrameStatus::Header) {
                                 Ok(freed_bytes) => {
                                     // Decrement memory usage
                                     self.memory_usage.fetch_sub(freed_bytes, Ordering::Relaxed);
+                                    // Decrement cached frames count (optimization for cached_frames_count())
+                                    self.cached_frames_count.fetch_sub(1, Ordering::Relaxed);
                                     debug!(
                                         "Unloaded frame {} outside range, freed {} bytes",
                                         global_idx, freed_bytes
@@ -600,7 +607,6 @@ impl Cache {
                             }
                         }
                     }
-                }
                 global_idx += 1;
             }
         }
@@ -699,8 +705,8 @@ impl Cache {
         let (seq_idx, frame_idx) = self.global_to_local(global_idx)?;
 
         // Get frame from sequence
-        if let Some(seq) = self.sequences.get(seq_idx) {
-            if let Some(frame) = seq.idx(frame_idx as isize, false) {
+        if let Some(seq) = self.sequences.get(seq_idx)
+            && let Some(frame) = seq.idx(frame_idx as isize, false) {
                 // Trigger load if needed (Header/Placeholder status = not loaded yet)
                 let status = frame.status();
                 if status == FrameStatus::Header || status == FrameStatus::Placeholder {
@@ -716,7 +722,6 @@ impl Cache {
                     }
                 }
             }
-        }
 
         // Return placeholder from sequence
         self.sequences.get(seq_idx)?.idx(frame_idx as isize, false)
@@ -737,6 +742,9 @@ impl Cache {
                     // Update memory usage
                     self.memory_usage.fetch_add(frame_size, Ordering::Relaxed);
 
+                    // Update cached frames count (optimization for cached_frames_count())
+                    self.cached_frames_count.fetch_add(1, Ordering::Relaxed);
+
                     // Frame already updated via shared Arc, no need to update sequence
 
                     // Progress
@@ -753,13 +761,12 @@ impl Cache {
                     );
 
                     // Reset frame back to Placeholder so playback can continue
-                    if let Some(seq) = self.sequences.get_mut(loaded_frame.seq_idx) {
-                        if let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false)
+                    if let Some(seq) = self.sequences.get_mut(loaded_frame.seq_idx)
+                        && let Some(seq_frame) = seq.idx_mut(loaded_frame.frame_idx as isize, false)
                         {
                             use crate::frame::FrameStatus;
                             let _ = seq_frame.set_status(FrameStatus::Placeholder);
                         }
-                    }
                 }
             }
         }
@@ -783,8 +790,11 @@ impl Cache {
     }
 
     /// Update memory limit as a fraction of currently available system memory
+    ///
+    /// **Performance**: Reuses cached System instance to avoid recreation overhead
     pub fn set_memory_fraction(&mut self, max_mem: f64) {
-        let mut sys = System::new_all();
+        // Reuse cached System instance
+        let mut sys = self.system_info.lock().unwrap();
         sys.refresh_memory();
         let available_memory = sys.available_memory() as usize;
         self.max_memory_bytes = (available_memory as f64 * max_mem) as usize;
@@ -794,18 +804,10 @@ impl Cache {
     }
 
     /// Get count of cached frames (Loaded status) in memory
+    ///
+    /// **Performance**: O(1) atomic read (optimized from O(n) iteration)
     pub fn cached_frames_count(&self) -> usize {
-        let mut count = 0;
-        for seq in &self.sequences {
-            for i in 0..seq.len() {
-                if let Some(frame) = seq.idx(i as isize, false) {
-                    if frame.status() == FrameStatus::Loaded {
-                        count += 1;
-                    }
-                }
-            }
-        }
-        count
+        self.cached_frames_count.load(Ordering::Relaxed)
     }
 
     /// Get sequences (returns reference for zero-copy access)

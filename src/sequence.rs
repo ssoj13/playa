@@ -98,11 +98,10 @@ impl Sequence {
             // Support printf-style pattern: frame.%04d.exr
             let re = Regex::new(r"%0(\d+)d")
                 .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
-            if let Some(caps) = re.captures(&pattern) {
-                if let Some(m) = caps.get(1) {
+            if let Some(caps) = re.captures(&pattern)
+                && let Some(m) = caps.get(1) {
                     seq.padding = m.as_str().parse::<usize>().unwrap_or(4);
                 }
-            }
             // Convert to a glob pattern for discovery
             let glob_pattern = re.replace_all(&pattern, "*").to_string();
             seq.init_from_glob(&glob_pattern)?;
@@ -186,11 +185,10 @@ impl Sequence {
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
             // Use last number in filename as frame number
-            if let Some(last_match) = re.find_iter(stem).last() {
-                if let Ok(num) = last_match.as_str().parse::<usize>() {
+            if let Some(last_match) = re.find_iter(stem).last()
+                && let Ok(num) = last_match.as_str().parse::<usize>() {
                     frame_map.insert(num, path);
                 }
-            }
         }
 
         if frame_map.is_empty() {

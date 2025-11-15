@@ -157,15 +157,14 @@ pub fn render_settings_window(
 
                             // Handle selection from actions
                             for action in actions {
-                                if let egui_ltreeview::Action::SetSelected(node_ids) = action {
-                                    if let Some(&node_id) = node_ids.iter().next() {
+                                if let egui_ltreeview::Action::SetSelected(node_ids) = action
+                                    && let Some(&node_id) = node_ids.first() {
                                         selected = match node_id {
                                             0 => SettingsCategory::General,
                                             1 => SettingsCategory::UI,
                                             _ => selected,
                                         };
                                     }
-                                }
                             }
                         });
 

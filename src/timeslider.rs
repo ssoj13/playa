@@ -307,13 +307,12 @@ fn draw_playhead(painter: &egui::Painter, rect: Rect, current_frame: usize, tota
 
 /// Handle mouse interaction (click and drag)
 fn handle_interaction(response: &Response, rect: Rect, total_frames: usize) -> Option<usize> {
-    if response.dragged() || response.clicked() {
-        if let Some(pos) = response.interact_pointer_pos() {
+    if (response.dragged() || response.clicked())
+        && let Some(pos) = response.interact_pointer_pos() {
             let ratio = ((pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
             let new_frame = (ratio * total_frames as f32) as usize;
             return Some(new_frame.min(total_frames.saturating_sub(1)));
         }
-    }
     None
 }
 
@@ -365,7 +364,7 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color32 {
 fn extract_filename(pattern: &str) -> String {
     // Get the last path component
     let normalized = pattern.replace('\\', "/");
-    let filename = normalized.split('/').last().unwrap_or(pattern);
+    let filename = normalized.split('/').next_back().unwrap_or(pattern);
 
     // Remove the .* or #### pattern and extension
     filename.split('.').next().unwrap_or(filename).to_string()
@@ -437,7 +436,7 @@ fn draw_frame_numbers(
     painter.text(
         Pos2::new(global_end_x, rect.min.y + 2.0),
         egui::Align2::RIGHT_TOP,
-        &format!("{}", global_end_frame),
+        format!("{}", global_end_frame),
         font_id.clone(),
         text_color,
     );
@@ -451,7 +450,7 @@ fn draw_frame_numbers(
             painter.text(
                 Pos2::new(seq_start_x, rect.min.y + 2.0),
                 egui::Align2::LEFT_TOP,
-                &format!("{}", current_offset),
+                format!("{}", current_offset),
                 font_id.clone(),
                 text_color,
             );
@@ -466,7 +465,7 @@ fn draw_frame_numbers(
         painter.text(
             Pos2::new(play_start_x, rect.max.y - 2.0),
             egui::Align2::LEFT_BOTTOM,
-            &format!("{}", play_start),
+            format!("{}", play_start),
             font_id.clone(),
             Color32::from_rgba_unmultiplied(255, 255, 0, 200),
         );
@@ -478,7 +477,7 @@ fn draw_frame_numbers(
         painter.text(
             Pos2::new(play_end_x, rect.max.y - 2.0),
             egui::Align2::RIGHT_BOTTOM,
-            &format!("{}", play_end),
+            format!("{}", play_end),
             font_id.clone(),
             Color32::from_rgba_unmultiplied(255, 255, 0, 200),
         );
