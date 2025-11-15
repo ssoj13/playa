@@ -6,7 +6,7 @@
 #   ./bootstrap.sh                    # Show xtask help
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
-#   ./bootstrap.sh test               # Run all tests (unit + integration)
+#   ./bootstrap.sh test               # Run all tests via xtask
 #   ./bootstrap.sh install            # Install playa from crates.io (checks FFmpeg dependencies)
 #   ./bootstrap.sh publish            # Publish crate to crates.io
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
@@ -96,12 +96,6 @@ if [ ! -f "target/debug/xtask" ]; then
 fi
 
 # Handle special commands
-if [ "$1" = "test" ]; then
-    # Run all tests via xtask
-    cargo xtask test
-    exit 0
-fi
-
 if [ "$1" = "publish" ]; then
     # Publish crate to crates.io
     echo "Publishing crate to crates.io..."
@@ -204,13 +198,12 @@ USAGE:
   ./bootstrap.sh [COMMAND] [OPTIONS]
 
 SPECIAL COMMANDS:
-  test               Run all tests (unit + integration)
   install            Install playa from crates.io (checks FFmpeg deps)
   publish            Publish crate to crates.io
 
 XTASK COMMANDS (forwarded to cargo xtask):
   build              Build playa (use --openexr for full EXR support)
-  test               Run all tests (unit + integration) [can also use: bootstrap test]
+  test               Run all tests (unit + integration)
   post               Copy native libraries (OpenEXR builds only)
   verify             Verify dependencies present
   deploy             Install to system
