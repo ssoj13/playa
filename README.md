@@ -65,7 +65,6 @@ Playa includes built-in video encoding (F4 hotkey) for exporting image sequences
 | `hevc_amf` | Hardware | Windows | AMD GPUs |
 | `libx264` | Software | All | CPU-based H.264 |
 | `libx265` | Software | All | CPU-based H.265 |
-| `mpeg4` | Software | All | Legacy MPEG-4 Part 2 |
 
 **Usage**:
 1. Load image sequence or video
@@ -616,14 +615,14 @@ playa --version
 - `Ctrl+B` - Reset play range to full sequence
 - Used for:
   - Loop playback within selected range
-  - Encoding only selected frames (F7)
+  - Encoding only selected frames (F4)
   - Timeline highlighting
 
 **UI:**
 - `F1` - Toggle help overlay
 - `F2` - Toggle playlist panel
 - `F3` - Toggle settings dialog
-- `F7` - Open video encoding dialog
+- `F4` - Open video encoding dialog
 - `Z` - Toggle fullscreen (cinema mode)
 - `ESC` - Exit fullscreen / Quit
 - `Q` - Quit
@@ -722,6 +721,12 @@ Intelligent caching system with multi-threaded architecture:
 - **Preload thread**: Background spiral loading from current frame
 - **Sequence management**: Multi-sequence playlist support
 - **Frame status tracking**: Provides frame load state for visualization
+
+**Recent Performance Optimizations:**
+- **Worker count calculation**: Uses proper rounding (`div_ceil`) instead of truncating division - better CPU utilization on odd-core systems
+- **Frame counting**: O(1) atomic counter instead of O(n) iteration - instant UI updates for large sequences
+- **System caching**: Reuses `System` instance in `set_memory_fraction` - reduced overhead when adjusting cache settings
+- **FPS preset navigation**: Fixed logic to find next/previous preset correctly (e.g., 25.5 → 30, not 60)
 
 **Caching strategy:**
 1. On-demand loading: Loads frame when accessed
