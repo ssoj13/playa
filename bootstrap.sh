@@ -16,21 +16,28 @@
 
 set -e
 
-# Set FFmpeg/vcpkg environment variables for this script session
-if [ -d "/usr/local/share/vcpkg" ]; then
-    export VCPKG_ROOT="/usr/local/share/vcpkg"
+# Set default vcpkg paths if not already set
+if [ -z "$VCPKG_ROOT" ]; then
+    if [ -d "/usr/local/share/vcpkg" ]; then
+        export VCPKG_ROOT="/usr/local/share/vcpkg"
+    fi
+fi
 
-    # Determine triplet based on OS and architecture
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        if [[ "$(uname -m)" == "arm64" ]]; then
-            export VCPKGRS_TRIPLET="arm64-osx-release"
+# Set FFmpeg/vcpkg environment variables for this script session
+if [ -n "$VCPKG_ROOT" ]; then
+    # Determine triplet based on OS and architecture if not set
+    if [ -z "$VCPKGRS_TRIPLET" ]; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            if [[ "$(uname -m)" == "arm64" ]]; then
+                export VCPKGRS_TRIPLET="arm64-osx-release"
+            else
+                export VCPKGRS_TRIPLET="x64-osx-release"
+            fi
         else
-            export VCPKGRS_TRIPLET="x64-osx-release"
+            # Linux
+            export VCPKGRS_TRIPLET="x64-linux-release"
         fi
-    else
-        # Linux
-        export VCPKGRS_TRIPLET="x64-linux-release"
     fi
 
     export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/$VCPKGRS_TRIPLET/lib/pkgconfig"
@@ -109,17 +116,22 @@ if [ "$1" = "install" ]; then
     echo "Checking FFmpeg dependencies..."
     echo ""
 
-    # Determine vcpkg path and triplet based on OS
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        VCPKG_PATH="/usr/local/share/vcpkg"
-        if [[ "$(uname -m)" == "arm64" ]]; then
-            TRIPLET="arm64-osx-release"
+    # Determine vcpkg root
+    VCPKG_PATH="${VCPKG_ROOT:-/usr/local/share/vcpkg}"
+
+    # Determine triplet based on OS if not already set
+    if [ -z "$VCPKGRS_TRIPLET" ]; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            if [[ "$(uname -m)" == "arm64" ]]; then
+                TRIPLET="arm64-osx-release"
+            else
+                TRIPLET="x64-osx-release"
+            fi
         else
-            TRIPLET="x64-osx-release"
+            TRIPLET="x64-linux-release"
         fi
     else
-        VCPKG_PATH="/usr/local/share/vcpkg"
-        TRIPLET="x64-linux-release"
+        TRIPLET="$VCPKGRS_TRIPLET"
     fi
 
     # Check vcpkg

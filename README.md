@@ -182,9 +182,9 @@ Bootstrap scripts provide the easiest build experience with automatic dependency
 git clone https://github.com/ssoj13/playa.git
 cd playa
 
-# Windows
-bootstrap.cmd build          # Build with exrs (fast, pure Rust)
-bootstrap.cmd build --openexr  # Build with OpenEXR (full DWAA/DWAB support)
+# Windows (PowerShell)
+.\bootstrap.ps1 build          # Build with exrs (fast, pure Rust)
+.\bootstrap.ps1 build --openexr  # Build with OpenEXR (full DWAA/DWAB support)
 
 # Linux/macOS
 ./bootstrap.sh build
@@ -211,7 +211,7 @@ bootstrap.cmd build --openexr  # Build with OpenEXR (full DWAA/DWAB support)
 - ✅ Handles platform-specific triplets automatically
 - ✅ Works identically on Windows, Linux, and macOS
 
-**After bootstrap:** Continue using `bootstrap.{sh|cmd}` or use `cargo xtask` directly.
+**After bootstrap:** Continue using bootstrap scripts (`.\bootstrap.ps1` / `./bootstrap.sh`) or use `cargo xtask` directly.
 
 #### EXR Backend Options
 
@@ -341,7 +341,7 @@ pkg-config --modversion libavcodec libavformat libavutil libswscale
 ffmpeg -encoders | grep -E "(nvenc|qsv|amf|264|265)"
 
 # Test encoding (requires playa built)
-bootstrap.cmd test    # Windows
+.\bootstrap.ps1 test    # Windows (PowerShell)
 ./bootstrap.sh test   # Linux/macOS
 ```
 
@@ -349,35 +349,36 @@ bootstrap.cmd test    # Windows
 
 **Start here!** Bootstrap scripts handle all dependencies automatically:
 
-### Windows
-```cmd
-bootstrap.cmd              # Show xtask help
-bootstrap.cmd build        # Build with exrs (fast)
-bootstrap.cmd build --openexr  # Build with full OpenEXR support
-bootstrap.cmd test         # Run encoding integration test
+### Windows (PowerShell)
+```powershell
+.\bootstrap.ps1              # Show bootstrap help
+.\bootstrap.ps1 build        # Build with exrs (fast)
+.\bootstrap.ps1 build --openexr  # Build with full OpenEXR support
+.\bootstrap.ps1 test         # Run all tests (unit + integration)
 ```
 
 ### Linux/macOS
 ```bash
-./bootstrap.sh             # Show xtask help
+./bootstrap.sh             # Show bootstrap help
 ./bootstrap.sh build       # Build with exrs (fast)
 ./bootstrap.sh build --openexr  # Build with full OpenEXR support
-./bootstrap.sh test        # Run encoding integration test
+./bootstrap.sh test        # Run all tests (unit + integration)
 ```
 
 **What bootstrap does:**
 1. Checks Rust installation (exits with error if missing)
-2. Auto-installs dependencies via `cargo-binstall` (faster than `cargo install`):
+2. Uses `$VCPKG_ROOT` environment variable (falls back to platform defaults)
+3. Auto-installs dependencies via `cargo-binstall` (faster than `cargo install`):
    - `cargo-release` - Version bumping and changelog generation
    - `cargo-packager` v0.11.7 - Cross-platform installer generation
-3. Builds `xtask` binary (project build automation)
-4. Forwards all arguments to `cargo xtask`
+4. Builds `xtask` binary (project build automation)
+5. Forwards all arguments to `cargo xtask`
 
-**After bootstrap:** Use `cargo xtask <command>` directly or continue with `bootstrap.{sh|cmd} <command>`
+**After bootstrap:** Use `cargo xtask <command>` directly or continue with bootstrap scripts
 
 ### Using xtask - Project Build Automation
 
-**Prerequisites:** Run `bootstrap.{sh|cmd}` first (see Quick Start above)
+**Prerequisites:** Run bootstrap script first (see Quick Start above)
 
 `xtask` is an idiomatic Rust pattern for build automation - a workspace helper binary providing cross-platform task automation without external dependencies (no Makefiles, no Python, no shell scripts).
 
