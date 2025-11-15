@@ -184,6 +184,26 @@ enum Commands {
     ///   cargo xtask wipe-wf
     #[clap(name = "wipe-wf")]
     WipeWf,
+
+    /// 🧪 Run all tests (unit + integration)
+    ///
+    /// Runs the complete test suite including:
+    /// - Unit tests (fast, isolated component tests)
+    /// - Integration tests (encoding, cache, sequence detection)
+    ///
+    /// Examples:
+    ///   cargo xtask test              # Run all tests in release mode
+    ///   cargo xtask test --debug      # Run all tests in debug mode
+    ///   cargo xtask test --nocapture  # Show println! output from tests
+    Test {
+        /// Run in debug mode instead of release
+        #[arg(long)]
+        debug: bool,
+
+        /// Show test output (pass --nocapture to cargo test)
+        #[arg(long)]
+        nocapture: bool,
+    },
 }
 
 fn main() {
@@ -223,6 +243,10 @@ fn run() -> Result<()> {
         Commands::Deploy { install_dir } => cmd_deploy(install_dir.as_deref()),
         Commands::Wipe { verbose, dry_run } => cmd_wipe(verbose, dry_run),
         Commands::WipeWf => cmd_wipe_wf(),
+        Commands::Test { debug, nocapture } => {
+            let is_release = !debug;
+            cmd_test(is_release, nocapture)
+        }
     }
 }
 
@@ -859,4 +883,51 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Command: cargo xtask test [--debug] [--nocapture]
+fn cmd_test(is_release: bool, nocapture: bool) -> Result<()> {
+    println!("🧪 Running all tests...");
+    println!();
+
+    let profile = if is_release { "release" } else { "debug" };
+    println!("Profile: {}", profile);
+    println!();
+
+    // Build cargo test command
+    let mut cmd = Command::new("cargo");
+    cmd.arg("test");
+
+    if is_release {
+        cmd.arg("--release");
+    }
+
+    // Always pass -- separator for test binary args
+    cmd.arg("--");
+
+    if nocapture {
+        cmd.arg("--nocapture");
+    }
+
+    // Show test output
+    cmd.arg("--show-output");
+
+    println!("Running: cargo test {}{} -- {}--show-output",
+        if is_release { "--release " } else { "" },
+        if nocapture { "--nocapture " } else { "" },
+        if nocapture { "" } else { "" }
+    );
+    println!();
+
+    // Run tests
+    let status = cmd.status().context("Failed to run cargo test")?;
+
+    println!();
+
+    if status.success() {
+        println!("✅ All tests passed!");
+        Ok(())
+    } else {
+        anyhow::bail!("❌ Tests failed");
+    }
 }

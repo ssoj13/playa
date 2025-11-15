@@ -97,10 +97,8 @@ fi
 
 # Handle special commands
 if [ "$1" = "test" ]; then
-    # Run encoding integration test
-    echo "Running encoding integration test..."
-    echo ""
-    cargo test --release test_encode_placeholder_frames -- --nocapture
+    # Run all tests via xtask
+    cargo xtask test
     exit 0
 fi
 
@@ -206,12 +204,13 @@ USAGE:
   ./bootstrap.sh [COMMAND] [OPTIONS]
 
 SPECIAL COMMANDS:
-  test               Run encoding integration test
+  test               Run all tests (unit + integration)
   install            Install playa from crates.io (checks FFmpeg deps)
   publish            Publish crate to crates.io
 
 XTASK COMMANDS (forwarded to cargo xtask):
   build              Build playa (use --openexr for full EXR support)
+  test               Run all tests (unit + integration) [can also use: bootstrap test]
   post               Copy native libraries (OpenEXR builds only)
   verify             Verify dependencies present
   deploy             Install to system

@@ -123,10 +123,8 @@ if not exist "target\debug\xtask.exe" (
 
 :: Handle special commands
 if "%~1"=="test" (
-    :: Run encoding integration test
-    echo Running encoding integration test...
-    echo.
-    cargo test --release test_encode_placeholder_frames -- --nocapture
+    :: Run all tests via xtask
+    cargo xtask test
     goto :end
 )
 
@@ -214,12 +212,13 @@ if "%~1"=="" (
     echo   bootstrap.cmd [COMMAND] [OPTIONS]
     echo.
     echo SPECIAL COMMANDS:
-    echo   test               Run encoding integration test
+    echo   test               Run all tests (unit + integration)
     echo   install            Install playa from crates.io (checks FFmpeg deps)
     echo   publish            Publish crate to crates.io
     echo.
     echo XTASK COMMANDS (forwarded to cargo xtask):
     echo   build              Build playa (use --openexr for full EXR support)
+    echo   test               Run all tests (unit + integration) [can also use: bootstrap test]
     echo   post               Copy native libraries (OpenEXR builds only)
     echo   verify             Verify dependencies present
     echo   deploy             Install to system
