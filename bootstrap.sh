@@ -6,7 +6,7 @@
 #   ./bootstrap.sh                    # Show xtask help
 #   ./bootstrap.sh tag-dev patch      # Run xtask command
 #   ./bootstrap.sh build --release    # Run xtask command
-#   ./bootstrap.sh test               # Run encoding integration test
+#   ./bootstrap.sh test               # Run all tests (unit + integration)
 #   ./bootstrap.sh install            # Install playa from crates.io (checks FFmpeg dependencies)
 #   ./bootstrap.sh publish            # Publish crate to crates.io
 #   ./bootstrap.sh wipe               # Clean ./target from stale platform binaries (non-recursive)
@@ -225,7 +225,7 @@ XTASK COMMANDS (forwarded to cargo xtask):
 EXAMPLES:
   ./bootstrap.sh                    # Show this help
   ./bootstrap.sh build --release    # Build release binary
-  ./bootstrap.sh test               # Run encoding test
+  ./bootstrap.sh test               # Run all tests
   ./bootstrap.sh tag-dev patch      # Create v0.1.x-dev tag
 
 For xtask command details, run: ./bootstrap.sh [command] --help

@@ -6,7 +6,7 @@
 ::   bootstrap.cmd                    # Show xtask help
 ::   bootstrap.cmd tag-dev patch      # Run xtask command
 ::   bootstrap.cmd build --release    # Run xtask command
-::   bootstrap.cmd test               # Run encoding integration test
+::   bootstrap.cmd test               # Run all tests (unit + integration)
 ::   bootstrap.cmd install            # Install playa from crates.io (checks FFmpeg dependencies)
 ::   bootstrap.cmd publish            # Publish crate to crates.io
 ::   bootstrap.cmd wipe               # Clean .\target from stale platform binaries (non-recursive)
@@ -233,7 +233,7 @@ if "%~1"=="" (
     echo EXAMPLES:
     echo   bootstrap.cmd                    # Show this help
     echo   bootstrap.cmd build --release    # Build release binary
-    echo   bootstrap.cmd test               # Run encoding test
+    echo   bootstrap.cmd test               # Run all tests
     echo   bootstrap.cmd tag-dev patch      # Create v0.1.x-dev tag
     echo.
     echo For xtask command details, run: bootstrap.cmd [command] --help
