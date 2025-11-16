@@ -136,7 +136,7 @@ impl Player {
         self.active_comp_mut()?.get_frame(frame_idx)
     }
 
-    /// Append detected clip to project playlist.
+    /// Append detected clip to project playlist and add as Layer to active Comp.
     pub fn append_clip(&mut self, clip: Clip) {
         let uuid = if clip.uuid.is_empty() {
             // Fallback: generate UUID from pattern/range
@@ -148,40 +148,68 @@ impl Player {
             clip.uuid.clone()
         };
 
-        // Insert clip into project
-        self.project.clips.insert(uuid.clone(), clip);
+        // Insert clip into project MediaPool
+        self.project.clips.insert(uuid.clone(), clip.clone());
         self.project.order_clips.push(uuid.clone());
 
-        // If no active comp yet, create one for this clip
+        // Ensure we have an active comp (creates "Main" if none exist)
         if self.active_comp.is_none() {
-            self.set_active_clip_by_uuid(&uuid);
+            let default_uuid = self.project.ensure_default_comp();
+            self.active_comp = Some(default_uuid);
+        }
+
+        // Add clip as Layer to active comp
+        if let Some(comp_uuid) = &self.active_comp.clone() {
+            if let Some(comp) = self.project.comps.get_mut(comp_uuid) {
+                // Create Layer from Clip
+                let clip_arc = Arc::new(clip);
+                log::info!("Creating layer from clip with {} frames", clip_arc.len());
+                let mut layer = Layer::new(Arc::clone(&clip_arc));
+                log::debug!("Layer.clip is_some: {}", layer.clip.is_some());
+                layer.clip_uuid = Some(uuid.clone());
+
+                // Set layer attrs for timeline positioning
+                let clip_len = clip_arc.len();
+                layer.attrs.set("clip_start", crate::attrs::AttrValue::UInt(0));
+                layer.attrs.set("clip_end", crate::attrs::AttrValue::UInt(clip_len.saturating_sub(1) as u32));
+
+                // Position layer at end of comp timeline (sequential stacking)
+                let layer_start = comp.end + 1;
+                let layer_end = layer_start + clip_len.saturating_sub(1);
+                layer.attrs.set("start", crate::attrs::AttrValue::UInt(layer_start as u32));
+                layer.attrs.set("end", crate::attrs::AttrValue::UInt(layer_end as u32));
+
+                comp.layers.push(layer);
+
+                // Extend comp timeline to include new layer
+                comp.end = layer_end;
+                comp.attrs.set("end", crate::attrs::AttrValue::UInt(layer_end as u32));
+
+                log::info!("Added clip {} as Layer to comp {} (timeline: {}..{})",
+                    uuid, comp_uuid, layer_start, layer_end);
+            }
+        }
+
+        // Set selected index
+        if self.selected_seq_idx.is_none() {
             self.selected_seq_idx = Some(0);
         }
     }
 
-    /// Helper: rebuild active comp for given clip UUID.
+    /// Helper: set active clip by UUID (for playlist navigation).
     pub fn set_active_clip_by_uuid(&mut self, clip_uuid: &str) {
-        let clip = match self.project.clips.get(clip_uuid) {
-            Some(c) => c.clone(),
-            None => return,
-        };
-
-        let clip_arc = Arc::new(clip);
-        let layer = Layer::new(Arc::clone(&clip_arc));
-
-        let total_frames = clip_arc.len();
-        let end = total_frames.saturating_sub(1);
-        let mut comp = Comp::new("Main", 0, end, self.fps_base);
-        comp.layers.push(layer);
-
-        let comp_uuid = comp.uuid.clone();
-        self.project.comps.insert(comp_uuid.clone(), comp);
-        if !self.project.order_comps.contains(&comp_uuid) {
-            self.project.order_comps.push(comp_uuid.clone());
+        // Find which layer in active comp contains this clip
+        if let Some(comp) = self.active_comp_mut() {
+            for layer in comp.layers.iter() {
+                if layer.clip_uuid.as_deref() == Some(clip_uuid) {
+                    // Jump to start of this layer
+                    let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
+                    self.current_frame = layer_start;
+                    log::debug!("Jumped to clip {} at frame {}", clip_uuid, layer_start);
+                    return;
+                }
+            }
         }
-
-        self.active_comp = Some(comp_uuid);
-        self.current_frame = 0;
     }
 
     /// Update playback state

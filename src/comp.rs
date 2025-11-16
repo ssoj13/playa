@@ -35,6 +35,10 @@ pub struct Comp {
     /// Layers that belong to this composition
     pub layers: Vec<Layer>,
 
+    /// Current playback position within this comp (persisted)
+    #[serde(default)]
+    pub current_frame: usize,
+
     /// Per-comp frame cache: global frame index -> composed Frame (runtime-only)
     #[serde(skip)]
     #[serde(default)]
@@ -62,6 +66,7 @@ impl Comp {
             fps,
             attrs,
             layers: Vec::new(),
+            current_frame: start, // Start at beginning of comp
             cache: HashMap::new(),
         }
     }

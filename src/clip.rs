@@ -4,7 +4,7 @@
 
 use log::info;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -34,7 +34,7 @@ pub fn detect(paths: Vec<PathBuf>) -> Result<Vec<Clip>, FrameError> {
 }
 
 /// Clip: sequence of frames with pattern-based file naming.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Clip {
     /// Stable identifier inside Project / MediaPool
     pub uuid: String,
@@ -48,6 +48,48 @@ pub struct Clip {
     xres: usize,
     yres: usize,
     pub attrs: Attrs,
+}
+
+/// Custom deserialization: rebuild frames after loading from JSON
+impl<'de> Deserialize<'de> for Clip {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Temporary struct for deserialization (matches serialized fields)
+        #[derive(Deserialize)]
+        struct ClipData {
+            uuid: String,
+            pattern: String,
+            start: usize,
+            end: usize,
+            padding: usize,
+            xres: usize,
+            yres: usize,
+            attrs: Attrs,
+        }
+
+        let data = ClipData::deserialize(deserializer)?;
+
+        let mut clip = Clip {
+            uuid: data.uuid,
+            frames: Vec::new(),
+            pattern: data.pattern,
+            start: data.start,
+            end: data.end,
+            padding: data.padding,
+            xres: data.xres,
+            yres: data.yres,
+            attrs: data.attrs,
+        };
+
+        // Rebuild frames from pattern (creates Frame::new_unloaded for each frame)
+        clip.restore_frames();
+
+        log::info!("Deserialized clip: {} with {} frames", clip.uuid, clip.frames.len());
+
+        Ok(clip)
+    }
 }
 
 fn gen_clip_uuid(pattern: &str, start: usize, end: usize) -> String {

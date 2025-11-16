@@ -73,14 +73,39 @@ impl Project {
         Ok(project)
     }
 
+    /// Ensure project has at least one composition.
+    /// Creates "Main" comp if none exist, and sets it as active.
+    ///
+    /// Returns UUID of the default/first comp.
+    pub fn ensure_default_comp(&mut self) -> String {
+        if self.comps.is_empty() {
+            let comp = Comp::new("Main", 0, 0, 24.0);
+            let uuid = comp.uuid.clone();
+            self.comps.insert(uuid.clone(), comp);
+            self.order_comps.push(uuid.clone());
+            log::info!("Created default comp: {}", uuid);
+            uuid
+        } else {
+            // Return first comp UUID from order
+            self.order_comps.first()
+                .or_else(|| self.comps.keys().next())
+                .cloned()
+                .unwrap_or_else(|| {
+                    // Fallback: create new if order is broken
+                    let comp = Comp::new("Main", 0, 0, 24.0);
+                    let uuid = comp.uuid.clone();
+                    self.comps.insert(uuid.clone(), comp);
+                    self.order_comps.push(uuid.clone());
+                    uuid
+                })
+        }
+    }
+
     /// Rebuild runtime-only state after deserialization.
     ///
     /// - Initializes per-comp caches.
     /// - Rebuilds Layer.clip from Clip UUIDs using Arc<Clip>.
     pub fn rebuild_runtime(&mut self) {
-        use crate::comp::Comp;
-        use crate::layer::Layer;
-
         // Build shared Arc<Clip> map so all layers reference the same instances.
         let mut clip_arcs: HashMap<String, Arc<Clip>> = HashMap::new();
         for (uuid, clip) in &self.clips {

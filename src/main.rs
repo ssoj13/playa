@@ -20,6 +20,7 @@ mod ui_encode;
 mod utils;
 mod video;
 mod viewport;
+mod workers;
 
 use clap::Parser;
 use eframe::{egui, glow};
@@ -31,7 +32,9 @@ use prefs::{AppSettings, render_settings_window};
 use shaders::Shaders;
 use status_bar::StatusBar;
 use std::path::PathBuf;
+use std::sync::Arc;
 use viewport::{ViewportRenderer, ViewportState};
+use workers::Workers;
 
 
 /// Image sequence player
@@ -145,12 +148,19 @@ struct PlayaApp {
     applied_workers: Option<usize>,
     #[serde(skip)]
     path_config: paths::PathConfig,
+    /// Global worker pool for background tasks (frame loading, encoding)
+    #[serde(skip)]
+    workers: Arc<Workers>,
 }
 
 impl Default for PlayaApp {
     fn default() -> Self {
         let player = Player::new();
         let status_bar = StatusBar::new();
+
+        // Create worker pool (75% of CPU cores for workers, 25% for UI thread)
+        let num_workers = (num_cpus::get() * 3 / 4).max(1);
+        let workers = Arc::new(Workers::new(num_workers));
 
         Self {
             frame: None,
@@ -175,6 +185,7 @@ impl Default for PlayaApp {
             applied_mem_fraction: 0.75,
             applied_workers: None,
             path_config: paths::PathConfig::from_env_and_cli(None),
+            workers,
         }
     }
 }
@@ -207,6 +218,90 @@ impl PlayaApp {
                 warn!("{}", error_msg);
                 self.error_msg = Some(error_msg.clone());
                 Err(error_msg)
+            }
+        }
+    }
+
+    /// Enqueue frame loading around playhead for active comp.
+    ///
+    /// Loads frames in radius around current_frame (e.g., -10..+10).
+    /// Workers call frame.set_status(Loaded) which triggers actual load.
+    fn enqueue_frame_loads_around_playhead(&self, radius: usize) {
+        let current_frame = self.player.current_frame();
+
+        // Get active comp
+        let Some(comp_uuid) = &self.player.active_comp else {
+            debug!("No active comp for frame loading");
+            return;
+        };
+        let Some(comp) = self.player.project.comps.get(comp_uuid) else {
+            debug!("Active comp {} not found", comp_uuid);
+            return;
+        };
+
+        debug!("Enqueuing frame loads around frame {} (radius: {}), comp has {} layers",
+               current_frame, radius, comp.layers.len());
+
+        // Enqueue loads for all layers in comp
+        for (layer_idx, layer) in comp.layers.iter().enumerate() {
+            let Some(ref clip) = layer.clip else {
+                debug!("Layer {} has no clip", layer_idx);
+                continue;
+            };
+            debug!("Processing layer {}: clip has {} frames", layer_idx, clip.len());
+
+            // Calculate frame range to load
+            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
+            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+
+            // Frames to load: [current - radius, current + radius] within layer bounds
+            let load_start = current_frame.saturating_sub(radius).max(layer_start);
+            let load_end = (current_frame + radius).min(layer_end);
+
+            debug!("Layer {}: range [{}, {}], will load frames [{}, {}]",
+                   layer_idx, layer_start, layer_end, load_start, load_end);
+
+            for global_idx in load_start..=load_end {
+                // Convert global frame to clip-local index
+                let clip_idx = global_idx.saturating_sub(layer_start);
+
+                if clip_idx >= clip.len() {
+                    debug!("Frame {} (clip_idx {}) out of bounds (clip len: {})", global_idx, clip_idx, clip.len());
+                    continue;
+                }
+
+                // Get frame from clip
+                let frame = match clip.get_frame(clip_idx) {
+                    Some(f) => f,
+                    None => {
+                        debug!("Failed to get frame {} (clip_idx {})", global_idx, clip_idx);
+                        continue;
+                    }
+                };
+
+                // Skip if already loaded
+                let status = frame.status();
+                if status == frame::FrameStatus::Loaded {
+                    continue;
+                }
+
+                debug!("Enqueuing load for frame {} (clip_idx {}) with status {:?}", global_idx, clip_idx, status);
+
+                // Enqueue load on worker thread
+                let workers = Arc::clone(&self.workers);
+                let frame_clone = frame.clone();
+
+                workers.execute(move || {
+                    use frame::FrameStatus;
+
+                    debug!("Worker loading frame with status {:?}", frame_clone.status());
+                    // Transition to Loaded triggers actual load via Frame::load()
+                    if let Err(e) = frame_clone.set_status(FrameStatus::Loaded) {
+                        error!("Failed to load frame: {}", e);
+                    } else {
+                        debug!("Frame loaded successfully, new status: {:?}", frame_clone.status());
+                    }
+                });
             }
         }
     }
@@ -507,6 +602,9 @@ impl eframe::App for PlayaApp {
 
         // cache_mem_percent is deprecated (old frame cache); kept only for config compatibility
         self.player.update();
+
+        // Enqueue frame loads around playhead (async background loading)
+        self.enqueue_frame_loads_around_playhead(10); // Load ±10 frames
 
         // Handle drag-and-drop files/folders - queue for async loading
         ctx.input(|i| {
@@ -812,6 +910,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
               // Recreate Player runtime from persisted project
               let mut player = Player::new();
               player.project = app.project.clone();
+              player.project.rebuild_runtime(); // Rebuild Arc references
+
+              // Ensure default comp exists and set as active
+              let default_comp_uuid = player.project.ensure_default_comp();
+              if player.active_comp.is_none() {
+                  player.active_comp = Some(default_comp_uuid);
+              }
+
               app.player = player;
             app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;

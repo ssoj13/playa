@@ -23,6 +23,7 @@ openexr = ["dep:openexr"]
 anyhow = "1.0"
 bytemuck = "1.24"
 clap = { version = "4.5", features = ["derive"] }
+crossbeam = "0.8.4"
 crossbeam-channel = "0.5"
 dirs-next = "2.0"
 eframe = { version = "0.33", features = ["persistence"] }

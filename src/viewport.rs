@@ -60,9 +60,12 @@ impl ViewportState {
         Self::default()
     }
 
-    /// Draw scrubber overlay (vertical line + frame number)
-    pub fn draw_scrubber(&self, ui: &egui::Ui, panel_rect: egui::Rect) {
+    /// Draw all viewport overlays (scrubber, guides, safe zones, etc.)
+    pub fn draw(&self, ui: &egui::Ui, panel_rect: egui::Rect) {
+        // Draw scrubber line during scrubbing
         self.scrubber.draw(ui, panel_rect);
+
+        // Future: добавить guides, safe zones, grid, и т.д.
     }
 
     /// Update viewport size (called when window resizes)

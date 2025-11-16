@@ -47,6 +47,20 @@ impl Attrs {
         }
     }
 
+    pub fn get_i32(&self, key: &str) -> Option<i32> {
+        match self.map.get(key) {
+            Some(AttrValue::Int(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn get_u32(&self, key: &str) -> Option<u32> {
+        match self.map.get(key) {
+            Some(AttrValue::UInt(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
     pub fn get_float(&self, key: &str) -> Option<f32> {
         match self.map.get(key) {
             Some(AttrValue::Float(v)) => Some(*v),

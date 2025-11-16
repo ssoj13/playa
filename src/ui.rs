@@ -59,32 +59,172 @@ pub fn help_text() -> &'static str {
     Left Click - Scrub"
 }
 
-/// Playlist actions result
-pub struct PlaylistActions {
+/// Project window actions result
+pub struct ProjectActions {
     pub load_sequence: Option<PathBuf>,
-    pub clear_all: bool,
-    pub save_playlist: Option<PathBuf>,
-    pub load_playlist: Option<PathBuf>,
+    pub save_project: Option<PathBuf>,
+    pub load_project: Option<PathBuf>,
+    pub remove_clip: Option<String>,     // clip UUID to remove
+    pub set_active_comp: Option<String>, // comp UUID to activate (from double-click)
+    pub new_comp: bool,
+    pub remove_comp: Option<String>,     // comp UUID to remove
 }
 
-/// Render playlist panel (right side) based on Project/order_clips
-pub fn render_playlist(ctx: &egui::Context, player: &mut Player) -> PlaylistActions {
-    let mut actions = PlaylistActions {
+// Deprecated - use ProjectActions
+pub type PlaylistActions = ProjectActions;
+
+/// Render project window (right panel): MediaPool + Compositions
+pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> ProjectActions {
+    let mut actions = ProjectActions {
         load_sequence: None,
-        clear_all: false,
-        save_playlist: None,
-        load_playlist: None,
+        save_project: None,
+        load_project: None,
+        remove_clip: None,
+        set_active_comp: None,
+        new_comp: false,
+        remove_comp: None,
     };
 
-    egui::SidePanel::right("playlist")
-        .default_width(250.0)
+    egui::SidePanel::right("project_window")
+        .default_width(280.0)
         .min_width(20.0)
         .resizable(true)
         .show(ctx, |ui| {
-            egui::ScrollArea::both()
+            egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .show(ui, |ui| {
-                    ui.heading("Playlist");
+                    ui.heading("Project");
+
+                    // Save/Load Project buttons
+                    ui.horizontal(|ui| {
+                        if ui.button("Save").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Playa Project", &["json"])
+                                .set_title("Save Project")
+                                .save_file()
+                        {
+                            actions.save_project = Some(path);
+                        }
+                        if ui.button("Load").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Playa Project", &["json"])
+                                .set_title("Load Project")
+                                .pick_file()
+                        {
+                            actions.load_project = Some(path);
+                        }
+                    });
+
+                    ui.separator();
+
+                    // === MEDIA POOL SECTION ===
+                    ui.heading("Media Pool");
+                    ui.horizontal(|ui| {
+                        if ui.button("Add Clips").clicked()
+                            && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
+                            && !paths.is_empty()
+                        {
+                            actions.load_sequence = Some(paths[0].clone());
+                        }
+                    });
+
+                    ui.add_space(4.0);
+
+                    // List clips
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            for clip_uuid in &player.project.order_clips {
+                                let clip = match player.project.clips.get(clip_uuid) {
+                                    Some(c) => c,
+                                    None => continue,
+                                };
+
+                                ui.horizontal(|ui| {
+                                    ui.label(clip.pattern());
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.small_button("X").clicked() {
+                                            actions.remove_clip = Some(clip_uuid.clone());
+                                        }
+                                        ui.label(format!("{}f", clip.len()));
+                                        let (w, h) = clip.resolution();
+                                        ui.label(format!("{}x{}", w, h));
+                                    });
+                                });
+                                ui.add_space(2.0);
+                            }
+                        });
+
+                    ui.separator();
+
+                    // === COMPOSITIONS SECTION ===
+                    ui.heading("Compositions");
+                    ui.horizontal(|ui| {
+                        if ui.button("New Comp").clicked() {
+                            actions.new_comp = true;
+                        }
+                    });
+
+                    ui.add_space(4.0);
+
+                    // List comps
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            for comp_uuid in &player.project.order_comps {
+                                let comp = match player.project.comps.get(comp_uuid) {
+                                    Some(c) => c,
+                                    None => continue,
+                                };
+
+                                let is_active = player.active_comp.as_ref() == Some(comp_uuid);
+
+                                let frame = if is_active {
+                                    egui::Frame::new()
+                                        .fill(ui.style().visuals.selection.bg_fill)
+                                        .inner_margin(4.0)
+                                } else {
+                                    egui::Frame::new().inner_margin(4.0)
+                                };
+
+                                frame.show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let response = ui.selectable_label(false, &comp.name);
+
+                                        // Double-click to activate
+                                        if response.double_clicked() {
+                                            actions.set_active_comp = Some(comp_uuid.clone());
+                                        }
+
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if ui.small_button("X").clicked() {
+                                                actions.remove_comp = Some(comp_uuid.clone());
+                                            }
+                                            ui.label(format!("{}fps", comp.fps as u32));
+                                            ui.label(format!("{}f", comp.total_frames()));
+                                        });
+                                    });
+                                });
+
+                                ui.add_space(2.0);
+                            }
+                        });
+                });
+        });
+
+    actions
+}
+
+/// Render controls panel (bottom)
+pub fn render_controls(
+    ctx: &egui::Context,
+    player: &mut Player,
+    shader_manager: &mut Shaders,
+    cached_seq_ranges: &mut Vec<SequenceRange>,
+    last_seq_version: &mut usize,
+    show_frame_numbers: bool,
+) -> bool {
 
                     // Add/Clear buttons on left, Up/Down on right
                     ui.horizontal(|ui| {
@@ -350,18 +490,48 @@ pub fn render_controls(
     old_shader != shader_manager.current_shader
 }
 
-/// Build sequence ranges for timeline visualization (comp-based)
+/// Build sequence ranges for timeline visualization through Layers
 fn build_sequence_ranges(player: &Player) -> Vec<SequenceRange> {
-    let total_frames = player.total_frames();
-    if total_frames == 0 {
-        return Vec::new();
+    // Try to build from active comp layers first
+    if let Some(comp_uuid) = &player.active_comp {
+        if let Some(comp) = player.project.comps.get(comp_uuid) {
+            let mut ranges = Vec::new();
+
+            for layer in &comp.layers {
+                if let Some(ref clip) = layer.clip {
+                    let start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
+                    let end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+
+                    ranges.push(SequenceRange {
+                        start_frame: start,
+                        end_frame: end,
+                        pattern: clip.pattern().to_string(),
+                    });
+                }
+            }
+
+            if !ranges.is_empty() {
+                return ranges;
+            }
+        }
     }
 
-    vec![SequenceRange {
-        start_frame: 0,
-        end_frame: total_frames.saturating_sub(1),
-        pattern: "Comp".to_string(),
-    }]
+    // Fallback: build from clips in playlist order (legacy mode)
+    let mut ranges = Vec::new();
+    let mut global_offset = 0;
+
+    for clip_uuid in &player.project.order_clips {
+        if let Some(clip) = player.project.clips.get(clip_uuid) {
+            ranges.push(SequenceRange {
+                start_frame: global_offset,
+                end_frame: global_offset + clip.len() - 1,
+                pattern: clip.pattern().to_string(),
+            });
+            global_offset += clip.len();
+        }
+    }
+
+    ranges
 }
 
 /// Viewport actions result
@@ -495,6 +665,9 @@ pub fn render_viewport(
                 }
                 FrameStatus::Loaded | FrameStatus::Header | FrameStatus::Placeholder => {}
             }
+
+            // Draw viewport overlays (scrubber, guides, etc.)
+            viewport_state.draw(ui, panel_rect);
         } else {
             ui.centered_and_justified(|ui| {
                 ui.label("No frame loaded. Drag'n'drop a file or use the playlist.");
