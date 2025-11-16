@@ -200,9 +200,9 @@ pub fn render_playlist(ctx: &egui::Context, player: &mut Player) -> PlaylistActi
 
                             // Execute deferred actions
                             if let Some(idx) = to_select {
-                                if let Some(uuid) = player.project.order_clips.get(idx) {
+                                if let Some(uuid) = player.project.order_clips.get(idx).cloned() {
                                     player.selected_seq_idx = Some(idx);
-                                    player.set_active_clip_by_uuid(uuid);
+                                    player.set_active_clip_by_uuid(&uuid);
                                 }
                             }
                             if let Some(idx) = to_remove {
@@ -464,10 +464,8 @@ pub fn render_viewport(
                     move |_info, painter| {
                         let gl = painter.gl();
                         let mut renderer = renderer.lock().unwrap();
-                        if let Some((pixels, pixel_format)) = maybe_pixels {
-                            renderer
-                                .upload_frame(gl, &pixels, pixel_format, w, h)
-                                .unwrap_or(());
+                        if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
+                            renderer.upload_texture(gl, w, h, &*pixels, *pixel_format);
                         }
                         renderer.render(gl, &state);
                     },
@@ -548,4 +546,3 @@ fn render_help_overlay(ui: &egui::Ui, panel_rect: egui::Rect) {
         egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128),
     );
 }
-

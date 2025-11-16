@@ -306,35 +306,6 @@ fn extract_filename(pattern: &str) -> String {
     filename.split('.').next().unwrap_or(filename).to_string()
 }
 
-/// Draw load indicator showing frame load status
-fn draw_load_indicator(painter: &egui::Painter, rect: Rect, statuses: &[FrameStatus], height: f32) {
-    let total = statuses.len();
-    if total == 0 {
-        return;
-    }
-
-    let indicator_rect = Rect::from_min_max(
-        Pos2::new(rect.min.x, rect.max.y),
-        Pos2::new(rect.max.x, rect.max.y + height),
-    );
-
-    let block_width = indicator_rect.width() / total as f32;
-
-    for (idx, status) in statuses.iter().enumerate() {
-        let x_start = indicator_rect.min.x + (idx as f32 * block_width);
-        let x_end = x_start + block_width;
-
-        let color = status.color();
-
-        let block_rect = Rect::from_min_max(
-            Pos2::new(x_start, indicator_rect.min.y),
-            Pos2::new(x_end, indicator_rect.max.y),
-        );
-
-        painter.rect_filled(block_rect, 0.0, color);
-    }
-}
-
 /// Draw frame numbers at important positions
 /// Positions: global start/end, sequence starts, play range start/end
 fn draw_frame_numbers(

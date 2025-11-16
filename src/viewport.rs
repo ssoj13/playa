@@ -65,10 +65,6 @@ impl ViewportState {
         self.scrubber.draw(ui, panel_rect);
     }
 
-    pub fn draw_scrubber(&self, ui: &egui::Ui, panel_rect: egui::Rect) {
-        self.scrubber.draw(ui, panel_rect);
-    }
-
     /// Update viewport size (called when window resizes)
     pub fn set_viewport_size(&mut self, size: egui::Vec2) {
         self.viewport_size = size;
@@ -233,6 +229,10 @@ impl ViewportState {
             return None;
         }
 
+        // Precompute bounds before mutably borrowing scrubber to avoid borrow conflicts
+        let current_bounds = self.get_image_screen_bounds();
+        let current_size = self.image_size;
+
         let scrubber = &mut self.scrubber;
 
         // Start or continue scrubbing on primary click/drag
@@ -241,20 +241,17 @@ impl ViewportState {
             && let Some(mouse_pos) = response.interact_pointer_pos()
         {
             // Start scrubbing - freeze bounds
-            if !scrubber.is_active() {
-                let current_bounds = self.get_image_screen_bounds();
-                let current_size = self.image_size;
+                if !scrubber.is_active() {
+                    let normalized =
+                        ViewportScrubber::mouse_to_normalized(mouse_pos.x, current_bounds);
+                    scrubber.start_scrubbing(current_bounds, current_size, normalized);
+                    scrubber.set_last_mouse_x(mouse_pos.x);
+                }
 
-                let normalized =
-                    ViewportScrubber::mouse_to_normalized(mouse_pos.x, current_bounds);
-                scrubber.start_scrubbing(current_bounds, current_size, normalized);
-                scrubber.set_last_mouse_x(mouse_pos.x);
-            }
-
-            // Use frozen bounds for entire scrubbing session
-            let image_bounds = scrubber
-                .frozen_bounds()
-                .unwrap_or_else(|| self.get_image_screen_bounds());
+                // Use frozen bounds for entire scrubbing session
+                let image_bounds = scrubber
+                    .frozen_bounds()
+                    .unwrap_or(current_bounds);
 
             let frame_idx = if scrubber.mouse_moved(mouse_pos.x) {
                 // Mouse moved - recalculate normalized from mouse
@@ -292,7 +289,7 @@ impl ViewportState {
             };
 
             Some(frame_idx)
-        } else if response.drag_released() || response.clicked() {
+        } else if response.drag_stopped() || response.clicked() {
             // On release, stop scrubbing but keep last frame
             scrubber.stop_scrubbing();
             None
@@ -344,7 +341,7 @@ impl ViewportState {
         ]
     }
 
-fn identity_matrix() -> [[f32; 4]; 4] {
+    fn identity_matrix() -> [[f32; 4]; 4] {
         [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -355,6 +352,7 @@ fn identity_matrix() -> [[f32; 4]; 4] {
 }
 
 /// Scrubbing control for timeline navigation via mouse, attached to the viewport.
+#[derive(Clone, Default)]
 pub struct ViewportScrubber {
     is_active: bool,
     normalized_position: Option<f32>, // Normalized position along timeline (can be outside 0.0..1.0)

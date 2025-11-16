@@ -522,12 +522,12 @@ impl eframe::App for PlayaApp {
             ctx.request_repaint();
         }
 
-        // Determine if the texture needs to be re-uploaded by checking if the frame has changed
+          // Determine if the texture needs to be re-uploaded by checking if the frame has changed
         let texture_needs_upload = self.displayed_frame != Some(self.player.current_frame());
 
-        // If the frame has changed, update our cached frame
-        if texture_needs_upload {
-            self.frame = self.player.get_current_frame().cloned();
+          // If the frame has changed, update our cached frame
+          if texture_needs_upload {
+              self.frame = self.player.get_current_frame();
             self.displayed_frame = Some(self.player.current_frame());
         }
 

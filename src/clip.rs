@@ -8,9 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::exr::{ExrImpl, ExrLoader};
 use crate::frame::{Frame, FrameError};
-use crate::utils::media;
 use crate::attrs::{Attrs, AttrValue};
 
 /// Detect clips from a list of paths (ported from original Sequence::detect).
@@ -54,6 +52,73 @@ pub struct Clip {
 
 fn gen_clip_uuid(pattern: &str, start: usize, end: usize) -> String {
     format!("clip:{}:{}:{}", pattern, start, end)
+}
+
+/// Expand a glob pattern into a list of paths.
+fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
+    let mut paths = Vec::new();
+    for entry in glob::glob(pattern)
+        .map_err(|e| FrameError::Image(format!("Glob error for pattern {}: {}", pattern, e)))?
+    {
+        match entry {
+            Ok(path) => paths.push(path),
+            Err(e) => {
+                return Err(FrameError::Image(format!(
+                    "Glob entry error for pattern {}: {}",
+                    pattern, e
+                )))
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// Split a sequence filename into (prefix, number, ext).
+///
+/// Example: "/path/seq.0001.exr" -> ("/path/seq.", 1, "exr")
+fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String)>, FrameError> {
+    let ext = match path.extension().and_then(|s| s.to_str()) {
+        Some(e) => e.to_string(),
+        None => return Ok(None),
+    };
+
+    let stem = match path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // Find trailing digits in stem
+    let mut digit_start = stem.len();
+    for (i, ch) in stem.char_indices().rev() {
+        if ch.is_ascii_digit() {
+            digit_start = i;
+        } else {
+            break;
+        }
+    }
+
+    if digit_start == stem.len() {
+        // No trailing digits -> not a sequence frame
+        return Ok(None);
+    }
+
+    let number_str = &stem[digit_start..];
+    let number = number_str
+        .parse::<usize>()
+        .map_err(|e| FrameError::Image(format!("Invalid frame number '{}': {}", number_str, e)))?;
+    let prefix_local = &stem[..digit_start]; // e.g. "seq." or "seq_"
+
+    // Build full prefix including parent directory
+    let mut prefix = String::new();
+    if let Some(parent) = path.parent() {
+        prefix.push_str(&parent.to_string_lossy());
+        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+            prefix.push(std::path::MAIN_SEPARATOR);
+        }
+    }
+    prefix.push_str(prefix_local);
+
+    Ok(Some((prefix, number, ext)))
 }
 
 impl Clip {
@@ -220,7 +285,7 @@ impl Clip {
     }
 
     fn init_from_glob(&mut self, pattern: &str) -> Result<(), FrameError> {
-        let paths = media::glob_paths(pattern)?;
+        let paths = glob_paths(pattern)?;
         if paths.is_empty() {
             return Err(FrameError::Image(format!(
                 "No files matched pattern: {}",
@@ -232,7 +297,7 @@ impl Clip {
         let mut groups: HashMap<(String, String), Vec<(usize, PathBuf)>> = HashMap::new();
 
         for path in paths {
-            if let Some((prefix, number, ext)) = media::split_sequence_path(&path)? {
+            if let Some((prefix, number, ext)) = split_sequence_path(&path)? {
                 let key = (prefix, ext);
                 groups.entry(key).or_default().push((number, path));
             }
@@ -278,7 +343,7 @@ impl Clip {
 
     fn init_from_file(&mut self, path_str: &str) -> Result<(), FrameError> {
         let path = PathBuf::from(path_str);
-        let (prefix, number, ext) = media::split_sequence_path(&path)?
+        let (prefix, number, ext) = split_sequence_path(&path)?
             .ok_or_else(|| FrameError::Image(format!("Not a sequence file: {}", path_str)))?;
 
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
@@ -289,7 +354,7 @@ impl Clip {
         {
             let entry = entry.map_err(|e| FrameError::Image(format!("Dir entry error: {}", e)))?;
             let p = entry.path();
-            if let Some((pfx, num, ext2)) = media::split_sequence_path(&p)? {
+            if let Some((pfx, num, ext2)) = split_sequence_path(&p)? {
                 if pfx == prefix && ext2 == ext {
                     frames.push((num, p));
                 }

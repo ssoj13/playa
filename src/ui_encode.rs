@@ -440,10 +440,7 @@ impl EncodeDialog {
                 if !ready_to_encode {
                     ui.colored_label(
                         egui::Color32::from_rgb(200, 150, 0),
-                        format!(
-                            "⚠ Frames loading: {}/{} ready",
-                            loaded_count, total_in_range
-                        ),
+                        "Frames are still loading...",
                     );
                 }
 
@@ -502,21 +499,18 @@ impl EncodeDialog {
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
 
           // Spawn encoder thread (Comp-based)
-          use crate::encode::encode_comp;
-          use crate::player::Player;
+            use crate::encode::encode_comp;
         use std::thread;
 
-          let handle = thread::spawn(move || {
-              info!("Encoder thread started");
+            let handle = thread::spawn(move || {
+                info!("Encoder thread started");
 
-              // For now we build a fresh Player/Comp for encoding
-              // In the future this can be wired to the active comp from App.
-              let mut player = Player::new();
-              let mut comp = crate::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
+                // For now we build a minimal Comp for encoding
+                let mut comp = crate::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
 
-              info!("Calling encode_comp()...");
-              encode_comp(&mut comp, &settings_clone, tx, cancel_flag_clone)
-          });
+                info!("Calling encode_comp()...");
+                encode_comp(&mut comp, &settings_clone, tx, cancel_flag_clone)
+            });
 
         self.encode_thread = Some(handle);
         self.is_encoding = true;

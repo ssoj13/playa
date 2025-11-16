@@ -160,7 +160,7 @@ impl Player {
     }
 
     /// Helper: rebuild active comp for given clip UUID.
-    fn set_active_clip_by_uuid(&mut self, clip_uuid: &str) {
+    pub fn set_active_clip_by_uuid(&mut self, clip_uuid: &str) {
         let clip = match self.project.clips.get(clip_uuid) {
             Some(c) => c.clone(),
             None => return,
@@ -433,8 +433,8 @@ impl Player {
         };
 
         if next_idx != idx {
-            if let Some(uuid) = self.project.order_clips.get(next_idx) {
-                self.set_active_clip_by_uuid(uuid);
+            if let Some(uuid) = self.project.order_clips.get(next_idx).cloned() {
+                self.set_active_clip_by_uuid(&uuid);
                 self.selected_seq_idx = Some(next_idx);
                 debug!("Jumped to next clip index {}", next_idx);
             }
@@ -461,8 +461,8 @@ impl Player {
         };
 
         if prev_idx != idx {
-            if let Some(uuid) = self.project.order_clips.get(prev_idx) {
-                self.set_active_clip_by_uuid(uuid);
+            if let Some(uuid) = self.project.order_clips.get(prev_idx).cloned() {
+                self.set_active_clip_by_uuid(&uuid);
                 self.selected_seq_idx = Some(prev_idx);
                 debug!("Jumped to previous clip index {}", prev_idx);
             }

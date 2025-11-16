@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use crate::convert::SwsContext;
-use crate::frame::{CropAlign, FrameConversion, FrameStatus, TonemapMode, PixelFormat};
+use crate::frame::{CropAlign, FrameConversion, TonemapMode, PixelFormat};
 use crate::comp::Comp;
 use playa_ffmpeg as ffmpeg;
 

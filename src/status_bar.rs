@@ -25,7 +25,7 @@ impl StatusBar {
         &self,
         ctx: &egui::Context,
         frame: Option<&Frame>,
-        player: &Player,
+        _player: &Player,
         viewport_state: &ViewportState,
         render_time_ms: f32,
     ) {
