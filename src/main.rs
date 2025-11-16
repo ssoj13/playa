@@ -26,6 +26,7 @@ use eframe::{egui, glow};
 use frame::Frame;
 use log::{debug, error, info, warn};
 use player::Player;
+use project::Project;
 use prefs::{AppSettings, render_settings_window};
 use shaders::Shaders;
 use status_bar::StatusBar;
@@ -120,6 +121,8 @@ struct PlayaApp {
     #[serde(skip)]
     last_render_time_ms: f32,
     settings: AppSettings,
+    /// Persisted project (playlist); runtime player.project синхронизируется при save/load
+    project: Project,
     #[serde(skip)]
     show_help: bool,
     #[serde(skip)]
@@ -160,6 +163,7 @@ impl Default for PlayaApp {
             shader_manager: Shaders::new(),
             last_render_time_ms: 0.0,
             settings: AppSettings::default(),
+            project: Project::new(),
             show_help: true,
             show_playlist: true,
             show_settings: false,
@@ -625,6 +629,8 @@ impl eframe::App for PlayaApp {
         self.settings.current_shader = self.shader_manager.current_shader.clone();
         self.settings.show_help = self.show_help;
         self.settings.show_playlist = self.show_playlist;
+        // Snapshot current project from runtime player into persisted field
+        self.project = self.player.project.clone();
 
         // Save cache state separately (sequences + current frame)
         // Serialize and save app settings
@@ -780,14 +786,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         native_options,
         Box::new(move |cc| {
             // Load persisted app state if available, otherwise create default
-            let mut app = cc
-                .storage
-                .and_then(|storage| storage.get_string(eframe::APP_KEY))
-                .and_then(|json| serde_json::from_str(&json).ok())
-                .unwrap_or_else(|| {
-                    info!("No persisted state found, creating default app");
-                    PlayaApp::default()
-                });
+              let mut app: PlayaApp = cc
+                  .storage
+                  .and_then(|storage| storage.get_string(eframe::APP_KEY))
+                  .and_then(|json| serde_json::from_str(&json).ok())
+                  .unwrap_or_else(|| {
+                      info!("No persisted state found, creating default app");
+                      PlayaApp::default()
+                  });
 
             // Recreate Player with CLI- or Settings-configured cache memory/worker settings
             // and rewire status bar + path sender
@@ -803,8 +809,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             });
 
-            let player = Player::new();
-            app.player = player;
+              // Recreate Player runtime from persisted project
+              let mut player = Player::new();
+              player.project = app.project.clone();
+              app.player = player;
             app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;
             app.applied_workers = _workers;
