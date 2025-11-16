@@ -1,5 +1,6 @@
 mod convert;
 mod encode;
+mod events;
 mod exr;
 mod frame;
 mod attrs;
@@ -14,6 +15,7 @@ mod progress;
 mod progress_bar;
 mod shaders;
 mod status_bar;
+mod timeline;
 mod timeslider;
 mod ui;
 mod ui_encode;
@@ -139,10 +141,6 @@ struct PlayaApp {
     #[serde(skip)]
     is_fullscreen: bool,
     #[serde(skip)]
-    cached_seq_ranges: Vec<timeslider::SequenceRange>,
-    #[serde(skip)]
-    last_seq_version: usize,
-    #[serde(skip)]
     applied_mem_fraction: f64,
     #[serde(skip)]
     applied_workers: Option<usize>,
@@ -151,6 +149,12 @@ struct PlayaApp {
     /// Global worker pool for background tasks (frame loading, encoding)
     #[serde(skip)]
     workers: Arc<Workers>,
+    /// Event receiver for composition events (frame changes, layer updates)
+    #[serde(skip)]
+    comp_event_receiver: crossbeam::channel::Receiver<events::CompEvent>,
+    /// Event sender for compositions (shared across all comps)
+    #[serde(skip)]
+    comp_event_sender: events::CompEventSender,
 }
 
 impl Default for PlayaApp {
@@ -161,6 +165,10 @@ impl Default for PlayaApp {
         // Create worker pool (75% of CPU cores for workers, 25% for UI thread)
         let num_workers = (num_cpus::get() * 3 / 4).max(1);
         let workers = Arc::new(Workers::new(num_workers));
+
+        // Create event channel for composition events
+        let (event_tx, event_rx) = crossbeam::channel::unbounded();
+        let comp_event_sender = events::CompEventSender::new(event_tx);
 
         Self {
             frame: None,
@@ -180,12 +188,12 @@ impl Default for PlayaApp {
             show_encode_dialog: false,
             encode_dialog: None,
             is_fullscreen: false,
-            cached_seq_ranges: Vec::new(),
-            last_seq_version: 0,
             applied_mem_fraction: 0.75,
             applied_workers: None,
             path_config: paths::PathConfig::from_env_and_cli(None),
             workers,
+            comp_event_receiver: event_rx,
+            comp_event_sender,
         }
     }
 }
@@ -306,6 +314,29 @@ impl PlayaApp {
         }
     }
 
+    /// Handle composition events (frame changes, layer updates)
+    fn handle_comp_events(&mut self) {
+        // Process all pending events
+        while let Ok(event) = self.comp_event_receiver.try_recv() {
+            match event {
+                events::CompEvent::CurrentFrameChanged { comp_uuid, old_frame, new_frame } => {
+                    debug!("Comp {} frame changed: {} → {}", comp_uuid, old_frame, new_frame);
+
+                    // Trigger frame loading around new position
+                    self.enqueue_frame_loads_around_playhead(10);
+                }
+                events::CompEvent::LayersChanged { comp_uuid } => {
+                    debug!("Comp {} layers changed", comp_uuid);
+                    // Future: invalidate timeline cache, rebuild layer UI
+                }
+                events::CompEvent::TimelineChanged { comp_uuid } => {
+                    debug!("Comp {} timeline changed", comp_uuid);
+                    // Future: update timeline bounds, recalculate durations
+                }
+            }
+        }
+    }
+
     /// Enable or disable "cinema mode": borderless fullscreen, hidden UI, black background.
     fn set_cinema_mode(&mut self, ctx: &egui::Context, enabled: bool) {
         self.is_fullscreen = enabled;
@@ -315,19 +346,21 @@ impl PlayaApp {
         // Request repaint to immediately reflect UI visibility/background changes
         ctx.request_repaint();
     }
-    /// Save playlist (project) to JSON file
-    fn save_playlist(&mut self, path: PathBuf) {
+    /// Save project to JSON file
+    fn save_project(&mut self, path: PathBuf) {
         if let Err(e) = self.player.project.to_json(&path) {
             error!("{}", e);
             self.error_msg = Some(e);
+        } else {
+            info!("Saved project to {}", path.display());
         }
     }
 
-    /// Load playlist from JSON file into Project
-    fn load_playlist(&mut self, path: PathBuf) {
+    /// Load project from JSON file
+    fn load_project(&mut self, path: PathBuf) {
         match crate::project::Project::from_json(&path) {
             Ok(project) => {
-                info!("Loaded project from playlist file");
+                info!("Loaded project from {}", path.display());
 
                 self.player.project = project;
                 self.error_msg = None;
@@ -603,8 +636,8 @@ impl eframe::App for PlayaApp {
         // cache_mem_percent is deprecated (old frame cache); kept only for config compatibility
         self.player.update();
 
-        // Enqueue frame loads around playhead (async background loading)
-        self.enqueue_frame_loads_around_playhead(10); // Load ±10 frames
+        // Handle composition events (CurrentFrameChanged → triggers frame loading)
+        self.handle_comp_events();
 
         // Handle drag-and-drop files/folders - queue for async loading
         ctx.input(|i| {
@@ -636,34 +669,102 @@ impl eframe::App for PlayaApp {
         // Update status messages BEFORE laying out panels
         self.status_bar.update(ctx);
 
-        // Playlist panel on the right (hidden in cinema mode or when toggled off)
+        // Project window on the right (hidden in cinema mode or when toggled off)
         if !self.is_fullscreen && self.show_playlist {
-            let playlist_actions = ui::render_playlist(ctx, &mut self.player);
-            if let Some(path) = playlist_actions.load_sequence {
+            let project_actions = ui::render_project_window(ctx, &mut self.player);
+
+            // Load media files
+            if let Some(path) = project_actions.load_sequence {
                 let _ = self.load_sequences(vec![path]);
             }
-            if playlist_actions.clear_all {
-                self.frame = None;
-                self.displayed_frame = None;
-                self.player = Player::new();
-                self.status_bar = StatusBar::new();
+
+            // Save/Load project
+            if let Some(path) = project_actions.save_project {
+                self.save_project(path);
             }
-            if let Some(path) = playlist_actions.save_playlist {
-                self.save_playlist(path);
+            if let Some(path) = project_actions.load_project {
+                self.load_project(path);
             }
-            if let Some(path) = playlist_actions.load_playlist {
-                self.load_playlist(path);
+
+            // Remove clip from MediaPool
+            if let Some(clip_uuid) = project_actions.remove_clip {
+                self.player.project.clips.remove(&clip_uuid);
+                self.player.project.order_clips.retain(|uuid| uuid != &clip_uuid);
+
+                // Also remove from all comp layers
+                for comp in self.player.project.comps.values_mut() {
+                    comp.layers.retain(|layer| layer.clip_uuid.as_ref() != Some(&clip_uuid));
+                }
+
+                info!("Removed clip {}", clip_uuid);
+            }
+
+            // Switch active composition (double-click)
+            if let Some(comp_uuid) = project_actions.set_active_comp {
+                self.player.set_active_comp(comp_uuid.clone());
+
+                // Trigger frame loading around new current_frame
+                self.enqueue_frame_loads_around_playhead(10);
+            }
+
+            // Create new composition
+            if project_actions.new_comp {
+                use crate::comp::Comp;
+                let fps = 30.0;
+                let end = (fps * 5.0) as usize; // 5 seconds
+                let mut comp = Comp::new("New Comp", 0, end, fps);
+                let uuid = comp.uuid.clone();
+
+                // Set event sender for the new comp
+                comp.set_event_sender(self.comp_event_sender.clone());
+
+                self.player.project.comps.insert(uuid.clone(), comp);
+                self.player.project.order_comps.push(uuid.clone());
+
+                // Activate the new comp
+                self.player.set_active_comp(uuid.clone());
+
+                info!("Created new comp: {}", uuid);
+            }
+
+            // Remove composition
+            if let Some(comp_uuid) = project_actions.remove_comp {
+                // Don't remove if it's the only comp
+                if self.player.project.comps.len() > 1 {
+                    self.player.project.comps.remove(&comp_uuid);
+                    self.player.project.order_comps.retain(|uuid| uuid != &comp_uuid);
+
+                    // If removed comp was active, switch to first available
+                    if self.player.active_comp.as_ref() == Some(&comp_uuid) {
+                        let first_comp = self.player.project.order_comps.first().cloned();
+                        if let Some(new_active) = first_comp {
+                            self.player.set_active_comp(new_active);
+                        } else {
+                            self.player.active_comp = None;
+                        }
+                    }
+
+                    info!("Removed comp {}", comp_uuid);
+                } else {
+                    warn!("Cannot remove the last composition");
+                }
             }
         }
 
         if !self.is_fullscreen {
+            // Render timeline first (bottom-most panel, resizable)
+            // Note: egui automatically persists panel size via panel id
+            ui::render_timeline_panel(
+                ctx,
+                &mut self.player,
+                self.settings.show_frame_numbers,
+            );
+
+            // Then render transport controls (above timeline)
             let shader_changed = ui::render_controls(
                 ctx,
                 &mut self.player,
                 &mut self.shader_manager,
-                &mut self.cached_seq_ranges,
-                &mut self.last_seq_version,
-                self.settings.show_frame_numbers,
             );
             if shader_changed {
                 let mut renderer = self.viewport_renderer.lock().unwrap();
@@ -910,7 +1011,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
               // Recreate Player runtime from persisted project
               let mut player = Player::new();
               player.project = app.project.clone();
-              player.project.rebuild_runtime(); // Rebuild Arc references
+
+              // Rebuild Arc references and set event sender for all comps
+              player.project.rebuild_runtime(Some(app.comp_event_sender.clone()));
 
               // Ensure default comp exists and set as active
               let default_comp_uuid = player.project.ensure_default_comp();

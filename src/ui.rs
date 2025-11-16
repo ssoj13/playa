@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::frame::{Frame, FrameStatus};
 use crate::player::Player;
 use crate::shaders::Shaders;
-use crate::timeslider::{time_slider, SequenceRange, TimeSliderConfig};
+use crate::timeline::{render_timeline, TimelineConfig, TimelineAction};
 use crate::utils::media;
 use crate::viewport::{ViewportRenderer, ViewportState};
 
@@ -68,6 +68,7 @@ pub struct ProjectActions {
     pub set_active_comp: Option<String>, // comp UUID to activate (from double-click)
     pub new_comp: bool,
     pub remove_comp: Option<String>,     // comp UUID to remove
+    pub clear_all_comps: bool,           // clear all compositions
 }
 
 // Deprecated - use ProjectActions
@@ -83,6 +84,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
         set_active_comp: None,
         new_comp: false,
         remove_comp: None,
+        clear_all_comps: false,
     };
 
     egui::SidePanel::right("project_window")
@@ -216,167 +218,58 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
     actions
 }
 
-/// Render controls panel (bottom)
-pub fn render_controls(
+/// Render timeline panel (bottom, resizable)
+///
+/// egui automatically persists panel size through its internal state.
+pub fn render_timeline_panel(
     ctx: &egui::Context,
     player: &mut Player,
-    shader_manager: &mut Shaders,
-    cached_seq_ranges: &mut Vec<SequenceRange>,
-    last_seq_version: &mut usize,
     show_frame_numbers: bool,
-) -> bool {
+) {
+    egui::TopBottomPanel::bottom("timeline")
+        .resizable(true)
+        .default_height(250.0) // Initial height, egui remembers resize
+        .height_range(100.0..=600.0)
+        .show(ctx, |ui| {
+            ui.add_space(4.0);
 
-                    // Add/Clear buttons on left, Up/Down on right
-                    ui.horizontal(|ui| {
-                        if ui.button("Add").clicked()
-                            && let Some(paths) = create_image_dialog("Add Files").pick_files()
-                            && !paths.is_empty()
-                        {
-                            info!("Add button: loading {}", paths[0].display());
-                            actions.load_sequence = Some(paths[0].clone());
+            // After Effects-style timeline (vertical layers)
+            if let Some(comp_uuid) = &player.active_comp.clone() {
+                if let Some(comp) = player.project.comps.get(comp_uuid) {
+                    let mut config = TimelineConfig::default();
+                    config.show_frame_numbers = show_frame_numbers;
+
+                    match render_timeline(ui, comp, &config) {
+                        TimelineAction::SetFrame(new_frame) => {
+                            player.set_frame(new_frame);
                         }
-                        if ui.button("Clear").clicked() {
-                            actions.clear_all = true;
+                        TimelineAction::SelectLayer(_idx) => {
+                            // TODO: implement layer selection
                         }
-
-                        // Push Up/Down to the right (reorder Project.order_clips)
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let has_selection = player.selected_seq_idx.is_some();
-                            ui.add_enabled_ui(has_selection, |ui| {
-                                if ui.button("↓ Down").clicked()
-                                    && let Some(idx) = player.selected_seq_idx
-                                {
-                                    let len = player.project.order_clips.len();
-                                    if idx + 1 < len {
-                                        player.project.order_clips.swap(idx, idx + 1);
-                                        player.selected_seq_idx = Some(idx + 1);
-                                    }
-                                }
-                                if ui.button("↑ Up").clicked()
-                                    && let Some(idx) = player.selected_seq_idx
-                                {
-                                    if idx > 0 {
-                                        player.project.order_clips.swap(idx, idx - 1);
-                                        player.selected_seq_idx = Some(idx - 1);
-                                    }
-                                }
-                            });
-                        });
-                    });
-
-                    // Save/Load playlist on separate line
-                    ui.horizontal(|ui| {
-                        if ui.button("Save").clicked()
-                            && let Some(path) = rfd::FileDialog::new()
-                                .add_filter("JSON Playlist", &["json"])
-                                .set_title("Save Playlist")
-                                .save_file()
-                        {
-                            actions.save_playlist = Some(path);
-                        }
-                        if ui.button("Load").clicked()
-                            && let Some(path) = rfd::FileDialog::new()
-                                .add_filter("JSON Playlist", &["json"])
-                                .set_title("Load Playlist")
-                                .pick_file()
-                        {
-                            actions.load_playlist = Some(path);
-                        }
-                    });
-
-                    ui.separator();
-
-                    // List of clips from Project.order_clips
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false; 2])
-                        .show(ui, |ui| {
-                            let mut to_remove: Option<usize> = None;
-                            let mut to_select: Option<usize> = None;
-
-                            for (idx, clip_uuid) in player.project.order_clips.iter().enumerate() {
-                                let clip = match player.project.clips.get(clip_uuid) {
-                                    Some(c) => c,
-                                    None => continue,
-                                };
-                                let is_selected = player.selected_seq_idx == Some(idx);
-
-                                let frame = if is_selected {
-                                    egui::Frame::new()
-                                        .fill(ui.style().visuals.selection.bg_fill)
-                                        .inner_margin(4.0)
-                                } else {
-                                    egui::Frame::new().inner_margin(4.0)
-                                };
-
-                                frame.show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let name_label = ui.selectable_label(
-                                            false,
-                                            clip.pattern().to_string(),
-                                        );
-
-                                        if name_label.clicked() {
-                                            to_select = Some(idx);
-                                        }
-
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui.small_button("X").clicked() {
-                                                    to_remove = Some(idx);
-                                                }
-
-                                                ui.label(format!("{}f", clip.len()));
-
-                                                let (w, h) = clip.resolution();
-                                                ui.label(format!("{}x{}", w, h));
-                                            },
-                                        );
-                                    });
-                                });
-
-                                ui.add_space(2.0);
-                            }
-
-                            // Execute deferred actions
-                            if let Some(idx) = to_select {
-                                if let Some(uuid) = player.project.order_clips.get(idx).cloned() {
-                                    player.selected_seq_idx = Some(idx);
-                                    player.set_active_clip_by_uuid(&uuid);
-                                }
-                            }
-                            if let Some(idx) = to_remove {
-                                if idx < player.project.order_clips.len() {
-                                    let removed_uuid = player.project.order_clips.remove(idx);
-                                    player.project.clips.remove(&removed_uuid);
-                                }
-                                if player.selected_seq_idx == Some(idx) {
-                                    player.selected_seq_idx = None;
-                                } else if let Some(sel) = player.selected_seq_idx {
-                                    if sel > idx {
-                                        player.selected_seq_idx = Some(sel - 1);
-                                    }
-                                }
-                            }
-                        });
+                        TimelineAction::None => {}
+                    }
+                }
+            } else {
+                ui.centered_and_justified(|ui| {
+                    ui.label("No active composition");
                 });
-        });
+            }
 
-    actions
+            ui.add_space(4.0);
+        });
 }
 
-/// Render controls panel (bottom)
+/// Render transport controls panel (bottom, above timeline)
 pub fn render_controls(
     ctx: &egui::Context,
     player: &mut Player,
     shader_manager: &mut Shaders,
-    cached_seq_ranges: &mut Vec<SequenceRange>,
-    last_seq_version: &mut usize,
-    show_frame_numbers: bool,
 ) -> bool {
     let old_shader = shader_manager.current_shader.clone();
 
-    egui::TopBottomPanel::bottom("controls").show(ctx, |ui| {
+    egui::TopBottomPanel::bottom("controls")
+        .default_height(80.0)
+        .show(ctx, |ui| {
         ui.add_space(8.0);
 
         // Row 1: Transport controls (Start | Play/Pause | End) centered
@@ -465,73 +358,10 @@ pub fn render_controls(
             ui.label(format!("{}", player.current_frame()));
         });
 
-        ui.add_space(4.0);
-
-        // Row 3: Custom time slider
-        // For now, build a single range for the active comp
-        *cached_seq_ranges = build_sequence_ranges(player);
-        *last_seq_version = cached_seq_ranges.len();
-
-        let mut config = TimeSliderConfig::default();
-        config.show_frame_numbers = show_frame_numbers;
-        if let Some(new_frame) = time_slider(
-            ui,
-            player.current_frame(),
-            player.total_frames(),
-            cached_seq_ranges,
-            &config,
-        ) {
-            player.set_frame(new_frame);
-        }
-
         ui.add_space(8.0);
     });
 
     old_shader != shader_manager.current_shader
-}
-
-/// Build sequence ranges for timeline visualization through Layers
-fn build_sequence_ranges(player: &Player) -> Vec<SequenceRange> {
-    // Try to build from active comp layers first
-    if let Some(comp_uuid) = &player.active_comp {
-        if let Some(comp) = player.project.comps.get(comp_uuid) {
-            let mut ranges = Vec::new();
-
-            for layer in &comp.layers {
-                if let Some(ref clip) = layer.clip {
-                    let start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                    let end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
-
-                    ranges.push(SequenceRange {
-                        start_frame: start,
-                        end_frame: end,
-                        pattern: clip.pattern().to_string(),
-                    });
-                }
-            }
-
-            if !ranges.is_empty() {
-                return ranges;
-            }
-        }
-    }
-
-    // Fallback: build from clips in playlist order (legacy mode)
-    let mut ranges = Vec::new();
-    let mut global_offset = 0;
-
-    for clip_uuid in &player.project.order_clips {
-        if let Some(clip) = player.project.clips.get(clip_uuid) {
-            ranges.push(SequenceRange {
-                start_frame: global_offset,
-                end_frame: global_offset + clip.len() - 1,
-                pattern: clip.pattern().to_string(),
-            });
-            global_offset += clip.len();
-        }
-    }
-
-    ranges
 }
 
 /// Viewport actions result

@@ -44,7 +44,6 @@ pub const FRAME_JUMP_STEP: i32 = 25;
 pub struct Player {
     pub project: Project,
     pub active_comp: Option<String>, // UUID of active comp
-    pub current_frame: usize,
     pub is_playing: bool,
     pub fps_base: f32,       // Base FPS (persistent setting)
     pub fps_play: f32,       // Current playback FPS (temporary, resets on stop)
@@ -63,7 +62,6 @@ impl Player {
         Self {
             project: Project::new(),
             active_comp: None,
-            current_frame: 0,
             is_playing: false,
             fps_base: 24.0,
             fps_play: 24.0,
@@ -116,8 +114,9 @@ impl Player {
             let clamped_end = end.min(max_idx);
             comp.set_play_range(clamped_start, clamped_end);
             // Ensure current_frame lies inside new range
-            if self.current_frame < clamped_start || self.current_frame > clamped_end {
-                self.current_frame = clamped_start;
+            let current = comp.current_frame;
+            if current < clamped_start || current > clamped_end {
+                comp.set_current_frame(clamped_start);
             }
         }
     }
@@ -126,13 +125,18 @@ impl Player {
     pub fn reset_play_range(&mut self) {
         if let Some(comp) = self.active_comp_mut() {
             comp.reset_play_range();
-            self.current_frame = comp.play_range().0;
+            comp.set_current_frame(comp.play_range().0);
         }
+    }
+
+    /// Get current frame index from active comp
+    pub fn current_frame(&self) -> usize {
+        self.active_comp().map(|c| c.current_frame).unwrap_or(0)
     }
 
     /// Get current frame as owned Frame (Composed)
     pub fn get_current_frame(&mut self) -> Option<Frame> {
-        let frame_idx = self.current_frame;
+        let frame_idx = self.current_frame();
         self.active_comp_mut()?.get_frame(frame_idx)
     }
 
@@ -196,6 +200,31 @@ impl Player {
         }
     }
 
+    /// Switch to a different composition by UUID.
+    ///
+    /// Updates active_comp and emits CurrentFrameChanged event.
+    /// Stops playback during transition.
+    pub fn set_active_comp(&mut self, comp_uuid: String) {
+        // Check if comp exists
+        if !self.project.comps.contains_key(&comp_uuid) {
+            log::warn!("Comp {} not found, cannot activate", comp_uuid);
+            return;
+        }
+
+        // Stop playback during transition
+        self.is_playing = false;
+
+        // Switch to new comp
+        self.active_comp = Some(comp_uuid.clone());
+
+        // Emit CurrentFrameChanged event from new comp (triggers frame loading)
+        if let Some(comp) = self.project.comps.get_mut(&comp_uuid) {
+            let frame = comp.current_frame;
+            comp.set_current_frame(frame);
+            log::info!("Activated comp {} at frame {}", comp_uuid, frame);
+        }
+    }
+
     /// Helper: set active clip by UUID (for playlist navigation).
     pub fn set_active_clip_by_uuid(&mut self, clip_uuid: &str) {
         // Find which layer in active comp contains this clip
@@ -204,7 +233,7 @@ impl Player {
                 if layer.clip_uuid.as_deref() == Some(clip_uuid) {
                     // Jump to start of this layer
                     let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                    self.current_frame = layer_start;
+                    comp.set_current_frame(layer_start);
                     log::debug!("Jumped to clip {} at frame {}", clip_uuid, layer_start);
                     return;
                 }
@@ -246,36 +275,45 @@ impl Player {
             return;
         }
 
-        let current = self.current_frame;
+        // Copy values before borrowing comp mutably
+        let play_direction = self.play_direction;
+        let loop_enabled = self.loop_enabled;
+
+        let comp = match self.active_comp_mut() {
+            Some(c) => c,
+            None => return,
+        };
+
+        let current = comp.current_frame;
         let (play_start, play_end) = (0, total_frames.saturating_sub(1));
 
-        if self.play_direction > 0.0 {
+        if play_direction > 0.0 {
             // Forward
             let next = current + 1;
             if next > play_end {
-                if self.loop_enabled {
+                if loop_enabled {
                     debug!("Frame loop: {} -> {}", current, play_start);
-                    self.current_frame = play_start;
+                    comp.set_current_frame(play_start);
                 } else {
                     debug!("Reached play range end, stopping");
-                    self.current_frame = play_end;
+                    comp.set_current_frame(play_end);
                     self.is_playing = false;
                 }
             } else {
-                self.current_frame = next;
+                comp.set_current_frame(next);
             }
         } else {
             // Backward
             if current <= play_start {
-                if self.loop_enabled {
+                if loop_enabled {
                     debug!("Frame loop: {} -> {}", current, play_end);
-                    self.current_frame = play_end;
+                    comp.set_current_frame(play_end);
                 } else {
                     debug!("Reached play range start, stopping");
                     self.is_playing = false;
                 }
             } else {
-                self.current_frame = current - 1;
+                comp.set_current_frame(current - 1);
             }
         }
     }
@@ -284,10 +322,10 @@ impl Player {
     pub fn toggle_play_pause(&mut self) {
         self.is_playing = !self.is_playing;
         if self.is_playing {
-            debug!("Playback started at frame {}", self.current_frame);
+            debug!("Playback started at frame {}", self.current_frame());
             self.last_frame_time = Some(Instant::now());
         } else {
-            debug!("Playback paused at frame {}", self.current_frame);
+            debug!("Playback paused at frame {}", self.current_frame());
             self.last_frame_time = None;
             // Reset fps_play to fps_base on stop
             self.fps_play = self.fps_base;
@@ -298,7 +336,7 @@ impl Player {
     pub fn stop(&mut self) {
         if self.is_playing {
             self.is_playing = false;
-            debug!("Playback stopped at frame {}", self.current_frame);
+            debug!("Playback stopped at frame {}", self.current_frame());
             self.last_frame_time = None;
             // Reset fps_play to fps_base on stop
             self.fps_play = self.fps_base;
@@ -309,7 +347,9 @@ impl Player {
     pub fn to_start(&mut self) {
         let (start, _) = self.play_range();
         debug!("Rewinding to frame {}", start);
-        self.current_frame = start;
+        if let Some(comp) = self.active_comp_mut() {
+            comp.set_current_frame(start);
+        }
         self.last_frame_time = None;
     }
 
@@ -317,15 +357,22 @@ impl Player {
     pub fn to_end(&mut self) {
         let (_, end) = self.play_range();
         debug!("Skipping to end: frame {}", end);
-        self.current_frame = end;
+        if let Some(comp) = self.active_comp_mut() {
+            comp.set_current_frame(end);
+        }
         self.last_frame_time = None;
     }
 
-    /// Set current frame
+    /// Set current frame (emits CompEvent::CurrentFrameChanged)
     pub fn set_frame(&mut self, frame: usize) {
         let (start, end) = self.play_range();
         let clamped = frame.clamp(start, end);
-        self.current_frame = clamped;
+
+        // Update active comp's current_frame (emits event)
+        if let Some(comp) = self.active_comp_mut() {
+            comp.set_current_frame(clamped);
+        }
+
         self.last_frame_time = None;
     }
 
@@ -336,7 +383,7 @@ impl Player {
             return;
         }
 
-        let current = self.current_frame;
+        let current = self.current_frame();
         let (play_start, play_end) = self.play_range();
 
         // Calculate target frame with saturating arithmetic
@@ -371,13 +418,9 @@ impl Player {
             target
         };
 
-        self.current_frame = final_frame;
-    }
-
-    /// Get current frame index in play range
-    #[inline]
-    pub fn current_frame(&self) -> usize {
-        self.current_frame
+        if let Some(comp) = self.active_comp_mut() {
+            comp.set_current_frame(final_frame);
+        }
     }
 
     /// Internal helper to start jogging in the specified direction

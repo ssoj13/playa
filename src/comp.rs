@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::attrs::{Attrs, AttrValue};
+use crate::events::{CompEvent, CompEventSender};
 use crate::frame::Frame;
 use crate::layer::Layer;
 
@@ -39,14 +40,15 @@ pub struct Comp {
     #[serde(default)]
     pub current_frame: usize,
 
+    /// Event sender for emitting comp events (runtime-only, rebuilt after deserialization)
+    #[serde(skip)]
+    #[serde(default)]
+    event_sender: CompEventSender,
+
     /// Per-comp frame cache: global frame index -> composed Frame (runtime-only)
     #[serde(skip)]
     #[serde(default)]
     cache: HashMap<usize, Frame>,
-}
-
-fn gen_comp_uuid(name: &str, start: usize, end: usize) -> String {
-    format!("comp:{}:{}:{}", name, start, end)
 }
 
 impl Comp {
@@ -59,7 +61,7 @@ impl Comp {
         attrs.set("fps", AttrValue::Float(fps));
 
         Self {
-            uuid: gen_comp_uuid(&name_str, start, end),
+            uuid: uuid::Uuid::new_v4().to_string(),
             name: name_str,
             start,
             end,
@@ -67,6 +69,7 @@ impl Comp {
             attrs,
             layers: Vec::new(),
             current_frame: start, // Start at beginning of comp
+            event_sender: CompEventSender::dummy(),
             cache: HashMap::new(),
         }
     }
@@ -108,6 +111,28 @@ impl Comp {
     /// Clear per-comp frame cache.
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+    }
+
+    /// Set event sender (called after deserialization or when creating new comp in app)
+    pub fn set_event_sender(&mut self, sender: CompEventSender) {
+        self.event_sender = sender;
+    }
+
+    /// Set current frame and emit CurrentFrameChanged event.
+    ///
+    /// This is the proper way to change frame position - emits event that triggers frame loading.
+    pub fn set_current_frame(&mut self, new_frame: usize) {
+        let old_frame = self.current_frame;
+        if old_frame != new_frame {
+            self.current_frame = new_frame;
+
+            // Emit event
+            self.event_sender.emit(CompEvent::CurrentFrameChanged {
+                comp_uuid: self.uuid.clone(),
+                old_frame,
+                new_frame,
+            });
+        }
     }
 
     /// Get composed frame at given global frame index.

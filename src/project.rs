@@ -69,7 +69,8 @@ impl Project {
         let mut project: Project =
             serde_json::from_str(&json).map_err(|e| format!("Parse project error: {}", e))?;
 
-        project.rebuild_runtime();
+        // Rebuild without event sender (caller must set it)
+        project.rebuild_runtime(None);
         Ok(project)
     }
 
@@ -105,16 +106,22 @@ impl Project {
     ///
     /// - Initializes per-comp caches.
     /// - Rebuilds Layer.clip from Clip UUIDs using Arc<Clip>.
-    pub fn rebuild_runtime(&mut self) {
+    /// - Sets event sender for all comps.
+    pub fn rebuild_runtime(&mut self, event_sender: Option<crate::events::CompEventSender>) {
         // Build shared Arc<Clip> map so all layers reference the same instances.
         let mut clip_arcs: HashMap<String, Arc<Clip>> = HashMap::new();
         for (uuid, clip) in &self.clips {
             clip_arcs.insert(uuid.clone(), Arc::new(clip.clone()));
         }
 
-        // Rebuild comps: clear caches and reconnect layers to clips.
+        // Rebuild comps: clear caches, reconnect layers to clips, set event sender.
         for comp in self.comps.values_mut() {
             comp.clear_cache();
+
+            // Set event sender if provided
+            if let Some(ref sender) = event_sender {
+                comp.set_event_sender(sender.clone());
+            }
 
             for layer in comp.layers.iter_mut() {
                 if let Some(ref clip_uuid) = layer.clip_uuid {
