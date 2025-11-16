@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
-use crate::cache::Cache;
 use crate::convert::SwsContext;
 use crate::frame::{CropAlign, FrameConversion, FrameStatus, TonemapMode, PixelFormat};
+use crate::comp::Comp;
 use playa_ffmpeg as ffmpeg;
 
 /// Encode dialog settings (persistent via AppSettings)
@@ -549,12 +549,12 @@ fn get_encoder_name(
     }
 }
 
-/// Main encoding function
+/// Main encoding function (legacy cache-based)
 ///
-/// Encodes sequence from play_range to output file.
+/// Encodes sequence from cache play_range to output file.
 /// Runs in separate thread, sends progress updates via channel.
-pub fn encode_sequence(
-    cache: &mut Cache,
+pub fn encode_sequence_from_comp(
+    comp: &mut Comp,
     settings: &EncoderSettings,
     progress_tx: Sender<EncodeProgress>,
     cancel_flag: Arc<AtomicBool>,
@@ -562,9 +562,9 @@ pub fn encode_sequence(
     let start_time = std::time::Instant::now();
     info!("========== encode_sequence() ENTERED at {:?} ==========", start_time);
 
-    // Get play range
-    let play_range = cache.get_play_range();
-    let total_frames = play_range.1 - play_range.0 + 1;
+    // Get play range from Comp
+    let play_range = comp.play_range();
+    let total_frames = play_range.1.saturating_sub(play_range.0) + 1;
 
     info!("Play range: {:?}, total frames: {}", play_range, total_frames);
     info!(
@@ -580,16 +580,11 @@ pub fn encode_sequence(
     });
 
     // Get first frame to determine target dimensions
-    let first_frame = cache.get_frame(play_range.0).ok_or_else(|| {
-        EncodeError::EncodeFrameFailed(format!("First frame {} not in cache", play_range.0))
-    })?;
-
-    // Ensure first frame is loaded
-    if first_frame.status() == FrameStatus::Header {
-        first_frame.load().map_err(|e| {
-            EncodeError::EncodeFrameFailed(format!("Failed to load first frame: {}", e))
+    let first_frame = comp
+        .get_frame(play_range.0)
+        .ok_or_else(|| {
+            EncodeError::EncodeFrameFailed(format!("First frame {} not available", play_range.0))
         })?;
-    }
 
     let (width, height) = first_frame.resolution();
     let (width, height) = (width as u32, height as u32);
@@ -911,8 +906,8 @@ pub fn encode_sequence(
     let mut pts = 0i64;
     info!("Entering frame encoding loop...");
 
-    #[allow(clippy::explicit_counter_loop)]
-    for frame_idx in play_range.0..=play_range.1 {
+      #[allow(clippy::explicit_counter_loop)]
+      for frame_idx in play_range.0..=play_range.1 {
         // Check for cancellation
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(EncodeError::Cancelled);
@@ -922,17 +917,10 @@ pub fn encode_sequence(
             info!("Processing frame {}/{}", frame_idx - play_range.0, total_frames);
         }
 
-        // Get frame from cache
-        let frame = cache.get_frame(frame_idx).ok_or_else(|| {
-            EncodeError::EncodeFrameFailed(format!("Frame {} not in cache", frame_idx))
-        })?;
-
-        // Ensure frame is loaded (skip Placeholder frames - they're already in memory)
-        if frame.status() == FrameStatus::Header {
-            frame.load().map_err(|e| {
-                EncodeError::EncodeFrameFailed(format!("Failed to load frame {}: {}", frame_idx, e))
-            })?;
-        }
+          // Get composed frame from Comp
+          let frame = comp.get_frame(frame_idx).ok_or_else(|| {
+              EncodeError::EncodeFrameFailed(format!("Frame {} not available in comp", frame_idx))
+          })?;
 
         // STEP 1: Crop to target dimensions if needed (handles mixed resolutions)
         let (frame_width, frame_height) = frame.resolution();
@@ -1162,12 +1150,23 @@ pub fn encode_sequence(
     Ok(())
 }
 
+/// High-level encoding entry point: encodes a Comp.
+///
+/// Comp is the single source of truth for play range and fps.
+pub fn encode_comp(
+    comp: &mut Comp,
+    settings: &EncoderSettings,
+    progress_tx: Sender<EncodeProgress>,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<(), EncodeError> {
+    encode_sequence_from_comp(comp, settings, progress_tx, cancel_flag)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache::Cache;
     use crate::frame::Frame;
-    use crate::sequence::Sequence;
+    use crate::clip::Clip;
 
     /// Test encoding with placeholder frames
     #[test]
@@ -1210,20 +1209,6 @@ mod tests {
         }
 
         println!("\nUsing encoder: {}", found_encoder.unwrap());
-
-        // Create cache with 100 placeholder frames
-        let (mut cache, _ui_rx) = Cache::new(0.1, None);
-
-        // Create sequence with 100 placeholder frames (no files)
-        // Placeholders are green RGBA [0,100,0,255] by default
-        let frames: Vec<Frame> = (0..100).map(|_| Frame::new_u8(640, 480)).collect();
-        let seq = Sequence::from_frames(frames, "test_placeholder.*.rgb".to_string(), 640, 480);
-
-        cache.append_seq(seq);
-
-        // Set play range to encode only frames 10-49 (40 frames total)
-        cache.set_play_range(10, 49);
-        let (play_start, play_end) = cache.get_play_range();
         println!(
             "Play range set: {}..{} ({} frames)",
             play_start,
@@ -1247,7 +1232,7 @@ mod tests {
                 println!("   Available: {}", found_encoder.unwrap());
                 println!("   Need: libx264, h264_nvenc, or libx265");
                 println!("\n✓ Test infrastructure verified:");
-                println!("  - Cache with 100 placeholder frames created");
+                println!("  - Placeholder frames created");
                 println!("  - Encoder discovery working");
                 return;
             };
@@ -1274,6 +1259,9 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
+        // Build Comp from play range and fps
+        let mut comp = crate::comp::Comp::new("TestComp", play_start, play_end, settings.fps);
+
         // Run encoding
         let abs_path = std::fs::canonicalize(&output_path)
             .unwrap_or_else(|_| std::env::current_dir().unwrap().join(&output_path));
@@ -1283,7 +1271,7 @@ mod tests {
             play_end,
             abs_path.display()
         );
-        let result = encode_sequence(&mut cache, &settings, tx, cancel_flag);
+        let result = encode_comp(&mut comp, &settings, tx, cancel_flag);
 
         // Check progress updates
         let mut last_progress: Option<EncodeProgress> = None;

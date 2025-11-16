@@ -2,18 +2,6 @@ use eframe::egui::{self, Color32, Pos2, Rect, Response, Sense, Ui, Vec2};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use crate::cache::Cache;
-use crate::frame::FrameStatus;
-
-/// Cache for load indicator state
-#[derive(Clone, Debug)]
-struct LoadIndicatorCache {
-    statuses: Vec<FrameStatus>,
-    cached_count: usize,      // Number of cached frames (for detecting changes)
-    loaded_events: usize,     // Number of successful frame loads (monotonic)
-    sequences_version: usize, // Sequences version (changes when playlist changes)
-}
-
 /// Represents a sequence range in global frame space
 #[derive(Clone, Debug)]
 pub struct SequenceRange {
@@ -56,53 +44,13 @@ pub fn time_slider(
     total_frames: usize,
     sequences: &[SequenceRange],
     config: &TimeSliderConfig,
-    cache: &Cache,
 ) -> Option<usize> {
     if total_frames == 0 {
         return None;
     }
 
-    // Get/update cached statuses using egui persistence
-    let cache_id = ui.id().with("load_indicator_cache");
-    let current_cached_count = cache.cached_frames_count();
-    let current_loaded_events = cache.loaded_events_counter();
-    let current_seq_ver = cache.sequences_version();
-
-    let cached_statuses = ui.ctx().memory_mut(|mem| {
-        let stored: Option<LoadIndicatorCache> = mem.data.get_temp(cache_id);
-
-        match stored {
-            Some(cached)
-                if cached.cached_count == current_cached_count
-                    && cached.loaded_events == current_loaded_events
-                    && cached.sequences_version == current_seq_ver =>
-            {
-                // Cache is up-to-date
-                cached.statuses
-            }
-            _ => {
-                // Rebuild cache when any token changes
-                let statuses = cache.get_frame_stats();
-                mem.data.insert_temp(
-                    cache_id,
-                    LoadIndicatorCache {
-                        statuses: statuses.clone(),
-                        cached_count: current_cached_count,
-                        loaded_events: current_loaded_events,
-                        sequences_version: current_seq_ver,
-                    },
-                );
-                statuses
-            }
-        }
-    });
-
     // Allocate space for the widget (include load indicator height if enabled)
-    let total_height = if config.show_load_indicator {
-        config.height + config.load_indicator_height
-    } else {
-        config.height
-    };
+    let total_height = config.height;
     let desired_size = Vec2::new(ui.available_width(), total_height);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click_and_drag());
 
@@ -111,9 +59,6 @@ pub fn time_slider(
 
         // Draw sequence backgrounds
         draw_seq_backgrounds(painter, rect, sequences, total_frames);
-
-        // Draw play range (work area)
-        draw_play_range(painter, rect, cache.get_play_range(), total_frames);
 
         // Draw dividers between sequences
         if config.show_dividers {
@@ -134,19 +79,10 @@ pub fn time_slider(
         // Draw playhead (current frame indicator)
         draw_playhead(painter, rect, current_frame, total_frames);
 
-        // Draw frame numbers if enabled
+        // Draw frame numbers if enabled (without play range highlighting)
         if config.show_frame_numbers {
-            draw_frame_numbers(painter, rect, sequences, total_frames, cache.get_play_range());
-        }
-
-        // Draw load indicator
-        if config.show_load_indicator {
-            draw_load_indicator(
-                painter,
-                rect,
-                &cached_statuses,
-                config.load_indicator_height,
-            );
+            // Use full range for now
+            draw_frame_numbers(painter, rect, sequences, total_frames, (0, total_frames - 1));
         }
     }
 

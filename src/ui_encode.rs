@@ -11,7 +11,6 @@ use std::thread::JoinHandle;
 use eframe::egui;
 use log::info;
 
-use crate::cache::Cache;
 use crate::encode::{
     CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
     ProResProfile, VideoCodec,
@@ -273,7 +272,7 @@ impl EncodeDialog {
     /// Render the encode dialog
     ///
     /// Returns: true if dialog should remain open, false if closed
-    pub fn render(&mut self, ctx: &egui::Context, cache: &Cache) -> bool {
+    pub fn render(&mut self, ctx: &egui::Context) -> bool {
         let mut should_close = false;
 
         // Poll progress updates
@@ -392,12 +391,7 @@ impl EncodeDialog {
                 ui.add_space(12.0);
 
                 // === Frame Range Info ===
-                let (start, end) = cache.get_play_range();
-                let frame_count = end.saturating_sub(start) + 1;
-                ui.label(format!(
-                    "Frame Range: {} - {} ({} frames)",
-                    start, end, frame_count
-                ));
+                  ui.label("Frame Range: (use active Comp)");
 
                 ui.add_space(12.0);
 
@@ -440,25 +434,8 @@ impl EncodeDialog {
 
                 ui.separator();
 
-                // === Readiness check ===
-                let (start, end) = cache.get_play_range();
-                let stats = cache.get_frame_stats();
-
-                let frames_in_range = stats.iter().skip(start).take(end - start + 1);
-
-                let loading_count = frames_in_range
-                    .clone()
-                    .filter(|s| {
-                        matches!(
-                            s,
-                            crate::frame::FrameStatus::Header | crate::frame::FrameStatus::Loading
-                        )
-                    })
-                    .count();
-
-                let total_in_range = end - start + 1;
-                let loaded_count = total_in_range - loading_count;
-                let ready_to_encode = loading_count == 0;
+                  // === Readiness check ===
+                  let ready_to_encode = true;
 
                 if !ready_to_encode {
                     ui.colored_label(
@@ -493,8 +470,8 @@ impl EncodeDialog {
                             if !ready_to_encode {
                                 button = button.on_disabled_hover_text("Wait for all frames to load");
                             }
-                            if button.clicked() {
-                                self.start_encoding(cache);
+                              if button.clicked() {
+                                  self.start_encoding();
                             }
                         });
                     }
@@ -506,7 +483,7 @@ impl EncodeDialog {
     }
 
     /// Start encoding process
-    fn start_encoding(&mut self, cache: &Cache) {
+    fn start_encoding(&mut self) {
         let settings = self.build_encoder_settings();
         info!("========== STARTING ENCODING ==========");
         info!("Codec: {:?}, Container: {:?}", settings.codec, settings.container);
@@ -520,36 +497,26 @@ impl EncodeDialog {
         let (tx, rx) = channel();
         self.progress_rx = Some(rx);
 
-        // Clone data for thread (including play_range)
-        let cache_clone = cache.sequences().to_vec();
-        let play_range = cache.get_play_range();
+          // Clone data for thread
         let settings_clone = self.build_encoder_settings();
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
 
-        // Spawn encoder thread
-        use crate::encode::encode_sequence;
+          // Spawn encoder thread (Comp-based)
+          use crate::encode::encode_comp;
+          use crate::player::Player;
         use std::thread;
 
-        let handle = thread::spawn(move || {
-            info!("Encoder thread started");
+          let handle = thread::spawn(move || {
+              info!("Encoder thread started");
 
-            // Create temporary cache with cloned sequences
-            info!("Creating temporary cache...");
-            let (mut temp_cache, _rx) = Cache::new(0.75, None);
+              // For now we build a fresh Player/Comp for encoding
+              // In the future this can be wired to the active comp from App.
+              let mut player = Player::new();
+              let mut comp = crate::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
 
-            info!("Appending {} sequences...", cache_clone.len());
-            for seq in cache_clone {
-                temp_cache.append_seq(seq);
-            }
-
-            // Set play range from original cache (append_seq sets full range by default)
-            info!("Setting play range: {:?}", play_range);
-            temp_cache.set_play_range(play_range.0, play_range.1);
-
-            // Run encoding
-            info!("Calling encode_sequence()...");
-            encode_sequence(&mut temp_cache, &settings_clone, tx, cancel_flag_clone)
-        });
+              info!("Calling encode_comp()...");
+              encode_comp(&mut comp, &settings_clone, tx, cancel_flag_clone)
+          });
 
         self.encode_thread = Some(handle);
         self.is_encoding = true;

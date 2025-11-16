@@ -1,15 +1,17 @@
-mod cache;
 mod convert;
 mod encode;
 mod exr;
 mod frame;
+mod attrs;
+mod clip;
+mod comp;
+mod layer;
+mod project;
 mod paths;
 mod player;
 mod prefs;
 mod progress;
 mod progress_bar;
-mod scrub;
-mod sequence;
 mod shaders;
 mod status_bar;
 mod timeslider;
@@ -25,8 +27,6 @@ use frame::Frame;
 use log::{debug, error, info, warn};
 use player::Player;
 use prefs::{AppSettings, render_settings_window};
-use scrub::Scrubber;
-use sequence::Sequence;
 use shaders::Shaders;
 use status_bar::StatusBar;
 use std::path::PathBuf;
@@ -89,12 +89,12 @@ struct Args {
     #[arg(short = 'c', long = "config-dir", value_name = "DIR")]
     config_dir: Option<PathBuf>,
 
-    /// Memory budget percentage for cache (e.g., 75 for 75%)
-    #[arg(long = "mem", value_name = "PERCENT")]
+    /// Deprecated: cache memory budget (was used for old frame cache, now ignored)
+    #[arg(long = "mem", value_name = "PERCENT", hide = true)]
     mem_percent: Option<f64>,
 
-    /// Worker threads override (default: 75% of CPU cores)
-    #[arg(long = "workers", value_name = "N")]
+    /// Deprecated: worker threads override for old frame cache (now ignored)
+    #[arg(long = "workers", value_name = "N", hide = true)]
     workers: Option<usize>,
 }
 
@@ -110,8 +110,6 @@ struct PlayaApp {
     player: Player,
     #[serde(skip)]
     error_msg: Option<String>,
-    #[serde(skip)]
-    scrubber: Option<Scrubber>,
     #[serde(skip)]
     status_bar: StatusBar,
     #[serde(skip)]
@@ -148,15 +146,14 @@ struct PlayaApp {
 
 impl Default for PlayaApp {
     fn default() -> Self {
-        let (player, ui_rx) = Player::new();
-        let status_bar = StatusBar::new(ui_rx);
+        let player = Player::new();
+        let status_bar = StatusBar::new();
 
         Self {
             frame: None,
             displayed_frame: None,
             player,
             error_msg: None,
-            scrubber: Some(Scrubber::new()),
             status_bar,
             viewport_renderer: std::sync::Arc::new(std::sync::Mutex::new(ViewportRenderer::new())),
             viewport_state: ViewportState::new(),
@@ -179,9 +176,9 @@ impl Default for PlayaApp {
 }
 
 impl PlayaApp {
-    /// Load sequences from file paths and append to cache
+    /// Load sequences from file paths and append to player/project
     ///
-    /// Detects sequences from provided paths, appends them to the player cache,
+    /// Detects sequences from provided paths, appends them to the player project,
     /// and clears any error messages on success.
     ///
     /// # Arguments
@@ -191,11 +188,11 @@ impl PlayaApp {
     /// * `Ok(())` - Sequences loaded successfully
     /// * `Err(String)` - Detection or loading failed with error message
     fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
-        match Sequence::detect(paths.clone()) {
-            Ok(sequences) => {
-                for seq in sequences {
-                    self.player.cache.append_seq(seq);
-                }
+        match clip::detect(paths.clone()) {
+            Ok(clips) => {
+                    for clip in clips {
+                        self.player.append_clip(clip);
+                    }
                 // Clear error message on successful load
                 self.error_msg = None;
                 info!("Loaded {} path(s)", paths.len());
@@ -219,35 +216,22 @@ impl PlayaApp {
         // Request repaint to immediately reflect UI visibility/background changes
         ctx.request_repaint();
     }
-    /// Save playlist to JSON file
+    /// Save playlist (project) to JSON file
     fn save_playlist(&mut self, path: PathBuf) {
-        if let Err(e) = self.player.cache.to_json(&path) {
+        if let Err(e) = self.player.project.to_json(&path) {
             error!("{}", e);
             self.error_msg = Some(e);
         }
     }
 
-    /// Load playlist from JSON file (append=true by default)
+    /// Load playlist from JSON file into Project
     fn load_playlist(&mut self, path: PathBuf) {
-        match self.player.cache.from_json(&path, true) {
-            Ok(count) => {
-                info!("Added {} sequence(s) from playlist", count);
+        match crate::project::Project::from_json(&path) {
+            Ok(project) => {
+                info!("Loaded project from playlist file");
 
-                // Clear error message on successful load
+                self.player.project = project;
                 self.error_msg = None;
-
-                // Get current frame for display
-                let current_frame_idx = self.player.current_frame();
-                if let Some(frame) = self.player.get_current_frame() {
-                    self.frame = Some(frame.clone());
-                    self.displayed_frame = Some(current_frame_idx);
-
-                    let (width, height) = frame.resolution();
-                    self.viewport_state.image_size = egui::Vec2::new(width as f32, height as f32);
-
-                    // Trigger background preload
-                    self.player.cache.signal_preload();
-                }
             }
             Err(e) => {
                 error!("{}", e);
@@ -428,21 +412,21 @@ impl PlayaApp {
 
             // Set play range start (B = Begin)
             if !input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
-                let current = self.player.cache.frame();
-                let (_, end) = self.player.cache.get_play_range();
-                self.player.cache.set_play_range(current, end);
+                let current = self.player.current_frame();
+                let (_, end) = self.player.play_range();
+                self.player.set_play_range(current, end);
             }
 
             // Set play range end (N = eNd)
             if input.key_pressed(egui::Key::N) {
-                let current = self.player.cache.frame();
-                let (start, _) = self.player.cache.get_play_range();
-                self.player.cache.set_play_range(start, current);
+                let current = self.player.current_frame();
+                let (start, _) = self.player.play_range();
+                self.player.set_play_range(start, current);
             }
 
             // Reset play range to full sequence (Ctrl+B)
             if input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
-                self.player.cache.reset_play_range();
+                self.player.reset_play_range();
             }
 
             // Skip to start/end (Ctrl modifiers)
@@ -517,17 +501,8 @@ impl eframe::App for PlayaApp {
 
         self.handle_keyboard_input(ctx);
 
-        // Apply live cache memory budget from settings if changed
-        let desired_mem_fraction =
-            (self.settings.cache_mem_percent as f64 / 100.0).clamp(0.05, 0.95);
-        if (desired_mem_fraction - self.applied_mem_fraction).abs() > f64::EPSILON {
-            self.player.cache.set_memory_fraction(desired_mem_fraction);
-            self.applied_mem_fraction = desired_mem_fraction;
-        }
+        // cache_mem_percent is deprecated (old frame cache); kept only for config compatibility
         self.player.update();
-
-        // Process loaded frames from worker threads (updates cache and sends progress to UI)
-        self.player.cache.process_loaded_frames();
 
         // Handle drag-and-drop files/folders - queue for async loading
         ctx.input(|i| {
@@ -568,9 +543,8 @@ impl eframe::App for PlayaApp {
             if playlist_actions.clear_all {
                 self.frame = None;
                 self.displayed_frame = None;
-                let (player, ui_rx) = Player::new();
-                self.player = player;
-                self.status_bar = StatusBar::new(ui_rx);
+                self.player = Player::new();
+                self.status_bar = StatusBar::new();
             }
             if let Some(path) = playlist_actions.save_playlist {
                 self.save_playlist(path);
@@ -614,7 +588,6 @@ impl eframe::App for PlayaApp {
             &mut self.player,
             &mut self.viewport_state,
             &self.viewport_renderer,
-            &mut self.scrubber,
             self.show_help,
             self.is_fullscreen,
             texture_needs_upload,
@@ -633,7 +606,7 @@ impl eframe::App for PlayaApp {
         if self.show_encode_dialog
             && let Some(ref mut dialog) = self.encode_dialog
         {
-            let should_stay_open = dialog.render(ctx, &self.player.cache);
+            let should_stay_open = dialog.render(ctx);
 
             // Save dialog state (on every render - cheap clone)
             self.settings.encode_dialog = dialog.save_to_settings();
@@ -654,12 +627,6 @@ impl eframe::App for PlayaApp {
         self.settings.show_playlist = self.show_playlist;
 
         // Save cache state separately (sequences + current frame)
-        let cache_path = paths::data_file("playa_cache.json", &self.path_config);
-
-        if let Err(e) = self.player.cache.to_json(&cache_path) {
-            warn!("Failed to save cache state: {}", e);
-        }
-
         // Serialize and save app settings
         if let Ok(json) = serde_json::to_string(self) {
             storage.set_string(eframe::APP_KEY, json);
@@ -700,9 +667,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || args.range.is_some()
         || args.log_file.is_some()
         || args.verbosity > 0
-        || args.config_dir.is_some()
-        || args.mem_percent.is_some()
-        || args.workers.is_some();
+        || args.config_dir.is_some();
 
     if !has_any_args {
         // Print help in GUI mode (no CLI arguments provided)
@@ -770,7 +735,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     info!(
         "Data path: {}",
-        paths::data_file("playa_cache.json", &path_config)
+        paths::data_file("playa_data.json", &path_config)
             .parent()
             .unwrap()
             .display()
@@ -829,18 +794,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mem_fraction = args
                 .mem_percent
                 .map(|p| (p / 100.0).clamp(0.05, 0.95))
-                .or_else(|| Some((app.settings.cache_mem_percent as f64 / 100.0).clamp(0.05, 0.95)))
                 .unwrap_or(0.75);
-            let workers = args.workers.or(if app.settings.workers_override > 0 {
+
+            // workers_override in settings controls App-level workers; we keep it for future use
+            let _workers = args.workers.or(if app.settings.workers_override > 0 {
                 Some(app.settings.workers_override as usize)
             } else {
                 None
             });
-            let (player, ui_rx) = Player::new_with_config(mem_fraction, workers);
+
+            let player = Player::new();
             app.player = player;
-            app.status_bar = StatusBar::new(ui_rx);
+            app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;
-            app.applied_workers = workers;
+            app.applied_workers = _workers;
             app.path_config = path_config_for_app;
 
             // Attempt to load shaders from the shaders directory
@@ -865,88 +832,72 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.show_help
             );
 
-            // Fast cache restoration (sequences + current frame)
-            let cache_path = paths::data_file("playa_cache.json", &path_config);
+              // CLI arguments have priority
+              let has_cli_input =
+                  args.file_path.is_some() || !args.files.is_empty() || args.playlist.is_some();
 
-            // CLI arguments have priority
-            let has_cli_input = args.file_path.is_some() || !args.files.is_empty() || args.playlist.is_some();
+              if has_cli_input {
+                  info!("CLI arguments provided, loading sequences");
 
-            if has_cli_input {
-                info!("CLI arguments provided, loading sequences");
+                  // Collect all file paths in order: positional arg, -f flags, -p playlist
+                  let mut all_files = Vec::new();
 
-                // Collect all file paths in order: positional arg, -f flags, -p playlist
-                let mut all_files = Vec::new();
+                  if let Some(ref path) = args.file_path {
+                      all_files.push(path.clone());
+                  }
 
-                if let Some(ref path) = args.file_path {
-                    all_files.push(path.clone());
-                }
+                  all_files.extend(args.files.iter().cloned());
 
-                all_files.extend(args.files.iter().cloned());
+                  // Load files
+                  if !all_files.is_empty() {
+                      let _ = app.load_sequences(all_files);
+                  }
 
-                // Load files
-                if !all_files.is_empty() {
-                    let _ = app.load_sequences(all_files);
-                }
+                  // Load playlist as Project
+                  if let Some(ref playlist_path) = args.playlist {
+                      info!("Loading playlist: {}", playlist_path.display());
+                      match crate::project::Project::from_json(playlist_path) {
+                          Ok(project) => {
+                              app.player.project = project;
+                              info!("Playlist loaded via Project");
+                          }
+                          Err(e) => {
+                              warn!(
+                                  "Failed to load playlist {}: {}",
+                                  playlist_path.display(),
+                                  e
+                              );
+                          }
+                      }
+                  }
 
-                // Load playlist
-                if let Some(ref playlist_path) = args.playlist {
-                    info!("Loading playlist: {}", playlist_path.display());
-                    match app.player.cache.from_json(playlist_path, false) {
-                        Ok(count) => {
-                            info!("Playlist loaded: {} sequences", count);
-                        }
-                        Err(e) => {
-                            warn!("Failed to load playlist {}: {}", playlist_path.display(), e);
-                        }
-                    }
-                }
+                  // Apply CLI options
+                  if let Some(frame) = args.start_frame {
+                      app.player.set_frame(frame);
+                  }
 
-                // Apply CLI options
-                if let Some(frame) = args.start_frame {
-                    app.player.cache.set_frame(frame);
-                }
+                  if args.autoplay {
+                      app.player.is_playing = true;
+                  }
 
-                if args.autoplay {
-                    app.player.is_playing = true;
-                }
+                  app.player.loop_enabled = args.loop_playback != 0;
 
-                app.player.loop_enabled = args.loop_playback != 0;
+                  // Set play range
+                  let (range_start, range_end) = if let Some(ref range) = args.range {
+                      (Some(range[0]), Some(range[1]))
+                  } else {
+                      (args.range_start, args.range_end)
+                  };
 
-                // Set play range
-                let (range_start, range_end) = if let Some(ref range) = args.range {
-                    (Some(range[0]), Some(range[1]))
-                } else {
-                    (args.range_start, args.range_end)
-                };
+                  if let (Some(start), Some(end)) = (range_start, range_end) {
+                      app.player.set_play_range(start, end);
+                  }
 
-                if let (Some(start), Some(end)) = (range_start, range_end) {
-                    app.player.cache.set_play_range(start, end);
-                }
-
-                // Set fullscreen
-                if args.fullscreen {
-                    app.set_cinema_mode(&cc.egui_ctx, true);
-                }
-
-                // Trigger preload
-                app.player.cache.signal_preload();
-            } else if cache_path.exists() {
-                // Restore cache state (instant UI, no I/O)
-                info!("Restoring cache from {}", cache_path.display());
-                match app.player.cache.from_json(&cache_path, false) {
-                    Ok(count) => {
-                        info!("Cache restored: {} sequences", count);
-
-                        // Trigger frame loading from current position
-                        app.player.cache.signal_preload();
-                    }
-                    Err(e) => {
-                        warn!("Failed to restore cache: {}", e);
-                    }
-                }
-            } else {
-                info!("No cache file found, starting with empty state");
-            }
+                  // Set fullscreen
+                  if args.fullscreen {
+                      app.set_cinema_mode(&cc.egui_ctx, true);
+                  }
+              }
 
             Ok(Box::new(app))
         }),

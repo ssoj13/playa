@@ -25,7 +25,7 @@ impl PathConfig {
 /// Priority:
 /// 1. CLI --config-dir argument
 /// 2. PLAYA_CONFIG_DIR environment variable
-/// 3. Local folder IF any config files exist (playa.json, playa_cache.json, playa.log)
+/// 3. Local folder IF any config files exist (playa.json, playa.log)
 /// 4. Platform-specific config directory from dirs-next (default)
 ///
 /// Platform paths:
@@ -41,7 +41,7 @@ pub fn config_file(name: &str, config: &PathConfig) -> PathBuf {
 /// Priority:
 /// 1. CLI --config-dir argument
 /// 2. PLAYA_CONFIG_DIR environment variable
-/// 3. Local folder IF any config files exist (playa.json, playa_cache.json, playa.log)
+/// 3. Local folder IF any config files exist (playa.json, playa.log)
 /// 4. Platform-specific data directory from dirs-next (default)
 ///
 /// Platform paths:
@@ -79,7 +79,7 @@ pub fn ensure_dirs(config: &PathConfig) -> Result<()> {
 
 /// Check if any config files exist in the given directory
 fn has_local_config_files(dir: &PathBuf) -> bool {
-    let files = ["playa.json", "playa_cache.json", "playa.log"];
+    let files = ["playa.json", "playa.log"];
     files.iter().any(|f| dir.join(f).exists())
 }
 
@@ -168,11 +168,11 @@ mod tests {
         let config = PathConfig { config_dir: None };
 
         let cfg_path = config_file("playa.json", &config);
-        let cache_path = data_file("playa_cache.json", &config);
+        let cache_path = data_file("playa_data.json", &config);
         let log_path = data_file("playa.log", &config);
 
         println!("Config file: {}", cfg_path.display());
-        println!("Cache file:  {}", cache_path.display());
+        println!("Data file:   {}", cache_path.display());
         println!("Log file:    {}", log_path.display());
 
         println!("\n=== With custom directory ===");
@@ -185,8 +185,8 @@ mod tests {
             config_file("playa.json", &custom_config).display()
         );
         println!(
-            "Cache file:  {}",
-            data_file("playa_cache.json", &custom_config).display()
+            "Data file:   {}",
+            data_file("playa_data.json", &custom_config).display()
         );
         println!(
             "Log file:    {}",

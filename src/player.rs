@@ -26,11 +26,13 @@
 //! Handles sequence boundaries (loop or stop at end).
 
 use log::{debug, info};
-use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::Instant;
-
-use crate::cache::{Cache, CacheMessage};
+use crate::clip::Clip;
+use crate::comp::Comp;
 use crate::frame::Frame;
+use crate::layer::Layer;
+use crate::project::Project;
 
 /// FPS presets for jog/shuttle control
 const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0];
@@ -40,34 +42,28 @@ pub const FRAME_JUMP_STEP: i32 = 25;
 
 /// Playback state manager with new architecture
 pub struct Player {
-    pub cache: Cache,
+    pub project: Project,
+    pub active_comp: Option<String>, // UUID of active comp
+    pub current_frame: usize,
     pub is_playing: bool,
     pub fps_base: f32,       // Base FPS (persistent setting)
     pub fps_play: f32,       // Current playback FPS (temporary, resets on stop)
     pub loop_enabled: bool,
     pub play_direction: f32, // 1.0 forward, -1.0 backward
     last_frame_time: Option<Instant>,
-    pub selected_seq_idx: Option<usize>, // Currently selected sequence in playlist
+    /// Index of selected clip in Project.order_clips (playlist)
+    pub selected_seq_idx: Option<usize>,
 }
 
 impl Player {
-    /// Create new player with empty cache and defaults
-    /// Returns (Player, UI message receiver)
-    pub fn new() -> (Self, mpsc::Receiver<CacheMessage>) {
-        Self::new_with_config(0.75, None)
-    }
+    /// Create new player with empty project and defaults
+    pub fn new() -> Self {
+        info!("Player initialized with Comp-based architecture");
 
-    /// Create new player with configurable memory budget and worker count
-    pub fn new_with_config(
-        max_mem_fraction: f64,
-        workers: Option<usize>,
-    ) -> (Self, mpsc::Receiver<CacheMessage>) {
-        info!("Player initialized with new architecture");
-
-        let (cache, ui_rx) = Cache::new(max_mem_fraction, workers); // configurable memory/workers
-
-        let player = Self {
-            cache,
+        Self {
+            project: Project::new(),
+            active_comp: None,
+            current_frame: 0,
             is_playing: false,
             fps_base: 24.0,
             fps_play: 24.0,
@@ -75,20 +71,122 @@ impl Player {
             play_direction: 1.0,
             last_frame_time: None,
             selected_seq_idx: None,
-        };
-
-        (player, ui_rx)
+        }
     }
 
-    /// Get current frame from cache
-    pub fn get_current_frame(&mut self) -> Option<&Frame> {
-        let frame_idx = self.cache.frame();
-        self.cache.get_frame(frame_idx)
+    fn active_comp_mut(&mut self) -> Option<&mut Comp> {
+        if let Some(ref uuid) = self.active_comp {
+            self.project.comps.get_mut(uuid)
+        } else {
+            None
+        }
+    }
+
+    fn active_comp(&self) -> Option<&Comp> {
+        if let Some(ref uuid) = self.active_comp {
+            self.project.comps.get(uuid)
+        } else {
+            None
+        }
+    }
+
+    /// Get total frames of active comp
+    pub fn total_frames(&self) -> usize {
+        self.active_comp().map(|c| c.total_frames()).unwrap_or(0)
+    }
+
+    /// Get current play range of active comp (start, end), or (0, 0) if none.
+    pub fn play_range(&self) -> (usize, usize) {
+        if let Some(comp) = self.active_comp() {
+            comp.play_range()
+        } else {
+            (0, 0)
+        }
+    }
+
+    /// Set play range of active comp (clamped to total_frames).
+    pub fn set_play_range(&mut self, start: usize, end: usize) {
+        if let Some(comp) = self.active_comp_mut() {
+            let total = comp.total_frames();
+            if total == 0 {
+                return;
+            }
+            let max_idx = total.saturating_sub(1);
+            let clamped_start = start.min(max_idx);
+            let clamped_end = end.min(max_idx);
+            comp.set_play_range(clamped_start, clamped_end);
+            // Ensure current_frame lies inside new range
+            if self.current_frame < clamped_start || self.current_frame > clamped_end {
+                self.current_frame = clamped_start;
+            }
+        }
+    }
+
+    /// Reset play range of active comp to its full range.
+    pub fn reset_play_range(&mut self) {
+        if let Some(comp) = self.active_comp_mut() {
+            comp.reset_play_range();
+            self.current_frame = comp.play_range().0;
+        }
+    }
+
+    /// Get current frame as owned Frame (Composed)
+    pub fn get_current_frame(&mut self) -> Option<Frame> {
+        let frame_idx = self.current_frame;
+        self.active_comp_mut()?.get_frame(frame_idx)
+    }
+
+    /// Append detected clip to project playlist.
+    pub fn append_clip(&mut self, clip: Clip) {
+        let uuid = if clip.uuid.is_empty() {
+            // Fallback: generate UUID from pattern/range
+            format!(
+                "clip:{}",
+                clip.pattern()
+            )
+        } else {
+            clip.uuid.clone()
+        };
+
+        // Insert clip into project
+        self.project.clips.insert(uuid.clone(), clip);
+        self.project.order_clips.push(uuid.clone());
+
+        // If no active comp yet, create one for this clip
+        if self.active_comp.is_none() {
+            self.set_active_clip_by_uuid(&uuid);
+            self.selected_seq_idx = Some(0);
+        }
+    }
+
+    /// Helper: rebuild active comp for given clip UUID.
+    fn set_active_clip_by_uuid(&mut self, clip_uuid: &str) {
+        let clip = match self.project.clips.get(clip_uuid) {
+            Some(c) => c.clone(),
+            None => return,
+        };
+
+        let clip_arc = Arc::new(clip);
+        let layer = Layer::new(Arc::clone(&clip_arc));
+
+        let total_frames = clip_arc.len();
+        let end = total_frames.saturating_sub(1);
+        let mut comp = Comp::new("Main", 0, end, self.fps_base);
+        comp.layers.push(layer);
+
+        let comp_uuid = comp.uuid.clone();
+        self.project.comps.insert(comp_uuid.clone(), comp);
+        if !self.project.order_comps.contains(&comp_uuid) {
+            self.project.order_comps.push(comp_uuid.clone());
+        }
+
+        self.active_comp = Some(comp_uuid);
+        self.current_frame = 0;
     }
 
     /// Update playback state
     pub fn update(&mut self) {
-        if !self.is_playing || self.cache.total_frames() == 0 {
+        if !self.is_playing || self.total_frames() == 0 {
             return;
         }
 
@@ -115,13 +213,13 @@ impl Player {
 
     /// Advance to next frame
     fn advance_frame(&mut self) {
-        let total_frames = self.cache.total_frames();
+        let total_frames = self.total_frames();
         if total_frames == 0 {
             return;
         }
 
-        let current = self.cache.frame();
-        let (play_start, play_end) = self.cache.get_play_range();
+        let current = self.current_frame;
+        let (play_start, play_end) = (0, total_frames.saturating_sub(1));
 
         if self.play_direction > 0.0 {
             // Forward
@@ -129,27 +227,27 @@ impl Player {
             if next > play_end {
                 if self.loop_enabled {
                     debug!("Frame loop: {} -> {}", current, play_start);
-                    self.cache.set_frame(play_start);
+                    self.current_frame = play_start;
                 } else {
                     debug!("Reached play range end, stopping");
-                    self.cache.set_frame(play_end);
+                    self.current_frame = play_end;
                     self.is_playing = false;
                 }
             } else {
-                self.cache.set_frame(next);
+                self.current_frame = next;
             }
         } else {
             // Backward
             if current <= play_start {
                 if self.loop_enabled {
                     debug!("Frame loop: {} -> {}", current, play_end);
-                    self.cache.set_frame(play_end);
+                    self.current_frame = play_end;
                 } else {
                     debug!("Reached play range start, stopping");
                     self.is_playing = false;
                 }
             } else {
-                self.cache.set_frame(current - 1);
+                self.current_frame = current - 1;
             }
         }
     }
@@ -158,12 +256,10 @@ impl Player {
     pub fn toggle_play_pause(&mut self) {
         self.is_playing = !self.is_playing;
         if self.is_playing {
-            debug!("Playback started at frame {}", self.cache.frame());
+            debug!("Playback started at frame {}", self.current_frame);
             self.last_frame_time = Some(Instant::now());
-            // Start preloading when playback begins
-            self.cache.signal_preload();
         } else {
-            debug!("Playback paused at frame {}", self.cache.frame());
+            debug!("Playback paused at frame {}", self.current_frame);
             self.last_frame_time = None;
             // Reset fps_play to fps_base on stop
             self.fps_play = self.fps_base;
@@ -174,7 +270,7 @@ impl Player {
     pub fn stop(&mut self) {
         if self.is_playing {
             self.is_playing = false;
-            debug!("Playback stopped at frame {}", self.cache.frame());
+            debug!("Playback stopped at frame {}", self.current_frame);
             self.last_frame_time = None;
             // Reset fps_play to fps_base on stop
             self.fps_play = self.fps_base;
@@ -183,30 +279,26 @@ impl Player {
 
     /// Rewind to start
     pub fn to_start(&mut self) {
-        debug!("Rewinding to frame 0");
-        self.cache.set_frame(0);
+        let (start, _) = self.play_range();
+        debug!("Rewinding to frame {}", start);
+        self.current_frame = start;
         self.last_frame_time = None;
-        self.cache.signal_preload();
     }
 
     /// Skip to end
     pub fn to_end(&mut self) {
-        let (_, global_end) = self.cache.range();
-        debug!("Skipping to end: frame {}", global_end);
-        self.cache.set_frame(global_end);
+        let (_, end) = self.play_range();
+        debug!("Skipping to end: frame {}", end);
+        self.current_frame = end;
         self.last_frame_time = None;
-        self.cache.signal_preload();
     }
 
     /// Set current frame
     pub fn set_frame(&mut self, frame: usize) {
-        let (_, global_end) = self.cache.range();
-        let clamped = frame.min(global_end);
-        self.cache.set_frame(clamped);
+        let (start, end) = self.play_range();
+        let clamped = frame.clamp(start, end);
+        self.current_frame = clamped;
         self.last_frame_time = None;
-
-        // Start preloading from new position
-        self.cache.signal_preload();
     }
 
     /// Step by N frames (positive = forward, negative = backward)
@@ -216,8 +308,8 @@ impl Player {
             return;
         }
 
-        let current = self.cache.frame();
-        let (play_start, play_end) = self.cache.get_play_range();
+        let current = self.current_frame;
+        let (play_start, play_end) = self.play_range();
 
         // Calculate target frame with saturating arithmetic
         let target = if count > 0 {
@@ -251,19 +343,13 @@ impl Player {
             target
         };
 
-        self.cache.set_frame(final_frame);
-        self.cache.signal_preload();
+        self.current_frame = final_frame;
     }
 
-    /// Get current frame index
+    /// Get current frame index in play range
     #[inline]
     pub fn current_frame(&self) -> usize {
-        self.cache.frame()
-    }
-
-    /// Get total frames
-    pub fn total_frames(&self) -> usize {
-        self.cache.total_frames()
+        self.current_frame
     }
 
     /// Internal helper to start jogging in the specified direction
@@ -330,87 +416,59 @@ impl Player {
     }
 
     /// Jump to next sequence start (] key)
-    /// If within sequence -> jump to next sequence start
-    /// If on last sequence -> jump to end of range
-    /// If at end and loop enabled -> jump to first sequence start
     pub fn jump_next_sequence(&mut self) {
-        let sequences = self.cache.sequences();
-        if sequences.is_empty() {
+        if self.project.order_clips.is_empty() {
             return;
         }
 
-        let (global_start, global_end) = self.cache.range();
-        let current_frame = self.cache.frame();
+        let len = self.project.order_clips.len();
+        let idx = self.selected_seq_idx.unwrap_or(0);
 
-        // Check if we're already at the end
-        if current_frame >= global_end {
-            if self.loop_enabled {
-                // Loop to first sequence start
-                self.cache.set_frame(global_start);
-                debug!("Looped from end to start: frame {}", global_start);
-            }
-            // If loop disabled, stay at end
-        } else if let Some((seq_idx, _local_frame)) = self.cache.current_sequence() {
-            // We're inside a sequence
-            if seq_idx + 1 < sequences.len() {
-                // Jump to start of next sequence
-                if let Some(next_start) = self.cache.local_to_global(seq_idx + 1, 0) {
-                    self.cache.set_frame(next_start);
-                    debug!("Jumped to next sequence start: frame {}", next_start);
-                }
-            } else {
-                // We're on last sequence, jump to end
-                self.cache.set_frame(global_end);
-                debug!("Jumped to end: frame {}", global_end);
+        let next_idx = if idx + 1 < len {
+            idx + 1
+        } else if self.loop_enabled {
+            0
+        } else {
+            idx
+        };
+
+        if next_idx != idx {
+            if let Some(uuid) = self.project.order_clips.get(next_idx) {
+                self.set_active_clip_by_uuid(uuid);
+                self.selected_seq_idx = Some(next_idx);
+                debug!("Jumped to next clip index {}", next_idx);
             }
         }
 
         self.last_frame_time = None;
-        self.cache.signal_preload();
     }
 
     /// Jump to previous sequence start ([ key)
-    /// If within sequence -> jump to current sequence start
-    /// If already at current sequence start -> jump to previous sequence start
-    /// If on first sequence start and loop enabled -> jump to end
     pub fn jump_prev_sequence(&mut self) {
-        let sequences = self.cache.sequences();
-        if sequences.is_empty() {
+        if self.project.order_clips.is_empty() {
             return;
         }
 
-        let (_, global_end) = self.cache.range();
-        let current_frame = self.cache.frame();
+        let len = self.project.order_clips.len();
+        let idx = self.selected_seq_idx.unwrap_or(0);
 
-        if let Some((seq_idx, local_frame)) = self.cache.current_sequence() {
-            // We're inside a sequence
-            if local_frame == 0 {
-                // Already at sequence start, jump to previous sequence
-                if seq_idx > 0 {
-                    if let Some(prev_start) = self.cache.local_to_global(seq_idx - 1, 0) {
-                        self.cache.set_frame(prev_start);
-                        debug!("Jumped to previous sequence start: frame {}", prev_start);
-                    }
-                } else if self.loop_enabled {
-                    // We're at first sequence start, loop to end
-                    self.cache.set_frame(global_end);
-                    debug!("Looped to end: frame {}", global_end);
-                }
-            } else {
-                // Not at sequence start, jump to current sequence start
-                if let Some(cur_start) = self.cache.local_to_global(seq_idx, 0) {
-                    self.cache.set_frame(cur_start);
-                    debug!("Jumped to current sequence start: frame {}", cur_start);
-                }
+        let prev_idx = if idx > 0 {
+            idx - 1
+        } else if self.loop_enabled {
+            len.saturating_sub(1)
+        } else {
+            idx
+        };
+
+        if prev_idx != idx {
+            if let Some(uuid) = self.project.order_clips.get(prev_idx) {
+                self.set_active_clip_by_uuid(uuid);
+                self.selected_seq_idx = Some(prev_idx);
+                debug!("Jumped to previous clip index {}", prev_idx);
             }
-        } else if current_frame >= global_end && self.loop_enabled {
-            // We're at the end, position at end
-            self.cache.set_frame(global_end);
-            debug!("At end, positioned at frame {}", global_end);
         }
 
         self.last_frame_time = None;
-        self.cache.signal_preload();
     }
 
     /// Reset settings
@@ -424,7 +482,6 @@ impl Player {
 
 impl Default for Player {
     fn default() -> Self {
-        let (player, _rx) = Self::new();
-        player
+        Self::new()
     }
 }

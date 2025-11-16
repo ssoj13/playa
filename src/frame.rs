@@ -5,7 +5,7 @@
 //! - EXR HALF: 16-bit float (half::f16)
 //! - EXR FLOAT: 32-bit float (f32, native precision)
 //!
-//! **Used by**: Cache workers (parallel loading), Viewport (pixel data for GPU upload)
+//! **Used by**: Viewport (pixel data for GPU upload)
 //!
 //! # Pixel Formats
 //!
@@ -33,6 +33,7 @@ use half::f16 as F16;
 // Import EXR loader (exrs or openexr-rs based on features)
 use crate::exr::{ExrImpl, ExrLoader};
 use crate::utils::media;
+use crate::attrs::Attrs;
 
 /// Parse video path with frame suffix
 /// "video.mp4@17" -> (PathBuf("video.mp4"), Some(17))
@@ -129,6 +130,7 @@ struct FrameData {
     width: usize,
     height: usize,
     status: FrameStatus,
+    attrs: Attrs,
 }
 
 /// Single frame with optional file source
@@ -181,6 +183,7 @@ impl Frame {
                     width,
                     height,
                     status: FrameStatus::Placeholder,
+                    attrs: Attrs::new(),
                 };
 
                 Self {
@@ -205,6 +208,7 @@ impl Frame {
                     width,
                     height,
                     status: FrameStatus::Placeholder,
+                    attrs: Attrs::new(),
                 };
 
                 Self {
@@ -227,6 +231,7 @@ impl Frame {
                     width,
                     height,
                     status: FrameStatus::Placeholder,
+                    attrs: Attrs::new(),
                 };
 
                 Self {
@@ -267,6 +272,7 @@ impl Frame {
             width: 1,
             height: 1,
             status: FrameStatus::Header, // Path set but not loaded
+            attrs: Attrs::new(),
         };
 
         Self {
@@ -377,7 +383,7 @@ impl Frame {
     ///
     /// **Why**: Decode image into GPU-ready RGBA buffer for display
     ///
-    /// **Used by**: Cache workers (background threads)
+    /// **Used by**: background frame loading threads
     ///
     /// # Pixel Format Selection
     ///
@@ -991,6 +997,7 @@ impl Frame {
                     width,
                     height,
                     status: data.status,
+                    attrs: data.attrs.clone(),
                 };
 
                 Ok(Frame {
@@ -1041,6 +1048,7 @@ impl Frame {
                     width,
                     height,
                     status: data.status,
+                    attrs: data.attrs.clone(),
                 };
 
                 Ok(Frame {
