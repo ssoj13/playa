@@ -757,28 +757,20 @@ impl eframe::App for PlayaApp {
 
             // Remove composition
             if let Some(comp_uuid) = project_actions.remove_comp {
-                // Count comps in media
-                let comp_count = self.player.project.media.values().filter(|s| s.is_comp()).count();
+                self.player.project.media.remove(&comp_uuid);
+                self.player.project.comps_order.retain(|uuid| uuid != &comp_uuid);
 
-                // Don't remove if it's the only comp
-                if comp_count > 1 {
-                    self.player.project.media.remove(&comp_uuid);
-                    self.player.project.comps_order.retain(|uuid| uuid != &comp_uuid);
-
-                    // If removed comp was active, switch to first available
-                    if self.player.active_comp.as_ref() == Some(&comp_uuid) {
-                        let first_comp = self.player.project.comps_order.first().cloned();
-                        if let Some(new_active) = first_comp {
-                            self.player.set_active_comp(new_active);
-                        } else {
-                            self.player.active_comp = None;
-                        }
+                // If removed comp was active, switch to first available or None
+                if self.player.active_comp.as_ref() == Some(&comp_uuid) {
+                    let first_comp = self.player.project.comps_order.first().cloned();
+                    if let Some(new_active) = first_comp {
+                        self.player.set_active_comp(new_active);
+                    } else {
+                        self.player.active_comp = None;
                     }
-
-                    info!("Removed comp {}", comp_uuid);
-                } else {
-                    warn!("Cannot remove the last composition");
                 }
+
+                info!("Removed comp {}", comp_uuid);
             }
 
             // Clear all compositions

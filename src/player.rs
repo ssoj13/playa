@@ -163,15 +163,28 @@ impl Player {
                     log::info!("Creating layer from clip {} with {} frames", uuid, clip_len);
 
                     // Position layer at end of comp timeline (sequential stacking)
-                    let layer_start = comp.end + 1;
+                    // If comp is empty, start from 0, otherwise stack after last layer
+                    let layer_start = if comp.layers.is_empty() {
+                        0  // First layer starts at frame 0
+                    } else {
+                        comp.end + 1  // Subsequent layers stack sequentially
+                    };
                     let layer_end = layer_start + clip_len.saturating_sub(1);
 
                     // Create Layer with UUID reference
                     let layer = Layer::new(uuid.clone(), layer_start, layer_end);
 
+                    // If this is the first layer, reset comp start to 0
+                    let is_first_layer = comp.layers.is_empty();
+
                     comp.layers.push(layer);
 
                     // Extend comp timeline to include new layer
+                    if is_first_layer {
+                        comp.start = 0;
+                        comp.current_frame = 0;  // Reset playhead to start
+                        comp.attrs.set("start", crate::attrs::AttrValue::UInt(0));
+                    }
                     comp.end = layer_end;
                     comp.attrs.set("end", crate::attrs::AttrValue::UInt(layer_end as u32));
 
