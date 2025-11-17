@@ -99,8 +99,17 @@ impl Comp {
         (visible_start, visible_end)
     }
 
+    /// Number of frames in full composition (not limited by play_area)
+    pub fn frame_count(&self) -> usize {
+        if self.end >= self.start {
+            self.end - self.start + 1
+        } else {
+            0
+        }
+    }
+
     /// Number of frames in play range (work area)
-    pub fn total_frames(&self) -> usize {
+    pub fn play_frame_count(&self) -> usize {
         let (visible_start, visible_end) = self.play_range();
         if visible_end >= visible_start {
             visible_end - visible_start + 1

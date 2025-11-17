@@ -191,8 +191,8 @@ pub fn render_timeline(
 ) -> TimelineAction {
     let mut action = TimelineAction::None;
 
-    // Calculate dimensions
-    let total_frames = comp.total_frames().max(100); // Minimum 100 frames for empty comps
+    // Calculate dimensions (use full frame count for timeline width, not just play_range)
+    let total_frames = comp.frame_count().max(100); // Minimum 100 frames for empty comps
 
     let timeline_width = (total_frames as f32 * config.pixels_per_frame * state.zoom).max(ui.available_width() - config.name_column_width);
     let total_height = comp.layers.len() as f32 * config.layer_height;
@@ -662,7 +662,7 @@ fn draw_frame_ruler(
     state: &TimelineState,
     timeline_width: f32,
 ) -> Option<usize> {
-    let total_frames = comp.total_frames();
+    let total_frames = comp.frame_count(); // Use full frame count, not play_range
     let ruler_height = 20.0;
 
     ui.horizontal(|ui| {
@@ -708,14 +708,17 @@ fn draw_frame_ruler(
             } else if effective_ppf > 20.0 {
                 5
             } else {
-                frame_step * 2
+                (frame_step * 2).max(frame_step) // At least frame_step to ensure some labels
             };
 
             // Determine visible frame range
             let visible_start = state.pan_offset.max(0.0) as usize;
             let visible_end = (state.pan_offset + (timeline_width / effective_ppf)).min(total_frames as f32) as usize;
 
-            for frame in (visible_start..=visible_end).step_by(frame_step.max(1)) {
+            // Start from frame that is aligned to frame_step grid
+            let start_frame = (visible_start / frame_step.max(1)) * frame_step.max(1);
+
+            for frame in (start_frame..=visible_end).step_by(frame_step.max(1)) {
                 let x = frame_to_screen_x(frame as f32, rect.min.x, config, state);
                 if x < rect.min.x || x > rect.max.x {
                     continue;

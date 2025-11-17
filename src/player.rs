@@ -87,9 +87,9 @@ impl Player {
         }
     }
 
-    /// Get total frames of active comp
+    /// Get total frames of active comp (play_frame_count - work area)
     pub fn total_frames(&self) -> usize {
-        self.active_comp().map(|c| c.total_frames()).unwrap_or(0)
+        self.active_comp().map(|c| c.play_frame_count()).unwrap_or(0)
     }
 
     /// Get current play range of active comp (start, end), or (0, 0) if none.
@@ -104,7 +104,7 @@ impl Player {
     /// Set play range of active comp (clamped to total_frames).
     pub fn set_play_range(&mut self, start: usize, end: usize) {
         if let Some(comp) = self.active_comp_mut() {
-            let total = comp.total_frames();
+            let total = comp.play_frame_count();
             if total == 0 {
                 return;
             }

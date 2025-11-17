@@ -33,11 +33,11 @@ impl MediaSource {
         }
     }
 
-    /// Total number of frames
+    /// Total number of frames (for Comp returns play_frame_count - active work area)
     pub fn total_frames(&self) -> usize {
         match self {
             MediaSource::Clip(c) => c.total_frames(),
-            MediaSource::Comp(c) => c.total_frames(),
+            MediaSource::Comp(c) => c.play_frame_count(),
         }
     }
 

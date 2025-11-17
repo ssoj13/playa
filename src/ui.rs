@@ -274,7 +274,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                                 actions.remove_comp = Some(comp_uuid.clone());
                                             }
                                             ui.label(format!("{}fps", comp.fps as u32));
-                                            ui.label(format!("{}f", comp.total_frames()));
+                                            ui.label(format!("{}f", comp.frame_count()));
                                         });
                                     })
                                 });
