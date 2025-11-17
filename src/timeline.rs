@@ -54,6 +54,8 @@ pub enum GlobalDragState {
     /// Dragging clip/comp from Project Window to timeline
     ProjectItem {
         source_uuid: String,
+        display_name: String,
+        duration: Option<usize>,
         drag_start_pos: Pos2,
     },
     /// Scrubbing timeline by dragging on ruler or timeline area
@@ -156,6 +158,7 @@ pub enum TimelineAction {
     None,
     SetFrame(usize),                                    // User clicked/dragged on timeline
     SelectLayer(usize),                                 // User clicked on layer name
+    ClearSelection,                                     // User clicked on empty space
     ToStart,                                            // Jump to start
     ToEnd,                                              // Jump to end
     TogglePlay,                                         // Toggle play/pause
@@ -194,8 +197,10 @@ pub fn render_timeline(
     // Calculate dimensions (use full frame count for timeline width, not just play_range)
     let total_frames = comp.frame_count().max(100); // Minimum 100 frames for empty comps
 
-    let timeline_width = (total_frames as f32 * config.pixels_per_frame * state.zoom).max(ui.available_width() - config.name_column_width);
-    let total_height = comp.layers.len() as f32 * config.layer_height;
+    let timeline_width = (total_frames as f32 * config.pixels_per_frame * state.zoom)
+        .max(ui.available_width() - config.name_column_width);
+    // Ensure non-zero height so DnD/drop zone works even for empty comps
+    let total_height = (comp.layers.len().max(1) as f32) * config.layer_height;
 
     // Toolbar with transport controls and zoom
     ui.horizontal(|ui| {
@@ -288,37 +293,50 @@ pub fn render_timeline(
         .show(ui, |ui| {
             // Two-column layout: layer names | timeline bars
             ui.horizontal(|ui| {
-                // Left column: layer names
-                ui.vertical(|ui| {
-                    ui.set_width(config.name_column_width);
-                    for (idx, layer) in comp.layers.iter().enumerate() {
-                        let layer_name = &layer.source_uuid;
-                        let (rect, response) = ui.allocate_exact_size(
-                            Vec2::new(config.name_column_width, config.layer_height),
-                            Sense::click(),
-                        );
+                  // Left column: layer names
+                  ui.vertical(|ui| {
+                      ui.set_width(config.name_column_width);
+                      for (idx, layer) in comp.layers.iter().enumerate() {
+                          let layer_name = &layer.source_uuid;
+                          let (rect, response) = ui.allocate_exact_size(
+                              Vec2::new(config.name_column_width, config.layer_height),
+                              Sense::click(),
+                          );
 
-                        // Draw layer name background
-                        ui.painter().rect_filled(
-                            rect,
-                            2.0,
-                            Color32::from_gray(40),
-                        );
+                          let is_selected = comp.selected_layer == Some(idx);
 
-                        // Draw layer name text
-                        ui.painter().text(
-                            Pos2::new(rect.min.x + 8.0, rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            layer_name,
-                            egui::FontId::proportional(12.0),
-                            Color32::from_gray(200),
-                        );
+                          // Draw layer name background (highlight when selected)
+                          let name_bg = if is_selected {
+                              Color32::from_rgb(70, 100, 140)
+                          } else {
+                              Color32::from_gray(40)
+                          };
+                          ui.painter().rect_filled(rect, 2.0, name_bg);
 
-                        if response.clicked() {
-                            action = TimelineAction::SelectLayer(idx);
-                        }
-                    }
-                });
+                          // Optional border for selected header
+                          if is_selected {
+                              ui.painter().rect_stroke(
+                                  rect.shrink(1.0),
+                                  2.0,
+                                  egui::Stroke::new(1.5, Color32::from_rgb(180, 230, 255)),
+                                  egui::epaint::StrokeKind::Middle,
+                              );
+                          }
+
+                          // Draw layer name text
+                          ui.painter().text(
+                              Pos2::new(rect.min.x + 8.0, rect.center().y),
+                              egui::Align2::LEFT_CENTER,
+                              layer_name,
+                              egui::FontId::proportional(12.0),
+                              Color32::from_gray(200),
+                          );
+
+                          if response.clicked() {
+                              action = TimelineAction::SelectLayer(idx);
+                          }
+                      }
+                  });
 
                 // Right column: timeline bars
                 ui.vertical(|ui| {
@@ -341,13 +359,13 @@ pub fn render_timeline(
                                 Vec2::new(timeline_width, config.layer_height),
                             );
 
-                            // Layer background (alternating colors)
-                            let bg_color = if idx % 2 == 0 {
-                                Color32::from_gray(30)
-                            } else {
-                                Color32::from_gray(35)
-                            };
-                            painter.rect_filled(layer_rect, 0.0, bg_color);
+                          // Layer background (alternating colors)
+                          let bg_color = if idx % 2 == 0 {
+                              Color32::from_gray(30)
+                          } else {
+                              Color32::from_gray(35)
+                          };
+                          painter.rect_filled(layer_rect, 0.0, bg_color);
 
                             // Get layer start/end from attrs
                             let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
@@ -371,7 +389,13 @@ pub fn render_timeline(
 
                             // Layer bar color (use hash of source_uuid for stable color)
                             let base_color = hash_color(&layer.source_uuid);
-                            let gray_color = Color32::from_rgba_unmultiplied(80, 80, 80, 100);
+                            let is_selected = comp.selected_layer == Some(idx);
+                            let gray_color = if is_selected {
+                                // Slightly brighter grey with a blue tint when selected
+                                Color32::from_rgba_unmultiplied(110, 140, 190, 130)
+                            } else {
+                                Color32::from_rgba_unmultiplied(80, 80, 80, 100)
+                            };
 
                             painter.rect_filled(full_bar_rect, 4.0, gray_color);
 
@@ -386,13 +410,19 @@ pub fn render_timeline(
                                 painter.rect_filled(visible_bar_rect, 4.0, base_color);
                             }
 
-                            // Draw outline around full bar
-                            painter.rect_stroke(
-                                full_bar_rect,
-                                4.0,
-                                egui::Stroke::new(1.0, Color32::from_gray(150)),
-                                egui::epaint::StrokeKind::Middle,
-                            );
+                              // Draw outline around full bar (thicker and colored when selected)
+                              let stroke_color = if is_selected {
+                                  Color32::from_rgb(180, 230, 255)
+                              } else {
+                                  Color32::from_gray(150)
+                              };
+                              let stroke_width = if is_selected { 2.0 } else { 1.0 };
+                              painter.rect_stroke(
+                                  full_bar_rect,
+                                  4.0,
+                                  egui::Stroke::new(stroke_width, stroke_color),
+                                  egui::epaint::StrokeKind::Middle,
+                              );
                         }
 
                         // Handle layer bar interactions using proper response system
@@ -611,10 +641,11 @@ pub fn render_timeline(
                             data.get_temp(egui::Id::new("global_drag_state"))
                         });
 
-                        if let Some(GlobalDragState::ProjectItem { source_uuid, .. }) = global_drag {
+                        if let Some(GlobalDragState::ProjectItem { source_uuid, display_name, duration, .. }) = global_drag {
                             // Show drop preview
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                                if timeline_rect.contains(hover_pos) {
+                                // Treat full vertical span of timeline area as drop zone; only X matters.
+                                if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
                                     let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as usize;
 
                                     // Draw drop indicator (vertical line)
@@ -623,6 +654,31 @@ pub fn render_timeline(
                                         [Pos2::new(drop_x, timeline_rect.min.y), Pos2::new(drop_x, timeline_rect.max.y)],
                                         (3.0, Color32::from_rgb(100, 220, 255)),
                                     );
+
+                                    // Optional ghost bar to visualize approximate layer span
+                                    if let Some(len) = duration {
+                                        let ghost_start = drop_frame as f32;
+                                        let ghost_end = ghost_start + len as f32;
+                                        let ghost_x_start = frame_to_screen_x(ghost_start, timeline_rect.min.x, config, state);
+                                        let ghost_x_end = frame_to_screen_x(ghost_end, timeline_rect.min.x, config, state);
+                                        let ghost_rect = Rect::from_min_max(
+                                            Pos2::new(ghost_x_start, timeline_rect.min.y + 4.0),
+                                            Pos2::new(ghost_x_end, timeline_rect.min.y + config.layer_height - 4.0),
+                                        );
+                                        painter.rect_filled(
+                                            ghost_rect,
+                                            4.0,
+                                            Color32::from_rgba_unmultiplied(100, 220, 255, 40),
+                                        );
+                                        // Draw name inside ghost bar
+                                        painter.text(
+                                            Pos2::new((ghost_x_start + ghost_x_end) * 0.5, ghost_rect.center().y),
+                                            egui::Align2::CENTER_CENTER,
+                                            display_name,
+                                            egui::FontId::proportional(12.0),
+                                            Color32::from_rgb(200, 230, 255),
+                                        );
+                                    }
 
                                     // Check for mouse release (drop)
                                     if ui.ctx().input(|i| i.pointer.any_released()) {
@@ -638,13 +694,35 @@ pub fn render_timeline(
                                 }
                             }
                         } else if state.drag_state.is_none() && global_drag.is_none() {
-                            // Handle click/drag interaction only if no active drag state
-                            if timeline_response.clicked() || timeline_response.dragged() {
-                                if let Some(pos) = timeline_response.interact_pointer_pos() {
-                                    let frame = screen_x_to_frame(pos.x, timeline_rect.min.x, config, state).round() as usize;
-                                    action = TimelineAction::SetFrame(frame.min(total_frames.saturating_sub(1)));
-                                }
-                            }
+                          // Handle click/drag interaction only if no active drag state
+                              if timeline_response.clicked() || timeline_response.dragged() {
+                                  if let Some(pos) = timeline_response.interact_pointer_pos() {
+                                      // If click is within any layer row, select that layer;
+                                      // otherwise treat it as a frame scrub on empty space.
+                                      let mut clicked_layer: Option<usize> = None;
+                                      for (idx, _) in comp.layers.iter().enumerate() {
+                                          let layer_y = timeline_rect.min.y + (idx as f32 * config.layer_height);
+                                          let row_rect = Rect::from_min_max(
+                                              Pos2::new(timeline_rect.min.x, layer_y),
+                                              Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
+                                          );
+                                          if row_rect.contains(pos) {
+                                              clicked_layer = Some(idx);
+                                              break;
+                                          }
+                                      }
+
+                                      if let Some(idx) = clicked_layer {
+                                          action = TimelineAction::SelectLayer(idx);
+                                      } else {
+                                          let frame = screen_x_to_frame(pos.x, timeline_rect.min.x, config, state).round() as usize;
+                                          action = TimelineAction::SetFrame(frame.min(total_frames.saturating_sub(1)));
+                                      }
+                                  } else {
+                                      // Click without position: clear selection
+                                      action = TimelineAction::ClearSelection;
+                                  }
+                              }
                         }
                     }
                 });

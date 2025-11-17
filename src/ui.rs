@@ -173,18 +173,22 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                         ui.painter().galley(rect.min, text_galley, text_color);
                                     }
 
-                                    // Handle drag for clips - store drag state
-                                    if label_response.drag_started() {
-                                        if let Some(pos) = label_response.interact_pointer_pos() {
-                                            ui.ctx().data_mut(|data| {
-                                                data.insert_temp(egui::Id::new("global_drag_state"),
-                                                    crate::timeline::GlobalDragState::ProjectItem {
-                                                        source_uuid: clip_uuid.clone(),
-                                                        drag_start_pos: pos,
-                                                    });
-                                            });
-                                        }
-                                    }
+                                      // Handle drag for clips - store drag state
+                                      if label_response.drag_started() {
+                                          if let Some(pos) = label_response.interact_pointer_pos() {
+                                              let duration = clip.len();
+                                              let display_name = display_name.clone();
+                                              ui.ctx().data_mut(|data| {
+                                                  data.insert_temp(egui::Id::new("global_drag_state"),
+                                                      crate::timeline::GlobalDragState::ProjectItem {
+                                                          source_uuid: clip_uuid.clone(),
+                                                          display_name,
+                                                          duration: Some(duration),
+                                                          drag_start_pos: pos,
+                                                      });
+                                              });
+                                          }
+                                      }
 
                                     // Update cursor based on drag state
                                     if label_response.dragged() {
@@ -249,18 +253,22 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                             actions.set_active_comp = Some(comp_uuid.clone());
                                         }
 
-                                        // Handle drag for comps - store drag state
-                                        if name_response.drag_started() {
-                                            if let Some(pos) = name_response.interact_pointer_pos() {
-                                                ui.ctx().data_mut(|data| {
-                                                    data.insert_temp(egui::Id::new("global_drag_state"),
-                                                        crate::timeline::GlobalDragState::ProjectItem {
-                                                            source_uuid: comp_uuid.clone(),
-                                                            drag_start_pos: pos,
-                                                        });
-                                                });
-                                            }
-                                        }
+                                          // Handle drag for comps - store drag state
+                                          if name_response.drag_started() {
+                                              if let Some(pos) = name_response.interact_pointer_pos() {
+                                                  let duration = comp.frame_count();
+                                                  let display_name = comp.name.clone();
+                                                  ui.ctx().data_mut(|data| {
+                                                      data.insert_temp(egui::Id::new("global_drag_state"),
+                                                          crate::timeline::GlobalDragState::ProjectItem {
+                                                              source_uuid: comp_uuid.clone(),
+                                                              display_name,
+                                                              duration: Some(duration),
+                                                              drag_start_pos: pos,
+                                                          });
+                                                  });
+                                              }
+                                          }
 
                                         // Update cursor based on drag state
                                         if name_response.dragged() {
@@ -331,8 +339,29 @@ pub fn render_timeline_panel(
                         TimelineAction::SetFrame(new_frame) => {
                             player.set_frame(new_frame);
                         }
-                        TimelineAction::SelectLayer(_idx) => {
-                            // TODO: implement layer selection
+                        TimelineAction::SelectLayer(idx) => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player
+                                    .project
+                                    .media
+                                    .get_mut(comp_uuid)
+                                    .and_then(|s| s.as_comp_mut())
+                                {
+                                    comp.set_selected_layer(Some(idx));
+                                }
+                            }
+                        }
+                        TimelineAction::ClearSelection => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player
+                                    .project
+                                    .media
+                                    .get_mut(comp_uuid)
+                                    .and_then(|s| s.as_comp_mut())
+                                {
+                                    comp.set_selected_layer(None);
+                                }
+                            }
                         }
                         TimelineAction::ToStart => {
                             player.to_start();

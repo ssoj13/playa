@@ -570,23 +570,54 @@ impl PlayaApp {
                 self.settings.show_frame_numbers = !self.settings.show_frame_numbers;
             }
 
-            // Set play range start (B = Begin)
+            // Set comp work area start (B = Begin) relative to comp.start
             if !input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
                 let current = self.player.current_frame();
-                let (_, end) = self.player.play_range();
-                self.player.set_play_range(current, end);
+                if let Some(comp_uuid) = &self.player.active_comp.clone() {
+                    if let Some(comp) = self
+                        .player
+                        .project
+                        .media
+                        .get_mut(comp_uuid)
+                        .and_then(|s| s.as_comp_mut())
+                    {
+                        let play_start = (current as i32 - comp.start as i32).max(0);
+                        comp.set_comp_play_start(play_start);
+                    }
+                }
             }
 
-            // Set play range end (N = eNd)
-            if input.key_pressed(egui::Key::N) {
+            // Set comp work area end (N = eNd) relative to comp.end
+            if !input.modifiers.ctrl && input.key_pressed(egui::Key::N) {
                 let current = self.player.current_frame();
-                let (start, _) = self.player.play_range();
-                self.player.set_play_range(start, current);
+                if let Some(comp_uuid) = &self.player.active_comp.clone() {
+                    if let Some(comp) = self
+                        .player
+                        .project
+                        .media
+                        .get_mut(comp_uuid)
+                        .and_then(|s| s.as_comp_mut())
+                    {
+                        let play_end = (comp.end as i32 - current as i32).max(0);
+                        comp.set_comp_play_end(play_end);
+                    }
+                }
             }
 
-            // Reset play range to full sequence (Ctrl+B)
+            // Reset comp work area to full (Ctrl+B)
             if input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
-                self.player.reset_play_range();
+                if let Some(comp_uuid) = &self.player.active_comp.clone() {
+                    if let Some(comp) = self
+                        .player
+                        .project
+                        .media
+                        .get_mut(comp_uuid)
+                        .and_then(|s| s.as_comp_mut())
+                    {
+                        comp.set_comp_play_start(0);
+                        comp.set_comp_play_end(0);
+                    }
+                }
             }
 
             // Skip to start/end (Ctrl modifiers)

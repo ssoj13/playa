@@ -101,21 +101,36 @@ impl Player {
         }
     }
 
-    /// Set play range of active comp (clamped to total_frames).
+    /// Set play range of active comp in global comp frame indices (inclusive).
+    ///
+    /// Internally this is mapped to comp.play_start / comp.play_end offsets.
     pub fn set_play_range(&mut self, start: usize, end: usize) {
         if let Some(comp) = self.active_comp_mut() {
-            let total = comp.play_frame_count();
-            if total == 0 {
+            if comp.end < comp.start {
                 return;
             }
-            let max_idx = total.saturating_sub(1);
-            let clamped_start = start.min(max_idx);
-            let clamped_end = end.min(max_idx);
-            comp.set_play_range(clamped_start, clamped_end);
-            // Ensure current_frame lies inside new range
+
+            let comp_start = comp.start;
+            let comp_end = comp.end;
+
+            // Clamp requested range to comp bounds
+            let clamped_start = start.clamp(comp_start, comp_end);
+            let clamped_end = end.clamp(comp_start, comp_end);
+            if clamped_end < clamped_start {
+                return;
+            }
+
+            let play_start = (clamped_start as i32 - comp_start as i32).max(0);
+            let play_end = (comp_end as i32 - clamped_end as i32).max(0);
+
+            comp.set_comp_play_start(play_start);
+            comp.set_comp_play_end(play_end);
+
+            // Ensure current_frame lies inside new play range
+            let (visible_start, visible_end) = comp.play_range();
             let current = comp.current_frame;
-            if current < clamped_start || current > clamped_end {
-                comp.set_current_frame(clamped_start);
+            if current < visible_start || current > visible_end {
+                comp.set_current_frame(visible_start);
             }
         }
     }
@@ -123,8 +138,9 @@ impl Player {
     /// Reset play range of active comp to its full range.
     pub fn reset_play_range(&mut self) {
         if let Some(comp) = self.active_comp_mut() {
-            comp.reset_play_range();
-            comp.set_current_frame(comp.play_range().0);
+            comp.set_comp_play_start(0);
+            comp.set_comp_play_end(0);
+            comp.set_current_frame(comp.start);
         }
     }
 
@@ -370,13 +386,17 @@ impl Player {
         self.last_frame_time = None;
     }
 
-    /// Set current frame (emits CompEvent::CurrentFrameChanged)
+    /// Set current frame (emits CompEvent::CurrentFrameChanged).
+    ///
+    /// Clamps to full comp timeline [comp.start..=comp.end], not play_range,
+    /// so scrubbing/timeline can move outside work area while playback still
+    /// respects play_range.
     pub fn set_frame(&mut self, frame: usize) {
-        let (start, end) = self.play_range();
-        let clamped = frame.clamp(start, end);
-
-        // Update active comp's current_frame (emits event)
         if let Some(comp) = self.active_comp_mut() {
+            if comp.end < comp.start {
+                return;
+            }
+            let clamped = frame.clamp(comp.start, comp.end);
             comp.set_current_frame(clamped);
         }
 

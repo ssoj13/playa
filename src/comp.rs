@@ -49,6 +49,10 @@ pub struct Comp {
     #[serde(default)]
     pub play_end: i32,
 
+    /// Currently selected layer index (if any)
+    #[serde(default)]
+    pub selected_layer: Option<usize>,
+
     /// Current playback position within this comp (persisted)
     #[serde(default)]
     pub current_frame: usize,
@@ -86,6 +90,7 @@ impl Comp {
             play_start: 0,  // Full range by default
             play_end: 0,    // Full range by default
             current_frame: start, // Start at beginning of comp
+            selected_layer: None,
             event_sender: CompEventSender::dummy(),
             cache: RefCell::new(HashMap::new()),
         }
@@ -118,24 +123,9 @@ impl Comp {
         }
     }
 
-    /// Set play range (inclusive) in comp-local frame indices.
-    pub fn set_play_range(&mut self, start: usize, end: usize) {
-        if end < start {
-            self.start = 0;
-            self.end = 0;
-        } else {
-            self.start = start;
-            self.end = end;
-        }
-    }
-
-    /// Reset play range to full length based on current layers.
-    pub fn reset_play_range(&mut self) {
-        // For now, assume full range is [0, total_frames-1] as stored.
-        if self.end < self.start {
-            self.start = 0;
-            self.end = 0;
-        }
+    /// Set selected layer index.
+    pub fn set_selected_layer(&mut self, layer: Option<usize>) {
+        self.selected_layer = layer;
     }
 
     /// Clear per-comp frame cache.
