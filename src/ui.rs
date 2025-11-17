@@ -166,6 +166,9 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                         if ui.button("New Comp").clicked() {
                             actions.new_comp = true;
                         }
+                        if ui.button("Clear All").clicked() {
+                            actions.clear_all_comps = true;
+                        }
                     });
 
                     ui.add_space(4.0);
@@ -218,26 +221,90 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
     actions
 }
 
-/// Render timeline panel (bottom, resizable)
+/// Render timeline panel with transport controls (bottom, resizable)
 ///
 /// egui automatically persists panel size through its internal state.
+/// Returns true if shader was changed.
 pub fn render_timeline_panel(
     ctx: &egui::Context,
     player: &mut Player,
+    shader_manager: &mut Shaders,
     show_frame_numbers: bool,
-) {
+    frame: Option<&Frame>,
+    viewport_state: &crate::viewport::ViewportState,
+    render_time_ms: f32,
+) -> bool {
+    let old_shader = shader_manager.current_shader.clone();
+
     egui::TopBottomPanel::bottom("timeline")
         .resizable(true)
-        .default_height(250.0) // Initial height, egui remembers resize
-        .height_range(100.0..=600.0)
+        .default_height(350.0)
+        .height_range(150.0..=700.0)
         .show(ctx, |ui| {
+            ui.add_space(8.0);
+
+            // Transport controls section (fixed height at top of panel)
+            ui.vertical_centered(|ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("⏮ Start").clicked() {
+                        player.to_start();
+                    }
+
+                    let play_text = if player.is_playing { "⏸ Pause" } else { "▶ Play" };
+                    if ui.button(play_text).clicked() {
+                        player.toggle_play_pause();
+                    }
+
+                    if ui.button("⏹ Stop").clicked() {
+                        player.stop();
+                    }
+
+                    if ui.button("⏭ End").clicked() {
+                        player.to_end();
+                    }
+                });
+            });
+
             ui.add_space(4.0);
 
-            // After Effects-style timeline (vertical layers)
+            // Row 2: FPS, Shader, Loop (centered)
+            ui.vertical_centered(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label("FPS:");
+                    let fps = if player.is_playing { player.fps_play } else { player.fps_base };
+                    ui.label(format!("{:.2}", fps));
+
+                    ui.add_space(16.0);
+
+                    ui.label("Shader:");
+                    egui::ComboBox::from_id_salt("shader_selector")
+                        .selected_text(&shader_manager.current_shader)
+                        .show_ui(ui, |ui| {
+                            for shader_name in shader_manager.get_shader_names() {
+                                ui.selectable_value(
+                                    &mut shader_manager.current_shader,
+                                    shader_name.to_string(),
+                                    shader_name,
+                                );
+                            }
+                        });
+
+                    ui.add_space(16.0);
+
+                    ui.checkbox(&mut player.loop_enabled, "Loop");
+                });
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            // Timeline section
             if let Some(comp_uuid) = &player.active_comp.clone() {
                 if let Some(comp) = player.project.comps.get(comp_uuid) {
                     let mut config = TimelineConfig::default();
                     config.show_frame_numbers = show_frame_numbers;
+                    // Don't set max_height - let ScrollArea use available space naturally
 
                     match render_timeline(ui, comp, &config) {
                         TimelineAction::SetFrame(new_frame) => {
@@ -256,110 +323,61 @@ pub fn render_timeline_panel(
             }
 
             ui.add_space(4.0);
-        });
-}
+            ui.separator();
 
-/// Render transport controls panel (bottom, above timeline)
-pub fn render_controls(
-    ctx: &egui::Context,
-    player: &mut Player,
-    shader_manager: &mut Shaders,
-) -> bool {
-    let old_shader = shader_manager.current_shader.clone();
-
-    egui::TopBottomPanel::bottom("controls")
-        .default_height(80.0)
-        .show(ctx, |ui| {
-        ui.add_space(8.0);
-
-        // Row 1: Transport controls (Start | Play/Pause | End) centered
-        ui.vertical_centered(|ui| {
+            // Status bar section (bottom of panel)
             ui.horizontal(|ui| {
-                if ui.button("⏮ Start").clicked() {
-                    player.to_start();
+                // Filename
+                if let Some(frame) = frame {
+                    if let Some(path) = frame.file() {
+                        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                            ui.monospace(filename);
+                        } else {
+                            ui.monospace("---");
+                        }
+                    } else {
+                        ui.monospace("No file");
+                    }
+                } else {
+                    ui.monospace("No file");
                 }
 
-                let play_text = if player.is_playing { "⏸ Pause" } else { "▶ Play" };
-                if ui.button(play_text).clicked() {
-                    player.toggle_play_pause();
+                ui.separator();
+
+                // Resolution
+                if let Some(img) = frame {
+                    ui.monospace(format!("{:>4}x{:<4}", img.width(), img.height()));
+                } else {
+                    ui.monospace("   0x0   ");
                 }
 
-                if ui.button("End ⏭").clicked() {
-                    player.to_end();
+                ui.separator();
+
+                // Pixel format
+                if let Some(img) = frame {
+                    let format_str = match img.pixel_format() {
+                        crate::frame::PixelFormat::Rgba8 => "RGBA u8",
+                        crate::frame::PixelFormat::RgbaF16 => "RGBA f16",
+                        crate::frame::PixelFormat::RgbaF32 => "RGBA f32",
+                    };
+                    ui.monospace(format_str);
+                } else {
+                    ui.monospace("---");
                 }
+
+                ui.separator();
+
+                // Zoom
+                ui.monospace(format!("{:>6.1}%", viewport_state.zoom * 100.0));
+
+                ui.separator();
+
+                // Render time
+                ui.monospace(format!("{:.1}ms", render_time_ms));
             });
+
+            ui.add_space(4.0);
         });
-
-        ui.add_space(4.0);
-
-        // Row 2: Loop, FPS, Shader, and Frame number
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut player.loop_enabled, "Loop");
-
-            ui.separator();
-
-            ui.label("Base FPS:");
-
-            let old_fps = player.fps_base;
-
-            egui::ComboBox::from_id_salt("fps_combo")
-                .selected_text(format!("{:.0}", player.fps_base))
-                .show_ui(ui, |ui| {
-                    for &fps_value in &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0] {
-                        ui.selectable_value(
-                            &mut player.fps_base,
-                            fps_value,
-                            format!("{:.0}", fps_value),
-                        );
-                    }
-                });
-
-            ui.add(
-                egui::DragValue::new(&mut player.fps_base)
-                    .speed(0.1)
-                    .range(0.00000001..=1000.0),
-            );
-
-            if (player.fps_base - old_fps).abs() > 0.001 && player.is_playing {
-                if player.fps_play < player.fps_base {
-                    log::debug!(
-                        "Base FPS changed from {:.1} to {:.1}, pushing play_fps from {:.1} to {:.1}",
-                        old_fps,
-                        player.fps_base,
-                        player.fps_play,
-                        player.fps_base
-                    );
-                    player.fps_play = player.fps_base;
-                }
-            }
-
-            if player.is_playing {
-                ui.label(format!("Play FPS: {:.0}", player.fps_play));
-            }
-
-            ui.separator();
-
-            ui.label("Shader:");
-            egui::ComboBox::from_id_salt("shader_combo")
-                .selected_text(shader_manager.current_shader.to_string())
-                .show_ui(ui, |ui| {
-                    for shader_name in shader_manager.get_shader_names() {
-                        ui.selectable_value(
-                            &mut shader_manager.current_shader,
-                            shader_name.clone(),
-                            shader_name,
-                        );
-                    }
-                });
-
-            ui.separator();
-
-            ui.label("Frame:");
-            ui.label(format!("{}", player.current_frame()));
-        });
-
-        ui.add_space(8.0);
-    });
 
     old_shader != shader_manager.current_shader
 }

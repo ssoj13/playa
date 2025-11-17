@@ -58,11 +58,11 @@ pub fn render_timeline(
         draw_frame_ruler(ui, comp, config, timeline_width);
     }
 
-    // Scrollable area for layers (constrained height)
-    let available_height = ui.available_height();
+    // Scrollable area for layers
+    // Use id_salt for persistence and let egui manage sizing naturally
     egui::ScrollArea::both()
+        .id_salt("timeline_scroll")
         .auto_shrink([false, false])
-        .max_height(available_height)
         .show(ui, |ui| {
             // Two-column layout: layer names | timeline bars
             ui.horizontal(|ui| {

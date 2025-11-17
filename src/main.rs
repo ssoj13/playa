@@ -749,38 +749,49 @@ impl eframe::App for PlayaApp {
                     warn!("Cannot remove the last composition");
                 }
             }
+
+            // Clear all compositions
+            if project_actions.clear_all_comps {
+                self.player.project.comps.clear();
+                self.player.project.order_comps.clear();
+
+                // Create new default comp
+                use crate::comp::Comp;
+                let fps = 30.0;
+                let end = (fps * 5.0) as usize; // 5 seconds
+                let mut comp = Comp::new("Main", 0, end, fps);
+                let uuid = comp.uuid.clone();
+
+                // Set event sender for the new comp
+                comp.set_event_sender(self.comp_event_sender.clone());
+
+                self.player.project.comps.insert(uuid.clone(), comp);
+                self.player.project.order_comps.push(uuid.clone());
+
+                // Activate the new comp
+                self.player.set_active_comp(uuid.clone());
+
+                info!("Cleared all compositions and created new default");
+            }
         }
 
         if !self.is_fullscreen {
-            // Render timeline first (bottom-most panel, resizable)
+            // Render timeline panel with transport controls and status bar (bottom, resizable)
             // Note: egui automatically persists panel size via panel id
-            ui::render_timeline_panel(
-                ctx,
-                &mut self.player,
-                self.settings.show_frame_numbers,
-            );
-
-            // Then render transport controls (above timeline)
-            let shader_changed = ui::render_controls(
+            let shader_changed = ui::render_timeline_panel(
                 ctx,
                 &mut self.player,
                 &mut self.shader_manager,
+                self.settings.show_frame_numbers,
+                self.frame.as_ref(),
+                &self.viewport_state,
+                self.last_render_time_ms,
             );
             if shader_changed {
                 let mut renderer = self.viewport_renderer.lock().unwrap();
                 renderer.update_shader(&self.shader_manager);
                 log::info!("Shader changed to: {}", self.shader_manager.current_shader);
             }
-        }
-
-        if !self.is_fullscreen {
-            self.status_bar.render(
-                ctx,
-                self.frame.as_ref(),
-                &self.player,
-                &self.viewport_state,
-                self.last_render_time_ms,
-            );
         }
 
         // Render viewport (central panel)
