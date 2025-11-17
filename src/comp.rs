@@ -194,7 +194,7 @@ impl Comp {
     /// - Converts global comp frame to local source frame via LayerRef.global_to_local()
     /// - Resolves MediaSource from Project.media by UUID
     /// - Recursively gets frames (supports nested Comps)
-    /// - Currently returns first layer's frame (TODO: full multi-layer blending)
+    /// - Blends multiple layers with CPU compositor (GPU compositor planned)
     fn compose(&self, frame_idx: usize, project: &crate::project::Project) -> Option<Frame> {
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
 
@@ -226,9 +226,8 @@ impl Comp {
             }
         }
 
-        // Simple composition: return first layer's frame
-        // TODO: Multi-layer blending with opacity/blend modes
-        source_frames.first().map(|(f, _)| f.clone())
+        // Blend all layers with project compositor (CPU or GPU)
+        project.compositor.blend(source_frames)
     }
 }
 
@@ -346,5 +345,49 @@ mod tests {
         comp2.layers[0].attrs.set("opacity", crate::attrs::AttrValue::Float(0.7));
         let hash3 = comp2.compute_layers_hash();
         assert_ne!(hash1, hash3, "Different opacity should produce different hash");
+    }
+
+    /// Test multi-layer blending with compositor
+    #[test]
+    fn test_multi_layer_blending() {
+        let mut project = Project::new();
+
+        // Create 3 clips with different frames
+        for i in 0..3 {
+            let frames: Vec<Frame> = (0..5).map(|_| dummy_frame(i * 30)).collect();
+            let clip = Clip::from_frames(frames, format!("clip_{}", i), 2, 2);
+            let clip_uuid = clip.uuid.clone();
+            project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
+            project.clips_order.push(clip_uuid.clone());
+        }
+
+        // Create Comp with all 3 clips as layers
+        let mut comp = Comp::new("Multi-layer Comp", 0, 4, 24.0);
+
+        // Layer 0: clip 0, full opacity
+        let layer0 = Layer::new(project.clips_order[0].clone(), 0, 4);
+        comp.layers.push(layer0);
+
+        // Layer 1: clip 1, 50% opacity
+        let mut layer1 = Layer::new(project.clips_order[1].clone(), 0, 4);
+        layer1.attrs.set("opacity", crate::attrs::AttrValue::Float(0.5));
+        comp.layers.push(layer1);
+
+        // Layer 2: clip 2, 30% opacity
+        let mut layer2 = Layer::new(project.clips_order[2].clone(), 0, 4);
+        layer2.attrs.set("opacity", crate::attrs::AttrValue::Float(0.3));
+        comp.layers.push(layer2);
+
+        let comp_uuid = comp.uuid.clone();
+        project.media.insert(comp_uuid.clone(), MediaSource::Comp(comp));
+
+        // Get frame - should blend all 3 layers
+        let comp = project.media.get(&comp_uuid).unwrap().as_comp().unwrap();
+        let frame = comp.get_frame(2, &project);
+
+        assert!(frame.is_some(), "Multi-layer composition should succeed");
+
+        // Verify cache contains the blended result
+        assert_eq!(comp.cache.borrow().len(), 1, "Cache should contain blended frame");
     }
 }

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::attrs::Attrs;
 use crate::comp::Comp;
+use crate::compositor::CompositorType;
 use crate::media::MediaSource;
 
 /// Top-level project / scene.
@@ -28,6 +29,12 @@ pub struct Project {
 
     /// Order for compositions in UI (UUIDs)
     pub comps_order: Vec<String>,
+
+    /// Frame compositor (runtime-only, not serialized)
+    /// Used by Comp.compose() for multi-layer blending
+    #[serde(skip)]
+    #[serde(default)]
+    pub compositor: CompositorType,
 }
 
 impl Project {
@@ -37,6 +44,7 @@ impl Project {
             media: HashMap::new(),
             clips_order: Vec::new(),
             comps_order: Vec::new(),
+            compositor: CompositorType::default(), // CPU compositor by default
         }
     }
 
@@ -108,8 +116,12 @@ impl Project {
     /// Rebuild runtime-only state after deserialization.
     ///
     /// - Clears per-comp caches.
+    /// - Reinitializes compositor to default (CPU).
     /// - Sets event sender for all comps.
     pub fn rebuild_runtime(&mut self, event_sender: Option<crate::events::CompEventSender>) {
+        // Reinitialize compositor (not serialized)
+        self.compositor = CompositorType::default();
+
         // Rebuild comps in unified media HashMap
         for source in self.media.values() {
             if let Some(comp) = source.as_comp() {
@@ -120,6 +132,15 @@ impl Project {
                 let _ = event_sender;
             }
         }
+    }
+
+    /// Set compositor type (CPU or GPU).
+    ///
+    /// Allows switching between CPU and GPU compositing backends.
+    /// GPU compositor requires OpenGL/WGPU context (future feature).
+    pub fn set_compositor(&mut self, compositor: CompositorType) {
+        log::info!("Compositor changed to: {:?}", compositor);
+        self.compositor = compositor;
     }
 }
 

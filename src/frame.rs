@@ -261,6 +261,57 @@ impl Frame {
         Self::new(width, height, PixelDepth::F32)
     }
 
+    /// Create frame from F32 buffer (used by compositor)
+    pub(crate) fn from_f32_buffer(buffer: Vec<f32>, width: usize, height: usize) -> Self {
+        let data = FrameData {
+            buffer: Arc::new(PixelBuffer::F32(buffer)),
+            pixel_format: PixelFormat::RgbaF32,
+            width,
+            height,
+            status: FrameStatus::Loaded,
+            attrs: Attrs::new(),
+        };
+
+        Self {
+            data: Arc::new(Mutex::new(data)),
+            filename: None,
+        }
+    }
+
+    /// Create frame from F16 buffer (used by compositor)
+    pub(crate) fn from_f16_buffer(buffer: Vec<F16>, width: usize, height: usize) -> Self {
+        let data = FrameData {
+            buffer: Arc::new(PixelBuffer::F16(buffer)),
+            pixel_format: PixelFormat::RgbaF16,
+            width,
+            height,
+            status: FrameStatus::Loaded,
+            attrs: Attrs::new(),
+        };
+
+        Self {
+            data: Arc::new(Mutex::new(data)),
+            filename: None,
+        }
+    }
+
+    /// Create frame from U8 buffer (used by compositor)
+    pub(crate) fn from_u8_buffer(buffer: Vec<u8>, width: usize, height: usize) -> Self {
+        let data = FrameData {
+            buffer: Arc::new(PixelBuffer::U8(buffer)),
+            pixel_format: PixelFormat::Rgba8,
+            width,
+            height,
+            status: FrameStatus::Loaded,
+            attrs: Attrs::new(),
+        };
+
+        Self {
+            data: Arc::new(Mutex::new(data)),
+            filename: None,
+        }
+    }
+
     /// Create unloaded frame placeholder with path (for deserialization/caching)
     pub fn new_unloaded(path: PathBuf) -> Self {
         // Create minimal 1x1 green placeholder

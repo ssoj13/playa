@@ -6,6 +6,7 @@ mod frame;
 mod attrs;
 mod clip;
 mod comp;
+mod compositor;
 mod layer;
 mod media;
 mod project;

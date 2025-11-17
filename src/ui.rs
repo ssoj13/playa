@@ -244,7 +244,7 @@ pub fn render_timeline_panel(
             // ВАЖНО: заставляем контент занимать всю высоту панели,
             // чтобы egui не схлопывал панель до высоты содержимого
             // и не «передумывал» размер после ресайза.
-            ui.set_min_height(ui.available_height());
+            // Removed ui.set_min_height(ui.available_height()) to fix panel jumping after resize
             ui.add_space(8.0);
 
             // Transport controls section (fixed height at top of panel)
