@@ -203,7 +203,17 @@ impl Default for PlayaApp {
     }
 }
 
-impl PlayaApp {
+  impl PlayaApp {
+      /// Attach composition event sender to all comps in the current project.
+      fn attach_comp_event_sender(&mut self) {
+          let sender = self.comp_event_sender.clone();
+          for source in self.player.project.media.values_mut() {
+              if let Some(comp) = source.as_comp_mut() {
+                  comp.set_event_sender(sender.clone());
+              }
+          }
+      }
+
     /// Load sequences from file paths and append to player/project
     ///
     /// Detects sequences from provided paths, appends them to the player project,
@@ -215,14 +225,17 @@ impl PlayaApp {
     /// # Returns
     /// * `Ok(())` - Sequences loaded successfully
     /// * `Err(String)` - Detection or loading failed with error message
-    fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
-        match clip::detect(paths.clone()) {
-            Ok(clips) => {
-                    for clip in clips {
-                        self.player.append_clip(clip);
-                    }
-                // Clear error message on successful load
-                self.error_msg = None;
+      fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
+          match clip::detect(paths.clone()) {
+              Ok(clips) => {
+                      for clip in clips {
+                          self.player.append_clip(clip);
+                      }
+                  // Ensure all comps have a valid event sender after clips/comps were modified
+                  self.attach_comp_event_sender();
+
+                  // Clear error message on successful load
+                  self.error_msg = None;
                 info!("Loaded {} path(s)", paths.len());
                 Ok(())
             }
@@ -384,15 +397,17 @@ impl PlayaApp {
         }
     }
 
-    /// Load project from JSON file
-    fn load_project(&mut self, path: PathBuf) {
-        match crate::project::Project::from_json(&path) {
-            Ok(project) => {
-                info!("Loaded project from {}", path.display());
-
-                self.player.project = project;
-                self.error_msg = None;
-            }
+      /// Load project from JSON file
+      fn load_project(&mut self, path: PathBuf) {
+          match crate::project::Project::from_json(&path) {
+              Ok(project) => {
+                  info!("Loaded project from {}", path.display());
+ 
+                  self.player.project = project;
+                  // Re-attach event sender for all comps in loaded project
+                  self.attach_comp_event_sender();
+                  self.error_msg = None;
+              }
             Err(e) => {
                 error!("{}", e);
                 self.error_msg = Some(e);
@@ -1143,6 +1158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                       match crate::project::Project::from_json(playlist_path) {
                           Ok(project) => {
                               app.player.project = project;
+                              app.attach_comp_event_sender();
                               info!("Playlist loaded via Project");
                           }
                           Err(e) => {
