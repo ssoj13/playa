@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::frame::{Frame, FrameStatus};
 use crate::player::Player;
 use crate::shaders::Shaders;
-use crate::timeline::{render_timeline, TimelineConfig, TimelineAction};
+use crate::timeline::{render_timeline, TimelineConfig, TimelineAction, TimelineState};
 use crate::utils::media;
 use crate::viewport::{ViewportRenderer, ViewportState};
 
@@ -74,7 +74,7 @@ pub struct ProjectActions {
 // Deprecated - use ProjectActions
 pub type PlaylistActions = ProjectActions;
 
-/// Render project window (right panel): MediaPool + Compositions
+/// Render project window (right panel): Unified list of Clips & Compositions
 pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> ProjectActions {
     let mut actions = ProjectActions {
         load_sequence: None,
@@ -97,7 +97,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                 .show(ui, |ui| {
                     ui.heading("Project");
 
-                    // Save/Load Project buttons
+                    // Action buttons (2 rows)
                     ui.horizontal(|ui| {
                         if ui.button("Save").clicked()
                             && let Some(path) = rfd::FileDialog::new()
@@ -117,53 +117,14 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                         }
                     });
 
-                    ui.separator();
-
-                    // === MEDIA POOL SECTION ===
-                    ui.heading("Media Pool");
                     ui.horizontal(|ui| {
-                        if ui.button("Add Clips").clicked()
+                        if ui.button("Add Clip").clicked()
                             && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
                             && !paths.is_empty()
                         {
                             actions.load_sequence = Some(paths[0].clone());
                         }
-                    });
-
-                    ui.add_space(4.0);
-
-                    // List clips
-                    egui::ScrollArea::vertical()
-                        .max_height(200.0)
-                        .auto_shrink([false; 2])
-                        .show(ui, |ui| {
-                            for clip_uuid in &player.project.clips_order {
-                                let clip = match player.project.media.get(clip_uuid).and_then(|s| s.as_clip()) {
-                                    Some(c) => c,
-                                    None => continue,
-                                };
-
-                                ui.horizontal(|ui| {
-                                    ui.label(clip.pattern());
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.small_button("X").clicked() {
-                                            actions.remove_clip = Some(clip_uuid.clone());
-                                        }
-                                        ui.label(format!("{}f", clip.len()));
-                                        let (w, h) = clip.resolution();
-                                        ui.label(format!("{}x{}", w, h));
-                                    });
-                                });
-                                ui.add_space(2.0);
-                            }
-                        });
-
-                    ui.separator();
-
-                    // === COMPOSITIONS SECTION ===
-                    ui.heading("Compositions");
-                    ui.horizontal(|ui| {
-                        if ui.button("New Comp").clicked() {
+                        if ui.button("Add Comp").clicked() {
                             actions.new_comp = true;
                         }
                         if ui.button("Clear All").clicked() {
@@ -171,12 +132,81 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                         }
                     });
 
-                    ui.add_space(4.0);
+                    ui.separator();
 
-                    // List comps
+                    // === UNIFIED ITEM LIST ===
+                    ui.heading("Items");
+
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
+                            // First, list all clips
+                            for clip_uuid in &player.project.clips_order {
+                                let clip = match player.project.media.get(clip_uuid).and_then(|s| s.as_clip()) {
+                                    Some(c) => c,
+                                    None => continue,
+                                };
+
+                                ui.horizontal(|ui| {
+                                    // Clip icon
+                                    ui.label("📹");
+
+                                    // Clip name (truncated pattern) - make it draggable
+                                    let pattern = clip.pattern();
+                                    let display_name = if pattern.len() > 25 {
+                                        format!("{}...", &pattern[..25])
+                                    } else {
+                                        pattern.to_string()
+                                    };
+
+                                    // Use allocate_rect instead of Label to prevent text selection
+                                    let text_color = ui.visuals().text_color();
+                                    let text_galley = ui.painter().layout_no_wrap(
+                                        display_name.clone(),
+                                        egui::FontId::default(),
+                                        text_color,
+                                    );
+                                    let desired_size = text_galley.size();
+                                    let (rect, label_response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
+
+                                    if ui.is_rect_visible(rect) {
+                                        ui.painter().galley(rect.min, text_galley, text_color);
+                                    }
+
+                                    // Handle drag for clips - store drag state
+                                    if label_response.drag_started() {
+                                        if let Some(pos) = label_response.interact_pointer_pos() {
+                                            ui.ctx().data_mut(|data| {
+                                                data.insert_temp(egui::Id::new("global_drag_state"),
+                                                    crate::timeline::GlobalDragState::ProjectItem {
+                                                        source_uuid: clip_uuid.clone(),
+                                                        drag_start_pos: pos,
+                                                    });
+                                            });
+                                        }
+                                    }
+
+                                    // Update cursor based on drag state
+                                    if label_response.dragged() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                                    } else if label_response.hovered() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                                    }
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        if ui.small_button("✖").clicked() {
+                                            actions.remove_clip = Some(clip_uuid.clone());
+                                        }
+                                        ui.label(format!("{}f", clip.len()));
+                                        let (w, h) = clip.resolution();
+                                        ui.label(format!("{}x{}", w, h));
+                                    });
+                                });
+
+                                ui.add_space(2.0);
+                            }
+
+                            // Then, list all compositions
                             for comp_uuid in &player.project.comps_order {
                                 let comp = match player.project.media.get(comp_uuid).and_then(|s| s.as_comp()) {
                                     Some(c) => c,
@@ -189,27 +219,64 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                     egui::Frame::new()
                                         .fill(ui.style().visuals.selection.bg_fill)
                                         .inner_margin(4.0)
+                                        .corner_radius(2.0)
                                 } else {
                                     egui::Frame::new().inner_margin(4.0)
                                 };
 
                                 frame.show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        let response = ui.selectable_label(false, &comp.name);
+                                        // Comp icon
+                                        ui.label("🎬");
+
+                                        // Comp name - clickable for activation and draggable
+                                        // Use allocate_rect instead of Label to prevent text selection
+                                        let text_color = ui.visuals().text_color();
+                                        let text_galley = ui.painter().layout_no_wrap(
+                                            comp.name.clone(),
+                                            egui::FontId::default(),
+                                            text_color,
+                                        );
+                                        let desired_size = text_galley.size();
+                                        let (rect, name_response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
+
+                                        if ui.is_rect_visible(rect) {
+                                            ui.painter().galley(rect.min, text_galley, text_color);
+                                        }
 
                                         // Double-click to activate
-                                        if response.double_clicked() {
+                                        if name_response.double_clicked() {
                                             actions.set_active_comp = Some(comp_uuid.clone());
                                         }
 
+                                        // Handle drag for comps - store drag state
+                                        if name_response.drag_started() {
+                                            if let Some(pos) = name_response.interact_pointer_pos() {
+                                                ui.ctx().data_mut(|data| {
+                                                    data.insert_temp(egui::Id::new("global_drag_state"),
+                                                        crate::timeline::GlobalDragState::ProjectItem {
+                                                            source_uuid: comp_uuid.clone(),
+                                                            drag_start_pos: pos,
+                                                        });
+                                                });
+                                            }
+                                        }
+
+                                        // Update cursor based on drag state
+                                        if name_response.dragged() {
+                                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                                        } else if name_response.hovered() {
+                                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                                        }
+
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if ui.small_button("X").clicked() {
+                                            if ui.small_button("✖").clicked() {
                                                 actions.remove_comp = Some(comp_uuid.clone());
                                             }
                                             ui.label(format!("{}fps", comp.fps as u32));
                                             ui.label(format!("{}f", comp.total_frames()));
                                         });
-                                    });
+                                    })
                                 });
 
                                 ui.add_space(2.0);
@@ -233,6 +300,7 @@ pub fn render_timeline_panel(
     frame: Option<&Frame>,
     viewport_state: &crate::viewport::ViewportState,
     render_time_ms: f32,
+    timeline_state: &mut TimelineState,
 ) -> bool {
     let old_shader = shader_manager.current_shader.clone();
 
@@ -241,81 +309,117 @@ pub fn render_timeline_panel(
         .default_height(350.0)
         .height_range(150.0..=700.0)
         .show(ctx, |ui| {
-            // ВАЖНО: заставляем контент занимать всю высоту панели,
-            // чтобы egui не схлопывал панель до высоты содержимого
-            // и не «передумывал» размер после ресайза.
-            // Removed ui.set_min_height(ui.available_height()) to fix panel jumping after resize
-            ui.add_space(8.0);
-
-            // Transport controls section (fixed height at top of panel)
-            ui.vertical_centered(|ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("⏮ Start").clicked() {
-                        player.to_start();
-                    }
-
-                    let play_text = if player.is_playing { "⏸ Pause" } else { "▶ Play" };
-                    if ui.button(play_text).clicked() {
-                        player.toggle_play_pause();
-                    }
-
-                    if ui.button("⏹ Stop").clicked() {
-                        player.stop();
-                    }
-
-                    if ui.button("⏭ End").clicked() {
-                        player.to_end();
-                    }
-                });
+            // Loop and FPS info at top of panel
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut player.loop_enabled, "Loop");
+                ui.add_space(16.0);
+                ui.label("FPS:");
+                let fps = if player.is_playing { player.fps_play } else { player.fps_base };
+                ui.label(format!("{:.2}", fps));
             });
 
             ui.add_space(4.0);
-
-            // Row 2: FPS, Shader, Loop (centered)
-            ui.vertical_centered(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label("FPS:");
-                    let fps = if player.is_playing { player.fps_play } else { player.fps_base };
-                    ui.label(format!("{:.2}", fps));
-
-                    ui.add_space(16.0);
-
-                    ui.label("Shader:");
-                    egui::ComboBox::from_id_salt("shader_selector")
-                        .selected_text(&shader_manager.current_shader)
-                        .show_ui(ui, |ui| {
-                            for shader_name in shader_manager.get_shader_names() {
-                                ui.selectable_value(
-                                    &mut shader_manager.current_shader,
-                                    shader_name.to_string(),
-                                    shader_name,
-                                );
-                            }
-                        });
-
-                    ui.add_space(16.0);
-
-                    ui.checkbox(&mut player.loop_enabled, "Loop");
-                });
-            });
-
-            ui.add_space(8.0);
             ui.separator();
-            ui.add_space(4.0);
 
-            // Timeline section
+            // Timeline section (with integrated transport controls)
             if let Some(comp_uuid) = &player.active_comp.clone() {
                 if let Some(comp) = player.project.media.get(comp_uuid).and_then(|s| s.as_comp()) {
                     let mut config = TimelineConfig::default();
                     config.show_frame_numbers = show_frame_numbers;
-                    // Don't set max_height - let ScrollArea use available space naturally
 
-                    match render_timeline(ui, comp, &config) {
+                    match render_timeline(ui, comp, &config, timeline_state) {
                         TimelineAction::SetFrame(new_frame) => {
                             player.set_frame(new_frame);
                         }
                         TimelineAction::SelectLayer(_idx) => {
                             // TODO: implement layer selection
+                        }
+                        TimelineAction::ToStart => {
+                            player.to_start();
+                        }
+                        TimelineAction::ToEnd => {
+                            player.to_end();
+                        }
+                        TimelineAction::TogglePlay => {
+                            player.toggle_play_pause();
+                        }
+                        TimelineAction::Stop => {
+                            player.stop();
+                        }
+                        TimelineAction::JumpToPrevEdge => {
+                            // Get layer edges sorted by distance from current frame
+                            let edges = comp.get_layer_edges_near(comp.current_frame);
+
+                            // Find first edge that is before current frame
+                            if let Some(&(frame, _)) = edges.iter().find(|(f, _)| *f < comp.current_frame) {
+                                player.set_frame(frame);
+                            }
+                        }
+                        TimelineAction::JumpToNextEdge => {
+                            // Get layer edges sorted by distance from current frame
+                            let edges = comp.get_layer_edges_near(comp.current_frame);
+
+                            // Find first edge that is after current frame
+                            if let Some(&(frame, _)) = edges.iter().find(|(f, _)| *f > comp.current_frame) {
+                                player.set_frame(frame);
+                            }
+                        }
+                        TimelineAction::AddLayer { source_uuid, start_frame } => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                // Get duration first (immutable borrow)
+                                let duration_opt = player.project.media.get(&source_uuid)
+                                    .map(|s| s.total_frames());
+
+                                if let Some(duration) = duration_opt {
+                                    // Then get mutable comp
+                                    if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                        let end_frame = start_frame + duration - 1;
+                                        let layer = crate::layer::Layer::new(source_uuid.clone(), start_frame, end_frame);
+                                        comp.layers.push(layer);
+                                        comp.clear_cache();
+                                    }
+                                } else {
+                                    eprintln!("Source {} not found", source_uuid);
+                                }
+                            }
+                        }
+                        TimelineAction::MoveLayer { layer_idx, new_start } => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    if let Err(e) = comp.move_layer(layer_idx, new_start) {
+                                        eprintln!("Failed to move layer: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        TimelineAction::ReorderLayer { from_idx, to_idx } => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    if from_idx != to_idx && from_idx < comp.layers.len() && to_idx < comp.layers.len() {
+                                        let layer = comp.layers.remove(from_idx);
+                                        comp.layers.insert(to_idx, layer);
+                                        comp.clear_cache();
+                                    }
+                                }
+                            }
+                        }
+                        TimelineAction::TrimLayerStart { layer_idx, new_trim } => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    if let Err(e) = comp.trim_layer_start(layer_idx, new_trim) {
+                                        eprintln!("Failed to trim layer start: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                        TimelineAction::TrimLayerEnd { layer_idx, new_trim } => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    if let Err(e) = comp.trim_layer_end(layer_idx, new_trim) {
+                                        eprintln!("Failed to trim layer end: {}", e);
+                                    }
+                                }
+                            }
                         }
                         TimelineAction::None => {}
                     }
@@ -399,6 +503,7 @@ pub fn render_viewport(
     player: &mut Player,
     viewport_state: &mut ViewportState,
     viewport_renderer: &Arc<Mutex<ViewportRenderer>>,
+    shader_manager: &mut Shaders,
     show_help: bool,
     is_fullscreen: bool,
     texture_needs_upload: bool,
@@ -529,6 +634,26 @@ pub fn render_viewport(
         if show_help {
             render_help_overlay(ui, panel_rect);
         }
+
+        // Shader selector overlay (top-right corner)
+        egui::Area::new(ui.id().with("shader_overlay"))
+            .fixed_pos(egui::pos2(panel_rect.max.x - 200.0, panel_rect.min.y + 10.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Shader:");
+                    egui::ComboBox::from_id_salt("shader_selector_viewport")
+                        .selected_text(&shader_manager.current_shader)
+                        .show_ui(ui, |ui| {
+                            for shader_name in shader_manager.get_shader_names() {
+                                ui.selectable_value(
+                                    &mut shader_manager.current_shader,
+                                    shader_name.to_string(),
+                                    shader_name,
+                                );
+                            }
+                        });
+                });
+            });
     });
 
     (actions, render_time_ms)

@@ -124,6 +124,8 @@ struct PlayaApp {
     viewport_renderer: std::sync::Arc<std::sync::Mutex<ViewportRenderer>>,
     viewport_state: ViewportState,
     #[serde(skip)]
+    timeline_state: crate::timeline::TimelineState,
+    #[serde(skip)]
     shader_manager: Shaders,
     #[serde(skip)]
     last_render_time_ms: f32,
@@ -180,6 +182,7 @@ impl Default for PlayaApp {
             status_bar,
             viewport_renderer: std::sync::Arc::new(std::sync::Mutex::new(ViewportRenderer::new())),
             viewport_state: ViewportState::new(),
+            timeline_state: crate::timeline::TimelineState::default(),
             shader_manager: Shaders::new(),
             last_render_time_ms: 0.0,
             settings: AppSettings::default(),
@@ -775,28 +778,12 @@ impl eframe::App for PlayaApp {
 
             // Clear all compositions
             if project_actions.clear_all_comps {
-                // Remove all comps from media
-                self.player.project.media.retain(|_, source| !source.is_comp());
+                // Remove all clips and comps from media
+                self.player.project.media.clear();
+                self.player.project.clips_order.clear();
                 self.player.project.comps_order.clear();
-
-                // Create new default comp
-                use crate::comp::Comp;
-                use crate::media::MediaSource;
-                let fps = 30.0;
-                let end = (fps * 5.0) as usize; // 5 seconds
-                let mut comp = Comp::new("Main", 0, end, fps);
-                let uuid = comp.uuid.clone();
-
-                // Set event sender for the new comp
-                comp.set_event_sender(self.comp_event_sender.clone());
-
-                self.player.project.media.insert(uuid.clone(), MediaSource::Comp(comp));
-                self.player.project.comps_order.push(uuid.clone());
-
-                // Activate the new comp
-                self.player.set_active_comp(uuid.clone());
-
-                info!("Cleared all compositions and created new default");
+                self.player.active_comp = None;
+                info!("All clips and compositions cleared");
             }
         }
 
@@ -811,6 +798,7 @@ impl eframe::App for PlayaApp {
                 self.frame.as_ref(),
                 &self.viewport_state,
                 self.last_render_time_ms,
+                &mut self.timeline_state,
             );
             if shader_changed {
                 let mut renderer = self.viewport_renderer.lock().unwrap();
@@ -827,6 +815,7 @@ impl eframe::App for PlayaApp {
             &mut self.player,
             &mut self.viewport_state,
             &self.viewport_renderer,
+            &mut self.shader_manager,
             self.show_help,
             self.is_fullscreen,
             texture_needs_upload,
@@ -834,6 +823,17 @@ impl eframe::App for PlayaApp {
         self.last_render_time_ms = render_time;
         if let Some(path) = viewport_actions.load_sequence {
             let _ = self.load_sequences(vec![path]);
+        }
+
+        // Status bar (bottom panel - render before central viewport panel)
+        if !self.is_fullscreen {
+            self.status_bar.render(
+                ctx,
+                self.frame.as_ref(),
+                &self.player,
+                &self.viewport_state,
+                self.last_render_time_ms,
+            );
         }
 
         // Settings window (can be shown even in cinema mode)

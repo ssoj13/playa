@@ -229,6 +229,141 @@ impl Comp {
         // Blend all layers with project compositor (CPU or GPU)
         project.compositor.blend(source_frames)
     }
+
+    /// Add a new layer to the composition at specified start frame.
+    ///
+    /// Automatically determines layer duration from source and creates layer with proper attributes.
+    pub fn add_layer(
+        &mut self,
+        source_uuid: String,
+        start_frame: usize,
+        project: &crate::project::Project,
+    ) -> anyhow::Result<()> {
+        // Get source to determine duration
+        let source = project
+            .media
+            .get(&source_uuid)
+            .ok_or_else(|| anyhow::anyhow!("Source {} not found", source_uuid))?;
+
+        let duration = source.total_frames();
+        let end_frame = start_frame + duration - 1;
+
+        // Create new layer with proper signature
+        let layer = Layer::new(source_uuid, start_frame, end_frame);
+
+        // Add to layers (top)
+        self.layers.push(layer);
+
+        // Clear cache and emit event
+        self.clear_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+
+        Ok(())
+    }
+
+    /// Move a layer to a new start position, preserving duration.
+    pub fn move_layer(&mut self, layer_idx: usize, new_start: usize) -> anyhow::Result<()> {
+        let layer = self
+            .layers
+            .get_mut(layer_idx)
+            .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
+
+        let old_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
+        let old_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+        let duration = if old_end >= old_start {
+            old_end - old_start
+        } else {
+            0
+        };
+
+        layer.attrs.set("start", AttrValue::UInt(new_start as u32));
+        layer
+            .attrs
+            .set("end", AttrValue::UInt((new_start + duration) as u32));
+
+        // Clear cache and emit event
+        self.clear_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+
+        Ok(())
+    }
+
+    /// Trim layer start (adjust trim_start attribute).
+    pub fn trim_layer_start(&mut self, layer_idx: usize, new_trim: i32) -> anyhow::Result<()> {
+        let layer = self
+            .layers
+            .get_mut(layer_idx)
+            .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
+
+        layer.attrs.set("trim_start", AttrValue::Int(new_trim));
+
+        // Clear cache and emit event
+        self.clear_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+
+        Ok(())
+    }
+
+    /// Trim layer end (adjust trim_end attribute).
+    pub fn trim_layer_end(&mut self, layer_idx: usize, new_trim: i32) -> anyhow::Result<()> {
+        let layer = self
+            .layers
+            .get_mut(layer_idx)
+            .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
+
+        layer.attrs.set("trim_end", AttrValue::Int(new_trim));
+
+        // Clear cache and emit event
+        self.clear_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+
+        Ok(())
+    }
+
+    /// Get all layer edges (start and end frames) sorted by distance from given frame
+    /// Returns vec of (frame_number, is_start) tuples
+    pub fn get_layer_edges_near(&self, from_frame: usize) -> Vec<(usize, bool)> {
+        let mut edges = Vec::new();
+
+        for layer in &self.layers {
+            let start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
+            let end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+            let trim_start = layer.attrs.get_i32("trim_start").unwrap_or(0);
+            let trim_end = layer.attrs.get_i32("trim_end").unwrap_or(0);
+
+            // Visible range accounting for trim
+            let visible_start = start + trim_start as usize;
+            let visible_end = end.saturating_sub(trim_end as usize);
+
+            if visible_start < visible_end {
+                edges.push((visible_start, true));   // Start edge
+                edges.push((visible_end, false));    // End edge
+            }
+        }
+
+        // Sort by distance from from_frame
+        edges.sort_by_key(|(frame, _)| {
+            let dist = if *frame > from_frame {
+                *frame - from_frame
+            } else {
+                from_frame - *frame
+            };
+            dist
+        });
+
+        // Remove duplicates while preserving order
+        edges.dedup_by_key(|(frame, _)| *frame);
+
+        edges
+    }
 }
 
 #[cfg(test)]
