@@ -293,10 +293,10 @@ impl PlayaApp {
                 }
 
                 // Convert global comp frame to local clip frame
-                let trim_start = layer.attrs.get_i32("trim_start").unwrap_or(0);
-                let clip_idx = (global_idx - layer_start) as i32 + trim_start;
+                let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
+                let clip_idx = (global_idx - layer_start) as i32 + play_start;
                 if clip_idx < 0 {
-                    debug!("Frame {} not active in layer {} (negative trim)", global_idx, layer_idx);
+                    debug!("Frame {} not active in layer {} (negative play_start)", global_idx, layer_idx);
                     continue;
                 }
                 let clip_idx = clip_idx as usize;

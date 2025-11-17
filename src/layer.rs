@@ -24,8 +24,8 @@ impl Layer {
         attrs.set("name", AttrValue::Str("Layer".to_string()));
         attrs.set("start", AttrValue::UInt(source_start as u32));
         attrs.set("end", AttrValue::UInt(source_end as u32));
-        attrs.set("trim_start", AttrValue::Int(0));
-        attrs.set("trim_end", AttrValue::Int(0));
+        attrs.set("play_start", AttrValue::Int(0));
+        attrs.set("play_end", AttrValue::Int(0));
         attrs.set("opacity", AttrValue::Float(1.0));
 
         Self { source_uuid, attrs }

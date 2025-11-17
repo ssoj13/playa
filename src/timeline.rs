@@ -73,16 +73,16 @@ pub enum GlobalDragState {
         drag_start_x: f32,
         drag_start_y: f32,
     },
-    /// Trimming layer start (left edge)
-    TrimStart {
+    /// Adjusting layer play start (left edge)
+    AdjustPlayStart {
         layer_idx: usize,
-        initial_trim: i32,
+        initial_play_start: i32,
         drag_start_x: f32,
     },
-    /// Trimming layer end (right edge)
-    TrimEnd {
+    /// Adjusting layer play end (right edge)
+    AdjustPlayEnd {
         layer_idx: usize,
-        initial_trim: i32,
+        initial_play_end: i32,
         drag_start_x: f32,
     },
 }
@@ -93,8 +93,8 @@ pub type LayerDragState = GlobalDragState;
 /// Tool/interaction mode detected at cursor position over a layer bar
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LayerTool {
-    TrimStart,
-    TrimEnd,
+    AdjustPlayStart,
+    AdjustPlayEnd,
     Move,
 }
 
@@ -102,7 +102,7 @@ impl LayerTool {
     /// Get cursor icon for this tool
     fn cursor(&self) -> egui::CursorIcon {
         match self {
-            LayerTool::TrimStart | LayerTool::TrimEnd => egui::CursorIcon::ResizeHorizontal,
+            LayerTool::AdjustPlayStart | LayerTool::AdjustPlayEnd => egui::CursorIcon::ResizeHorizontal,
             LayerTool::Move => egui::CursorIcon::Grab,
         }
     }
@@ -110,13 +110,13 @@ impl LayerTool {
     /// Convert to drag state for given layer
     fn to_drag_state(&self, layer_idx: usize, layer: &crate::layer::Layer, drag_start_pos: Pos2) -> GlobalDragState {
         match self {
-            LayerTool::TrimStart => {
-                let initial_trim = layer.attrs.get_i32("trim_start").unwrap_or(0);
-                GlobalDragState::TrimStart { layer_idx, initial_trim, drag_start_x: drag_start_pos.x }
+            LayerTool::AdjustPlayStart => {
+                let initial_play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
+                GlobalDragState::AdjustPlayStart { layer_idx, initial_play_start, drag_start_x: drag_start_pos.x }
             }
-            LayerTool::TrimEnd => {
-                let initial_trim = layer.attrs.get_i32("trim_end").unwrap_or(0);
-                GlobalDragState::TrimEnd { layer_idx, initial_trim, drag_start_x: drag_start_pos.x }
+            LayerTool::AdjustPlayEnd => {
+                let initial_play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
+                GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x: drag_start_pos.x }
             }
             LayerTool::Move => {
                 let initial_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
@@ -143,9 +143,9 @@ fn detect_layer_tool(hover_pos: Pos2, bar_rect: Rect, edge_threshold: f32) -> Op
     let dist_to_right = (hover_pos.x - bar_rect.max.x).abs();
 
     if dist_to_left < edge_threshold {
-        Some(LayerTool::TrimStart)
+        Some(LayerTool::AdjustPlayStart)
     } else if dist_to_right < edge_threshold {
-        Some(LayerTool::TrimEnd)
+        Some(LayerTool::AdjustPlayEnd)
     } else {
         Some(LayerTool::Move)
     }
@@ -165,8 +165,11 @@ pub enum TimelineAction {
     AddLayer { source_uuid: String, start_frame: usize }, // Drop item on timeline
     MoveLayer { layer_idx: usize, new_start: usize },   // Move layer horizontally
     ReorderLayer { from_idx: usize, to_idx: usize },    // Reorder layer vertically
-    TrimLayerStart { layer_idx: usize, new_trim: i32 }, // Trim layer start
-    TrimLayerEnd { layer_idx: usize, new_trim: i32 },   // Trim layer end
+    SetLayerPlayStart { layer_idx: usize, new_play_start: i32 }, // Adjust layer play start
+    SetLayerPlayEnd { layer_idx: usize, new_play_end: i32 },   // Adjust layer play end
+    SetCompPlayStart { frame: usize },                  // Set comp work area start (B key)
+    SetCompPlayEnd { frame: usize },                    // Set comp work area end (N key)
+    ResetCompPlayArea,                                  // Reset comp work area to full (Ctrl+B)
 }
 
 /// Convert frame index to screen X coordinate
@@ -257,6 +260,19 @@ pub fn render_timeline(
         action = TimelineAction::JumpToNextEdge;
     }
 
+    // Handle keyboard shortcuts for work area
+    if ui.ctx().input(|i| i.key_pressed(egui::Key::B)) {
+        let ctrl_pressed = ui.ctx().input(|i| i.modifiers.ctrl);
+        if ctrl_pressed {
+            action = TimelineAction::ResetCompPlayArea;
+        } else {
+            action = TimelineAction::SetCompPlayStart { frame: comp.current_frame };
+        }
+    }
+    if ui.ctx().input(|i| i.key_pressed(egui::Key::N)) {
+        action = TimelineAction::SetCompPlayEnd { frame: comp.current_frame };
+    }
+
     // Header: frame numbers ruler
     if config.show_frame_numbers {
         if let Some(frame) = draw_frame_ruler(ui, comp, config, state, timeline_width) {
@@ -336,14 +352,14 @@ pub fn render_timeline(
                             // Get layer start/end from attrs
                             let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
                             let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
-                            let trim_start = layer.attrs.get_i32("trim_start").unwrap_or(0);
-                            let trim_end = layer.attrs.get_i32("trim_end").unwrap_or(0);
+                            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
+                            let play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
 
-                            // Calculate full clip range and visible (trimmed) range
+                            // Calculate full clip range and visible (play) range
                             let full_start = layer_start;
                             let full_end = layer_end;
-                            let visible_start = layer_start + trim_start as usize;
-                            let visible_end = layer_end.saturating_sub(trim_end as usize);
+                            let visible_start = layer_start + play_start as usize;
+                            let visible_end = layer_end.saturating_sub(play_end as usize);
 
                             // Draw full clip bar (grayed out, semi-transparent)
                             let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
@@ -384,10 +400,18 @@ pub fn render_timeline(
                         for (idx, layer) in comp.layers.iter().enumerate() {
                             let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
                             let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+                            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
+                            let play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
+
+                            // Calculate visible (play) range for interaction
+                            let visible_start = layer_start + play_start as usize;
+                            let visible_end = layer_end.saturating_sub(play_end as usize);
+
                             let layer_y = timeline_rect.min.y + (idx as f32 * config.layer_height);
 
-                            let bar_x_start = frame_to_screen_x(layer_start as f32, timeline_rect.min.x, config, state);
-                            let bar_x_end = frame_to_screen_x((layer_end + 1) as f32, timeline_rect.min.x, config, state);
+                            // Use visible range for interaction rect (user should interact with visible edges)
+                            let bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
+                            let bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x, config, state);
                             let bar_rect = Rect::from_min_max(
                                 Pos2::new(bar_x_start, layer_y + 4.0),
                                 Pos2::new(bar_x_end, layer_y + config.layer_height - 4.0),
@@ -463,19 +487,19 @@ pub fn render_timeline(
                                             state.drag_state = None;
                                         }
                                     }
-                                    GlobalDragState::TrimStart { layer_idx, initial_trim, drag_start_x } => {
+                                    GlobalDragState::AdjustPlayStart { layer_idx, initial_play_start, drag_start_x } => {
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
-                                        let new_trim = (*initial_trim + delta_frames).max(0);
+                                        let new_play_start = (*initial_play_start + delta_frames).max(0);
 
-                                        // Visual feedback: draw ghost trim preview
+                                        // Visual feedback: draw ghost play range preview
                                         if let Some(layer) = comp.layers.get(*layer_idx) {
                                             let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
                                             let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
                                             let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
 
-                                            // New visual start accounting for trim
-                                            let visual_start = layer_start + new_trim as usize;
+                                            // New visual start accounting for play_start
+                                            let visual_start = layer_start + new_play_start as usize;
                                             let ghost_x_start = frame_to_screen_x(visual_start as f32, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x(layer_end as f32, timeline_rect.min.x, config, state);
 
@@ -493,28 +517,28 @@ pub fn render_timeline(
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
 
-                                        // On release, commit the trim
+                                        // On release, commit the play start adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            action = TimelineAction::TrimLayerStart {
+                                            action = TimelineAction::SetLayerPlayStart {
                                                 layer_idx: *layer_idx,
-                                                new_trim,
+                                                new_play_start,
                                             };
                                             state.drag_state = None;
                                         }
                                     }
-                                    GlobalDragState::TrimEnd { layer_idx, initial_trim, drag_start_x } => {
+                                    GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x } => {
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
-                                        let new_trim = (*initial_trim - delta_frames).max(0); // Note: inverted for end trim
+                                        let new_play_end = (*initial_play_end - delta_frames).max(0); // Note: inverted for end
 
-                                        // Visual feedback: draw ghost trim preview
+                                        // Visual feedback: draw ghost play range preview
                                         if let Some(layer) = comp.layers.get(*layer_idx) {
                                             let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
                                             let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
                                             let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
 
-                                            // New visual end accounting for trim
-                                            let visual_end = layer_end.saturating_sub(new_trim as usize);
+                                            // New visual end accounting for play_end
+                                            let visual_end = layer_end.saturating_sub(new_play_end as usize);
                                             let ghost_x_start = frame_to_screen_x(layer_start as f32, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x(visual_end as f32, timeline_rect.min.x, config, state);
 
@@ -532,11 +556,11 @@ pub fn render_timeline(
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
 
-                                        // On release, commit the trim
+                                        // On release, commit the play end adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            action = TimelineAction::TrimLayerEnd {
+                                            action = TimelineAction::SetLayerPlayEnd {
                                                 layer_idx: *layer_idx,
-                                                new_trim,
+                                                new_play_end,
                                             };
                                             state.drag_state = None;
                                         }
@@ -550,6 +574,33 @@ pub fn render_timeline(
                             if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
                                 state.drag_state = None;
                             }
+                        }
+
+                        // Draw work area overlay (darken regions outside play_range)
+                        let (play_start, play_end) = comp.play_range();
+                        let comp_start = comp.start;
+                        let comp_end = comp.end;
+
+                        // Darken region before work area start
+                        if play_start > comp_start {
+                            let start_x = frame_to_screen_x(comp_start as f32, timeline_rect.min.x, config, state);
+                            let end_x = frame_to_screen_x(play_start as f32, timeline_rect.min.x, config, state);
+                            let overlay_rect = Rect::from_min_max(
+                                Pos2::new(start_x, timeline_rect.min.y),
+                                Pos2::new(end_x, timeline_rect.max.y),
+                            );
+                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 51));
+                        }
+
+                        // Darken region after work area end
+                        if play_end < comp_end {
+                            let start_x = frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x, config, state);
+                            let end_x = frame_to_screen_x((comp_end + 1) as f32, timeline_rect.min.x, config, state);
+                            let overlay_rect = Rect::from_min_max(
+                                Pos2::new(start_x, timeline_rect.min.y),
+                                Pos2::new(end_x, timeline_rect.max.y),
+                            );
+                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 51));
                         }
 
                         // Draw playhead (current_frame) as vertical line

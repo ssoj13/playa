@@ -403,21 +403,45 @@ pub fn render_timeline_panel(
                                 }
                             }
                         }
-                        TimelineAction::TrimLayerStart { layer_idx, new_trim } => {
+                        TimelineAction::SetLayerPlayStart { layer_idx, new_play_start } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    if let Err(e) = comp.trim_layer_start(layer_idx, new_trim) {
-                                        eprintln!("Failed to trim layer start: {}", e);
+                                    if let Err(e) = comp.set_layer_play_start(layer_idx, new_play_start) {
+                                        eprintln!("Failed to set layer play start: {}", e);
                                     }
                                 }
                             }
                         }
-                        TimelineAction::TrimLayerEnd { layer_idx, new_trim } => {
+                        TimelineAction::SetLayerPlayEnd { layer_idx, new_play_end } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    if let Err(e) = comp.trim_layer_end(layer_idx, new_trim) {
-                                        eprintln!("Failed to trim layer end: {}", e);
+                                    if let Err(e) = comp.set_layer_play_end(layer_idx, new_play_end) {
+                                        eprintln!("Failed to set layer play end: {}", e);
                                     }
+                                }
+                            }
+                        }
+                        TimelineAction::SetCompPlayStart { frame } => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    let play_start = (frame as i32 - comp.start as i32).max(0);
+                                    comp.set_comp_play_start(play_start);
+                                }
+                            }
+                        }
+                        TimelineAction::SetCompPlayEnd { frame } => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    let play_end = (comp.end as i32 - frame as i32).max(0);
+                                    comp.set_comp_play_end(play_end);
+                                }
+                            }
+                        }
+                        TimelineAction::ResetCompPlayArea => {
+                            if let Some(comp_uuid) = &player.active_comp.clone() {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    comp.set_comp_play_start(0);
+                                    comp.set_comp_play_end(0);
                                 }
                             }
                         }

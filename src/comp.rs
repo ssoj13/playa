@@ -39,6 +39,16 @@ pub struct Comp {
     /// Layers that belong to this composition
     pub layers: Vec<Layer>,
 
+    /// Work area / play range start offset (frames from comp start)
+    /// Only frames within play_area are rendered and cached
+    #[serde(default)]
+    pub play_start: i32,
+
+    /// Work area / play range end offset (frames from comp end)
+    /// Only frames within play_area are rendered and cached
+    #[serde(default)]
+    pub play_end: i32,
+
     /// Current playback position within this comp (persisted)
     #[serde(default)]
     pub current_frame: usize,
@@ -73,21 +83,27 @@ impl Comp {
             fps,
             attrs,
             layers: Vec::new(),
+            play_start: 0,  // Full range by default
+            play_end: 0,    // Full range by default
             current_frame: start, // Start at beginning of comp
             event_sender: CompEventSender::dummy(),
             cache: RefCell::new(HashMap::new()),
         }
     }
 
-    /// Inclusive play range used for rendering/encoding
+    /// Inclusive play range (work area) used for rendering/encoding
+    /// Returns the visible portion considering play_start/play_end offsets
     pub fn play_range(&self) -> (usize, usize) {
-        (self.start, self.end)
+        let visible_start = self.start + self.play_start.max(0) as usize;
+        let visible_end = self.end.saturating_sub(self.play_end.max(0) as usize);
+        (visible_start, visible_end)
     }
 
-    /// Number of frames in play range
+    /// Number of frames in play range (work area)
     pub fn total_frames(&self) -> usize {
-        if self.end >= self.start {
-            self.end - self.start + 1
+        let (visible_start, visible_end) = self.play_range();
+        if visible_end >= visible_start {
+            visible_end - visible_start + 1
         } else {
             0
         }
@@ -130,11 +146,11 @@ impl Comp {
         for layer in &self.layers {
             layer.source_uuid.hash(&mut hasher);
 
-            // Hash layer attrs (start, end, trim_start, trim_end, opacity)
+            // Hash layer attrs (start, end, play_start, play_end, opacity)
             layer.attrs.get_u32("start").unwrap_or(0).hash(&mut hasher);
             layer.attrs.get_u32("end").unwrap_or(0).hash(&mut hasher);
-            layer.attrs.get_i32("trim_start").unwrap_or(0).hash(&mut hasher);
-            layer.attrs.get_i32("trim_end").unwrap_or(0).hash(&mut hasher);
+            layer.attrs.get_i32("play_start").unwrap_or(0).hash(&mut hasher);
+            layer.attrs.get_i32("play_end").unwrap_or(0).hash(&mut hasher);
 
             // Hash opacity as bits to avoid float comparison issues
             let opacity_bits = layer.attrs.get_float("opacity").unwrap_or(1.0).to_bits();
@@ -170,7 +186,14 @@ impl Comp {
     ///
     /// Recursively resolves layer sources from Project.media and composes them.
     /// Uses hash-based cache that invalidates when layers configuration changes.
+    /// Only frames within play_area (work area) are composed - frames outside return None.
     pub fn get_frame(&self, frame_idx: usize, project: &crate::project::Project) -> Option<Frame> {
+        // Check if frame is within play area (work area)
+        let (play_start, play_end) = self.play_range();
+        if frame_idx < play_start || frame_idx > play_end {
+            return None; // Frame outside work area - don't compose
+        }
+
         // Compute layers hash for cache key
         let layers_hash = self.compute_layers_hash();
         let cache_key = (layers_hash, frame_idx);
@@ -210,8 +233,8 @@ impl Comp {
             }
 
             // Convert comp frame to local source frame
-            let trim_start = layer.attrs.get_i32("trim_start").unwrap_or(0);
-            let local_frame = (frame_idx - layer_start) as i32 + trim_start;
+            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
+            let local_frame = (frame_idx - layer_start) as i32 + play_start;
             if local_frame < 0 {
                 continue;
             }
@@ -292,14 +315,14 @@ impl Comp {
         Ok(())
     }
 
-    /// Trim layer start (adjust trim_start attribute).
-    pub fn trim_layer_start(&mut self, layer_idx: usize, new_trim: i32) -> anyhow::Result<()> {
+    /// Set layer play start (adjust play_start attribute - visible start offset from layer start).
+    pub fn set_layer_play_start(&mut self, layer_idx: usize, new_play_start: i32) -> anyhow::Result<()> {
         let layer = self
             .layers
             .get_mut(layer_idx)
             .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
 
-        layer.attrs.set("trim_start", AttrValue::Int(new_trim));
+        layer.attrs.set("play_start", AttrValue::Int(new_play_start));
 
         // Clear cache and emit event
         self.clear_cache();
@@ -310,14 +333,14 @@ impl Comp {
         Ok(())
     }
 
-    /// Trim layer end (adjust trim_end attribute).
-    pub fn trim_layer_end(&mut self, layer_idx: usize, new_trim: i32) -> anyhow::Result<()> {
+    /// Set layer play end (adjust play_end attribute - visible end offset from layer end).
+    pub fn set_layer_play_end(&mut self, layer_idx: usize, new_play_end: i32) -> anyhow::Result<()> {
         let layer = self
             .layers
             .get_mut(layer_idx)
             .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
 
-        layer.attrs.set("trim_end", AttrValue::Int(new_trim));
+        layer.attrs.set("play_end", AttrValue::Int(new_play_end));
 
         // Clear cache and emit event
         self.clear_cache();
@@ -326,6 +349,26 @@ impl Comp {
         });
 
         Ok(())
+    }
+
+    /// Set comp play start (work area start offset from comp start).
+    /// This limits the active work area for playback and rendering.
+    pub fn set_comp_play_start(&mut self, new_play_start: i32) {
+        self.play_start = new_play_start;
+        self.clear_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+    }
+
+    /// Set comp play end (work area end offset from comp end).
+    /// This limits the active work area for playback and rendering.
+    pub fn set_comp_play_end(&mut self, new_play_end: i32) {
+        self.play_end = new_play_end;
+        self.clear_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
     }
 
     /// Get all layer edges (start and end frames) sorted by distance from given frame
@@ -336,12 +379,12 @@ impl Comp {
         for layer in &self.layers {
             let start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
             let end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
-            let trim_start = layer.attrs.get_i32("trim_start").unwrap_or(0);
-            let trim_end = layer.attrs.get_i32("trim_end").unwrap_or(0);
+            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
+            let play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
 
-            // Visible range accounting for trim
-            let visible_start = start + trim_start as usize;
-            let visible_end = end.saturating_sub(trim_end as usize);
+            // Visible range accounting for play range
+            let visible_start = start + play_start as usize;
+            let visible_end = end.saturating_sub(play_end as usize);
 
             if visible_start < visible_end {
                 edges.push((visible_start, true));   // Start edge
