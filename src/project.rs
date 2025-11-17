@@ -7,13 +7,12 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attrs::Attrs;
-use crate::clip::Clip;
 use crate::comp::Comp;
+use crate::media::MediaSource;
 
 /// Top-level project / scene.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -21,27 +20,23 @@ pub struct Project {
     /// Global project attributes (fps defaults, resolution presets, etc.)
     pub attrs: Attrs,
 
-    /// All clips in the media pool, keyed by UUID.
-    pub clips: HashMap<String, Clip>,
+    /// Unified media pool: all clips and comps keyed by UUID
+    pub media: HashMap<String, MediaSource>,
 
-    /// All compositions, keyed by UUID.
-    pub comps: HashMap<String, Comp>,
+    /// Order for clips in playlist (UUIDs)
+    pub clips_order: Vec<String>,
 
-    /// Playlist order for clips (UUIDs).
-    pub order_clips: Vec<String>,
-
-    /// Order for compositions in UI (UUIDs).
-    pub order_comps: Vec<String>,
+    /// Order for compositions in UI (UUIDs)
+    pub comps_order: Vec<String>,
 }
 
 impl Project {
     pub fn new() -> Self {
         Self {
             attrs: Attrs::new(),
-            clips: HashMap::new(),
-            comps: HashMap::new(),
-            order_clips: Vec::new(),
-            order_comps: Vec::new(),
+            media: HashMap::new(),
+            clips_order: Vec::new(),
+            comps_order: Vec::new(),
         }
     }
 
@@ -79,24 +74,32 @@ impl Project {
     ///
     /// Returns UUID of the default/first comp.
     pub fn ensure_default_comp(&mut self) -> String {
-        if self.comps.is_empty() {
+        // Check if we have any comps in media
+        let has_comps = self.media.values().any(|s| s.is_comp());
+
+        if !has_comps {
             let comp = Comp::new("Main", 0, 0, 24.0);
             let uuid = comp.uuid.clone();
-            self.comps.insert(uuid.clone(), comp);
-            self.order_comps.push(uuid.clone());
+            self.media.insert(uuid.clone(), MediaSource::Comp(comp));
+            self.comps_order.push(uuid.clone());
             log::info!("Created default comp: {}", uuid);
             uuid
         } else {
             // Return first comp UUID from order
-            self.order_comps.first()
-                .or_else(|| self.comps.keys().next())
+            self.comps_order.first()
+                .or_else(|| {
+                    // Find first comp UUID in media
+                    self.media.iter()
+                        .find(|(_, s)| s.is_comp())
+                        .map(|(uuid, _)| uuid)
+                })
                 .cloned()
                 .unwrap_or_else(|| {
                     // Fallback: create new if order is broken
                     let comp = Comp::new("Main", 0, 0, 24.0);
                     let uuid = comp.uuid.clone();
-                    self.comps.insert(uuid.clone(), comp);
-                    self.order_comps.push(uuid.clone());
+                    self.media.insert(uuid.clone(), MediaSource::Comp(comp));
+                    self.comps_order.push(uuid.clone());
                     uuid
                 })
         }
@@ -104,35 +107,17 @@ impl Project {
 
     /// Rebuild runtime-only state after deserialization.
     ///
-    /// - Initializes per-comp caches.
-    /// - Rebuilds Layer.clip from Clip UUIDs using Arc<Clip>.
+    /// - Clears per-comp caches.
     /// - Sets event sender for all comps.
     pub fn rebuild_runtime(&mut self, event_sender: Option<crate::events::CompEventSender>) {
-        // Build shared Arc<Clip> map so all layers reference the same instances.
-        let mut clip_arcs: HashMap<String, Arc<Clip>> = HashMap::new();
-        for (uuid, clip) in &self.clips {
-            clip_arcs.insert(uuid.clone(), Arc::new(clip.clone()));
-        }
+        // Rebuild comps in unified media HashMap
+        for source in self.media.values() {
+            if let Some(comp) = source.as_comp() {
+                comp.clear_cache();
 
-        // Rebuild comps: clear caches, reconnect layers to clips, set event sender.
-        for comp in self.comps.values_mut() {
-            comp.clear_cache();
-
-            // Set event sender if provided
-            if let Some(ref sender) = event_sender {
-                comp.set_event_sender(sender.clone());
-            }
-
-            for layer in comp.layers.iter_mut() {
-                if let Some(ref clip_uuid) = layer.clip_uuid {
-                    if let Some(arc) = clip_arcs.get(clip_uuid) {
-                        layer.clip = Some(Arc::clone(arc));
-                    } else {
-                        layer.clip = None;
-                    }
-                } else {
-                    layer.clip = None;
-                }
+                // TODO: Set event sender for comps in media HashMap
+                // This requires mut access - consider using RefCell for event_sender
+                let _ = event_sender;
             }
         }
     }

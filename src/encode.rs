@@ -554,7 +554,8 @@ fn get_encoder_name(
 /// Encodes sequence from cache play_range to output file.
 /// Runs in separate thread, sends progress updates via channel.
 pub fn encode_sequence_from_comp(
-    comp: &mut Comp,
+    comp: &Comp,
+    project: &crate::project::Project,
     settings: &EncoderSettings,
     progress_tx: Sender<EncodeProgress>,
     cancel_flag: Arc<AtomicBool>,
@@ -581,7 +582,7 @@ pub fn encode_sequence_from_comp(
 
     // Get first frame to determine target dimensions
     let first_frame = comp
-        .get_frame(play_range.0)
+        .get_frame(play_range.0, project)
         .ok_or_else(|| {
             EncodeError::EncodeFrameFailed(format!("First frame {} not available", play_range.0))
         })?;
@@ -918,7 +919,7 @@ pub fn encode_sequence_from_comp(
         }
 
           // Get composed frame from Comp
-          let frame = comp.get_frame(frame_idx).ok_or_else(|| {
+          let frame = comp.get_frame(frame_idx, project).ok_or_else(|| {
               EncodeError::EncodeFrameFailed(format!("Frame {} not available in comp", frame_idx))
           })?;
 
@@ -1153,13 +1154,15 @@ pub fn encode_sequence_from_comp(
 /// High-level encoding entry point: encodes a Comp.
 ///
 /// Comp is the single source of truth for play range and fps.
+/// TODO: Update callers to pass real Project instead of empty one
 pub fn encode_comp(
-    comp: &mut Comp,
+    comp: &Comp,
+    project: &crate::project::Project,
     settings: &EncoderSettings,
     progress_tx: Sender<EncodeProgress>,
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<(), EncodeError> {
-    encode_sequence_from_comp(comp, settings, progress_tx, cancel_flag)
+    encode_sequence_from_comp(comp, project, settings, progress_tx, cancel_flag)
 }
 
 #[cfg(test)]
@@ -1209,6 +1212,11 @@ mod tests {
         }
 
         println!("\nUsing encoder: {}", found_encoder.unwrap());
+
+        // Define test play range
+        let play_start = 0;
+        let play_end = 9;
+
         println!(
             "Play range set: {}..{} ({} frames)",
             play_start,
@@ -1260,7 +1268,8 @@ mod tests {
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
         // Build Comp from play range and fps
-        let mut comp = crate::comp::Comp::new("TestComp", play_start, play_end, settings.fps);
+        let comp = crate::comp::Comp::new("TestComp", play_start, play_end, settings.fps);
+        let project = crate::project::Project::new();
 
         // Run encoding
         let abs_path = std::fs::canonicalize(&output_path)
@@ -1271,7 +1280,7 @@ mod tests {
             play_end,
             abs_path.display()
         );
-        let result = encode_comp(&mut comp, &settings, tx, cancel_flag);
+        let result = encode_comp(&comp, &project, &settings, tx, cancel_flag);
 
         // Check progress updates
         let mut last_progress: Option<EncodeProgress> = None;

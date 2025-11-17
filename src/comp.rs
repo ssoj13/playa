@@ -3,7 +3,10 @@
 //! `Comp` references Layers, Clips (via Layers), and owns
 //! a simple per-comp cache for composed frames.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
@@ -45,10 +48,12 @@ pub struct Comp {
     #[serde(default)]
     event_sender: CompEventSender,
 
-    /// Per-comp frame cache: global frame index -> composed Frame (runtime-only)
+    /// Per-comp frame cache: (layers_hash, frame_idx) -> composed Frame (runtime-only)
+    /// Uses RefCell for interior mutability to allow caching with &self
+    /// Hash invalidates cache when layers change
     #[serde(skip)]
     #[serde(default)]
-    cache: HashMap<usize, Frame>,
+    cache: RefCell<HashMap<(u64, usize), Frame>>,
 }
 
 impl Comp {
@@ -70,7 +75,7 @@ impl Comp {
             layers: Vec::new(),
             current_frame: start, // Start at beginning of comp
             event_sender: CompEventSender::dummy(),
-            cache: HashMap::new(),
+            cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -109,8 +114,34 @@ impl Comp {
     }
 
     /// Clear per-comp frame cache.
-    pub fn clear_cache(&mut self) {
-        self.cache.clear();
+    pub fn clear_cache(&self) {
+        self.cache.borrow_mut().clear();
+    }
+
+    /// Compute hash of layers configuration for cache invalidation.
+    /// Hash changes when layers, their UUIDs, or attrs change.
+    fn compute_layers_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+
+        // Hash number of layers
+        self.layers.len().hash(&mut hasher);
+
+        // Hash each layer's source_uuid and attrs
+        for layer in &self.layers {
+            layer.source_uuid.hash(&mut hasher);
+
+            // Hash layer attrs (start, end, trim_start, trim_end, opacity)
+            layer.attrs.get_u32("start").unwrap_or(0).hash(&mut hasher);
+            layer.attrs.get_u32("end").unwrap_or(0).hash(&mut hasher);
+            layer.attrs.get_i32("trim_start").unwrap_or(0).hash(&mut hasher);
+            layer.attrs.get_i32("trim_end").unwrap_or(0).hash(&mut hasher);
+
+            // Hash opacity as bits to avoid float comparison issues
+            let opacity_bits = layer.attrs.get_float("opacity").unwrap_or(1.0).to_bits();
+            opacity_bits.hash(&mut hasher);
+        }
+
+        hasher.finish()
     }
 
     /// Set event sender (called after deserialization or when creating new comp in app)
@@ -137,27 +168,183 @@ impl Comp {
 
     /// Get composed frame at given global frame index.
     ///
-    /// If frame is not in cache, composes it via `compose()`,
-    /// stores in cache, and returns the result.
-    pub fn get_frame(&mut self, frame_idx: usize) -> Option<Frame> {
-        if let Some(frame) = self.cache.get(&frame_idx) {
+    /// Recursively resolves layer sources from Project.media and composes them.
+    /// Uses hash-based cache that invalidates when layers configuration changes.
+    pub fn get_frame(&self, frame_idx: usize, project: &crate::project::Project) -> Option<Frame> {
+        // Compute layers hash for cache key
+        let layers_hash = self.compute_layers_hash();
+        let cache_key = (layers_hash, frame_idx);
+
+        // Check cache
+        if let Some(frame) = self.cache.borrow().get(&cache_key) {
             return Some(frame.clone());
         }
 
-        let composed = self.compose(frame_idx)?;
-        self.cache.insert(frame_idx, composed.clone());
+        // Compose frame recursively
+        let composed = self.compose(frame_idx, project)?;
+
+        // Cache result with hash-based key
+        self.cache.borrow_mut().insert(cache_key, composed.clone());
         Some(composed)
     }
 
     /// Compose frame at given global frame index.
     ///
-    /// For now, this is a minimal implementation:
-    /// - If there is at least one Layer
-    /// - Delegates to Layer::get_frame (single-layer case)
-    ///
-    /// Later это будет заменено на полноценный мульти-layer compositing.
-    pub fn compose(&self, frame_idx: usize) -> Option<Frame> {
-        let layer = self.layers.first()?;
-        layer.get_frame(frame_idx)
+    /// Recursively resolves all active layers:
+    /// - Converts global comp frame to local source frame via LayerRef.global_to_local()
+    /// - Resolves MediaSource from Project.media by UUID
+    /// - Recursively gets frames (supports nested Comps)
+    /// - Currently returns first layer's frame (TODO: full multi-layer blending)
+    fn compose(&self, frame_idx: usize, project: &crate::project::Project) -> Option<Frame> {
+        let mut source_frames: Vec<(Frame, f32)> = Vec::new();
+
+        // Collect frames from all active layers
+        for layer in &self.layers {
+            // Get layer range from attrs
+            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
+            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+
+            // Check if layer is active at this frame
+            if frame_idx < layer_start || frame_idx > layer_end {
+                continue; // Layer not active
+            }
+
+            // Convert comp frame to local source frame
+            let trim_start = layer.attrs.get_i32("trim_start").unwrap_or(0);
+            let local_frame = (frame_idx - layer_start) as i32 + trim_start;
+            if local_frame < 0 {
+                continue;
+            }
+
+            // Resolve source from Project.media
+            if let Some(source) = project.media.get(&layer.source_uuid) {
+                // Recursively get frame from source (Clip or Comp)
+                if let Some(frame) = source.get_frame(local_frame as usize, project) {
+                    let opacity = layer.attrs.get_float("opacity").unwrap_or(1.0);
+                    source_frames.push((frame, opacity));
+                }
+            }
+        }
+
+        // Simple composition: return first layer's frame
+        // TODO: Multi-layer blending with opacity/blend modes
+        source_frames.first().map(|(f, _)| f.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clip::Clip;
+    use crate::media::MediaSource;
+    use crate::project::Project;
+
+    /// Helper: create dummy frame
+    fn dummy_frame(_value: u8) -> Frame {
+        // Create 2x2 F32 frame with test pattern
+        Frame::new(2, 2, crate::frame::PixelDepth::F32)
+    }
+
+    /// Test recursive composition: Comp A contains Comp B
+    #[test]
+    fn test_recursive_composition() {
+        let mut project = Project::new();
+
+        // Create Clip with 10 frames
+        let frames: Vec<Frame> = (0..10).map(|i| dummy_frame(i * 10)).collect();
+        let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
+        let clip_uuid = clip.uuid.clone();
+        project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
+        project.clips_order.push(clip_uuid.clone());
+
+        // Create Comp B with clip as layer
+        let mut comp_b = Comp::new("Comp B", 0, 9, 24.0);
+        let layer_b = Layer::new(clip_uuid.clone(), 0, 9);
+        comp_b.layers.push(layer_b);
+        let comp_b_uuid = comp_b.uuid.clone();
+        project.media.insert(comp_b_uuid.clone(), MediaSource::Comp(comp_b));
+        project.comps_order.push(comp_b_uuid.clone());
+
+        // Create Comp A with Comp B as layer
+        let mut comp_a = Comp::new("Comp A", 0, 9, 24.0);
+        let layer_a = Layer::new(comp_b_uuid.clone(), 0, 9);
+        comp_a.layers.push(layer_a);
+        let comp_a_uuid = comp_a.uuid.clone();
+        project.media.insert(comp_a_uuid.clone(), MediaSource::Comp(comp_a));
+        project.comps_order.push(comp_a_uuid.clone());
+
+        // Test: Get frame from Comp A (should recursively resolve through Comp B to Clip)
+        let comp_a = project.media.get(&comp_a_uuid).unwrap().as_comp().unwrap();
+        let frame = comp_a.get_frame(5, &project);
+        assert!(frame.is_some(), "Frame should be resolved recursively");
+
+        // Verify frame was composed (detailed data verification would require frame comparison helper)
+        let _frame = frame.unwrap();
+        // Success if we got a frame - recursive composition worked
+    }
+
+    /// Test hash-based cache invalidation
+    #[test]
+    fn test_cache_invalidation() {
+        let mut project = Project::new();
+
+        // Create Clip with 5 frames
+        let frames: Vec<Frame> = (0..5).map(|i| dummy_frame(i * 20)).collect();
+        let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
+        let clip_uuid = clip.uuid.clone();
+        project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
+
+        // Create Comp with clip as layer
+        let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
+        let layer = Layer::new(clip_uuid.clone(), 0, 4);
+        comp.layers.push(layer);
+        let comp_uuid = comp.uuid.clone();
+        project.media.insert(comp_uuid.clone(), MediaSource::Comp(comp));
+
+        // Get frame 2 - should cache it
+        let comp = project.media.get(&comp_uuid).unwrap().as_comp().unwrap();
+        let _frame1 = comp.get_frame(2, &project).unwrap();
+        let cache_size_before = comp.cache.borrow().len();
+        assert_eq!(cache_size_before, 1, "Cache should have 1 entry");
+
+        // Get same frame - should hit cache
+        let _frame2 = comp.get_frame(2, &project).unwrap();
+        // Frames should be clones (cache hit)
+        assert_eq!(comp.cache.borrow().len(), 1, "Cache size should stay the same");
+
+        // Modify layer (change opacity) - should invalidate cache
+        {
+            let comp_mut = project.media.get_mut(&comp_uuid).unwrap().as_comp_mut().unwrap();
+            comp_mut.layers[0].attrs.set("opacity", crate::attrs::AttrValue::Float(0.5));
+        } // Release mutable borrow
+
+        // Get frame again - cache should add new entry with different hash
+        let comp = project.media.get(&comp_uuid).unwrap().as_comp().unwrap();
+        let _frame3 = comp.get_frame(2, &project).unwrap();
+        assert_eq!(comp.cache.borrow().len(), 2, "Cache should have both old and new entries (different hashes)");
+        // Success - cache uses hash-based keys, old entry with old hash remains, new entry with new hash added
+    }
+
+    /// Test hash computation consistency
+    #[test]
+    fn test_layers_hash_consistency() {
+        let mut comp1 = Comp::new("Comp1", 0, 10, 24.0);
+        let mut comp2 = Comp::new("Comp2", 0, 10, 24.0);
+
+        // Same layers should produce same hash
+        let layer1 = Layer::new("uuid1".to_string(), 0, 10);
+        let layer2 = Layer::new("uuid1".to_string(), 0, 10);
+
+        comp1.layers.push(layer1);
+        comp2.layers.push(layer2);
+
+        let hash1 = comp1.compute_layers_hash();
+        let hash2 = comp2.compute_layers_hash();
+        assert_eq!(hash1, hash2, "Identical layers should produce same hash");
+
+        // Different opacity should produce different hash
+        comp2.layers[0].attrs.set("opacity", crate::attrs::AttrValue::Float(0.7));
+        let hash3 = comp2.compute_layers_hash();
+        assert_ne!(hash1, hash3, "Different opacity should produce different hash");
     }
 }

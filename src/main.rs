@@ -7,6 +7,7 @@ mod attrs;
 mod clip;
 mod comp;
 mod layer;
+mod media;
 mod project;
 mod paths;
 mod player;
@@ -242,8 +243,12 @@ impl PlayaApp {
             debug!("No active comp for frame loading");
             return;
         };
-        let Some(comp) = self.player.project.comps.get(comp_uuid) else {
-            debug!("Active comp {} not found", comp_uuid);
+        let Some(source) = self.player.project.media.get(comp_uuid) else {
+            debug!("Active comp {} not found in media", comp_uuid);
+            return;
+        };
+        let Some(comp) = source.as_comp() else {
+            debug!("Active source {} is not a comp", comp_uuid);
             return;
         };
 
@@ -252,13 +257,21 @@ impl PlayaApp {
 
         // Enqueue loads for all layers in comp
         for (layer_idx, layer) in comp.layers.iter().enumerate() {
-            let Some(ref clip) = layer.clip else {
-                debug!("Layer {} has no clip", layer_idx);
+            // Resolve source from Project.media by UUID
+            let Some(source) = self.player.project.media.get(&layer.source_uuid) else {
+                debug!("Layer {} references missing source {}", layer_idx, layer.source_uuid);
                 continue;
             };
-            debug!("Processing layer {}: clip has {} frames", layer_idx, clip.len());
 
-            // Calculate frame range to load
+            // Only process Clip sources for frame loading (Comps are composed on-demand)
+            let Some(clip) = source.as_clip() else {
+                debug!("Layer {} references comp, skipping frame loading", layer_idx);
+                continue;
+            };
+
+            debug!("Processing layer {}: clip {} has {} frames", layer_idx, layer.source_uuid, clip.len());
+
+            // Get layer range from attrs
             let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
             let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
 
@@ -270,8 +283,19 @@ impl PlayaApp {
                    layer_idx, layer_start, layer_end, load_start, load_end);
 
             for global_idx in load_start..=load_end {
-                // Convert global frame to clip-local index
-                let clip_idx = global_idx.saturating_sub(layer_start);
+                // Check if frame is within layer range
+                if global_idx < layer_start || global_idx > layer_end {
+                    continue;
+                }
+
+                // Convert global comp frame to local clip frame
+                let trim_start = layer.attrs.get_i32("trim_start").unwrap_or(0);
+                let clip_idx = (global_idx - layer_start) as i32 + trim_start;
+                if clip_idx < 0 {
+                    debug!("Frame {} not active in layer {} (negative trim)", global_idx, layer_idx);
+                    continue;
+                }
+                let clip_idx = clip_idx as usize;
 
                 if clip_idx >= clip.len() {
                     debug!("Frame {} (clip_idx {}) out of bounds (clip len: {})", global_idx, clip_idx, clip.len());
@@ -686,14 +710,16 @@ impl eframe::App for PlayaApp {
                 self.load_project(path);
             }
 
-            // Remove clip from MediaPool
+            // Remove clip from media pool
             if let Some(clip_uuid) = project_actions.remove_clip {
-                self.player.project.clips.remove(&clip_uuid);
-                self.player.project.order_clips.retain(|uuid| uuid != &clip_uuid);
+                self.player.project.media.remove(&clip_uuid);
+                self.player.project.clips_order.retain(|uuid| uuid != &clip_uuid);
 
                 // Also remove from all comp layers
-                for comp in self.player.project.comps.values_mut() {
-                    comp.layers.retain(|layer| layer.clip_uuid.as_ref() != Some(&clip_uuid));
+                for source in self.player.project.media.values_mut() {
+                    if let Some(comp) = source.as_comp_mut() {
+                        comp.layers.retain(|layer| layer.source_uuid != clip_uuid);
+                    }
                 }
 
                 info!("Removed clip {}", clip_uuid);
@@ -710,6 +736,7 @@ impl eframe::App for PlayaApp {
             // Create new composition
             if project_actions.new_comp {
                 use crate::comp::Comp;
+                use crate::media::MediaSource;
                 let fps = 30.0;
                 let end = (fps * 5.0) as usize; // 5 seconds
                 let mut comp = Comp::new("New Comp", 0, end, fps);
@@ -718,8 +745,8 @@ impl eframe::App for PlayaApp {
                 // Set event sender for the new comp
                 comp.set_event_sender(self.comp_event_sender.clone());
 
-                self.player.project.comps.insert(uuid.clone(), comp);
-                self.player.project.order_comps.push(uuid.clone());
+                self.player.project.media.insert(uuid.clone(), MediaSource::Comp(comp));
+                self.player.project.comps_order.push(uuid.clone());
 
                 // Activate the new comp
                 self.player.set_active_comp(uuid.clone());
@@ -729,14 +756,17 @@ impl eframe::App for PlayaApp {
 
             // Remove composition
             if let Some(comp_uuid) = project_actions.remove_comp {
+                // Count comps in media
+                let comp_count = self.player.project.media.values().filter(|s| s.is_comp()).count();
+
                 // Don't remove if it's the only comp
-                if self.player.project.comps.len() > 1 {
-                    self.player.project.comps.remove(&comp_uuid);
-                    self.player.project.order_comps.retain(|uuid| uuid != &comp_uuid);
+                if comp_count > 1 {
+                    self.player.project.media.remove(&comp_uuid);
+                    self.player.project.comps_order.retain(|uuid| uuid != &comp_uuid);
 
                     // If removed comp was active, switch to first available
                     if self.player.active_comp.as_ref() == Some(&comp_uuid) {
-                        let first_comp = self.player.project.order_comps.first().cloned();
+                        let first_comp = self.player.project.comps_order.first().cloned();
                         if let Some(new_active) = first_comp {
                             self.player.set_active_comp(new_active);
                         } else {
@@ -752,11 +782,13 @@ impl eframe::App for PlayaApp {
 
             // Clear all compositions
             if project_actions.clear_all_comps {
-                self.player.project.comps.clear();
-                self.player.project.order_comps.clear();
+                // Remove all comps from media
+                self.player.project.media.retain(|_, source| !source.is_comp());
+                self.player.project.comps_order.clear();
 
                 // Create new default comp
                 use crate::comp::Comp;
+                use crate::media::MediaSource;
                 let fps = 30.0;
                 let end = (fps * 5.0) as usize; // 5 seconds
                 let mut comp = Comp::new("Main", 0, end, fps);
@@ -765,8 +797,8 @@ impl eframe::App for PlayaApp {
                 // Set event sender for the new comp
                 comp.set_event_sender(self.comp_event_sender.clone());
 
-                self.player.project.comps.insert(uuid.clone(), comp);
-                self.player.project.order_comps.push(uuid.clone());
+                self.player.project.media.insert(uuid.clone(), MediaSource::Comp(comp));
+                self.player.project.comps_order.push(uuid.clone());
 
                 // Activate the new comp
                 self.player.set_active_comp(uuid.clone());

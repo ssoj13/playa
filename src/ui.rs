@@ -137,8 +137,8 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                         .max_height(200.0)
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            for clip_uuid in &player.project.order_clips {
-                                let clip = match player.project.clips.get(clip_uuid) {
+                            for clip_uuid in &player.project.clips_order {
+                                let clip = match player.project.media.get(clip_uuid).and_then(|s| s.as_clip()) {
                                     Some(c) => c,
                                     None => continue,
                                 };
@@ -177,8 +177,8 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            for comp_uuid in &player.project.order_comps {
-                                let comp = match player.project.comps.get(comp_uuid) {
+                            for comp_uuid in &player.project.comps_order {
+                                let comp = match player.project.media.get(comp_uuid).and_then(|s| s.as_comp()) {
                                     Some(c) => c,
                                     None => continue,
                                 };
@@ -241,6 +241,10 @@ pub fn render_timeline_panel(
         .default_height(350.0)
         .height_range(150.0..=700.0)
         .show(ctx, |ui| {
+            // ВАЖНО: заставляем контент занимать всю высоту панели,
+            // чтобы egui не схлопывал панель до высоты содержимого
+            // и не «передумывал» размер после ресайза.
+            ui.set_min_height(ui.available_height());
             ui.add_space(8.0);
 
             // Transport controls section (fixed height at top of panel)
@@ -301,7 +305,7 @@ pub fn render_timeline_panel(
 
             // Timeline section
             if let Some(comp_uuid) = &player.active_comp.clone() {
-                if let Some(comp) = player.project.comps.get(comp_uuid) {
+                if let Some(comp) = player.project.media.get(comp_uuid).and_then(|s| s.as_comp()) {
                     let mut config = TimelineConfig::default();
                     config.show_frame_numbers = show_frame_numbers;
                     // Don't set max_height - let ScrollArea use available space naturally

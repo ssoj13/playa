@@ -505,11 +505,13 @@ impl EncodeDialog {
             let handle = thread::spawn(move || {
                 info!("Encoder thread started");
 
-                // For now we build a minimal Comp for encoding
-                let mut comp = crate::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
+                // TODO: Get real comp and project from UI state
+                // For now we build minimal empty comp and project
+                let comp = crate::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
+                let project = crate::project::Project::new();
 
                 info!("Calling encode_comp()...");
-                encode_comp(&mut comp, &settings_clone, tx, cancel_flag_clone)
+                encode_comp(&comp, &project, &settings_clone, tx, cancel_flag_clone)
             });
 
         self.encode_thread = Some(handle);

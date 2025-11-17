@@ -297,6 +297,26 @@ impl Clip {
         self.frames.get(idx)
     }
 
+    /// Get start frame
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Get end frame
+    pub fn end(&self) -> usize {
+        self.end
+    }
+
+    /// Total frames (alias for len())
+    pub fn total_frames(&self) -> usize {
+        self.len()
+    }
+
+    /// Get FPS from attrs or default to 24.0
+    pub fn fps(&self) -> f32 {
+        self.attrs.get_float("fps").unwrap_or(24.0)
+    }
+
     fn frame_path(&self, frame_num: usize) -> PathBuf {
         if self.pattern.contains('*') {
             let number = format!("{:0width$}", frame_num, width = self.padding);

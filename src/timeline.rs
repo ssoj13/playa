@@ -70,7 +70,7 @@ pub fn render_timeline(
                 ui.vertical(|ui| {
                     ui.set_width(config.name_column_width);
                     for (idx, layer) in comp.layers.iter().enumerate() {
-                        let layer_name = layer.clip_uuid.as_deref().unwrap_or("Unnamed");
+                        let layer_name = &layer.source_uuid;
                         let (rect, response) = ui.allocate_exact_size(
                             Vec2::new(config.name_column_width, config.layer_height),
                             Sense::click(),
@@ -139,12 +139,8 @@ pub fn render_timeline(
                                 Pos2::new(bar_x_end, layer_y + config.layer_height - 4.0),
                             );
 
-                            // Layer bar color (use hash of clip_uuid for stable color)
-                            let bar_color = if let Some(ref clip_uuid) = layer.clip_uuid {
-                                hash_color(clip_uuid)
-                            } else {
-                                Color32::from_rgb(80, 80, 120)
-                            };
+                            // Layer bar color (use hash of source_uuid for stable color)
+                            let bar_color = hash_color(&layer.source_uuid);
 
                             painter.rect_filled(bar_rect, 4.0, bar_color);
                             painter.rect_stroke(
