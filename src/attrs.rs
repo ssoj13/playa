@@ -67,5 +67,40 @@ impl Attrs {
             _ => None,
         }
     }
+
+    /// Get mutable reference to attribute value
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut AttrValue> {
+        self.map.get_mut(key)
+    }
+
+    /// Remove attribute by key
+    pub fn remove(&mut self, key: &str) -> Option<AttrValue> {
+        self.map.remove(key)
+    }
+
+    /// Iterate over all attributes (key, value)
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &AttrValue)> {
+        self.map.iter()
+    }
+
+    /// Iterate mutably over all attributes (key, value)
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut AttrValue)> {
+        self.map.iter_mut()
+    }
+
+    /// Check if attribute exists
+    pub fn contains(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
+    /// Get number of attributes
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
 }
 

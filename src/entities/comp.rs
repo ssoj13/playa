@@ -13,41 +13,27 @@ use serde::{Deserialize, Serialize};
 use crate::attrs::{Attrs, AttrValue};
 use crate::events::{CompEvent, CompEventSender};
 use crate::frame::Frame;
-use crate::layer::Layer;
+use super::Layer;
 
 /// Lightweight composition descriptor with per-comp cache.
+///
+/// All editable properties are stored in `attrs`:
+/// - "name" (Str): Human-readable name
+/// - "start" (UInt): Global start frame
+/// - "end" (UInt): Global end frame
+/// - "fps" (Float): Timeline framerate
+/// - "play_start" (Int): Work area start offset
+/// - "play_end" (Int): Work area end offset
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Comp {
     /// Stable identifier inside Project
     pub uuid: String,
 
-    /// Human-readable name (e.g., "Main", "Shot_010")
-    pub name: String,
-
-    /// Global start frame (inclusive)
-    pub start: usize,
-
-    /// Global end frame (inclusive)
-    pub end: usize,
-
-    /// Timeline framerate (frames per second)
-    pub fps: f32,
-
-    /// Arbitrary attributes (resolution, fps overrides, tags, etc.)
+    /// Arbitrary attributes (all editable properties stored here)
     pub attrs: Attrs,
 
     /// Layers that belong to this composition
     pub layers: Vec<Layer>,
-
-    /// Work area / play range start offset (frames from comp start)
-    /// Only frames within play_area are rendered and cached
-    #[serde(default)]
-    pub play_start: i32,
-
-    /// Work area / play range end offset (frames from comp end)
-    /// Only frames within play_area are rendered and cached
-    #[serde(default)]
-    pub play_end: i32,
 
     /// Currently selected layer index (if any)
     #[serde(default)]
@@ -72,42 +58,89 @@ pub struct Comp {
 
 impl Comp {
     pub fn new(name: impl Into<String>, start: usize, end: usize, fps: f32) -> Self {
-        let name_str = name.into();
         let mut attrs = Attrs::new();
-        attrs.set("name", AttrValue::Str(name_str.clone()));
+        attrs.set("name", AttrValue::Str(name.into()));
         attrs.set("start", AttrValue::UInt(start as u32));
         attrs.set("end", AttrValue::UInt(end as u32));
         attrs.set("fps", AttrValue::Float(fps));
+        attrs.set("play_start", AttrValue::Int(0)); // Full range by default
+        attrs.set("play_end", AttrValue::Int(0));   // Full range by default
 
         Self {
             uuid: uuid::Uuid::new_v4().to_string(),
-            name: name_str,
-            start,
-            end,
-            fps,
             attrs,
             layers: Vec::new(),
-            play_start: 0,  // Full range by default
-            play_end: 0,    // Full range by default
-            current_frame: start, // Start at beginning of comp
+            current_frame: start,
             selected_layer: None,
             event_sender: CompEventSender::dummy(),
             cache: RefCell::new(HashMap::new()),
         }
     }
 
+    // Getters for attrs-based properties
+    pub fn name(&self) -> &str {
+        self.attrs.get_str("name").unwrap_or("Untitled")
+    }
+
+    pub fn start(&self) -> usize {
+        self.attrs.get_u32("start").unwrap_or(0) as usize
+    }
+
+    pub fn end(&self) -> usize {
+        self.attrs.get_u32("end").unwrap_or(100) as usize
+    }
+
+    pub fn fps(&self) -> f32 {
+        self.attrs.get_float("fps").unwrap_or(24.0)
+    }
+
+    pub fn play_start(&self) -> i32 {
+        self.attrs.get_i32("play_start").unwrap_or(0)
+    }
+
+    pub fn play_end(&self) -> i32 {
+        self.attrs.get_i32("play_end").unwrap_or(0)
+    }
+
+    // Setters for attrs-based properties
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.attrs.set("name", AttrValue::Str(name.into()));
+    }
+
+    pub fn set_start(&mut self, start: usize) {
+        self.attrs.set("start", AttrValue::UInt(start as u32));
+    }
+
+    pub fn set_end(&mut self, end: usize) {
+        self.attrs.set("end", AttrValue::UInt(end as u32));
+    }
+
+    pub fn set_fps(&mut self, fps: f32) {
+        self.attrs.set("fps", AttrValue::Float(fps));
+    }
+
+    pub fn set_play_start(&mut self, play_start: i32) {
+        self.attrs.set("play_start", AttrValue::Int(play_start));
+    }
+
+    pub fn set_play_end(&mut self, play_end: i32) {
+        self.attrs.set("play_end", AttrValue::Int(play_end));
+    }
+
     /// Inclusive play range (work area) used for rendering/encoding
     /// Returns the visible portion considering play_start/play_end offsets
     pub fn play_range(&self) -> (usize, usize) {
-        let visible_start = self.start + self.play_start.max(0) as usize;
-        let visible_end = self.end.saturating_sub(self.play_end.max(0) as usize);
+        let visible_start = self.start() + self.play_start().max(0) as usize;
+        let visible_end = self.end().saturating_sub(self.play_end().max(0) as usize);
         (visible_start, visible_end)
     }
 
     /// Number of frames in full composition (not limited by play_area)
     pub fn frame_count(&self) -> usize {
-        if self.end >= self.start {
-            self.end - self.start + 1
+        let start = self.start();
+        let end = self.end();
+        if end >= start {
+            end - start + 1
         } else {
             0
         }
@@ -408,12 +441,117 @@ impl Comp {
     }
 }
 
+// ===== GUI Trait Implementations =====
+
+impl crate::entities::ProjectUI for Comp {
+    fn project_ui(&self, ui: &mut egui::Ui) -> egui::Response {
+        ui.horizontal(|ui| {
+            // Icon/type indicator
+            ui.label("📁");
+
+            // Comp name
+            ui.label(self.name());
+
+            // Metadata
+            ui.label(format!("{}fps", self.fps()));
+            ui.label(format!("{}-{}", self.start(), self.end()));
+            ui.label(format!("{} layers", self.layers.len()));
+        })
+        .response
+    }
+}
+
+impl crate::entities::TimelineUI for Comp {
+    fn timeline_ui(
+        &self,
+        ui: &mut egui::Ui,
+        bar_rect: egui::Rect,
+        current_frame: usize,
+    ) -> egui::Response {
+        let painter = ui.painter();
+
+        // Draw bar background (different color for comp)
+        let bar_color = egui::Color32::from_rgb(100, 60, 140);
+        painter.rect_filled(bar_rect, 2.0, bar_color);
+
+        // Draw border
+        painter.rect_stroke(bar_rect, 2.0, (1.0, egui::Color32::WHITE));
+
+        // Highlight current frame if within range
+        let start = self.start();
+        let end = self.end();
+        if current_frame >= start && current_frame <= end {
+            let total_frames = (end - start + 1) as f32;
+            let frame_width = bar_rect.width() / total_frames;
+            let offset = (current_frame - start) as f32 * frame_width;
+            let playhead_rect = egui::Rect::from_min_size(
+                egui::pos2(bar_rect.min.x + offset, bar_rect.min.y),
+                egui::vec2(2.0, bar_rect.height()),
+            );
+            painter.rect_filled(playhead_rect, 0.0, egui::Color32::RED);
+        }
+
+        // Draw label
+        painter.text(
+            bar_rect.left_center() + egui::vec2(5.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            self.name(),
+            egui::FontId::default(),
+            egui::Color32::WHITE,
+        );
+
+        ui.interact(bar_rect, ui.id().with(&self.uuid), egui::Sense::click_and_drag())
+    }
+}
+
+impl crate::entities::AttributeEditorUI for Comp {
+    fn ae_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Composition");
+
+        // All editable properties are now in attrs
+        crate::entities::render_attrs_editor(ui, &mut self.attrs);
+
+        ui.separator();
+
+        // Info section (read-only runtime state)
+        egui::CollapsingHeader::new("Info")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("UUID:");
+                    ui.label(&self.uuid);
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Current Frame:");
+                    ui.label(format!("{}", self.current_frame));
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Layers:");
+                    ui.label(format!("{}", self.layers.len()));
+                });
+
+                // Show layer list
+                for (idx, layer) in self.layers.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let is_selected = self.selected_layer == Some(idx);
+                        if ui.selectable_label(is_selected, format!("Layer {}", idx)).clicked() {
+                            self.selected_layer = Some(idx);
+                        }
+                        ui.label(format!("({}-{})", layer.start(), layer.end()));
+                    });
+                }
+            });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::clip::Clip;
+    use super::super::Clip;
     use crate::media::MediaSource;
-    use crate::project::Project;
+    use super::super::Project;
 
     /// Helper: create dummy frame
     fn dummy_frame(_value: u8) -> Frame {

@@ -3,8 +3,8 @@
 //! Provides common interface for frame sources
 
 use serde::{Deserialize, Serialize};
-use crate::clip::Clip;
-use crate::comp::Comp;
+use crate::entities::Clip;
+use crate::entities::Comp;
 use crate::frame::Frame;
 use crate::attrs::Attrs;
 
@@ -26,7 +26,7 @@ impl MediaSource {
 
     /// Get frame at given index (returns owned Frame)
     /// For Comp sources, requires reference to Project for recursive resolution
-    pub fn get_frame(&self, frame: usize, project: &crate::project::Project) -> Option<Frame> {
+    pub fn get_frame(&self, frame: usize, project: &crate::entities::Project) -> Option<Frame> {
         match self {
             MediaSource::Clip(c) => c.get_frame(frame).cloned(),
             MediaSource::Comp(c) => c.get_frame(frame, project),

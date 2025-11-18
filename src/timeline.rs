@@ -6,7 +6,8 @@
 //! - Visual indication of current_frame (playhead)
 
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
-use crate::comp::Comp;
+use crate::entities::Comp;
+use egui_dnd::{dnd, DragDropItem};
 
 /// Configuration for timeline widget
 #[derive(Clone, Debug)]
@@ -291,52 +292,74 @@ pub fn render_timeline(
         .id_salt("timeline_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // Two-column layout: layer names | timeline bars
+            // Create temporary layer order for egui_dnd
+            let mut layer_order: Vec<usize> = (0..comp.layers.len()).collect();
+
+            // Two-column layout: layer names (with DnD) | timeline bars
             ui.horizontal(|ui| {
-                  // Left column: layer names
-                  ui.vertical(|ui| {
-                      ui.set_width(config.name_column_width);
-                      for (idx, layer) in comp.layers.iter().enumerate() {
-                          let layer_name = &layer.source_uuid;
-                          let (rect, response) = ui.allocate_exact_size(
-                              Vec2::new(config.name_column_width, config.layer_height),
-                              Sense::click(),
-                          );
+                // Left column: layer names with egui_dnd for smooth reordering
+                {
+                    let dnd_response = dnd(ui, "timeline_layer_names")
+                        .show_vec(&mut layer_order, |ui, layer_idx, handle, _state| {
+                            let idx = *layer_idx;
+                            let layer = &comp.layers[idx];
+                            let layer_name = &layer.source_uuid;
 
-                          let is_selected = comp.selected_layer == Some(idx);
+                            ui.horizontal(|ui| {
+                                // Drag handle
+                                handle.ui(ui, |ui| {
+                                    ui.label("☰");
+                                });
 
-                          // Draw layer name background (highlight when selected)
-                          let name_bg = if is_selected {
-                              Color32::from_rgb(70, 100, 140)
-                          } else {
-                              Color32::from_gray(40)
-                          };
-                          ui.painter().rect_filled(rect, 2.0, name_bg);
+                                // Layer name
+                                let (rect, response) = ui.allocate_exact_size(
+                                    Vec2::new(config.name_column_width - 20.0, config.layer_height),
+                                    Sense::click(),
+                                );
 
-                          // Optional border for selected header
-                          if is_selected {
-                              ui.painter().rect_stroke(
-                                  rect.shrink(1.0),
-                                  2.0,
-                                  egui::Stroke::new(1.5, Color32::from_rgb(180, 230, 255)),
-                                  egui::epaint::StrokeKind::Middle,
-                              );
-                          }
+                                let is_selected = comp.selected_layer == Some(idx);
 
-                          // Draw layer name text
-                          ui.painter().text(
-                              Pos2::new(rect.min.x + 8.0, rect.center().y),
-                              egui::Align2::LEFT_CENTER,
-                              layer_name,
-                              egui::FontId::proportional(12.0),
-                              Color32::from_gray(200),
-                          );
+                                // Draw layer name background (highlight when selected)
+                                let name_bg = if is_selected {
+                                    Color32::from_rgb(70, 100, 140)
+                                } else {
+                                    Color32::from_gray(40)
+                                };
+                                ui.painter().rect_filled(rect, 2.0, name_bg);
 
-                          if response.clicked() {
-                              action = TimelineAction::SelectLayer(idx);
-                          }
-                      }
-                  });
+                                // Optional border for selected header
+                                if is_selected {
+                                    ui.painter().rect_stroke(
+                                        rect.shrink(1.0),
+                                        2.0,
+                                        egui::Stroke::new(1.5, Color32::from_rgb(180, 230, 255)),
+                                        egui::epaint::StrokeKind::Middle,
+                                    );
+                                }
+
+                                // Draw layer name text
+                                ui.painter().text(
+                                    Pos2::new(rect.min.x + 8.0, rect.center().y),
+                                    egui::Align2::LEFT_CENTER,
+                                    layer_name,
+                                    egui::FontId::proportional(12.0),
+                                    Color32::from_gray(200),
+                                );
+
+                                if response.clicked() {
+                                    action = TimelineAction::SelectLayer(idx);
+                                }
+                            });
+                        });
+
+                    // Check if layer order changed and emit ReorderLayer action
+                    if let Some(update) = dnd_response.final_update {
+                        action = TimelineAction::ReorderLayer {
+                            from_idx: update.from,
+                            to_idx: update.to,
+                        };
+                    }
+                }
 
                 // Right column: timeline bars
                 ui.vertical(|ui| {
@@ -351,9 +374,11 @@ pub fn render_timeline(
                     if ui.is_rect_visible(timeline_rect) {
                         let painter = ui.painter();
 
-                        // Draw layer bars and handle interactions
-                        for (idx, layer) in comp.layers.iter().enumerate() {
-                            let layer_y = timeline_rect.min.y + (idx as f32 * config.layer_height);
+                        // Draw layer bars in same order as layer names (using layer_order from DnD)
+                        for (display_idx, &original_idx) in layer_order.iter().enumerate() {
+                            let idx = original_idx;
+                            let layer = &comp.layers[idx];
+                            let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
                             let layer_rect = Rect::from_min_size(
                                 Pos2::new(timeline_rect.min.x, layer_y),
                                 Vec2::new(timeline_width, config.layer_height),
@@ -427,7 +452,9 @@ pub fn render_timeline(
 
                         // Handle layer bar interactions using proper response system
                         // We need to do this in a second pass after drawing to ensure responses are on top
-                        for (idx, layer) in comp.layers.iter().enumerate() {
+                        for (display_idx, &original_idx) in layer_order.iter().enumerate() {
+                            let idx = original_idx;
+                            let layer = &comp.layers[idx];
                             let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
                             let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
                             let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
@@ -437,7 +464,7 @@ pub fn render_timeline(
                             let visible_start = layer_start + play_start as usize;
                             let visible_end = layer_end.saturating_sub(play_end as usize);
 
-                            let layer_y = timeline_rect.min.y + (idx as f32 * config.layer_height);
+                            let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
 
                             // Use visible range for interaction rect (user should interact with visible edges)
                             let bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
@@ -700,14 +727,14 @@ pub fn render_timeline(
                                       // If click is within any layer row, select that layer;
                                       // otherwise treat it as a frame scrub on empty space.
                                       let mut clicked_layer: Option<usize> = None;
-                                      for (idx, _) in comp.layers.iter().enumerate() {
-                                          let layer_y = timeline_rect.min.y + (idx as f32 * config.layer_height);
+                                      for (display_idx, &original_idx) in layer_order.iter().enumerate() {
+                                          let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
                                           let row_rect = Rect::from_min_max(
                                               Pos2::new(timeline_rect.min.x, layer_y),
                                               Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
                                           );
                                           if row_rect.contains(pos) {
-                                              clicked_layer = Some(idx);
+                                              clicked_layer = Some(original_idx);
                                               break;
                                           }
                                       }

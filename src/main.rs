@@ -1,15 +1,12 @@
+mod attrs;
+mod compositor;
 mod convert;
 mod encode;
+mod entities;
 mod events;
 mod exr;
 mod frame;
-mod attrs;
-mod clip;
-mod comp;
-mod compositor;
-mod layer;
 mod media;
-mod project;
 mod paths;
 mod player;
 mod prefs;
@@ -31,7 +28,7 @@ use eframe::{egui, glow};
 use frame::Frame;
 use log::{debug, error, info, warn};
 use player::Player;
-use project::Project;
+use entities::Project;
 use prefs::{AppSettings, render_settings_window};
 use shaders::Shaders;
 use status_bar::StatusBar;
@@ -159,6 +156,9 @@ struct PlayaApp {
     /// Event sender for compositions (shared across all comps)
     #[serde(skip)]
     comp_event_sender: events::CompEventSender,
+    /// Global event bus for application-wide events
+    #[serde(skip)]
+    event_bus: events::EventBus,
 }
 
 impl Default for PlayaApp {
@@ -199,6 +199,7 @@ impl Default for PlayaApp {
             workers,
             comp_event_receiver: event_rx,
             comp_event_sender,
+            event_bus: events::EventBus::new(),
         }
     }
 }
@@ -400,12 +401,12 @@ impl Default for PlayaApp {
       /// Load project from JSON file
       fn load_project(&mut self, path: PathBuf) {
           match crate::project::Project::from_json(&path) {
-              Ok(project) => {
+              Ok(mut project) => {
                   info!("Loaded project from {}", path.display());
- 
+
+                  // Rebuild runtime with event sender for all comps
+                  project.rebuild_runtime(Some(self.comp_event_sender.clone()));
                   self.player.project = project;
-                  // Re-attach event sender for all comps in loaded project
-                  self.attach_comp_event_sender();
                   self.error_msg = None;
               }
             Err(e) => {
@@ -415,21 +416,145 @@ impl Default for PlayaApp {
         }
     }
 
+    /// Handle application events from the event bus
+    fn handle_event(&mut self, event: events::AppEvent) {
+        use events::AppEvent;
+
+        match event {
+            // ===== Playback Control =====
+            AppEvent::Play => {
+                self.player.play();
+            }
+            AppEvent::Pause => {
+                self.player.pause();
+            }
+            AppEvent::Stop => {
+                self.player.stop();
+            }
+            AppEvent::SetFrame(frame) => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        comp.set_frame(frame);
+                    }
+                }
+            }
+            AppEvent::StepForward => {
+                // TODO: implement step forward
+            }
+            AppEvent::StepBackward => {
+                // TODO: implement step backward
+            }
+            AppEvent::JumpToStart => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        comp.set_frame(comp.play_start as usize);
+                    }
+                }
+            }
+            AppEvent::JumpToEnd => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        comp.set_frame(comp.play_end as usize);
+                    }
+                }
+            }
+
+            // ===== Project Management =====
+            AppEvent::AddClip(path) => {
+                let _ = self.load_sequences(vec![path]);
+            }
+            AppEvent::AddClips(paths) => {
+                let _ = self.load_sequences(paths);
+            }
+            AppEvent::AddComp { name, fps } => {
+                let start = 0;
+                let end = 100;
+                let comp = crate::comp::Comp::new(name, start, end, fps);
+                self.player.project.add_comp(comp);
+            }
+            AppEvent::RemoveMedia(_uuid) => {
+                // TODO: implement remove media
+            }
+            AppEvent::SaveProject(path) => {
+                self.save_project(path);
+            }
+            AppEvent::LoadProject(path) => {
+                self.load_project(path);
+            }
+
+            // ===== Selection =====
+            AppEvent::SelectMedia(_uuid) => {
+                // TODO: implement select media
+            }
+            AppEvent::SelectLayer(_index) => {
+                // TODO: implement select layer
+            }
+            AppEvent::DeselectAll => {
+                // TODO: implement deselect all
+            }
+
+            // ===== UI State =====
+            AppEvent::TogglePlaylist => {
+                self.show_playlist = !self.show_playlist;
+            }
+            AppEvent::ToggleHelp => {
+                self.show_help = !self.show_help;
+            }
+            AppEvent::ToggleAttributeEditor => {
+                // TODO: implement when attribute editor exists
+            }
+            AppEvent::ZoomViewport(factor) => {
+                self.viewport_state.zoom *= factor;
+            }
+            AppEvent::ResetViewport => {
+                self.viewport_state.reset();
+            }
+
+            // ===== Drag-and-Drop (placeholders for now) =====
+            AppEvent::DragStart { .. } => {
+                // TODO: implement drag start
+            }
+            AppEvent::DragMove { .. } => {
+                // TODO: implement drag move
+            }
+            AppEvent::DragDrop { .. } => {
+                // TODO: implement drag drop
+            }
+            AppEvent::DragCancel => {
+                // TODO: implement drag cancel
+            }
+
+            // ===== Hotkeys =====
+            AppEvent::HotkeyPressed { key, window } => {
+                log::debug!("Hotkey pressed: {} in {:?}", key, window);
+                // TODO: implement hotkey handling per window
+            }
+            AppEvent::HotkeyReleased { key, window } => {
+                log::debug!("Hotkey released: {} in {:?}", key, window);
+                // TODO: implement hotkey handling per window
+            }
+        }
+    }
+
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
         let input = ctx.input(|i| i.clone());
 
+        // F1: Toggle help
         if input.key_pressed(egui::Key::F1) {
-            self.show_help = !self.show_help;
+            self.event_bus.send(events::AppEvent::ToggleHelp);
         }
 
+        // F2: Toggle playlist
         if input.key_pressed(egui::Key::F2) {
-            self.show_playlist = !self.show_playlist;
+            self.event_bus.send(events::AppEvent::TogglePlaylist);
         }
 
+        // F3: Toggle settings (not yet in EventBus, keep direct)
         if input.key_pressed(egui::Key::F3) {
             self.show_settings = !self.show_settings;
         }
 
+        // F4: Toggle encode dialog (not yet in EventBus, keep direct)
         if input.key_pressed(egui::Key::F4) {
             self.show_encode_dialog = !self.show_encode_dialog;
             // Load dialog state from settings when opening
@@ -468,12 +593,17 @@ impl Default for PlayaApp {
 
         // Play/Pause (Space, ArrowUp)
         if input.key_pressed(egui::Key::Space) || input.key_pressed(egui::Key::ArrowUp) {
-            self.player.toggle_play_pause();
+            // Toggle between play and pause
+            if self.player.is_playing() {
+                self.event_bus.send(events::AppEvent::Pause);
+            } else {
+                self.event_bus.send(events::AppEvent::Play);
+            }
         }
 
         // Stop (K, .)
         if input.key_pressed(egui::Key::K) || input.key_pressed(egui::Key::Period) {
-            self.player.stop();
+            self.event_bus.send(events::AppEvent::Stop);
         }
 
         // Only process playback hotkeys when no widget has keyboard focus
@@ -481,12 +611,12 @@ impl Default for PlayaApp {
         if !ctx.wants_keyboard_input() {
             // Jump to start (1, Home)
             if input.key_pressed(egui::Key::Num1) || input.key_pressed(egui::Key::Home) {
-                self.player.to_start();
+                self.event_bus.send(events::AppEvent::JumpToStart);
             }
 
             // Jump to end (2, End)
             if input.key_pressed(egui::Key::Num2) || input.key_pressed(egui::Key::End) {
-                self.player.to_end();
+                self.event_bus.send(events::AppEvent::JumpToEnd);
             }
 
             // Frame stepping
@@ -691,6 +821,11 @@ impl Default for PlayaApp {
 
 impl eframe::App for PlayaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Process all events from the event bus
+        while let Some(event) = self.event_bus.try_recv() {
+            self.handle_event(event);
+        }
+
         // Apply theme based on settings
         if self.settings.dark_mode {
             ctx.set_visuals(egui::Visuals::dark());
@@ -785,7 +920,7 @@ impl eframe::App for PlayaApp {
 
             // Create new composition
             if project_actions.new_comp {
-                use crate::comp::Comp;
+                use crate::entities::Comp;
                 use crate::media::MediaSource;
                 let fps = 30.0;
                 let end = (fps * 5.0) as usize; // 5 seconds
@@ -1156,9 +1291,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                   if let Some(ref playlist_path) = args.playlist {
                       info!("Loading playlist: {}", playlist_path.display());
                       match crate::project::Project::from_json(playlist_path) {
-                          Ok(project) => {
+                          Ok(mut project) => {
+                              // Rebuild runtime with event sender for all comps
+                              project.rebuild_runtime(Some(app.comp_event_sender.clone()));
                               app.player.project = project;
-                              app.attach_comp_event_sender();
                               info!("Playlist loaded via Project");
                           }
                           Err(e) => {

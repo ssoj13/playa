@@ -27,11 +27,11 @@
 
 use log::{debug, info};
 use std::time::Instant;
-use crate::clip::Clip;
-use crate::comp::Comp;
+use crate::entities::Clip;
+use crate::entities::Comp;
 use crate::frame::Frame;
-use crate::layer::Layer;
-use crate::project::Project;
+use crate::entities::Layer;
+use crate::entities::Project;
 
 /// FPS presets for jog/shuttle control
 const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0];

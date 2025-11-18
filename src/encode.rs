@@ -12,7 +12,7 @@ use std::sync::mpsc::Sender;
 
 use crate::convert::SwsContext;
 use crate::frame::{CropAlign, FrameConversion, TonemapMode, PixelFormat};
-use crate::comp::Comp;
+use crate::entities::Comp;
 use playa_ffmpeg as ffmpeg;
 
 /// Encode dialog settings (persistent via AppSettings)
@@ -1169,7 +1169,7 @@ pub fn encode_comp(
 mod tests {
     use super::*;
     use crate::frame::Frame;
-    use crate::clip::Clip;
+    use crate::entities::Clip;
 
     /// Test encoding with placeholder frames
     #[test]

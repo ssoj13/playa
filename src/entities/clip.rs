@@ -34,6 +34,11 @@ pub fn detect(paths: Vec<PathBuf>) -> Result<Vec<Clip>, FrameError> {
 }
 
 /// Clip: sequence of frames with pattern-based file naming.
+///
+/// All editable properties are stored in `attrs`:
+/// - "start" (UInt): First frame number
+/// - "end" (UInt): Last frame number
+/// - "padding" (UInt): Number of digits in frame numbers
 #[derive(Debug, Clone, Serialize)]
 pub struct Clip {
     /// Stable identifier inside Project / MediaPool
@@ -41,12 +46,15 @@ pub struct Clip {
 
     #[serde(skip)]
     frames: Vec<Frame>,
-    pattern: String, // "c:/temp/seq1/aaa.*.exr"
-    start: usize,    // first frame number
-    end: usize,      // last frame number
-    padding: usize,  // number of digits (4 for "0001")
+
+    /// File pattern ("c:/temp/seq1/aaa.*.exr")
+    pattern: String,
+
+    /// Frame resolution (detected from first frame)
     xres: usize,
     yres: usize,
+
+    /// Arbitrary attributes (all editable properties stored here)
     pub attrs: Attrs,
 }
 
@@ -61,9 +69,6 @@ impl<'de> Deserialize<'de> for Clip {
         struct ClipData {
             uuid: String,
             pattern: String,
-            start: usize,
-            end: usize,
-            padding: usize,
             xres: usize,
             yres: usize,
             attrs: Attrs,
@@ -75,9 +80,6 @@ impl<'de> Deserialize<'de> for Clip {
             uuid: data.uuid,
             frames: Vec::new(),
             pattern: data.pattern,
-            start: data.start,
-            end: data.end,
-            padding: data.padding,
             xres: data.xres,
             yres: data.yres,
             attrs: data.attrs,
@@ -115,10 +117,10 @@ fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
     Ok(paths)
 }
 
-/// Split a sequence filename into (prefix, number, ext).
+/// Split a sequence filename into (prefix, number, ext, padding).
 ///
-/// Example: "/path/seq.0001.exr" -> ("/path/seq.", 1, "exr")
-fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String)>, FrameError> {
+/// Example: "/path/seq.0001.exr" -> ("/path/seq.", 1, "exr", 4)
+fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usize)>, FrameError> {
     let ext = match path.extension().and_then(|s| s.to_str()) {
         Some(e) => e.to_string(),
         None => return Ok(None),
@@ -149,6 +151,7 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String)>, F
         .parse::<usize>()
         .map_err(|e| FrameError::Image(format!("Invalid frame number '{}': {}", number_str, e)))?;
     let prefix_local = &stem[..digit_start]; // e.g. "seq." or "seq_"
+    let padding = number_str.len(); // Actual padding from filename
 
     // Build full prefix including parent directory
     let mut prefix = String::new();
@@ -160,10 +163,36 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String)>, F
     }
     prefix.push_str(prefix_local);
 
-    Ok(Some((prefix, number, ext)))
+    Ok(Some((prefix, number, ext, padding)))
 }
 
 impl Clip {
+    // Getters for attrs-based properties
+    pub fn start(&self) -> usize {
+        self.attrs.get_u32("start").unwrap_or(0) as usize
+    }
+
+    pub fn end(&self) -> usize {
+        self.attrs.get_u32("end").unwrap_or(0) as usize
+    }
+
+    pub fn padding(&self) -> usize {
+        self.attrs.get_u32("padding").unwrap_or(4) as usize
+    }
+
+    // Setters for attrs-based properties
+    pub fn set_start(&mut self, start: usize) {
+        self.attrs.set("start", AttrValue::UInt(start as u32));
+    }
+
+    pub fn set_end(&mut self, end: usize) {
+        self.attrs.set("end", AttrValue::UInt(end as u32));
+    }
+
+    pub fn set_padding(&mut self, padding: usize) {
+        self.attrs.set("padding", AttrValue::UInt(padding as u32));
+    }
+
     /// Create clip from file pattern or glob.
     pub fn new(
         pattern: String,
@@ -175,16 +204,18 @@ impl Clip {
         let start_val = start.unwrap_or(0);
         let end_val = end.unwrap_or(0);
 
+        let mut attrs = Attrs::new();
+        attrs.set("start", AttrValue::UInt(start_val as u32));
+        attrs.set("end", AttrValue::UInt(end_val as u32));
+        attrs.set("padding", AttrValue::UInt(4));
+
         let mut clip = Self {
             uuid: gen_clip_uuid(&pattern, start_val, end_val),
             frames: Vec::new(),
             pattern: pattern.clone(),
-            start: start_val,
-            end: end_val,
-            padding: 4,
             xres,
             yres,
-            attrs: Attrs::new(),
+            attrs,
         };
 
         // If pattern has "*" – glob files
@@ -198,7 +229,8 @@ impl Clip {
             if let Some(caps) = re.captures(&pattern)
                 && let Some(m) = caps.get(1)
             {
-                clip.padding = m.as_str().parse::<usize>().unwrap_or(4);
+                let padding_val = m.as_str().parse::<usize>().unwrap_or(4);
+                clip.set_padding(padding_val);
             }
             // Convert to a glob pattern for discovery
             let glob_pattern = re.replace_all(&pattern, "*").to_string();
@@ -208,16 +240,11 @@ impl Clip {
             clip.init_from_file(&pattern)?;
         }
 
-        // Basic metadata for serialization
+        // Additional metadata for serialization
         clip.attrs.set("pattern", AttrValue::Str(clip.pattern.clone()));
-        clip.attrs
-            .set("xres", AttrValue::UInt(clip.xres as u32));
-        clip.attrs
-            .set("yres", AttrValue::UInt(clip.yres as u32));
-        clip.attrs
-            .set("start", AttrValue::UInt(clip.start as u32));
-        clip.attrs
-            .set("end", AttrValue::UInt(clip.end as u32));
+        clip.attrs.set("xres", AttrValue::UInt(clip.xres as u32));
+        clip.attrs.set("yres", AttrValue::UInt(clip.yres as u32));
+        // start, end, padding already set in attrs during initialization/init_from_*
 
         Ok(clip)
     }
@@ -225,37 +252,32 @@ impl Clip {
     /// Helper for tests: create clip from in-memory frames.
     pub fn from_frames(frames: Vec<Frame>, pattern: String, xres: usize, yres: usize) -> Self {
         let end = if frames.is_empty() { 0 } else { frames.len() - 1 };
-        let mut clip = Self {
+
+        let mut attrs = Attrs::new();
+        attrs.set("start", AttrValue::UInt(0));
+        attrs.set("end", AttrValue::UInt(end as u32));
+        attrs.set("padding", AttrValue::UInt(4));
+        attrs.set("pattern", AttrValue::Str(pattern.clone()));
+        attrs.set("xres", AttrValue::UInt(xres as u32));
+        attrs.set("yres", AttrValue::UInt(yres as u32));
+
+        Self {
             uuid: gen_clip_uuid(&pattern, 0, end),
             frames,
             pattern,
-            start: 0,
-            end,
-            padding: 4,
             xres,
             yres,
-            attrs: Attrs::new(),
-        };
-
-        clip.attrs
-            .set("pattern", AttrValue::Str(clip.pattern.clone()));
-        clip.attrs
-            .set("xres", AttrValue::UInt(clip.xres as u32));
-        clip.attrs
-            .set("yres", AttrValue::UInt(clip.yres as u32));
-        clip.attrs
-            .set("start", AttrValue::UInt(clip.start as u32));
-        clip.attrs
-            .set("end", AttrValue::UInt(clip.end as u32));
-
-        clip
+            attrs,
+        }
     }
 
     /// Restore frames from metadata after deserialization
     pub fn restore_frames(&mut self) {
         self.frames.clear();
 
-        for frame_num in self.start..=self.end {
+        let start = self.start();
+        let end = self.end();
+        for frame_num in start..=end {
             let path = self.frame_path(frame_num);
             self.frames.push(Frame::new_unloaded(path));
         }
@@ -274,12 +296,14 @@ impl Clip {
     }
 
     pub fn frame_range(&self) -> (usize, usize) {
-        (self.start, self.end)
+        (self.start(), self.end())
     }
 
     pub fn len(&self) -> usize {
-        if self.end >= self.start {
-            self.end - self.start + 1
+        let start = self.start();
+        let end = self.end();
+        if end >= start {
+            end - start + 1
         } else {
             0
         }
@@ -318,11 +342,12 @@ impl Clip {
     }
 
     fn frame_path(&self, frame_num: usize) -> PathBuf {
+        let padding = self.padding();
         if self.pattern.contains('*') {
-            let number = format!("{:0width$}", frame_num, width = self.padding);
+            let number = format!("{:0width$}", frame_num, width = padding);
             self.pattern.replace('*', &number).into()
         } else if self.pattern.contains("####") {
-            let number = format!("{:0width$}", frame_num, width = self.padding);
+            let number = format!("{:0width$}", frame_num, width = padding);
             self.pattern.replace("####", &number).into()
         } else {
             let path = Path::new(&self.pattern);
@@ -331,8 +356,8 @@ impl Clip {
                 .and_then(|s| s.to_str())
                 .unwrap_or("frame");
             let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("exr");
-            let number = format!("{:0width$}", frame_num, width = self.padding);
-            let mut name = String::with_capacity(stem.len() + 1 + self.padding + ext.len() + 1);
+            let number = format!("{:0width$}", frame_num, width = padding);
+            let mut name = String::with_capacity(stem.len() + 1 + padding + ext.len() + 1);
             name.push_str(stem);
             name.push('.');
             name.push_str(&number);
@@ -355,13 +380,13 @@ impl Clip {
             )));
         }
 
-        // Group by (prefix, ext)
-        let mut groups: HashMap<(String, String), Vec<(usize, PathBuf)>> = HashMap::new();
+        // Group by (prefix, ext), storing (number, path, padding)
+        let mut groups: HashMap<(String, String), Vec<(usize, PathBuf, usize)>> = HashMap::new();
 
         for path in paths {
-            if let Some((prefix, number, ext)) = split_sequence_path(&path)? {
+            if let Some((prefix, number, ext, padding)) = split_sequence_path(&path)? {
                 let key = (prefix, ext);
-                groups.entry(key).or_default().push((number, path));
+                groups.entry(key).or_default().push((number, path, padding));
             }
         }
 
@@ -374,20 +399,24 @@ impl Clip {
         let (prefix, ext) = key;
         let (min_frame, max_frame) = frames
             .iter()
-            .fold((usize::MAX, 0usize), |(min_f, max_f), (num, _)| {
+            .fold((usize::MAX, 0usize), |(min_f, max_f), (num, _, _)| {
                 (min_f.min(*num), max_f.max(*num))
             });
 
-        self.start = min_frame;
-        self.end = max_frame;
-        self.padding = frames
+        self.set_start(min_frame);
+        self.set_end(max_frame);
+        // Use padding from first frame in sequence
+        let padding_val = frames
             .first()
-            .map(|(num, _)| num.to_string().len())
+            .map(|(_, _, padding)| *padding)
             .unwrap_or(4);
+        self.set_padding(padding_val);
         self.pattern = format!("{}*.{}", prefix, ext);
 
         self.frames.clear();
-        for frame_num in self.start..=self.end {
+        let start = self.start();
+        let end = self.end();
+        for frame_num in start..=end {
             let path = self.frame_path(frame_num);
             self.frames.push(Frame::new_unloaded(path));
         }
@@ -395,8 +424,8 @@ impl Clip {
         info!(
             "Detected clip: {} ({}..{}, {} frames)",
             self.pattern,
-            self.start,
-            self.end,
+            self.start(),
+            self.end(),
             self.len()
         );
 
@@ -405,7 +434,7 @@ impl Clip {
 
     fn init_from_file(&mut self, path_str: &str) -> Result<(), FrameError> {
         let path = PathBuf::from(path_str);
-        let (prefix, number, ext) = split_sequence_path(&path)?
+        let (prefix, number, ext, padding) = split_sequence_path(&path)?
             .ok_or_else(|| FrameError::Image(format!("Not a sequence file: {}", path_str)))?;
 
         let dir = path.parent().unwrap_or_else(|| Path::new("."));
@@ -416,7 +445,7 @@ impl Clip {
         {
             let entry = entry.map_err(|e| FrameError::Image(format!("Dir entry error: {}", e)))?;
             let p = entry.path();
-            if let Some((pfx, num, ext2)) = split_sequence_path(&p)? {
+            if let Some((pfx, num, ext2, _)) = split_sequence_path(&p)? {
                 if pfx == prefix && ext2 == ext {
                     frames.push((num, p));
                 }
@@ -431,9 +460,9 @@ impl Clip {
         }
 
         frames.sort_by_key(|(n, _)| *n);
-        self.start = frames.first().map(|(n, _)| *n).unwrap_or(number);
-        self.end = frames.last().map(|(n, _)| *n).unwrap_or(number);
-        self.padding = number.to_string().len();
+        self.set_start(frames.first().map(|(n, _)| *n).unwrap_or(number));
+        self.set_end(frames.last().map(|(n, _)| *n).unwrap_or(number));
+        self.set_padding(padding); // Use actual padding from filename
         self.pattern = format!("{}*.{}", prefix, ext);
 
         self.frames.clear();
@@ -445,11 +474,120 @@ impl Clip {
             "Detected clip from file {}: {} ({}..{}, {} frames)",
             path_str,
             self.pattern,
-            self.start,
-            self.end,
+            self.start(),
+            self.end(),
             self.len()
         );
 
         Ok(())
+    }
+}
+
+// ===== GUI Trait Implementations =====
+
+impl crate::entities::ProjectUI for Clip {
+    fn project_ui(&self, ui: &mut egui::Ui) -> egui::Response {
+        ui.horizontal(|ui| {
+            // Icon/type indicator
+            ui.label("🎬");
+
+            // Clip name (derived from pattern)
+            let name = std::path::Path::new(&self.pattern)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Clip");
+            ui.label(name);
+
+            // Metadata
+            let (xres, yres) = self.resolution();
+            ui.label(format!("{}x{}", xres, yres));
+            ui.label(format!("{}-{}", self.start(), self.end()));
+            ui.label(format!("{} frames", self.len()));
+        })
+        .response
+    }
+}
+
+impl crate::entities::TimelineUI for Clip {
+    fn timeline_ui(
+        &self,
+        ui: &mut egui::Ui,
+        bar_rect: egui::Rect,
+        current_frame: usize,
+    ) -> egui::Response {
+        let painter = ui.painter();
+
+        // Draw bar background
+        let bar_color = egui::Color32::from_rgb(60, 100, 140);
+        painter.rect_filled(bar_rect, 2.0, bar_color);
+
+        // Draw border
+        painter.rect_stroke(bar_rect, 2.0, (1.0, egui::Color32::WHITE));
+
+        // Highlight current frame if within range
+        let start = self.start();
+        let end = self.end();
+        if current_frame >= start && current_frame <= end {
+            let frame_width = bar_rect.width() / (self.len() as f32);
+            let offset = (current_frame - start) as f32 * frame_width;
+            let playhead_rect = egui::Rect::from_min_size(
+                egui::pos2(bar_rect.min.x + offset, bar_rect.min.y),
+                egui::vec2(2.0, bar_rect.height()),
+            );
+            painter.rect_filled(playhead_rect, 0.0, egui::Color32::RED);
+        }
+
+        // Draw label
+        let name = std::path::Path::new(&self.pattern)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Clip");
+        painter.text(
+            bar_rect.left_center() + egui::vec2(5.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            name,
+            egui::FontId::default(),
+            egui::Color32::WHITE,
+        );
+
+        ui.interact(bar_rect, ui.id().with(&self.uuid), egui::Sense::click_and_drag())
+    }
+}
+
+impl crate::entities::AttributeEditorUI for Clip {
+    fn ae_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Clip");
+
+        // All editable properties are now in attrs
+        crate::entities::render_attrs_editor(ui, &mut self.attrs);
+
+        ui.separator();
+
+        // Info section (read-only runtime state)
+        egui::CollapsingHeader::new("Info")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Pattern:");
+                    ui.label(&self.pattern);
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("UUID:");
+                    ui.label(&self.uuid);
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("Total Frames:");
+                    ui.label(format!("{}", self.len()));
+                });
+
+                // Resolution
+                let (xres, yres) = self.resolution();
+                ui.horizontal(|ui| {
+                    ui.label("Resolution:");
+                    ui.label(format!("{}x{}", xres, yres));
+                });
+            });
     }
 }

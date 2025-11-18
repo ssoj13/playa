@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::attrs::Attrs;
-use crate::comp::Comp;
+use super::Comp;
 use crate::compositor::CompositorType;
 use crate::media::MediaSource;
 
@@ -123,13 +123,14 @@ impl Project {
         self.compositor = CompositorType::default();
 
         // Rebuild comps in unified media HashMap
-        for source in self.media.values() {
-            if let Some(comp) = source.as_comp() {
+        for source in self.media.values_mut() {
+            if let Some(comp) = source.as_comp_mut() {
                 comp.clear_cache();
 
-                // TODO: Set event sender for comps in media HashMap
-                // This requires mut access - consider using RefCell for event_sender
-                let _ = event_sender;
+                // Set event sender for comps if provided
+                if let Some(ref sender) = event_sender {
+                    comp.set_event_sender(sender.clone());
+                }
             }
         }
     }
