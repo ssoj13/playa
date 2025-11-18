@@ -143,5 +143,29 @@ impl Project {
         log::info!("Compositor changed to: {:?}", compositor);
         self.compositor = compositor;
     }
+
+    /// Get mutable reference to a composition by UUID.
+    pub fn get_comp_mut(&mut self, uuid: &str) -> Option<&mut Comp> {
+        self.media.get_mut(uuid).and_then(|s| s.as_comp_mut())
+    }
+
+    /// Get immutable reference to a composition by UUID.
+    pub fn get_comp(&self, uuid: &str) -> Option<&Comp> {
+        self.media.get(uuid).and_then(|s| s.as_comp())
+    }
+
+    /// Add a composition to the project.
+    pub fn add_comp(&mut self, comp: Comp) {
+        let uuid = comp.uuid.clone();
+        self.media.insert(uuid.clone(), MediaSource::Comp(comp));
+        self.comps_order.push(uuid);
+    }
+
+    /// Remove media (clip or comp) by UUID.
+    pub fn remove_media(&mut self, uuid: &str) {
+        self.media.remove(uuid);
+        self.clips_order.retain(|u| u != uuid);
+        self.comps_order.retain(|u| u != uuid);
+    }
 }
 

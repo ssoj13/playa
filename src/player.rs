@@ -106,12 +106,12 @@ impl Player {
     /// Internally this is mapped to comp.play_start / comp.play_end offsets.
     pub fn set_play_range(&mut self, start: usize, end: usize) {
         if let Some(comp) = self.active_comp_mut() {
-            if comp.end < comp.start {
+            if comp.end() < comp.start() {
                 return;
             }
 
-            let comp_start = comp.start;
-            let comp_end = comp.end;
+            let comp_start = comp.start();
+            let comp_end = comp.end();
 
             // Clamp requested range to comp bounds
             let clamped_start = start.clamp(comp_start, comp_end);
@@ -140,7 +140,8 @@ impl Player {
         if let Some(comp) = self.active_comp_mut() {
             comp.set_comp_play_start(0);
             comp.set_comp_play_end(0);
-            comp.set_current_frame(comp.start);
+            let start = comp.start();
+            comp.set_current_frame(start);
         }
     }
 
@@ -183,7 +184,7 @@ impl Player {
                     let layer_start = if comp.layers.is_empty() {
                         0  // First layer starts at frame 0
                     } else {
-                        comp.end + 1  // Subsequent layers stack sequentially
+                        comp.end() + 1  // Subsequent layers stack sequentially
                     };
                     let layer_end = layer_start + clip_len.saturating_sub(1);
 
@@ -197,12 +198,10 @@ impl Player {
 
                     // Extend comp timeline to include new layer
                     if is_first_layer {
-                        comp.start = 0;
+                        comp.set_start(0);
                         comp.current_frame = 0;  // Reset playhead to start
-                        comp.attrs.set("start", crate::attrs::AttrValue::UInt(0));
                     }
-                    comp.end = layer_end;
-                    comp.attrs.set("end", crate::attrs::AttrValue::UInt(layer_end as u32));
+                    comp.set_end(layer_end);
 
                     log::info!("Added clip {} as Layer to comp {} (timeline: {}..{})",
                         uuid, comp_uuid, layer_start, layer_end);
@@ -393,10 +392,12 @@ impl Player {
     /// respects play_range.
     pub fn set_frame(&mut self, frame: usize) {
         if let Some(comp) = self.active_comp_mut() {
-            if comp.end < comp.start {
+            let comp_start = comp.start();
+            let comp_end = comp.end();
+            if comp_end < comp_start {
                 return;
             }
-            let clamped = frame.clamp(comp.start, comp.end);
+            let clamped = frame.clamp(comp_start, comp_end);
             comp.set_current_frame(clamped);
         }
 

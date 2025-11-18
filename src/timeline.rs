@@ -111,7 +111,7 @@ impl LayerTool {
     }
 
     /// Convert to drag state for given layer
-    fn to_drag_state(&self, layer_idx: usize, layer: &crate::layer::Layer, drag_start_pos: Pos2) -> GlobalDragState {
+    fn to_drag_state(&self, layer_idx: usize, layer: &crate::entities::layer::Layer, drag_start_pos: Pos2) -> GlobalDragState {
         match self {
             LayerTool::AdjustPlayStart => {
                 let initial_play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
@@ -353,7 +353,7 @@ pub fn render_timeline(
                         });
 
                     // Check if layer order changed and emit ReorderLayer action
-                    if let Some(update) = dnd_response.final_update {
+                    if let Some(update) = dnd_response.final_update() {
                         action = TimelineAction::ReorderLayer {
                             from_idx: update.from,
                             to_idx: update.to,
@@ -635,8 +635,8 @@ pub fn render_timeline(
 
                         // Draw work area overlay (darken regions outside play_range)
                         let (play_start, play_end) = comp.play_range();
-                        let comp_start = comp.start;
-                        let comp_end = comp.end;
+                        let comp_start = comp.start();
+                        let comp_end = comp.end();
 
                         // Darken region before work area start
                         if play_start > comp_start {
@@ -937,3 +937,4 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color32 {
         ((b + m) * 255.0) as u8,
     )
 }
+

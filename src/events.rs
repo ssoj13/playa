@@ -104,6 +104,58 @@ pub enum HotkeyWindow {
     AttributeEditor,
 }
 
+/// Composition-level events emitted by Comp instances.
+/// These events notify the app about changes within a composition.
+#[derive(Debug, Clone)]
+pub enum CompEvent {
+    /// Current frame changed in a composition
+    CurrentFrameChanged {
+        comp_uuid: String,
+        old_frame: usize,
+        new_frame: usize,
+    },
+    /// Layers were modified (added, removed, reordered)
+    LayersChanged {
+        comp_uuid: String,
+    },
+    /// Timeline settings changed (play range, etc.)
+    TimelineChanged {
+        comp_uuid: String,
+    },
+}
+
+/// Event sender for Comp to emit CompEvents.
+/// Wraps a channel sender for type safety.
+#[derive(Clone, Debug)]
+pub struct CompEventSender {
+    tx: Option<crossbeam::channel::Sender<CompEvent>>,
+}
+
+impl CompEventSender {
+    /// Create a new CompEventSender
+    pub fn new(tx: crossbeam::channel::Sender<CompEvent>) -> Self {
+        Self { tx: Some(tx) }
+    }
+
+    /// Create a dummy sender (for initialization, before event system is set up)
+    pub fn dummy() -> Self {
+        Self { tx: None }
+    }
+
+    /// Emit a CompEvent
+    pub fn emit(&self, event: CompEvent) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(event);
+        }
+    }
+}
+
+impl Default for CompEventSender {
+    fn default() -> Self {
+        Self::dummy()
+    }
+}
+
 /// Event bus for message passing between components.
 ///
 /// Uses crossbeam unbounded channels for lock-free, multi-producer multi-consumer messaging.

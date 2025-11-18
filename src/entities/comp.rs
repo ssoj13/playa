@@ -9,6 +9,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
+use eframe::egui;
 
 use crate::attrs::{Attrs, AttrValue};
 use crate::events::{CompEvent, CompEventSender};
@@ -219,7 +220,7 @@ impl Comp {
     /// Recursively resolves layer sources from Project.media and composes them.
     /// Uses hash-based cache that invalidates when layers configuration changes.
     /// Only frames within play_area (work area) are composed - frames outside return None.
-    pub fn get_frame(&self, frame_idx: usize, project: &crate::project::Project) -> Option<Frame> {
+    pub fn get_frame(&self, frame_idx: usize, project: &super::Project) -> Option<Frame> {
         // Check if frame is within play area (work area)
         let (play_start, play_end) = self.play_range();
         if frame_idx < play_start || frame_idx > play_end {
@@ -250,7 +251,7 @@ impl Comp {
     /// - Resolves MediaSource from Project.media by UUID
     /// - Recursively gets frames (supports nested Comps)
     /// - Blends multiple layers with CPU compositor (GPU compositor planned)
-    fn compose(&self, frame_idx: usize, project: &crate::project::Project) -> Option<Frame> {
+    fn compose(&self, frame_idx: usize, project: &super::Project) -> Option<Frame> {
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
 
         // Collect frames from all active layers
@@ -292,7 +293,7 @@ impl Comp {
         &mut self,
         source_uuid: String,
         start_frame: usize,
-        project: &crate::project::Project,
+        project: &super::Project,
     ) -> anyhow::Result<()> {
         // Get source to determine duration
         let source = project
@@ -386,7 +387,7 @@ impl Comp {
     /// Set comp play start (work area start offset from comp start).
     /// This limits the active work area for playback and rendering.
     pub fn set_comp_play_start(&mut self, new_play_start: i32) {
-        self.play_start = new_play_start;
+        self.set_play_start(new_play_start);
         self.clear_cache();
         self.event_sender.emit(CompEvent::LayersChanged {
             comp_uuid: self.uuid.clone(),
@@ -396,7 +397,7 @@ impl Comp {
     /// Set comp play end (work area end offset from comp end).
     /// This limits the active work area for playback and rendering.
     pub fn set_comp_play_end(&mut self, new_play_end: i32) {
-        self.play_end = new_play_end;
+        self.set_play_end(new_play_end);
         self.clear_cache();
         self.event_sender.emit(CompEvent::LayersChanged {
             comp_uuid: self.uuid.clone(),
@@ -475,7 +476,7 @@ impl crate::entities::TimelineUI for Comp {
         painter.rect_filled(bar_rect, 2.0, bar_color);
 
         // Draw border
-        painter.rect_stroke(bar_rect, 2.0, (1.0, egui::Color32::WHITE));
+        painter.rect_stroke(bar_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::epaint::StrokeKind::Middle);
 
         // Highlight current frame if within range
         let start = self.start();

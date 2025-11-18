@@ -237,7 +237,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                         // Use allocate_rect instead of Label to prevent text selection
                                         let text_color = ui.visuals().text_color();
                                         let text_galley = ui.painter().layout_no_wrap(
-                                            comp.name.clone(),
+                                            comp.name().to_string(),
                                             egui::FontId::default(),
                                             text_color,
                                         );
@@ -257,7 +257,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                           if name_response.drag_started() {
                                               if let Some(pos) = name_response.interact_pointer_pos() {
                                                   let duration = comp.frame_count();
-                                                  let display_name = comp.name.clone();
+                                                  let display_name = comp.name().to_string();
                                                   ui.ctx().data_mut(|data| {
                                                       data.insert_temp(egui::Id::new("global_drag_state"),
                                                           crate::timeline::GlobalDragState::ProjectItem {
@@ -281,7 +281,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                             if ui.small_button("✖").clicked() {
                                                 actions.remove_comp = Some(comp_uuid.clone());
                                             }
-                                            ui.label(format!("{}fps", comp.fps as u32));
+                                            ui.label(format!("{}fps", comp.fps() as u32));
                                             ui.label(format!("{}f", comp.frame_count()));
                                         });
                                     })
@@ -403,7 +403,7 @@ pub fn render_timeline_panel(
                                     // Then get mutable comp
                                     if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
                                         let end_frame = start_frame + duration - 1;
-                                        let layer = crate::layer::Layer::new(source_uuid.clone(), start_frame, end_frame);
+                                        let layer = crate::entities::layer::Layer::new(source_uuid.clone(), start_frame, end_frame);
                                         comp.layers.push(layer);
                                         comp.clear_cache();
                                     }
@@ -453,7 +453,7 @@ pub fn render_timeline_panel(
                         TimelineAction::SetCompPlayStart { frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    let play_start = (frame as i32 - comp.start as i32).max(0);
+                                    let play_start = (frame as i32 - comp.start() as i32).max(0);
                                     comp.set_comp_play_start(play_start);
                                 }
                             }
@@ -461,7 +461,7 @@ pub fn render_timeline_panel(
                         TimelineAction::SetCompPlayEnd { frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    let play_end = (comp.end as i32 - frame as i32).max(0);
+                                    let play_end = (comp.end() as i32 - frame as i32).max(0);
                                     comp.set_comp_play_end(play_end);
                                 }
                             }
@@ -749,3 +749,4 @@ fn render_help_overlay(ui: &egui::Ui, panel_rect: egui::Rect) {
         egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128),
     );
 }
+

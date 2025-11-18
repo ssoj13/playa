@@ -227,7 +227,7 @@ impl Default for PlayaApp {
     /// * `Ok(())` - Sequences loaded successfully
     /// * `Err(String)` - Detection or loading failed with error message
       fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
-          match clip::detect(paths.clone()) {
+          match entities::clip::detect(paths.clone()) {
               Ok(clips) => {
                       for clip in clips {
                           self.player.append_clip(clip);
@@ -400,7 +400,7 @@ impl Default for PlayaApp {
 
       /// Load project from JSON file
       fn load_project(&mut self, path: PathBuf) {
-          match crate::project::Project::from_json(&path) {
+          match crate::entities::Project::from_json(&path) {
               Ok(mut project) => {
                   info!("Loaded project from {}", path.display());
 
@@ -423,10 +423,10 @@ impl Default for PlayaApp {
         match event {
             // ===== Playback Control =====
             AppEvent::Play => {
-                self.player.play();
+                self.player.is_playing = true;
             }
             AppEvent::Pause => {
-                self.player.pause();
+                self.player.is_playing = false;
             }
             AppEvent::Stop => {
                 self.player.stop();
@@ -434,7 +434,7 @@ impl Default for PlayaApp {
             AppEvent::SetFrame(frame) => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        comp.set_frame(frame);
+                        comp.set_current_frame(frame);
                     }
                 }
             }
@@ -447,14 +447,16 @@ impl Default for PlayaApp {
             AppEvent::JumpToStart => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        comp.set_frame(comp.play_start as usize);
+                        let play_start = comp.play_start() as usize;
+                        comp.set_current_frame(play_start);
                     }
                 }
             }
             AppEvent::JumpToEnd => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        comp.set_frame(comp.play_end as usize);
+                        let play_end = comp.play_end() as usize;
+                        comp.set_current_frame(play_end);
                     }
                 }
             }
@@ -469,7 +471,7 @@ impl Default for PlayaApp {
             AppEvent::AddComp { name, fps } => {
                 let start = 0;
                 let end = 100;
-                let comp = crate::comp::Comp::new(name, start, end, fps);
+                let comp = crate::entities::comp::Comp::new(name, start, end, fps);
                 self.player.project.add_comp(comp);
             }
             AppEvent::RemoveMedia(_uuid) => {
@@ -594,7 +596,7 @@ impl Default for PlayaApp {
         // Play/Pause (Space, ArrowUp)
         if input.key_pressed(egui::Key::Space) || input.key_pressed(egui::Key::ArrowUp) {
             // Toggle between play and pause
-            if self.player.is_playing() {
+            if self.player.is_playing {
                 self.event_bus.send(events::AppEvent::Pause);
             } else {
                 self.event_bus.send(events::AppEvent::Play);
@@ -726,7 +728,7 @@ impl Default for PlayaApp {
                         .get_mut(comp_uuid)
                         .and_then(|s| s.as_comp_mut())
                     {
-                        let play_start = (current as i32 - comp.start as i32).max(0);
+                        let play_start = (current as i32 - comp.start() as i32).max(0);
                         comp.set_comp_play_start(play_start);
                     }
                 }
@@ -743,7 +745,7 @@ impl Default for PlayaApp {
                         .get_mut(comp_uuid)
                         .and_then(|s| s.as_comp_mut())
                     {
-                        let play_end = (comp.end as i32 - current as i32).max(0);
+                        let play_end = (comp.end() as i32 - current as i32).max(0);
                         comp.set_comp_play_end(play_end);
                     }
                 }
@@ -1290,7 +1292,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                   // Load playlist as Project
                   if let Some(ref playlist_path) = args.playlist {
                       info!("Loading playlist: {}", playlist_path.display());
-                      match crate::project::Project::from_json(playlist_path) {
+                      match crate::entities::Project::from_json(playlist_path) {
                           Ok(mut project) => {
                               // Rebuild runtime with event sender for all comps
                               project.rebuild_runtime(Some(app.comp_event_sender.clone()));
@@ -1342,3 +1344,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Application exiting");
     Ok(())
 }
+

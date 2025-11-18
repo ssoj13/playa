@@ -7,6 +7,7 @@ use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use eframe::egui;
 
 use crate::frame::{Frame, FrameError};
 use crate::attrs::{Attrs, AttrValue};
@@ -321,16 +322,6 @@ impl Clip {
         self.frames.get(idx)
     }
 
-    /// Get start frame
-    pub fn start(&self) -> usize {
-        self.start
-    }
-
-    /// Get end frame
-    pub fn end(&self) -> usize {
-        self.end
-    }
-
     /// Total frames (alias for len())
     pub fn total_frames(&self) -> usize {
         self.len()
@@ -522,7 +513,7 @@ impl crate::entities::TimelineUI for Clip {
         painter.rect_filled(bar_rect, 2.0, bar_color);
 
         // Draw border
-        painter.rect_stroke(bar_rect, 2.0, (1.0, egui::Color32::WHITE));
+        painter.rect_stroke(bar_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::epaint::StrokeKind::Middle);
 
         // Highlight current frame if within range
         let start = self.start();

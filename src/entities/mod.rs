@@ -5,17 +5,17 @@
 //! - Timeline view (bars, handles)
 //! - Attribute Editor view (all properties)
 
-mod clip;
-mod comp;
-mod layer;
-mod project;
+pub mod clip;
+pub mod comp;
+pub mod layer;
+pub mod project;
 
 pub use clip::Clip;
 pub use comp::Comp;
 pub use layer::Layer;
 pub use project::Project;
 
-use egui::{Ui, Response, Rect};
+use eframe::egui::{self, Ui, Response, Rect};
 use crate::attrs::{Attrs, AttrValue};
 
 /// Render generic attributes editor
@@ -47,7 +47,7 @@ pub fn render_attrs_editor(ui: &mut Ui, attrs: &mut Attrs) {
                     }
                     AttrValue::UInt(v) => {
                         let mut temp = *v as i32;
-                        if ui.add(egui::DragValue::new(&mut temp).speed(1.0).clamp_range(0..=i32::MAX)).changed() {
+                        if ui.add(egui::DragValue::new(&mut temp).speed(1.0).range(0..=i32::MAX)).changed() {
                             *v = temp.max(0) as u32;
                         }
                     }

@@ -555,7 +555,7 @@ fn get_encoder_name(
 /// Runs in separate thread, sends progress updates via channel.
 pub fn encode_sequence_from_comp(
     comp: &Comp,
-    project: &crate::project::Project,
+    project: &crate::entities::Project,
     settings: &EncoderSettings,
     progress_tx: Sender<EncodeProgress>,
     cancel_flag: Arc<AtomicBool>,
@@ -1157,7 +1157,7 @@ pub fn encode_sequence_from_comp(
 /// TODO: Update callers to pass real Project instead of empty one
 pub fn encode_comp(
     comp: &Comp,
-    project: &crate::project::Project,
+    project: &crate::entities::Project,
     settings: &EncoderSettings,
     progress_tx: Sender<EncodeProgress>,
     cancel_flag: Arc<AtomicBool>,
@@ -1268,8 +1268,8 @@ mod tests {
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
         // Build Comp from play range and fps
-        let comp = crate::comp::Comp::new("TestComp", play_start, play_end, settings.fps);
-        let project = crate::project::Project::new();
+        let comp = crate::entities::comp::Comp::new("TestComp", play_start, play_end, settings.fps);
+        let project = crate::entities::project::Project::new();
 
         // Run encoding
         let abs_path = std::fs::canonicalize(&output_path)
@@ -1327,3 +1327,4 @@ mod tests {
         // let _ = std::fs::remove_file(&output_path);
     }
 }
+

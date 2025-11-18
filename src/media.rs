@@ -45,7 +45,7 @@ impl MediaSource {
     pub fn frame_range(&self) -> (usize, usize) {
         match self {
             MediaSource::Clip(c) => (c.start(), c.end()),
-            MediaSource::Comp(c) => (c.start, c.end),
+            MediaSource::Comp(c) => (c.start(), c.end()),
         }
     }
 
@@ -53,7 +53,7 @@ impl MediaSource {
     pub fn fps(&self) -> f32 {
         match self {
             MediaSource::Clip(c) => c.fps(),
-            MediaSource::Comp(c) => c.fps,
+            MediaSource::Comp(c) => c.fps(),
         }
     }
 
@@ -77,7 +77,7 @@ impl MediaSource {
     pub fn name(&self) -> &str {
         match self {
             MediaSource::Clip(c) => c.pattern(),
-            MediaSource::Comp(c) => &c.name,
+            MediaSource::Comp(c) => c.name(),
         }
     }
 

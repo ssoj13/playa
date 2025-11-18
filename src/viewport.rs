@@ -60,6 +60,13 @@ impl ViewportState {
         Self::default()
     }
 
+    /// Reset viewport to default zoom and pan
+    pub fn reset(&mut self) {
+        self.zoom = 1.0;
+        self.pan = egui::Vec2::ZERO;
+        self.mode = ViewportMode::AutoFit;
+    }
+
     /// Draw all viewport overlays (scrubber, guides, safe zones, etc.)
     pub fn draw(&self, ui: &egui::Ui, panel_rect: egui::Rect) {
         // Draw scrubber line during scrubbing

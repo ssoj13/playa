@@ -30,4 +30,24 @@ impl Layer {
 
         Self { source_uuid, attrs }
     }
+
+    /// Get layer start frame
+    pub fn start(&self) -> usize {
+        self.attrs.get_u32("start").unwrap_or(0) as usize
+    }
+
+    /// Get layer end frame
+    pub fn end(&self) -> usize {
+        self.attrs.get_u32("end").unwrap_or(0) as usize
+    }
+
+    /// Get layer name
+    pub fn name(&self) -> &str {
+        self.attrs.get_str("name").unwrap_or("Layer")
+    }
+
+    /// Get layer opacity
+    pub fn opacity(&self) -> f32 {
+        self.attrs.get_float("opacity").unwrap_or(1.0)
+    }
 }

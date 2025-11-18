@@ -507,8 +507,8 @@ impl EncodeDialog {
 
                 // TODO: Get real comp and project from UI state
                 // For now we build minimal empty comp and project
-                let comp = crate::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
-                let project = crate::project::Project::new();
+                let comp = crate::entities::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
+                let project = crate::entities::project::Project::new();
 
                 info!("Calling encode_comp()...");
                 encode_comp(&comp, &project, &settings_clone, tx, cancel_flag_clone)
@@ -922,3 +922,4 @@ impl EncodeDialog {
         ui.label("");
     }
 }
+
