@@ -251,7 +251,7 @@ impl Loader {
 
         Ok(Frame::from_buffer(
             PixelBuffer::U8(pixels),
-            PixelFormat::RgbaU8,
+            PixelFormat::Rgba8,
             width,
             height,
         ))

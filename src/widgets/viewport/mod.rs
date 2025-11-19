@@ -3,7 +3,7 @@
 //! OpenGL renderer with scrubbing support
 
 mod renderer;
-mod shaders;
+pub mod shaders;
 mod viewport;
 mod viewport_ui;
 

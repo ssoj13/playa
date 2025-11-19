@@ -107,7 +107,7 @@ struct PlayaApp {
     viewport_renderer: std::sync::Arc<std::sync::Mutex<ViewportRenderer>>,
     viewport_state: ViewportState,
     #[serde(skip)]
-    timeline_state: crate::timeline::TimelineState,
+    timeline_state: crate::widgets::timeline::TimelineState,
     #[serde(skip)]
     shader_manager: Shaders,
     #[serde(skip)]
@@ -168,7 +168,7 @@ impl Default for PlayaApp {
             status_bar,
             viewport_renderer: std::sync::Arc::new(std::sync::Mutex::new(ViewportRenderer::new())),
             viewport_state: ViewportState::new(),
-            timeline_state: crate::timeline::TimelineState::default(),
+            timeline_state: crate::widgets::timeline::TimelineState::default(),
             shader_manager: Shaders::new(),
             last_render_time_ms: 0.0,
             settings: AppSettings::default(),
@@ -194,10 +194,8 @@ impl Default for PlayaApp {
       /// Attach composition event sender to all comps in the current project.
       fn attach_comp_event_sender(&mut self) {
           let sender = self.comp_event_sender.clone();
-          for source in self.player.project.media.values_mut() {
-              if let Some(comp) = source {
-                  comp.set_event_sender(sender.clone());
-              }
+          for comp in self.player.project.media.values_mut() {
+              comp.set_event_sender(sender.clone());
           }
       }
 
@@ -247,12 +245,8 @@ impl Default for PlayaApp {
             debug!("No active comp for frame loading");
             return;
         };
-        let Some(source) = self.player.project.media.get(comp_uuid) else {
+        let Some(comp) = self.player.project.media.get(comp_uuid) else {
             debug!("Active comp {} not found in media", comp_uuid);
-            return;
-        };
-        let Some(comp) = source else {
-            debug!("Active source {} is not a comp", comp_uuid);
             return;
         };
 
@@ -333,7 +327,7 @@ impl Default for PlayaApp {
                 let frame_clone = frame.clone();
 
                 workers.execute(move || {
-                    use frame::FrameStatus;
+                    use crate::entities::frame::FrameStatus;
 
                     debug!("Worker loading frame with status {:?}", frame_clone.status());
                     // Transition to Loaded triggers actual load via Frame::load()
@@ -419,6 +413,9 @@ impl Default for PlayaApp {
             AppEvent::Pause => {
                 self.player.is_playing = false;
             }
+            AppEvent::TogglePlayPause => {
+                self.player.is_playing = !self.player.is_playing;
+            }
             AppEvent::Stop => {
                 self.player.stop();
             }
@@ -434,6 +431,18 @@ impl Default for PlayaApp {
             }
             AppEvent::StepBackward => {
                 // TODO: implement step backward
+            }
+            AppEvent::StepForwardLarge => {
+                // TODO: implement step forward large (25 frames)
+            }
+            AppEvent::StepBackwardLarge => {
+                // TODO: implement step backward large (25 frames)
+            }
+            AppEvent::PreviousClip => {
+                // TODO: implement previous clip
+            }
+            AppEvent::NextClip => {
+                // TODO: implement next clip
             }
             AppEvent::JumpToStart => {
                 if let Some(comp_uuid) = &self.player.active_comp {
@@ -496,11 +505,94 @@ impl Default for PlayaApp {
             AppEvent::ToggleAttributeEditor => {
                 // TODO: implement when attribute editor exists
             }
+            AppEvent::ToggleSettings => {
+                self.show_settings = !self.show_settings;
+            }
+            AppEvent::ToggleFullscreen => {
+                // TODO: implement fullscreen toggle
+            }
+            AppEvent::ToggleLoop => {
+                self.settings.loop_enabled = !self.settings.loop_enabled;
+            }
+            AppEvent::ToggleFrameNumbers => {
+                self.settings.show_frame_numbers = !self.settings.show_frame_numbers;
+            }
             AppEvent::ZoomViewport(factor) => {
                 self.viewport_state.zoom *= factor;
             }
             AppEvent::ResetViewport => {
                 self.viewport_state.reset();
+            }
+            AppEvent::FitViewport => {
+                self.viewport_state.reset(); // Fit is same as reset for now
+            }
+
+            // ===== Play Range Control =====
+            AppEvent::SetPlayRangeStart => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        let current = comp.current_frame as i32;
+                        comp.set_play_start(current);
+                    }
+                }
+            }
+            AppEvent::SetPlayRangeEnd => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        let current = comp.current_frame as i32;
+                        comp.set_play_end(current);
+                    }
+                }
+            }
+            AppEvent::ResetPlayRange => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        comp.set_play_start(0);
+                        comp.set_play_end(0); // 0 means use full range
+                    }
+                }
+            }
+
+            // ===== FPS Control =====
+            AppEvent::IncreaseFPS => {
+                self.settings.fps_base = (self.settings.fps_base + 1.0).min(120.0);
+            }
+            AppEvent::DecreaseFPS => {
+                self.settings.fps_base = (self.settings.fps_base - 1.0).max(1.0);
+            }
+
+            // ===== Layer Operations =====
+            AppEvent::AddLayer { comp_uuid, source_uuid, start_frame } => {
+                // Get duration before mutable borrow
+                let duration = self.player.project.media.get(&source_uuid)
+                    .map(|s| s.frame_count())
+                    .unwrap_or(1);
+
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    if let Err(e) = comp.add_child_with_duration(source_uuid, start_frame, duration) {
+                        log::error!("Failed to add layer: {}", e);
+                    }
+                }
+            }
+            AppEvent::RemoveLayer { comp_uuid, layer_idx } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    // Get child UUID by index
+                    if let Some(child_uuid) = comp.children.get(layer_idx).cloned() {
+                        comp.remove_child(&child_uuid);
+                    } else {
+                        log::error!("Layer index {} out of bounds", layer_idx);
+                    }
+                }
+            }
+            AppEvent::MoveLayer { comp_uuid, layer_idx, new_start } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    if let Err(e) = comp.move_child(layer_idx, new_start) {
+                        log::error!("Failed to move layer: {}", e);
+                    }
+                }
+            }
+            AppEvent::RemoveSelectedLayer => {
+                // TODO: implement remove selected layer (need selection tracking)
             }
 
             // ===== Drag-and-Drop (placeholders for now) =====
@@ -717,7 +809,7 @@ impl Default for PlayaApp {
                         .project
                         .media
                         .get_mut(comp_uuid)
-                        .and_then(|s| s)
+                        
                     {
                         let play_start = (current as i32 - comp.start() as i32).max(0);
                         comp.set_comp_play_start(play_start);
@@ -734,7 +826,7 @@ impl Default for PlayaApp {
                         .project
                         .media
                         .get_mut(comp_uuid)
-                        .and_then(|s| s)
+                        
                     {
                         let play_end = (comp.end() as i32 - current as i32).max(0);
                         comp.set_comp_play_end(play_end);
@@ -750,7 +842,7 @@ impl Default for PlayaApp {
                         .project
                         .media
                         .get_mut(comp_uuid)
-                        .and_then(|s| s)
+                        
                     {
                         comp.set_comp_play_start(0);
                         comp.set_comp_play_end(0);
@@ -894,11 +986,9 @@ impl eframe::App for PlayaApp {
                 self.player.project.clips_order.retain(|uuid| uuid != &clip_uuid);
 
                 // Also remove from all comp children
-                for source in self.player.project.media.values_mut() {
-                    if let Some(comp) = source {
-                        comp.children.retain(|child_uuid| child_uuid != &clip_uuid);
-                        comp.children_attrs.retain(|child_uuid, _| child_uuid != &clip_uuid);
-                    }
+                for comp in self.player.project.media.values_mut() {
+                    comp.children.retain(|child_uuid| child_uuid != &clip_uuid);
+                    comp.children_attrs.retain(|child_uuid, _| child_uuid != &clip_uuid);
                 }
 
                 info!("Removed clip {}", clip_uuid);

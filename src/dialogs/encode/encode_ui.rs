@@ -11,11 +11,11 @@ use std::thread::JoinHandle;
 use eframe::egui;
 use log::info;
 
-use crate::encode::{
+use crate::dialogs::encode::{
     CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
     ProResProfile, VideoCodec,
 };
-use crate::progress_bar::ProgressBar;
+use crate::widgets::timeline::progress_bar::ProgressBar;
 
 /// Encoding dialog state
 pub struct EncodeDialog {
@@ -52,7 +52,7 @@ pub struct EncodeDialog {
     encoder_name: String,
 
     /// Tonemapping mode for HDR→LDR conversion
-    pub tonemap_mode: crate::frame::TonemapMode,
+    pub tonemap_mode: crate::entities::frame::TonemapMode,
 }
 
 impl EncodeDialog {
@@ -123,7 +123,7 @@ impl EncodeDialog {
     }
 
     /// Load dialog state from AppSettings (called when opening dialog)
-    pub fn load_from_settings(settings: &crate::encode::EncodeDialogSettings) -> Self {
+    pub fn load_from_settings(settings: &crate::dialogs::encode::EncodeDialogSettings) -> Self {
         log::debug!("========== LOADING ENCODE DIALOG SETTINGS ==========");
         log::debug!("  Output: {}", settings.output_path.display());
         log::debug!("  Container: {:?}, FPS: {}, Codec: {:?}", settings.container, settings.fps, settings.selected_codec);
@@ -168,7 +168,7 @@ impl EncodeDialog {
     }
 
     /// Save current dialog state to AppSettings (called when closing dialog or starting encode)
-    pub fn save_to_settings(&self) -> crate::encode::EncodeDialogSettings {
+    pub fn save_to_settings(&self) -> crate::dialogs::encode::EncodeDialogSettings {
         log::debug!("========== SAVING ENCODE DIALOG SETTINGS ==========");
         log::debug!("  Output: {}", self.output_path.display());
         log::debug!("  Container: {:?}, FPS: {}, Codec: {:?}", self.container, self.fps, self.selected_codec);
@@ -195,7 +195,7 @@ impl EncodeDialog {
         );
         log::debug!("  Tonemap: {:?}", self.tonemap_mode);
 
-        crate::encode::EncodeDialogSettings {
+        crate::dialogs::encode::EncodeDialogSettings {
             output_path: self.output_path.clone(),
             container: self.container,
             fps: self.fps,
@@ -235,8 +235,8 @@ impl EncodeDialog {
                     None,
                 ),
                 VideoCodec::ProRes => (
-                    crate::encode::EncoderImpl::Software,
-                    crate::encode::QualityMode::CRF,
+                    crate::dialogs::encode::EncoderImpl::Software,
+                    crate::dialogs::encode::QualityMode::CRF,
                     0, // ProRes doesn't use quality_value
                     None,
                     None,
@@ -499,7 +499,7 @@ impl EncodeDialog {
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
 
           // Spawn encoder thread (Comp-based)
-            use crate::encode::encode_comp;
+            use crate::dialogs::encode::encode_comp;
         use std::thread;
 
             let handle = thread::spawn(move || {
@@ -592,7 +592,7 @@ impl EncodeDialog {
 
     /// Render H.264 settings
     fn render_h264_settings(&mut self, ui: &mut egui::Ui) {
-        use crate::encode::{EncoderImpl, QualityMode};
+        use crate::dialogs::encode::{EncoderImpl, QualityMode};
 
         // Encoder implementation
         ui.label("Encoder:");
@@ -689,7 +689,7 @@ impl EncodeDialog {
 
     /// Render H.265 settings
     fn render_h265_settings(&mut self, ui: &mut egui::Ui) {
-        use crate::encode::{EncoderImpl, QualityMode};
+        use crate::dialogs::encode::{EncoderImpl, QualityMode};
 
         // Encoder implementation
         ui.label("Encoder:");
@@ -818,7 +818,7 @@ impl EncodeDialog {
 
     /// Render AV1 settings
     fn render_av1_settings(&mut self, ui: &mut egui::Ui) {
-        use crate::encode::{EncoderImpl, QualityMode};
+        use crate::dialogs::encode::{EncoderImpl, QualityMode};
 
         ui.label("Encoder:");
         ui.horizontal(|ui| {

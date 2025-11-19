@@ -47,7 +47,7 @@ pub struct AppSettings {
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
 
     // Encoding dialog
-    pub encode_dialog: crate::encode::EncodeDialogSettings,
+    pub encode_dialog: crate::dialogs::encode::EncodeDialogSettings,
 
     // Internal
     pub selected_settings_category: Option<String>,
@@ -65,7 +65,7 @@ impl Default for AppSettings {
             dark_mode: true,
             font_size: 13.0,
             workers_override: 0,
-            encode_dialog: crate::encode::EncodeDialogSettings::default(),
+            encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
             selected_settings_category: Some("UI".to_string()),
         }
     }

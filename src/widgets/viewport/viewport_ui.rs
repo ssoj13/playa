@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::entities::frame::{Frame, FrameStatus};
 use crate::player::Player;
-use crate::shaders::Shaders;
+use super::shaders::Shaders;
 use super::{ViewportState, ViewportRenderer};
 
 /// Viewport actions result

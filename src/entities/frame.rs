@@ -425,7 +425,7 @@ impl Frame {
 
         // For video files, get dimensions from video metadata
         if media::is_video(&actual_path) {
-            let (width, height) = crate::video::get_video_dimensions(&actual_path)?;
+            let (width, height) = crate::entities::loader_video::get_video_dimensions(&actual_path)?;
 
             let mut data = self.data.lock().unwrap();
             data.width = width;
@@ -439,8 +439,8 @@ impl Frame {
         // For images, use unified Loader
         let attrs = super::loader::Loader::header(&actual_path)?;
 
-        let width = attrs.get_uint("width").unwrap_or(1) as usize;
-        let height = attrs.get_uint("height").unwrap_or(1) as usize;
+        let width = attrs.get_u32("width").unwrap_or(1) as usize;
+        let height = attrs.get_u32("height").unwrap_or(1) as usize;
 
         let mut data = self.data.lock().unwrap();
         data.width = width;
@@ -633,7 +633,7 @@ impl Frame {
         );
 
         let (buffer, pixel_format, width, height) =
-            crate::video::decode_frame(path.as_ref(), frame_num)?;
+            crate::entities::loader_video::decode_frame(path.as_ref(), frame_num)?;
 
         // Calculate memory size before moving buffer
         let mem_size = match &buffer {

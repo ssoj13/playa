@@ -68,7 +68,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                         .show(ui, |ui| {
                             // List all compositions (both File and Layer modes)
                             for comp_uuid in &player.project.comps_order {
-                                let comp = match player.project.media.get(comp_uuid).and_then(|s| s.as_comp()) {
+                                let comp = match player.project.media.get(comp_uuid) {
                                     Some(c) => c,
                                     None => continue,
                                 };
@@ -120,7 +120,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                                   let display_name = comp.name().to_string();
                                                   ui.ctx().data_mut(|data| {
                                                       data.insert_temp(egui::Id::new("global_drag_state"),
-                                                          crate::timeline::GlobalDragState::ProjectItem {
+                                                          crate::widgets::timeline::GlobalDragState::ProjectItem {
                                                               source_uuid: comp_uuid.clone(),
                                                               display_name,
                                                               duration: Some(duration),

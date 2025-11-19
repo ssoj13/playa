@@ -27,20 +27,20 @@ impl LayerTool {
         }
     }
 
-    /// Convert to drag state for given layer
-    fn to_drag_state(&self, layer_idx: usize, layer: &crate::entities::layer::Layer, drag_start_pos: Pos2) -> GlobalDragState {
+    /// Convert to drag state for given layer (child)
+    fn to_drag_state(&self, layer_idx: usize, attrs: &crate::entities::Attrs, drag_start_pos: Pos2) -> GlobalDragState {
         match self {
             LayerTool::AdjustPlayStart => {
-                let initial_play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
+                let initial_play_start = attrs.get_i32("play_start").unwrap_or(0);
                 GlobalDragState::AdjustPlayStart { layer_idx, initial_play_start, drag_start_x: drag_start_pos.x }
             }
             LayerTool::AdjustPlayEnd => {
-                let initial_play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
+                let initial_play_end = attrs.get_i32("play_end").unwrap_or(0);
                 GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x: drag_start_pos.x }
             }
             LayerTool::Move => {
-                let initial_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                let initial_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+                let initial_start = attrs.get_u32("start").unwrap_or(0) as usize;
+                let initial_end = attrs.get_u32("end").unwrap_or(0) as usize;
                 GlobalDragState::MovingLayer {
                     layer_idx,
                     initial_start,
@@ -373,8 +373,8 @@ pub fn render_timeline(
                             let bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
                             let bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x, config, state);
                             let bar_rect = Rect::from_min_max(
-                                Pos2::new(bar_x_start, layer_y + 4.0),
-                                Pos2::new(bar_x_end, layer_y + config.layer_height - 4.0),
+                                Pos2::new(bar_x_start, child_y + 4.0),
+                                Pos2::new(bar_x_end, child_y + config.layer_height - 4.0),
                             );
 
                             // Check interaction with this bar using unified tool detection
@@ -387,7 +387,9 @@ pub fn render_timeline(
 
                                         // On mouse press, create appropriate drag state
                                         if ui.ctx().input(|i| i.pointer.primary_pressed()) {
-                                            state.drag_state = Some(tool.to_drag_state(idx, layer, hover_pos));
+                                            if let Some(child_attrs) = attrs {
+                                                state.drag_state = Some(tool.to_drag_state(idx, child_attrs, hover_pos));
+                                            }
                                         }
                                     }
                                 }
@@ -436,10 +438,10 @@ pub fn render_timeline(
                                         // On release, commit the move (horizontal and/or vertical)
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
                                             // If layer changed vertically, reorder first
-                                            if target_layer != *layer_idx {
+                                            if target_child != *layer_idx {
                                                 action = TimelineAction::ReorderLayer {
                                                     from_idx: *layer_idx,
-                                                    to_idx: target_layer,
+                                                    to_idx: target_child,
                                                 };
                                             } else {
                                                 action = TimelineAction::MoveLayer {
@@ -639,7 +641,7 @@ pub fn render_timeline(
                                       // If click is within any layer row, select that layer;
                                       // otherwise treat it as a frame scrub on empty space.
                                       let mut clicked_layer: Option<usize> = None;
-                                      for (display_idx, &original_idx) in layer_order.iter().enumerate() {
+                                      for (display_idx, &original_idx) in child_order.iter().enumerate() {
                                           let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
                                           let row_rect = Rect::from_min_max(
                                               Pos2::new(timeline_rect.min.x, layer_y),

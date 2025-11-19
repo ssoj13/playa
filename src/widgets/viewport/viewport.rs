@@ -4,7 +4,7 @@ use eframe::glow::HasContext;
 use log::{debug, error, info};
 
 use crate::entities::frame::{PixelBuffer, PixelFormat};
-use crate::shaders::Shaders;
+use super::shaders::Shaders;
 
 /// Scrubber line color when inside image bounds (white, 50% transparent)
 const SCRUB_NORMAL: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.5);

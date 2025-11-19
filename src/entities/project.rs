@@ -80,31 +80,25 @@ impl Project {
     ///
     /// Returns UUID of the default/first comp.
     pub fn ensure_default_comp(&mut self) -> String {
-        // Check if we have any comps in media
-        let has_comps = self.media.values().any(|s| s.is_comp());
+        // Check if we have any comps in media (Layer mode comps in comps_order)
+        let has_comps = !self.comps_order.is_empty();
 
         if !has_comps {
             let comp = Comp::new("Main", 0, 0, 24.0);
             let uuid = comp.uuid.clone();
-            self.media.insert(uuid.clone(), MediaSource::Comp(comp));
+            self.media.insert(uuid.clone(), comp);
             self.comps_order.push(uuid.clone());
             log::info!("Created default comp: {}", uuid);
             uuid
         } else {
             // Return first comp UUID from order
             self.comps_order.first()
-                .or_else(|| {
-                    // Find first comp UUID in media
-                    self.media.iter()
-                        .find(|(_, s)| s.is_comp())
-                        .map(|(uuid, _)| uuid)
-                })
                 .cloned()
                 .unwrap_or_else(|| {
                     // Fallback: create new if order is broken
                     let comp = Comp::new("Main", 0, 0, 24.0);
                     let uuid = comp.uuid.clone();
-                    self.media.insert(uuid.clone(), MediaSource::Comp(comp));
+                    self.media.insert(uuid.clone(), comp);
                     self.comps_order.push(uuid.clone());
                     uuid
                 })
@@ -121,14 +115,12 @@ impl Project {
         self.compositor = CompositorType::default();
 
         // Rebuild comps in unified media HashMap
-        for source in self.media.values_mut() {
-            if let Some(comp) = source.as_comp_mut() {
-                comp.clear_cache();
+        for comp in self.media.values_mut() {
+            comp.clear_cache();
 
-                // Set event sender for comps if provided
-                if let Some(ref sender) = event_sender {
-                    comp.set_event_sender(sender.clone());
-                }
+            // Set event sender for comps if provided
+            if let Some(ref sender) = event_sender {
+                comp.set_event_sender(sender.clone());
             }
         }
     }
@@ -144,18 +136,18 @@ impl Project {
 
     /// Get mutable reference to a composition by UUID.
     pub fn get_comp_mut(&mut self, uuid: &str) -> Option<&mut Comp> {
-        self.media.get_mut(uuid).and_then(|s| s.as_comp_mut())
+        self.media.get_mut(uuid)
     }
 
     /// Get immutable reference to a composition by UUID.
     pub fn get_comp(&self, uuid: &str) -> Option<&Comp> {
-        self.media.get(uuid).and_then(|s| s.as_comp())
+        self.media.get(uuid)
     }
 
     /// Add a composition to the project.
     pub fn add_comp(&mut self, comp: Comp) {
         let uuid = comp.uuid.clone();
-        self.media.insert(uuid.clone(), MediaSource::Comp(comp));
+        self.media.insert(uuid.clone(), comp);
         self.comps_order.push(uuid);
     }
 

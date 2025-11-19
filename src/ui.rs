@@ -5,10 +5,10 @@ use std::sync::{Arc, Mutex};
 
 use crate::entities::frame::{Frame, FrameStatus};
 use crate::player::Player;
-use crate::shaders::Shaders;
-use crate::timeline::{render_timeline, TimelineConfig, TimelineAction, TimelineState};
+use crate::widgets::viewport::shaders::Shaders;
+use crate::widgets::timeline::{render_timeline, TimelineConfig, TimelineAction, TimelineState};
 use crate::utils::media;
-use crate::viewport::{ViewportRenderer, ViewportState};
+use crate::widgets::viewport::{ViewportRenderer, ViewportState};
 
 /// Create configured file dialog for image/video selection
 fn create_image_dialog(title: &str) -> rfd::FileDialog {
@@ -140,19 +140,19 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                     egui::ScrollArea::vertical()
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
-                            // First, list all clips
+                            // First, list all File mode comps (clips)
                             for clip_uuid in &player.project.clips_order {
-                                let clip = match player.project.media.get(clip_uuid).and_then(|s| s.as_clip()) {
-                                    Some(c) => c,
-                                    None => continue,
+                                let comp = match player.project.media.get(clip_uuid) {
+                                    Some(c) if c.mode == crate::entities::comp::CompMode::File => c,
+                                    _ => continue,
                                 };
 
                                 ui.horizontal(|ui| {
-                                    // Clip icon
+                                    // File mode comp icon
                                     ui.label("📹");
 
-                                    // Clip name (truncated pattern) - make it draggable
-                                    let pattern = clip.pattern();
+                                    // Comp name (truncated) - make it draggable
+                                    let pattern = comp.file_mask.as_deref().unwrap_or("Unknown");
                                     let display_name = if pattern.len() > 25 {
                                         format!("{}...", &pattern[..25])
                                     } else {
@@ -173,14 +173,14 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                         ui.painter().galley(rect.min, text_galley, text_color);
                                     }
 
-                                      // Handle drag for clips - store drag state
+                                      // Handle drag for File mode comps - store drag state
                                       if label_response.drag_started() {
                                           if let Some(pos) = label_response.interact_pointer_pos() {
-                                              let duration = clip.len();
+                                              let duration = comp.frame_count();
                                               let display_name = display_name.clone();
                                               ui.ctx().data_mut(|data| {
                                                   data.insert_temp(egui::Id::new("global_drag_state"),
-                                                      crate::timeline::GlobalDragState::ProjectItem {
+                                                      crate::widgets::timeline::GlobalDragState::ProjectItem {
                                                           source_uuid: clip_uuid.clone(),
                                                           display_name,
                                                           duration: Some(duration),
@@ -201,18 +201,17 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                         if ui.small_button("✖").clicked() {
                                             actions.remove_clip = Some(clip_uuid.clone());
                                         }
-                                        ui.label(format!("{}f", clip.len()));
-                                        let (w, h) = clip.resolution();
-                                        ui.label(format!("{}x{}", w, h));
+                                        ui.label(format!("{}f", comp.frame_count()));
+                                        // TODO: Add resolution display once xres/yres fields are added to File mode Comp
                                     });
                                 });
 
                                 ui.add_space(2.0);
                             }
 
-                            // Then, list all compositions
+                            // Then, list all Layer mode compositions
                             for comp_uuid in &player.project.comps_order {
-                                let comp = match player.project.media.get(comp_uuid).and_then(|s| s.as_comp()) {
+                                let comp = match player.project.media.get(comp_uuid) {
                                     Some(c) => c,
                                     None => continue,
                                 };
@@ -260,7 +259,7 @@ pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> Projec
                                                   let display_name = comp.name().to_string();
                                                   ui.ctx().data_mut(|data| {
                                                       data.insert_temp(egui::Id::new("global_drag_state"),
-                                                          crate::timeline::GlobalDragState::ProjectItem {
+                                                          crate::widgets::timeline::GlobalDragState::ProjectItem {
                                                               source_uuid: comp_uuid.clone(),
                                                               display_name,
                                                               duration: Some(duration),
@@ -306,7 +305,7 @@ pub fn render_timeline_panel(
     shader_manager: &mut Shaders,
     show_frame_numbers: bool,
     frame: Option<&Frame>,
-    viewport_state: &crate::viewport::ViewportState,
+    viewport_state: &crate::widgets::viewport::ViewportState,
     render_time_ms: f32,
     timeline_state: &mut TimelineState,
 ) -> bool {
@@ -331,7 +330,7 @@ pub fn render_timeline_panel(
 
             // Timeline section (with integrated transport controls)
             if let Some(comp_uuid) = &player.active_comp.clone() {
-                if let Some(comp) = player.project.media.get(comp_uuid).and_then(|s| s.as_comp()) {
+                if let Some(comp) = player.project.media.get(comp_uuid) {
                     let mut config = TimelineConfig::default();
                     config.show_frame_numbers = show_frame_numbers;
 
@@ -345,7 +344,7 @@ pub fn render_timeline_panel(
                                     .project
                                     .media
                                     .get_mut(comp_uuid)
-                                    .and_then(|s| s)
+                                    
                                 {
                                     comp.set_selected_layer(Some(idx));
                                 }
@@ -357,7 +356,7 @@ pub fn render_timeline_panel(
                                     .project
                                     .media
                                     .get_mut(comp_uuid)
-                                    .and_then(|s| s)
+                                    
                                 {
                                     comp.set_selected_layer(None);
                                 }
@@ -395,9 +394,13 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::AddLayer { source_uuid, start_frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                // Use add_child method
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
-                                    if let Err(e) = comp.add_child(source_uuid, start_frame, &player.project) {
+                                // Get duration before mutable borrow to avoid borrow checker issues
+                                let duration = player.project.media.get(&source_uuid)
+                                    .map(|s| s.frame_count())
+                                    .unwrap_or(1);
+
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
+                                    if let Err(e) = comp.add_child_with_duration(source_uuid, start_frame, duration) {
                                         eprintln!("Failed to add child: {}", e);
                                     }
                                 }
@@ -405,7 +408,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::MoveLayer { layer_idx, new_start } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                     if let Err(e) = comp.move_child(layer_idx, new_start) {
                                         eprintln!("Failed to move child: {}", e);
                                     }
@@ -414,7 +417,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::ReorderLayer { from_idx, to_idx } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                     if from_idx != to_idx && from_idx < comp.children.len() && to_idx < comp.children.len() {
                                         let child_uuid = comp.children.remove(from_idx);
                                         comp.children.insert(to_idx, child_uuid);
@@ -425,7 +428,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetLayerPlayStart { layer_idx, new_play_start } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                     if let Err(e) = comp.set_child_play_start(layer_idx, new_play_start) {
                                         eprintln!("Failed to set child play start: {}", e);
                                     }
@@ -434,7 +437,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetLayerPlayEnd { layer_idx, new_play_end } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                     if let Err(e) = comp.set_child_play_end(layer_idx, new_play_end) {
                                         eprintln!("Failed to set child play end: {}", e);
                                     }
@@ -443,7 +446,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetCompPlayStart { frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                     let play_start = (frame as i32 - comp.start() as i32).max(0);
                                     comp.set_comp_play_start(play_start);
                                 }
@@ -451,7 +454,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetCompPlayEnd { frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                     let play_end = (comp.end() as i32 - frame as i32).max(0);
                                     comp.set_comp_play_end(play_end);
                                 }
@@ -459,7 +462,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::ResetCompPlayArea => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                     comp.set_comp_play_start(0);
                                     comp.set_comp_play_end(0);
                                 }
@@ -508,9 +511,9 @@ pub fn render_timeline_panel(
                 // Pixel format
                 if let Some(img) = frame {
                     let format_str = match img.pixel_format() {
-                        crate::frame::PixelFormat::Rgba8 => "RGBA u8",
-                        crate::frame::PixelFormat::RgbaF16 => "RGBA f16",
-                        crate::frame::PixelFormat::RgbaF32 => "RGBA f32",
+                        crate::entities::frame::PixelFormat::Rgba8 => "RGBA u8",
+                        crate::entities::frame::PixelFormat::RgbaF16 => "RGBA f16",
+                        crate::entities::frame::PixelFormat::RgbaF32 => "RGBA f32",
                     };
                     ui.monospace(format_str);
                 } else {

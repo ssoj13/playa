@@ -145,7 +145,7 @@ pub enum AppEvent {
 }
 
 /// Window context for hotkeys
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HotkeyWindow {
     /// Global hotkeys (app-level)
     Global,

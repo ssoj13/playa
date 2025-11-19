@@ -1,4 +1,10 @@
 ﻿
+use eframe::glow::{self, HasContext};
+use log::{debug, error, info};
+use crate::entities::frame::{PixelBuffer, PixelFormat};
+use super::shaders::Shaders;
+use super::ViewportState;
+
 /// OpenGL renderer for viewport
 pub struct ViewportRenderer {
     program: Option<glow::Program>,

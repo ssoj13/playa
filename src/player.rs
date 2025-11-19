@@ -193,6 +193,9 @@ impl Player {
 
         // Add clip as child to active comp
         if let Some(comp_uuid) = &self.active_comp.clone() {
+            // Get duration before mutable borrow
+            let duration = clip_len;
+
             if let Some(comp) = self.project.media.get_mut(comp_uuid) {
                 log::info!("Creating child from clip {} with {} frames", uuid, clip_len);
 
@@ -207,8 +210,8 @@ impl Player {
                     // If this is the first child, reset comp start to 0
                     let is_first_child = comp.children.is_empty();
 
-                    // Use add_child() instead of creating Layer
-                    if let Err(e) = comp.add_child(uuid.clone(), child_start, &self.project) {
+                    // Use add_child_with_duration() to avoid borrow checker issues
+                    if let Err(e) = comp.add_child_with_duration(uuid.clone(), child_start, duration) {
                         log::error!("Failed to add child: {}", e);
                         return;
                     }

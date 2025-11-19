@@ -2,7 +2,7 @@
 //!
 //! Vertical stack of layers with horizontal bars
 
-mod progress_bar;
+pub mod progress_bar;
 mod timeline;
 mod timeline_ui;
 mod timeslider;
@@ -16,4 +16,4 @@ pub use timeline::{
     TimelineAction,
 };
 pub use timeline_ui::render_timeline;
-pub use timeslider::TimeSlider;
+pub use timeslider::{time_slider, TimeSliderConfig};

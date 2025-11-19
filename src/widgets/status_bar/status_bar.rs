@@ -1,6 +1,6 @@
 use crate::entities::frame::{Frame, PixelFormat};
 use crate::player::Player;
-use crate::viewport::ViewportState;
+use crate::widgets::viewport::ViewportState;
 use eframe::egui;
 
 /// Status bar component (simplified, no cache progress)
