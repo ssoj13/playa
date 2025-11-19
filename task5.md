@@ -91,5 +91,13 @@ Entities предоставляют handlers, слоты или API/Interface д
 С самого начало всё нужно делать с учётом интеграции egui_taffy, egui_dock, egui_dnd, нужные интерфейсы переработать, сохраняя рабочую логику.
 Составь краткий но подробный анализ и пошаговый оптимальный план действий
 Don't try to guess, you have to be SURE.
+No compatibility needed, this is WiP
 Use internet, MCP, sub-agents and work in parallel
 
+
+
+Переработай image loader. Он должен использоваться во Frame, но саму загрузку сделай через struct Loader, где будут функции для чтения заголовка файла и его содержимого.
+При этом Loader::header(filename) -> HashMap of metadata и Loader::load(filename) -> Frame вызывают разные функции в зависимости от того используется ли openexr или нет. Если нет - всё грузим через crate image который использует exrs.
+Если без openexr - то только image.
+
+Интерфейс - Frame.file_header() и .file_load().

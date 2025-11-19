@@ -10,8 +10,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::attrs::Attrs;
-use super::Comp;
+use super::{Attrs, Comp};
 use crate::compositor::CompositorType;
 use crate::media::MediaSource;
 

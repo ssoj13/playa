@@ -15,6 +15,8 @@ pub enum AppEvent {
     Play,
     /// Pause playback
     Pause,
+    /// Toggle play/pause
+    TogglePlayPause,
     /// Stop playback and reset to start
     Stop,
     /// Set current frame to specific value
@@ -23,10 +25,18 @@ pub enum AppEvent {
     StepForward,
     /// Step backward one frame
     StepBackward,
+    /// Step forward 25 frames
+    StepForwardLarge,
+    /// Step backward 25 frames
+    StepBackwardLarge,
     /// Jump to start of playback range
     JumpToStart,
     /// Jump to end of playback range
     JumpToEnd,
+    /// Previous clip
+    PreviousClip,
+    /// Next clip
+    NextClip,
 
     // ===== Project Management =====
     /// Add clip from file path
@@ -55,6 +65,27 @@ pub enum AppEvent {
     /// Cancel drag operation
     DragCancel,
 
+    // ===== Layer Operations =====
+    /// Add layer to composition
+    AddLayer {
+        comp_uuid: String,
+        source_uuid: String,
+        start_frame: usize,
+    },
+    /// Remove layer from composition
+    RemoveLayer {
+        comp_uuid: String,
+        layer_idx: usize,
+    },
+    /// Move layer to new start position
+    MoveLayer {
+        comp_uuid: String,
+        layer_idx: usize,
+        new_start: usize,
+    },
+    /// Remove selected layer
+    RemoveSelectedLayer,
+
     // ===== Selection =====
     /// Select media item by UUID
     SelectMedia(String),
@@ -70,10 +101,34 @@ pub enum AppEvent {
     ToggleHelp,
     /// Toggle attribute editor panel visibility
     ToggleAttributeEditor,
+    /// Toggle settings dialog
+    ToggleSettings,
+    /// Toggle fullscreen
+    ToggleFullscreen,
+    /// Toggle loop mode
+    ToggleLoop,
+    /// Toggle frame numbers display
+    ToggleFrameNumbers,
     /// Zoom viewport by factor
     ZoomViewport(f32),
     /// Reset viewport zoom to fit
     ResetViewport,
+    /// Fit viewport to frame
+    FitViewport,
+
+    // ===== Play Range Control =====
+    /// Set play range start at current frame
+    SetPlayRangeStart,
+    /// Set play range end at current frame
+    SetPlayRangeEnd,
+    /// Reset play range to full
+    ResetPlayRange,
+
+    // ===== FPS Control =====
+    /// Increase base FPS
+    IncreaseFPS,
+    /// Decrease base FPS
+    DecreaseFPS,
 
     // ===== Keyboard Shortcuts =====
     /// Generic hotkey pressed event with window context

@@ -1,22 +1,43 @@
 //! Composition-level types (timeline unit for playback/encoding).
 //!
-//! `Comp` references Layers, Clips (via Layers), and owns
-//! a simple per-comp cache for composed frames.
+//! `Comp` is now a unified entity that can work in two modes:
+//! - Layer mode: composes children comps
+//! - File mode: loads image sequence from disk (ex-Clip functionality)
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use eframe::egui;
+use log::info;
+use regex::Regex;
 
-use crate::attrs::{Attrs, AttrValue};
+use super::{Attrs, AttrValue};
 use crate::events::{CompEvent, CompEventSender};
-use crate::frame::Frame;
-use super::Layer;
+use crate::frame::{Frame, FrameError};
 
-/// Lightweight composition descriptor with per-comp cache.
+/// Comp operating mode: Layer composition or File sequence loading
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CompMode {
+    /// Layer mode: composes children comps (default)
+    Layer,
+    /// File mode: loads image sequence from disk
+    File,
+}
+
+impl Default for CompMode {
+    fn default() -> Self {
+        CompMode::Layer
+    }
+}
+
+/// Unified composition descriptor with dual-mode operation.
+///
+/// **Layer mode**: Composes children comps recursively
+/// **File mode**: Loads image sequence from disk
 ///
 /// All editable properties are stored in `attrs`:
 /// - "name" (Str): Human-readable name
@@ -25,18 +46,63 @@ use super::Layer;
 /// - "fps" (Float): Timeline framerate
 /// - "play_start" (Int): Work area start offset
 /// - "play_end" (Int): Work area end offset
+///
+/// **Transform attributes** (Vec3 or Float):
+/// - "position" (Vec3): x, y, z position
+/// - "rotation" (Vec3): euler angles (degrees)
+/// - "scale" (Vec3): scale factors
+/// - "pivot" (Vec3): pivot point
+/// - "transparency" (Float): alpha (0.0 = transparent, 1.0 = opaque)
+/// - "layer_mode" (Str): blend mode ("normal", "screen", "add", "subtract", "multiply", "divide")
+/// - "speed" (Float): playback speed multiplier (1.0 = normal, 2.0 = double speed, 0.5 = half speed)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Comp {
     /// Stable identifier inside Project
     pub uuid: String,
 
+    /// Operating mode: Layer or File
+    #[serde(default)]
+    pub mode: CompMode,
+
     /// Arbitrary attributes (all editable properties stored here)
     pub attrs: Attrs,
 
-    /// Layers that belong to this composition
-    pub layers: Vec<Layer>,
+    // ===== Layer Mode Fields =====
+    /// Parent composition UUID (if nested in another comp)
+    #[serde(default)]
+    pub parent: Option<String>,
 
-    /// Currently selected layer index (if any)
+    /// Children composition UUIDs (for Layer mode) - ordered list
+    #[serde(default)]
+    pub children: Vec<String>,
+
+    /// Attributes for each child (start, end, play_start, play_end, opacity, etc.)
+    #[serde(default)]
+    pub children_attrs: HashMap<String, Attrs>,
+
+    // ===== File Mode Fields =====
+    /// File pattern for image sequence (e.g. "/path/seq.*.exr")
+    /// Only used in File mode
+    #[serde(default)]
+    pub file_mask: Option<String>,
+
+    /// First frame number in sequence
+    /// Only used in File mode
+    #[serde(default)]
+    pub file_start: Option<usize>,
+
+    /// Last frame number in sequence
+    /// Only used in File mode
+    #[serde(default)]
+    pub file_end: Option<usize>,
+
+    /// Loaded frames (runtime-only, for File mode)
+    #[serde(skip)]
+    #[serde(default)]
+    frames: Vec<Frame>,
+
+    // ===== Common Fields =====
+    /// Currently selected layer/child index (if any)
     #[serde(default)]
     pub selected_layer: Option<usize>,
 
@@ -49,15 +115,23 @@ pub struct Comp {
     #[serde(default)]
     event_sender: CompEventSender,
 
-    /// Per-comp frame cache: (layers_hash, frame_idx) -> composed Frame (runtime-only)
+    /// Per-comp frame cache: (comp_hash, frame_idx) -> composed Frame (runtime-only)
     /// Uses RefCell for interior mutability to allow caching with &self
-    /// Hash invalidates cache when layers change
+    /// Hash invalidates cache when composition changes
     #[serde(skip)]
     #[serde(default)]
     cache: RefCell<HashMap<(u64, usize), Frame>>,
+
+    /// Composition hash (for cache invalidation)
+    /// Layer mode: accumulated hash of all children
+    /// File mode: hash of file_mask + file_start/end
+    #[serde(skip)]
+    #[serde(default)]
+    comp_hash: u64,
 }
 
 impl Comp {
+    /// Create new composition in Layer mode (default)
     pub fn new(name: impl Into<String>, start: usize, end: usize, fps: f32) -> Self {
         let mut attrs = Attrs::new();
         attrs.set("name", AttrValue::Str(name.into()));
@@ -67,15 +141,43 @@ impl Comp {
         attrs.set("play_start", AttrValue::Int(0)); // Full range by default
         attrs.set("play_end", AttrValue::Int(0));   // Full range by default
 
+        // Transform defaults
+        attrs.set("transparency", AttrValue::Float(1.0)); // Fully opaque
+        attrs.set("layer_mode", AttrValue::Str("normal".to_string()));
+        attrs.set("speed", AttrValue::Float(1.0)); // Normal speed
+
         Self {
             uuid: uuid::Uuid::new_v4().to_string(),
+            mode: CompMode::Layer,
             attrs,
-            layers: Vec::new(),
+            parent: None,
+            children: Vec::new(),
+            children_attrs: HashMap::new(),
+            file_mask: None,
+            file_start: None,
+            file_end: None,
+            frames: Vec::new(),
             current_frame: start,
             selected_layer: None,
             event_sender: CompEventSender::dummy(),
             cache: RefCell::new(HashMap::new()),
+            comp_hash: 0,
         }
+    }
+
+    /// Create new composition in File mode for loading image sequences
+    pub fn new_file_comp(
+        pattern: impl Into<String>,
+        start: usize,
+        end: usize,
+        fps: f32,
+    ) -> Self {
+        let mut comp = Self::new("File Comp", start, end, fps);
+        comp.mode = CompMode::File;
+        comp.file_mask = Some(pattern.into());
+        comp.file_start = Some(start);
+        comp.file_end = Some(end);
+        comp
     }
 
     // Getters for attrs-based properties
@@ -167,28 +269,58 @@ impl Comp {
         self.cache.borrow_mut().clear();
     }
 
-    /// Compute hash of layers configuration for cache invalidation.
-    /// Hash changes when layers, their UUIDs, or attrs change.
-    fn compute_layers_hash(&self) -> u64 {
+    /// Compute hash of composition configuration for cache invalidation.
+    /// Hash changes based on mode:
+    /// - File mode: file_mask, file_start, file_end
+    /// - Layer mode: children UUIDs and layers (legacy, will be removed)
+    /// Also hashes transform attributes (transparency, layer_mode, speed).
+    fn compute_comp_hash(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
 
-        // Hash number of layers
-        self.layers.len().hash(&mut hasher);
-
-        // Hash each layer's source_uuid and attrs
-        for layer in &self.layers {
-            layer.source_uuid.hash(&mut hasher);
-
-            // Hash layer attrs (start, end, play_start, play_end, opacity)
-            layer.attrs.get_u32("start").unwrap_or(0).hash(&mut hasher);
-            layer.attrs.get_u32("end").unwrap_or(0).hash(&mut hasher);
-            layer.attrs.get_i32("play_start").unwrap_or(0).hash(&mut hasher);
-            layer.attrs.get_i32("play_end").unwrap_or(0).hash(&mut hasher);
-
-            // Hash opacity as bits to avoid float comparison issues
-            let opacity_bits = layer.attrs.get_float("opacity").unwrap_or(1.0).to_bits();
-            opacity_bits.hash(&mut hasher);
+        // Hash mode
+        match self.mode {
+            CompMode::Layer => 0u8.hash(&mut hasher),
+            CompMode::File => 1u8.hash(&mut hasher),
         }
+
+        match self.mode {
+            CompMode::File => {
+                // Hash file sequence parameters
+                if let Some(ref mask) = self.file_mask {
+                    mask.hash(&mut hasher);
+                }
+                self.file_start.hash(&mut hasher);
+                self.file_end.hash(&mut hasher);
+            }
+            CompMode::Layer => {
+                // Hash children UUIDs (order matters)
+                self.children.len().hash(&mut hasher);
+                for child_uuid in &self.children {
+                    child_uuid.hash(&mut hasher);
+
+                    // Hash child attributes if present
+                    if let Some(attrs) = self.children_attrs.get(child_uuid) {
+                        attrs.get_u32("start").unwrap_or(0).hash(&mut hasher);
+                        attrs.get_u32("end").unwrap_or(0).hash(&mut hasher);
+                        attrs.get_i32("play_start").unwrap_or(0).hash(&mut hasher);
+                        attrs.get_i32("play_end").unwrap_or(0).hash(&mut hasher);
+                        let opacity_bits = attrs.get_float("opacity").unwrap_or(1.0).to_bits();
+                        opacity_bits.hash(&mut hasher);
+                    }
+                }
+            }
+        }
+
+        // Hash transform attributes
+        let transparency_bits = self.attrs.get_float("transparency").unwrap_or(1.0).to_bits();
+        transparency_bits.hash(&mut hasher);
+
+        if let Some(layer_mode) = self.attrs.get_str("layer_mode") {
+            layer_mode.hash(&mut hasher);
+        }
+
+        let speed_bits = self.attrs.get_float("speed").unwrap_or(1.0).to_bits();
+        speed_bits.hash(&mut hasher);
 
         hasher.finish()
     }
@@ -227,9 +359,9 @@ impl Comp {
             return None; // Frame outside work area - don't compose
         }
 
-        // Compute layers hash for cache key
-        let layers_hash = self.compute_layers_hash();
-        let cache_key = (layers_hash, frame_idx);
+        // Compute composition hash for cache key
+        let comp_hash = self.compute_comp_hash();
+        let cache_key = (comp_hash, frame_idx);
 
         // Check cache
         if let Some(frame) = self.cache.borrow().get(&cache_key) {
@@ -246,50 +378,53 @@ impl Comp {
 
     /// Compose frame at given global frame index.
     ///
-    /// Recursively resolves all active layers:
-    /// - Converts global comp frame to local source frame via LayerRef.global_to_local()
+    /// Recursively resolves all active children:
+    /// - Converts global comp frame to local source frame
     /// - Resolves MediaSource from Project.media by UUID
     /// - Recursively gets frames (supports nested Comps)
-    /// - Blends multiple layers with CPU compositor (GPU compositor planned)
+    /// - Blends multiple children with CPU compositor (GPU compositor planned)
     fn compose(&self, frame_idx: usize, project: &super::Project) -> Option<Frame> {
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
 
-        // Collect frames from all active layers
-        for layer in &self.layers {
-            // Get layer range from attrs
-            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+        // Collect frames from all active children
+        for child_uuid in &self.children {
+            // Get child attributes
+            let attrs = self.children_attrs.get(child_uuid)?;
 
-            // Check if layer is active at this frame
-            if frame_idx < layer_start || frame_idx > layer_end {
-                continue; // Layer not active
+            // Get child range from attrs
+            let child_start = attrs.get_u32("start").unwrap_or(0) as usize;
+            let child_end = attrs.get_u32("end").unwrap_or(0) as usize;
+
+            // Check if child is active at this frame
+            if frame_idx < child_start || frame_idx > child_end {
+                continue; // Child not active
             }
 
             // Convert comp frame to local source frame
-            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
-            let local_frame = (frame_idx - layer_start) as i32 + play_start;
+            let play_start = attrs.get_i32("play_start").unwrap_or(0);
+            let local_frame = (frame_idx - child_start) as i32 + play_start;
             if local_frame < 0 {
                 continue;
             }
 
             // Resolve source from Project.media
-            if let Some(source) = project.media.get(&layer.source_uuid) {
+            if let Some(source) = project.media.get(child_uuid) {
                 // Recursively get frame from source (Clip or Comp)
                 if let Some(frame) = source.get_frame(local_frame as usize, project) {
-                    let opacity = layer.attrs.get_float("opacity").unwrap_or(1.0);
+                    let opacity = attrs.get_float("opacity").unwrap_or(1.0);
                     source_frames.push((frame, opacity));
                 }
             }
         }
 
-        // Blend all layers with project compositor (CPU or GPU)
+        // Blend all children with project compositor (CPU or GPU)
         project.compositor.blend(source_frames)
     }
 
-    /// Add a new layer to the composition at specified start frame.
+    /// Add a new child to the composition at specified start frame.
     ///
-    /// Automatically determines layer duration from source and creates layer with proper attributes.
-    pub fn add_layer(
+    /// Automatically determines duration from source and creates child attributes.
+    pub fn add_child(
         &mut self,
         source_uuid: String,
         start_frame: usize,
@@ -304,11 +439,18 @@ impl Comp {
         let duration = source.total_frames();
         let end_frame = start_frame + duration - 1;
 
-        // Create new layer with proper signature
-        let layer = Layer::new(source_uuid, start_frame, end_frame);
+        // Create child attributes
+        let mut attrs = Attrs::new();
+        attrs.set("name", AttrValue::Str("Child".to_string()));
+        attrs.set("start", AttrValue::UInt(start_frame as u32));
+        attrs.set("end", AttrValue::UInt(end_frame as u32));
+        attrs.set("play_start", AttrValue::Int(0));
+        attrs.set("play_end", AttrValue::Int(0));
+        attrs.set("opacity", AttrValue::Float(1.0));
 
-        // Add to layers (top)
-        self.layers.push(layer);
+        // Add to children (top)
+        self.children.push(source_uuid.clone());
+        self.children_attrs.insert(source_uuid, attrs);
 
         // Clear cache and emit event
         self.clear_cache();
@@ -319,25 +461,29 @@ impl Comp {
         Ok(())
     }
 
-    /// Move a layer to a new start position, preserving duration.
-    pub fn move_layer(&mut self, layer_idx: usize, new_start: usize) -> anyhow::Result<()> {
-        let layer = self
-            .layers
-            .get_mut(layer_idx)
-            .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
+    /// Move a child to a new start position, preserving duration.
+    pub fn move_child(&mut self, child_idx: usize, new_start: usize) -> anyhow::Result<()> {
+        let child_uuid = self
+            .children
+            .get(child_idx)
+            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?
+            .clone();
 
-        let old_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-        let old_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+        let attrs = self
+            .children_attrs
+            .get_mut(&child_uuid)
+            .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
+
+        let old_start = attrs.get_u32("start").unwrap_or(0) as usize;
+        let old_end = attrs.get_u32("end").unwrap_or(0) as usize;
         let duration = if old_end >= old_start {
             old_end - old_start
         } else {
             0
         };
 
-        layer.attrs.set("start", AttrValue::UInt(new_start as u32));
-        layer
-            .attrs
-            .set("end", AttrValue::UInt((new_start + duration) as u32));
+        attrs.set("start", AttrValue::UInt(new_start as u32));
+        attrs.set("end", AttrValue::UInt((new_start + duration) as u32));
 
         // Clear cache and emit event
         self.clear_cache();
@@ -348,14 +494,20 @@ impl Comp {
         Ok(())
     }
 
-    /// Set layer play start (adjust play_start attribute - visible start offset from layer start).
-    pub fn set_layer_play_start(&mut self, layer_idx: usize, new_play_start: i32) -> anyhow::Result<()> {
-        let layer = self
-            .layers
-            .get_mut(layer_idx)
-            .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
+    /// Set child play start (adjust play_start attribute - visible start offset from child start).
+    pub fn set_child_play_start(&mut self, child_idx: usize, new_play_start: i32) -> anyhow::Result<()> {
+        let child_uuid = self
+            .children
+            .get(child_idx)
+            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?
+            .clone();
 
-        layer.attrs.set("play_start", AttrValue::Int(new_play_start));
+        let attrs = self
+            .children_attrs
+            .get_mut(&child_uuid)
+            .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
+
+        attrs.set("play_start", AttrValue::Int(new_play_start));
 
         // Clear cache and emit event
         self.clear_cache();
@@ -366,14 +518,20 @@ impl Comp {
         Ok(())
     }
 
-    /// Set layer play end (adjust play_end attribute - visible end offset from layer end).
-    pub fn set_layer_play_end(&mut self, layer_idx: usize, new_play_end: i32) -> anyhow::Result<()> {
-        let layer = self
-            .layers
-            .get_mut(layer_idx)
-            .ok_or_else(|| anyhow::anyhow!("Layer {} not found", layer_idx))?;
+    /// Set child play end (adjust play_end attribute - visible end offset from child end).
+    pub fn set_child_play_end(&mut self, child_idx: usize, new_play_end: i32) -> anyhow::Result<()> {
+        let child_uuid = self
+            .children
+            .get(child_idx)
+            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?
+            .clone();
 
-        layer.attrs.set("play_end", AttrValue::Int(new_play_end));
+        let attrs = self
+            .children_attrs
+            .get_mut(&child_uuid)
+            .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
+
+        attrs.set("play_end", AttrValue::Int(new_play_end));
 
         // Clear cache and emit event
         self.clear_cache();
@@ -404,24 +562,26 @@ impl Comp {
         });
     }
 
-    /// Get all layer edges (start and end frames) sorted by distance from given frame
+    /// Get all child edges (start and end frames) sorted by distance from given frame
     /// Returns vec of (frame_number, is_start) tuples
-    pub fn get_layer_edges_near(&self, from_frame: usize) -> Vec<(usize, bool)> {
+    pub fn get_child_edges_near(&self, from_frame: usize) -> Vec<(usize, bool)> {
         let mut edges = Vec::new();
 
-        for layer in &self.layers {
-            let start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-            let end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
-            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
-            let play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
+        for child_uuid in &self.children {
+            if let Some(attrs) = self.children_attrs.get(child_uuid) {
+                let start = attrs.get_u32("start").unwrap_or(0) as usize;
+                let end = attrs.get_u32("end").unwrap_or(0) as usize;
+                let play_start = attrs.get_i32("play_start").unwrap_or(0);
+                let play_end = attrs.get_i32("play_end").unwrap_or(0);
 
-            // Visible range accounting for play range
-            let visible_start = start + play_start as usize;
-            let visible_end = end.saturating_sub(play_end as usize);
+                // Visible range accounting for play range
+                let visible_start = start + play_start as usize;
+                let visible_end = end.saturating_sub(play_end as usize);
 
-            if visible_start < visible_end {
-                edges.push((visible_start, true));   // Start edge
-                edges.push((visible_end, false));    // End edge
+                if visible_start < visible_end {
+                    edges.push((visible_start, true));   // Start edge
+                    edges.push((visible_end, false));    // End edge
+                }
             }
         }
 
@@ -440,6 +600,279 @@ impl Comp {
 
         edges
     }
+
+    // ===== Parent-Child Management =====
+
+    /// Add child comp to this composition
+    pub fn add_child(&mut self, child_uuid: String) {
+        if !self.children.contains(&child_uuid) {
+            self.children.push(child_uuid);
+            self.invalidate_cache();
+            self.event_sender.emit(CompEvent::LayersChanged {
+                comp_uuid: self.uuid.clone(),
+            });
+        }
+    }
+
+    /// Remove child comp from this composition
+    pub fn remove_child(&mut self, child_uuid: &str) {
+        self.children.retain(|uuid| uuid != child_uuid);
+        self.invalidate_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+    }
+
+    /// Set parent composition UUID
+    pub fn set_parent(&mut self, parent_uuid: Option<String>) {
+        self.parent = parent_uuid;
+    }
+
+    /// Get parent composition UUID
+    pub fn get_parent(&self) -> Option<&String> {
+        self.parent.as_ref()
+    }
+
+    /// Get children composition UUIDs
+    pub fn get_children(&self) -> &[String] {
+        &self.children
+    }
+
+    /// Check if this comp has a specific child
+    pub fn has_child(&self, child_uuid: &str) -> bool {
+        self.children.iter().any(|uuid| uuid == child_uuid)
+    }
+
+    /// Invalidate cache (alias for clear_cache with hash reset)
+    fn invalidate_cache(&self) {
+        self.cache.borrow_mut().clear();
+        // comp_hash will be recalculated on next get_frame()
+    }
+
+    // ===== File Mode Methods (ex-Clip functionality) =====
+
+    /// Initialize from file pattern (glob or printf-style)
+    /// Supports: "/path/seq.*.exr", "/path/seq.%04d.exr", or single file
+    pub fn init_from_pattern(&mut self, pattern: &str) -> Result<(), FrameError> {
+        if pattern.contains('*') {
+            self.init_from_glob(pattern)?;
+        } else if pattern.contains('%') {
+            // Printf-style pattern: frame.%04d.exr
+            let re = Regex::new(r"%0(\d+)d")
+                .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
+            if let Some(caps) = re.captures(pattern)
+                && let Some(m) = caps.get(1)
+            {
+                let padding_val = m.as_str().parse::<usize>().unwrap_or(4);
+                self.attrs.set("padding", AttrValue::UInt(padding_val as u32));
+            }
+            // Convert to glob pattern for discovery
+            let glob_pattern = re.replace_all(pattern, "*").to_string();
+            self.init_from_glob(&glob_pattern)?;
+        } else {
+            // Single file - auto-detect sequence
+            self.init_from_file(pattern)?;
+        }
+
+        self.file_mask = Some(pattern.to_string());
+        Ok(())
+    }
+
+    /// Initialize from glob pattern
+    fn init_from_glob(&mut self, pattern: &str) -> Result<(), FrameError> {
+        let paths = glob_paths(pattern)?;
+        if paths.is_empty() {
+            return Err(FrameError::Image(format!("No files matched pattern: {}", pattern)));
+        }
+
+        // Group by (prefix, ext), storing (number, path, padding)
+        let mut groups: HashMap<(String, String), Vec<(usize, PathBuf, usize)>> = HashMap::new();
+
+        for path in paths {
+            if let Some((prefix, number, ext, padding)) = split_sequence_path(&path)? {
+                let key = (prefix, ext);
+                groups.entry(key).or_default().push((number, path, padding));
+            }
+        }
+
+        // Select largest group as main sequence
+        let (key, frames_data) = groups
+            .into_iter()
+            .max_by_key(|(_, v)| v.len())
+            .ok_or_else(|| FrameError::Image("No valid sequence files found".into()))?;
+
+        let (prefix, ext) = key;
+        let (min_frame, max_frame) = frames_data
+            .iter()
+            .fold((usize::MAX, 0usize), |(min_f, max_f), (num, _, _)| {
+                (min_f.min(*num), max_f.max(*num))
+            });
+
+        self.file_start = Some(min_frame);
+        self.file_end = Some(max_frame);
+        self.attrs.set("start", AttrValue::UInt(min_frame as u32));
+        self.attrs.set("end", AttrValue::UInt(max_frame as u32));
+
+        // Use padding from first frame
+        let padding_val = frames_data.first().map(|(_, _, p)| *p).unwrap_or(4);
+        self.attrs.set("padding", AttrValue::UInt(padding_val as u32));
+        self.file_mask = Some(format!("{}*.{}", prefix, ext));
+
+        // Create Frame::new_unloaded for each frame
+        self.frames.clear();
+        for frame_num in min_frame..=max_frame {
+            let path = self.frame_path_from_mask(frame_num);
+            self.frames.push(Frame::new_unloaded(path));
+        }
+
+        info!("Loaded sequence: {} frames ({}..{})", self.frames.len(), min_frame, max_frame);
+        Ok(())
+    }
+
+    /// Initialize from single file path - auto-detect sequence
+    fn init_from_file(&mut self, file_path: &str) -> Result<(), FrameError> {
+        let path = Path::new(file_path);
+        if !path.exists() {
+            return Err(FrameError::Image(format!("File not found: {}", file_path)));
+        }
+
+        // Try to detect sequence pattern
+        if let Some((prefix, number, ext, padding)) = split_sequence_path(path)? {
+            self.attrs.set("padding", AttrValue::UInt(padding as u32));
+            let pattern = format!("{}*.{}", prefix, ext);
+            self.init_from_glob(&pattern)?;
+        } else {
+            // Single file, not a sequence
+            self.file_start = Some(0);
+            self.file_end = Some(0);
+            self.attrs.set("start", AttrValue::UInt(0));
+            self.attrs.set("end", AttrValue::UInt(0));
+            self.file_mask = Some(file_path.to_string());
+            self.frames.clear();
+            self.frames.push(Frame::new_unloaded(PathBuf::from(file_path)));
+        }
+
+        Ok(())
+    }
+
+    /// Restore frames from file_mask after deserialization
+    pub fn restore_frames_from_mask(&mut self) {
+        if self.mode != CompMode::File {
+            return;
+        }
+
+        self.frames.clear();
+
+        let start = self.file_start.unwrap_or(0);
+        let end = self.file_end.unwrap_or(0);
+        for frame_num in start..=end {
+            let path = self.frame_path_from_mask(frame_num);
+            self.frames.push(Frame::new_unloaded(path));
+        }
+    }
+
+    /// Generate file path for given frame number based on file_mask
+    fn frame_path_from_mask(&self, frame_num: usize) -> PathBuf {
+        let mask = self.file_mask.as_deref().unwrap_or("");
+        let padding = self.attrs.get_u32("padding").unwrap_or(4) as usize;
+
+        if mask.contains('*') {
+            let number = format!("{:0width$}", frame_num, width = padding);
+            mask.replace('*', &number).into()
+        } else if mask.contains("####") {
+            let number = format!("{:0width$}", frame_num, width = padding);
+            mask.replace("####", &number).into()
+        } else {
+            let path = Path::new(mask);
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("frame");
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("exr");
+            let number = format!("{:0width$}", frame_num, width = padding);
+            let mut name = String::with_capacity(stem.len() + 1 + padding + ext.len() + 1);
+            name.push_str(stem);
+            name.push('.');
+            name.push_str(&number);
+            name.push('.');
+            name.push_str(ext);
+            if let Some(parent) = path.parent() {
+                parent.join(name)
+            } else {
+                PathBuf::from(name)
+            }
+        }
+    }
+
+    /// Get frame by index for File mode
+    pub fn get_file_frame(&self, idx: usize) -> Option<&Frame> {
+        if self.mode != CompMode::File {
+            return None;
+        }
+        self.frames.get(idx)
+    }
+
+    /// Get mutable frame by index for File mode
+    pub fn get_file_frame_mut(&mut self, idx: usize) -> Option<&mut Frame> {
+        if self.mode != CompMode::File {
+            return None;
+        }
+        self.frames.get_mut(idx)
+    }
+}
+
+// ===== Helper Functions for File Mode =====
+
+/// Expand a glob pattern into a list of paths
+fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
+    let mut paths = Vec::new();
+    for entry in glob::glob(pattern)
+        .map_err(|e| FrameError::Image(format!("Glob error for pattern {}: {}", pattern, e)))?
+    {
+        match entry {
+            Ok(path) => paths.push(path),
+            Err(e) => return Err(FrameError::Image(format!("Glob entry error: {}", e))),
+        }
+    }
+    Ok(paths)
+}
+
+/// Split a sequence filename into (prefix, number, ext, padding)
+///
+/// Example: "/path/seq.0001.exr" -> ("/path/seq.", 1, "exr", 4)
+fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usize)>, FrameError> {
+    let ext = match path.extension().and_then(|s| s.to_str()) {
+        Some(e) => e.to_string(),
+        None => return Ok(None),
+    };
+
+    let file_stem = match path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // Find trailing digits
+    let re = Regex::new(r"^(.+?)(\d+)$")
+        .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
+
+    if let Some(caps) = re.captures(file_stem) {
+        let prefix_part = caps.get(1).unwrap().as_str();
+        let number_str = caps.get(2).unwrap().as_str();
+        let padding = number_str.len();
+        let number: usize = number_str.parse()
+            .map_err(|e| FrameError::Image(format!("Parse error: {}", e)))?;
+
+        let parent = path.parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("");
+
+        let prefix = if parent.is_empty() {
+            format!("{}", prefix_part)
+        } else {
+            format!("{}/{}", parent, prefix_part)
+        };
+
+        Ok(Some((prefix, number, ext, padding)))
+    } else {
+        Ok(None)
+    }
 }
 
 // ===== GUI Trait Implementations =====
@@ -456,7 +889,7 @@ impl crate::entities::ProjectUI for Comp {
             // Metadata
             ui.label(format!("{}fps", self.fps()));
             ui.label(format!("{}-{}", self.start(), self.end()));
-            ui.label(format!("{} layers", self.layers.len()));
+            ui.label(format!("{} children", self.children.len()));
         })
         .response
     }
@@ -529,18 +962,23 @@ impl crate::entities::AttributeEditorUI for Comp {
                 });
 
                 ui.horizontal(|ui| {
-                    ui.label("Layers:");
-                    ui.label(format!("{}", self.layers.len()));
+                    ui.label("Children:");
+                    ui.label(format!("{}", self.children.len()));
                 });
 
-                // Show layer list
-                for (idx, layer) in self.layers.iter().enumerate() {
+                // Show children list
+                for (idx, child_uuid) in self.children.iter().enumerate() {
                     ui.horizontal(|ui| {
                         let is_selected = self.selected_layer == Some(idx);
-                        if ui.selectable_label(is_selected, format!("Layer {}", idx)).clicked() {
+                        if ui.selectable_label(is_selected, format!("Child {}", idx)).clicked() {
                             self.selected_layer = Some(idx);
                         }
-                        ui.label(format!("({}-{})", layer.start(), layer.end()));
+
+                        if let Some(attrs) = self.children_attrs.get(child_uuid) {
+                            let start = attrs.get_u32("start").unwrap_or(0);
+                            let end = attrs.get_u32("end").unwrap_or(0);
+                            ui.label(format!("({}-{})", start, end));
+                        }
                     });
                 }
             });
@@ -572,18 +1010,16 @@ mod tests {
         project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
         project.clips_order.push(clip_uuid.clone());
 
-        // Create Comp B with clip as layer
+        // Create Comp B with clip as child
         let mut comp_b = Comp::new("Comp B", 0, 9, 24.0);
-        let layer_b = Layer::new(clip_uuid.clone(), 0, 9);
-        comp_b.layers.push(layer_b);
+        comp_b.add_child(clip_uuid.clone(), 0, &project).unwrap();
         let comp_b_uuid = comp_b.uuid.clone();
         project.media.insert(comp_b_uuid.clone(), MediaSource::Comp(comp_b));
         project.comps_order.push(comp_b_uuid.clone());
 
-        // Create Comp A with Comp B as layer
+        // Create Comp A with Comp B as child
         let mut comp_a = Comp::new("Comp A", 0, 9, 24.0);
-        let layer_a = Layer::new(comp_b_uuid.clone(), 0, 9);
-        comp_a.layers.push(layer_a);
+        comp_a.add_child(comp_b_uuid.clone(), 0, &project).unwrap();
         let comp_a_uuid = comp_a.uuid.clone();
         project.media.insert(comp_a_uuid.clone(), MediaSource::Comp(comp_a));
         project.comps_order.push(comp_a_uuid.clone());
@@ -609,10 +1045,9 @@ mod tests {
         let clip_uuid = clip.uuid.clone();
         project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
 
-        // Create Comp with clip as layer
+        // Create Comp with clip as child
         let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
-        let layer = Layer::new(clip_uuid.clone(), 0, 4);
-        comp.layers.push(layer);
+        comp.add_child(clip_uuid.clone(), 0, &project).unwrap();
         let comp_uuid = comp.uuid.clone();
         project.media.insert(comp_uuid.clone(), MediaSource::Comp(comp));
 
@@ -642,24 +1077,40 @@ mod tests {
 
     /// Test hash computation consistency
     #[test]
-    fn test_layers_hash_consistency() {
+    fn test_comp_hash_consistency() {
         let mut comp1 = Comp::new("Comp1", 0, 10, 24.0);
         let mut comp2 = Comp::new("Comp2", 0, 10, 24.0);
 
-        // Same layers should produce same hash
-        let layer1 = Layer::new("uuid1".to_string(), 0, 10);
-        let layer2 = Layer::new("uuid1".to_string(), 0, 10);
+        // Same children should produce same hash
+        let uuid1 = "uuid1".to_string();
 
-        comp1.layers.push(layer1);
-        comp2.layers.push(layer2);
+        let mut attrs1 = Attrs::new();
+        attrs1.set("start", AttrValue::UInt(0));
+        attrs1.set("end", AttrValue::UInt(10));
+        attrs1.set("play_start", AttrValue::Int(0));
+        attrs1.set("play_end", AttrValue::Int(0));
+        attrs1.set("opacity", AttrValue::Float(1.0));
 
-        let hash1 = comp1.compute_layers_hash();
-        let hash2 = comp2.compute_layers_hash();
+        let mut attrs2 = Attrs::new();
+        attrs2.set("start", AttrValue::UInt(0));
+        attrs2.set("end", AttrValue::UInt(10));
+        attrs2.set("play_start", AttrValue::Int(0));
+        attrs2.set("play_end", AttrValue::Int(0));
+        attrs2.set("opacity", AttrValue::Float(1.0));
+
+        comp1.children.push(uuid1.clone());
+        comp1.children_attrs.insert(uuid1.clone(), attrs1);
+
+        comp2.children.push(uuid1.clone());
+        comp2.children_attrs.insert(uuid1, attrs2);
+
+        let hash1 = comp1.compute_comp_hash();
+        let hash2 = comp2.compute_comp_hash();
         assert_eq!(hash1, hash2, "Identical layers should produce same hash");
 
         // Different opacity should produce different hash
         comp2.layers[0].attrs.set("opacity", crate::attrs::AttrValue::Float(0.7));
-        let hash3 = comp2.compute_layers_hash();
+        let hash3 = comp2.compute_comp_hash();
         assert_ne!(hash1, hash3, "Different opacity should produce different hash");
     }
 
@@ -680,19 +1131,38 @@ mod tests {
         // Create Comp with all 3 clips as layers
         let mut comp = Comp::new("Multi-layer Comp", 0, 4, 24.0);
 
-        // Layer 0: clip 0, full opacity
-        let layer0 = Layer::new(project.clips_order[0].clone(), 0, 4);
-        comp.layers.push(layer0);
+        // Child 0: clip 0, full opacity
+        let uuid0 = project.clips_order[0].clone();
+        comp.children.push(uuid0.clone());
+        let mut attrs0 = Attrs::new();
+        attrs0.set("start", AttrValue::UInt(0));
+        attrs0.set("end", AttrValue::UInt(4));
+        attrs0.set("play_start", AttrValue::Int(0));
+        attrs0.set("play_end", AttrValue::Int(0));
+        attrs0.set("opacity", AttrValue::Float(1.0));
+        comp.children_attrs.insert(uuid0, attrs0);
 
-        // Layer 1: clip 1, 50% opacity
-        let mut layer1 = Layer::new(project.clips_order[1].clone(), 0, 4);
-        layer1.attrs.set("opacity", crate::attrs::AttrValue::Float(0.5));
-        comp.layers.push(layer1);
+        // Child 1: clip 1, 50% opacity
+        let uuid1 = project.clips_order[1].clone();
+        comp.children.push(uuid1.clone());
+        let mut attrs1 = Attrs::new();
+        attrs1.set("start", AttrValue::UInt(0));
+        attrs1.set("end", AttrValue::UInt(4));
+        attrs1.set("play_start", AttrValue::Int(0));
+        attrs1.set("play_end", AttrValue::Int(0));
+        attrs1.set("opacity", AttrValue::Float(0.5));
+        comp.children_attrs.insert(uuid1, attrs1);
 
-        // Layer 2: clip 2, 30% opacity
-        let mut layer2 = Layer::new(project.clips_order[2].clone(), 0, 4);
-        layer2.attrs.set("opacity", crate::attrs::AttrValue::Float(0.3));
-        comp.layers.push(layer2);
+        // Child 2: clip 2, 30% opacity
+        let uuid2 = project.clips_order[2].clone();
+        comp.children.push(uuid2.clone());
+        let mut attrs2 = Attrs::new();
+        attrs2.set("start", AttrValue::UInt(0));
+        attrs2.set("end", AttrValue::UInt(4));
+        attrs2.set("play_start", AttrValue::Int(0));
+        attrs2.set("play_end", AttrValue::Int(0));
+        attrs2.set("opacity", AttrValue::Float(0.3));
+        comp.children_attrs.insert(uuid2, attrs2);
 
         let comp_uuid = comp.uuid.clone();
         project.media.insert(comp_uuid.clone(), MediaSource::Comp(comp));

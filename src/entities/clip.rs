@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 
 use crate::frame::{Frame, FrameError};
-use crate::attrs::{Attrs, AttrValue};
+use super::{Attrs, AttrValue};
 
 /// Detect clips from a list of paths (ported from original Sequence::detect).
 pub fn detect(paths: Vec<PathBuf>) -> Result<Vec<Clip>, FrameError> {

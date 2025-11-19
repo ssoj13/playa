@@ -30,10 +30,9 @@ use std::sync::{Arc, Mutex};
 // Import f16 from half crate
 use half::f16 as F16;
 
-// Import EXR loader (exrs or openexr-rs based on features)
-use crate::exr::{ExrImpl, ExrLoader};
+// Import utilities
 use crate::utils::media;
-use crate::attrs::Attrs;
+use crate::entities::Attrs;
 
 /// Parse video path with frame suffix
 /// "video.mp4@17" -> (PathBuf("video.mp4"), Some(17))
@@ -278,6 +277,26 @@ impl Frame {
         }
     }
 
+    /// Load image header from file (unified Loader interface)
+    ///
+    /// Returns metadata as Attrs with:
+    /// - "width", "height" (UInt) - image dimensions
+    /// - "channels" (UInt) - number of channels
+    /// - "format" (Str) - pixel format description
+    /// - Additional format-specific metadata
+    ///
+    /// Supports: EXR, PNG, JPG, TIFF, HDR, TGA
+    pub fn file_header(path: &Path) -> Result<Attrs, FrameError> {
+        crate::loader::Loader::header(path)
+    }
+
+    /// Load complete image file into Frame (unified Loader interface)
+    ///
+    /// Supports: EXR (with/without openexr feature), PNG, JPG, TIFF, HDR, TGA
+    pub fn file_load(path: &Path) -> Result<Frame, FrameError> {
+        crate::loader::Loader::load(path)
+    }
+
     /// Create frame from F16 buffer (used by compositor)
     pub(crate) fn from_f16_buffer(buffer: Vec<F16>, width: usize, height: usize) -> Self {
         let data = FrameData {
@@ -300,6 +319,23 @@ impl Frame {
         let data = FrameData {
             buffer: Arc::new(PixelBuffer::U8(buffer)),
             pixel_format: PixelFormat::Rgba8,
+            width,
+            height,
+            status: FrameStatus::Loaded,
+            attrs: Attrs::new(),
+        };
+
+        Self {
+            data: Arc::new(Mutex::new(data)),
+            filename: None,
+        }
+    }
+
+    /// Create frame from any PixelBuffer (used by Loader)
+    pub(crate) fn from_buffer(buffer: PixelBuffer, pixel_format: PixelFormat, width: usize, height: usize) -> Self {
+        let data = FrameData {
+            buffer: Arc::new(buffer),
+            pixel_format,
             width,
             height,
             status: FrameStatus::Loaded,
@@ -400,31 +436,17 @@ impl Frame {
             return Ok(0);
         }
 
-        // For images, use ExrImpl::header (works for all formats via image crate)
-        let ext = actual_path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_lowercase())
-            .unwrap_or_default();
+        // For images, use unified Loader
+        let attrs = crate::loader::Loader::header(&actual_path)?;
 
-        let (width, height) = match ext.as_str() {
-            "exr" => ExrImpl::header(&actual_path)?,
-            "png" | "jpg" | "jpeg" | "tif" | "tiff" | "tga" | "hdr" => {
-                // Use ImageReader for fast header reading without decoding pixels
-                let reader = image::ImageReader::open(&actual_path)
-                    .map_err(|e| FrameError::Image(e.to_string()))?;
-                let (w, h) = reader
-                    .into_dimensions()
-                    .map_err(|e| FrameError::Image(e.to_string()))?;
-                (w as usize, h as usize)
-            }
-            _ => return Err(FrameError::UnsupportedFormat(format!(".{}", ext))),
-        };
+        let width = attrs.get_uint("width").unwrap_or(1) as usize;
+        let height = attrs.get_uint("height").unwrap_or(1) as usize;
 
         let mut data = self.data.lock().unwrap();
         data.width = width;
         data.height = height;
         data.status = FrameStatus::Header;
+        data.attrs = attrs;
 
         debug!("Loaded header: {}x{}", width, height);
         Ok(0)
@@ -513,15 +535,19 @@ impl Frame {
         }
     }
 
-    /// Load EXR file - delegate to ExrImpl (exrs or openexr-rs)
+    /// Load EXR file - delegate to unified Loader
     fn load_exr<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
         debug!("Loading EXR: {}", path.as_ref().display());
 
-        // Delegate to ExrImpl (compile-time selected backend)
-        let (buffer, pixel_format, width, height) = ExrImpl::load(path.as_ref())?;
+        // Load via unified Loader
+        let frame = crate::loader::Loader::load(path.as_ref())?;
 
-        // Calculate memory size before moving buffer
-        let mem_size = match &buffer {
+        let buffer = frame.buffer();
+        let pixel_format = frame.pixel_format();
+        let (width, height) = frame.resolution();
+
+        // Calculate memory size
+        let mem_size = match buffer.as_ref() {
             PixelBuffer::U8(vec) => vec.len(),
             PixelBuffer::F16(vec) => vec.len() * 2,
             PixelBuffer::F32(vec) => vec.len() * 4,
@@ -529,7 +555,7 @@ impl Frame {
 
         // Update frame data
         let mut data = self.data.lock().unwrap();
-        data.buffer = Arc::new(buffer);
+        data.buffer = buffer;
         data.pixel_format = pixel_format;
         data.width = width;
         data.height = height;

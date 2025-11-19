@@ -1,11 +1,12 @@
-mod attrs;
 mod compositor;
 mod convert;
+mod dialogs;
 mod encode;
 mod entities;
 mod events;
 mod exr;
 mod frame;
+mod loader;
 mod media;
 mod paths;
 mod player;
@@ -14,13 +15,12 @@ mod progress;
 mod progress_bar;
 mod shaders;
 mod status_bar;
-mod timeline;
 mod timeslider;
 mod ui;
 mod ui_encode;
 mod utils;
 mod video;
-mod viewport;
+mod widgets;
 mod workers;
 
 use clap::Parser;

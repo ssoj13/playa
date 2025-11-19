@@ -1,21 +1,7 @@
-//! Entities module - core types with separation of business logic and GUI
-//!
-//! Each entity (Clip, Comp, Project) can have multiple UI representations:
-//! - Project panel view (name, metadata)
-//! - Timeline view (bars, handles)
-//! - Attribute Editor view (all properties)
+//! Attribute Editor widget - UI rendering
 
-pub mod attrs;
-pub mod clip;
-pub mod comp;
-pub mod project;
-
-pub use attrs::{Attrs, AttrValue};
-pub use clip::Clip;
-pub use comp::Comp;
-pub use project::Project;
-
-use eframe::egui::{self, Ui, Response, Rect};
+use eframe::egui::{self, Ui};
+use crate::entities::{Attrs, AttrValue};
 
 /// Render generic attributes editor
 ///
@@ -81,64 +67,4 @@ pub fn render_attrs_editor(ui: &mut Ui, attrs: &mut Attrs) {
             }
         });
     }
-}
-
-/// Widget for project panel - shows entity in the project list
-///
-/// Displays:
-/// - Name/identifier
-/// - Metadata (resolution, frame count, fps)
-/// - Icon/thumbnail (optional)
-pub trait ProjectUI {
-    /// Render entity in project panel
-    ///
-    /// Returns Response for interaction handling (clicks, drag-and-drop)
-    fn project_ui(&self, ui: &mut Ui) -> Response;
-}
-
-/// Widget for timeline - shows entity as a bar/clip
-///
-/// Displays:
-/// - Horizontal bar representing time range
-/// - Handles for trimming/moving
-/// - Visual state (selected, muted, etc.)
-pub trait TimelineUI {
-    /// Render entity in timeline
-    ///
-    /// # Arguments
-    /// * `ui` - egui UI context
-    /// * `bar_rect` - Rectangle where the bar should be drawn
-    /// * `current_frame` - Current playhead position (for highlighting)
-    ///
-    /// Returns Response for interaction handling
-    fn timeline_ui(&self, ui: &mut Ui, bar_rect: Rect, current_frame: usize) -> Response;
-}
-
-/// Widget for Attribute Editor - shows all entity properties
-///
-/// Similar to Maya's Attribute Editor or After Effects' Effect Controls.
-/// Displays:
-/// - All editable attributes
-/// - Grouped by category
-/// - Interactive widgets (sliders, text fields, checkboxes)
-pub trait AttributeEditorUI {
-    /// Render entity attributes in attribute editor panel
-    ///
-    /// This is a mutable method because editing attributes modifies the entity.
-    fn ae_ui(&mut self, ui: &mut Ui);
-}
-
-/// Optional: Node editor representation (for future node-based workflow)
-///
-/// Displays entity as a node in a graph editor (like Houdini or Nuke).
-/// This is for future expansion - not required now.
-pub trait NodeUI {
-    /// Render entity as a node in node editor
-    ///
-    /// # Arguments
-    /// * `ui` - egui UI context
-    /// * `node_rect` - Rectangle where the node should be drawn
-    ///
-    /// Returns Response for interaction handling
-    fn node_ui(&self, ui: &mut Ui, node_rect: Rect) -> Response;
 }

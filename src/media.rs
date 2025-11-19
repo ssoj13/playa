@@ -3,10 +3,8 @@
 //! Provides common interface for frame sources
 
 use serde::{Deserialize, Serialize};
-use crate::entities::Clip;
-use crate::entities::Comp;
+use crate::entities::{Attrs, Clip, Comp};
 use crate::frame::Frame;
-use crate::attrs::Attrs;
 
 /// Unified media source - can be either Clip or Comp
 #[derive(Clone, Debug, Serialize, Deserialize)]
