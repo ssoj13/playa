@@ -345,7 +345,7 @@ pub fn render_timeline_panel(
                                     .project
                                     .media
                                     .get_mut(comp_uuid)
-                                    .and_then(|s| s.as_comp_mut())
+                                    .and_then(|s| s)
                                 {
                                     comp.set_selected_layer(Some(idx));
                                 }
@@ -357,7 +357,7 @@ pub fn render_timeline_panel(
                                     .project
                                     .media
                                     .get_mut(comp_uuid)
-                                    .and_then(|s| s.as_comp_mut())
+                                    .and_then(|s| s)
                                 {
                                     comp.set_selected_layer(None);
                                 }
@@ -396,7 +396,7 @@ pub fn render_timeline_panel(
                         TimelineAction::AddLayer { source_uuid, start_frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 // Use add_child method
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     if let Err(e) = comp.add_child(source_uuid, start_frame, &player.project) {
                                         eprintln!("Failed to add child: {}", e);
                                     }
@@ -405,7 +405,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::MoveLayer { layer_idx, new_start } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     if let Err(e) = comp.move_child(layer_idx, new_start) {
                                         eprintln!("Failed to move child: {}", e);
                                     }
@@ -414,7 +414,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::ReorderLayer { from_idx, to_idx } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     if from_idx != to_idx && from_idx < comp.children.len() && to_idx < comp.children.len() {
                                         let child_uuid = comp.children.remove(from_idx);
                                         comp.children.insert(to_idx, child_uuid);
@@ -425,7 +425,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetLayerPlayStart { layer_idx, new_play_start } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     if let Err(e) = comp.set_child_play_start(layer_idx, new_play_start) {
                                         eprintln!("Failed to set child play start: {}", e);
                                     }
@@ -434,7 +434,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetLayerPlayEnd { layer_idx, new_play_end } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     if let Err(e) = comp.set_child_play_end(layer_idx, new_play_end) {
                                         eprintln!("Failed to set child play end: {}", e);
                                     }
@@ -443,7 +443,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetCompPlayStart { frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     let play_start = (frame as i32 - comp.start() as i32).max(0);
                                     comp.set_comp_play_start(play_start);
                                 }
@@ -451,7 +451,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::SetCompPlayEnd { frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     let play_end = (comp.end() as i32 - frame as i32).max(0);
                                     comp.set_comp_play_end(play_end);
                                 }
@@ -459,7 +459,7 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::ResetCompPlayArea => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s) {
                                     comp.set_comp_play_start(0);
                                     comp.set_comp_play_end(0);
                                 }

@@ -70,9 +70,25 @@ impl Player {
         }
     }
 
+    /// Convert Clip to Comp with File mode
+    fn clip_to_comp(clip: Clip) -> Comp {
+        let uuid = clip.uuid.clone();
+        let pattern = clip.pattern().to_string();
+        let fps = clip.fps();
+        let start = clip.start();
+        let end = clip.end();
+
+        // Create Comp with File mode
+        let mut comp = Comp::new_file_comp(pattern.clone(), start, end, fps);
+        comp.uuid = uuid; // Preserve original UUID
+        comp.attrs = clip.attrs.clone();
+
+        comp
+    }
+
     fn active_comp_mut(&mut self) -> Option<&mut Comp> {
         if let Some(ref uuid) = self.active_comp {
-            self.project.media.get_mut(uuid)?.as_comp_mut()
+            self.project.media.get_mut(uuid)
         } else {
             None
         }
@@ -80,7 +96,7 @@ impl Player {
 
     fn active_comp(&self) -> Option<&Comp> {
         if let Some(ref uuid) = self.active_comp {
-            self.project.media.get(uuid)?.as_comp()
+            self.project.media.get(uuid)
         } else {
             None
         }
@@ -153,7 +169,7 @@ impl Player {
     pub fn get_current_frame(&mut self) -> Option<Frame> {
         let frame_idx = self.current_frame();
         let comp_uuid = self.active_comp.clone()?;
-        let comp = self.project.media.get(&comp_uuid)?.as_comp()?;
+        let comp = self.project.media.get(&comp_uuid)?;
         comp.get_frame(frame_idx, &self.project)
     }
 
@@ -162,8 +178,11 @@ impl Player {
         let uuid = clip.uuid.clone();
         let clip_len = clip.len();
 
-        // Insert clip into unified media HashMap
-        self.project.media.insert(uuid.clone(), crate::media::MediaSource::Clip(clip));
+        // Convert Clip to Comp with File mode
+        let comp = Self::clip_to_comp(clip);
+
+        // Insert comp into unified media HashMap
+        self.project.media.insert(uuid.clone(), comp);
         self.project.clips_order.push(uuid.clone());
 
         // Ensure we have an active comp (creates "Main" if none exist)
@@ -174,9 +193,8 @@ impl Player {
 
         // Add clip as child to active comp
         if let Some(comp_uuid) = &self.active_comp.clone() {
-            if let Some(source) = self.project.media.get_mut(comp_uuid) {
-                if let Some(comp) = source.as_comp_mut() {
-                    log::info!("Creating child from clip {} with {} frames", uuid, clip_len);
+            if let Some(comp) = self.project.media.get_mut(comp_uuid) {
+                log::info!("Creating child from clip {} with {} frames", uuid, clip_len);
 
                     // Position child at end of comp timeline (sequential stacking)
                     // If comp is empty, start from 0, otherwise stack after last child
@@ -203,9 +221,8 @@ impl Player {
                     let child_end = child_start + clip_len.saturating_sub(1);
                     comp.set_end(child_end);
 
-                    log::info!("Added clip {} as child to comp {} (timeline: {}..{})",
-                        uuid, comp_uuid, child_start, child_end);
-                }
+                log::info!("Added clip {} as child to comp {} (timeline: {}..{})",
+                    uuid, comp_uuid, child_start, child_end);
             }
         }
 
@@ -221,12 +238,7 @@ impl Player {
     /// Stops playback during transition.
     pub fn set_active_comp(&mut self, comp_uuid: String) {
         // Check if comp exists in media
-        if let Some(source) = self.project.media.get(&comp_uuid) {
-            if !source.is_comp() {
-                log::warn!("{} is not a comp, cannot activate", comp_uuid);
-                return;
-            }
-        } else {
+        if !self.project.media.contains_key(&comp_uuid) {
             log::warn!("Comp {} not found, cannot activate", comp_uuid);
             return;
         }
@@ -238,12 +250,10 @@ impl Player {
         self.active_comp = Some(comp_uuid.clone());
 
         // Emit CurrentFrameChanged event from new comp (triggers frame loading)
-        if let Some(source) = self.project.media.get_mut(&comp_uuid) {
-            if let Some(comp) = source.as_comp_mut() {
-                let frame = comp.current_frame;
-                comp.set_current_frame(frame);
-                log::info!("Activated comp {} at frame {}", comp_uuid, frame);
-            }
+        if let Some(comp) = self.project.media.get_mut(&comp_uuid) {
+            let frame = comp.current_frame;
+            comp.set_current_frame(frame);
+            log::info!("Activated comp {} at frame {}", comp_uuid, frame);
         }
     }
 

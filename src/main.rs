@@ -195,7 +195,7 @@ impl Default for PlayaApp {
       fn attach_comp_event_sender(&mut self) {
           let sender = self.comp_event_sender.clone();
           for source in self.player.project.media.values_mut() {
-              if let Some(comp) = source.as_comp_mut() {
+              if let Some(comp) = source {
                   comp.set_event_sender(sender.clone());
               }
           }
@@ -251,7 +251,7 @@ impl Default for PlayaApp {
             debug!("Active comp {} not found in media", comp_uuid);
             return;
         };
-        let Some(comp) = source.as_comp() else {
+        let Some(comp) = source else {
             debug!("Active source {} is not a comp", comp_uuid);
             return;
         };
@@ -272,13 +272,13 @@ impl Default for PlayaApp {
                 continue;
             };
 
-            // Only process Clip sources for frame loading (Comps are composed on-demand)
-            let Some(clip) = source.as_clip() else {
-                debug!("Child {} references comp, skipping frame loading", child_idx);
+            // Only process File mode comps for frame loading (Layer mode comps are composed on-demand)
+            if source.mode != crate::entities::comp::CompMode::File {
+                debug!("Child {} is Layer mode comp, skipping frame loading", child_idx);
                 continue;
-            };
+            }
 
-            debug!("Processing child {}: clip {} has {} frames", child_idx, child_uuid, clip.len());
+            debug!("Processing child {}: comp {} has {} frames", child_idx, child_uuid, source.play_frame_count());
 
             // Get child range from attrs
             let child_start = attrs.get_u32("start").unwrap_or(0) as usize;
@@ -297,36 +297,36 @@ impl Default for PlayaApp {
                     continue;
                 }
 
-                // Convert global comp frame to local clip frame
+                // Convert global comp frame to local frame index
                 let play_start = attrs.get_i32("play_start").unwrap_or(0);
-                let clip_idx = (global_idx - child_start) as i32 + play_start;
-                if clip_idx < 0 {
+                let frame_idx = (global_idx - child_start) as i32 + play_start;
+                if frame_idx < 0 {
                     debug!("Frame {} not active in child {} (negative play_start)", global_idx, child_idx);
                     continue;
                 }
-                let clip_idx = clip_idx as usize;
+                let frame_idx = frame_idx as usize;
 
-                if clip_idx >= clip.len() {
-                    debug!("Frame {} (clip_idx {}) out of bounds (clip len: {})", global_idx, clip_idx, clip.len());
+                if frame_idx >= source.play_frame_count() {
+                    debug!("Frame {} (frame_idx {}) out of bounds (comp len: {})", global_idx, frame_idx, source.play_frame_count());
                     continue;
                 }
 
-                // Get frame from clip
-                let frame = match clip.get_frame(clip_idx) {
+                // Get frame from File mode comp
+                let frame = match source.get_frame(frame_idx, &self.player.project) {
                     Some(f) => f,
                     None => {
-                        debug!("Failed to get frame {} (clip_idx {})", global_idx, clip_idx);
+                        debug!("Failed to get frame {} (frame_idx {})", global_idx, frame_idx);
                         continue;
                     }
                 };
 
                 // Skip if already loaded
                 let status = frame.status();
-                if status == frame::FrameStatus::Loaded {
+                if status == crate::entities::frame::FrameStatus::Loaded {
                     continue;
                 }
 
-                debug!("Enqueuing load for frame {} (clip_idx {}) with status {:?}", global_idx, clip_idx, status);
+                debug!("Enqueuing load for frame {} (frame_idx {}) with status {:?}", global_idx, frame_idx, status);
 
                 // Enqueue load on worker thread
                 let workers = Arc::clone(&self.workers);
@@ -717,7 +717,7 @@ impl Default for PlayaApp {
                         .project
                         .media
                         .get_mut(comp_uuid)
-                        .and_then(|s| s.as_comp_mut())
+                        .and_then(|s| s)
                     {
                         let play_start = (current as i32 - comp.start() as i32).max(0);
                         comp.set_comp_play_start(play_start);
@@ -734,7 +734,7 @@ impl Default for PlayaApp {
                         .project
                         .media
                         .get_mut(comp_uuid)
-                        .and_then(|s| s.as_comp_mut())
+                        .and_then(|s| s)
                     {
                         let play_end = (comp.end() as i32 - current as i32).max(0);
                         comp.set_comp_play_end(play_end);
@@ -750,7 +750,7 @@ impl Default for PlayaApp {
                         .project
                         .media
                         .get_mut(comp_uuid)
-                        .and_then(|s| s.as_comp_mut())
+                        .and_then(|s| s)
                     {
                         comp.set_comp_play_start(0);
                         comp.set_comp_play_end(0);
@@ -895,7 +895,7 @@ impl eframe::App for PlayaApp {
 
                 // Also remove from all comp children
                 for source in self.player.project.media.values_mut() {
-                    if let Some(comp) = source.as_comp_mut() {
+                    if let Some(comp) = source {
                         comp.children.retain(|child_uuid| child_uuid != &clip_uuid);
                         comp.children_attrs.retain(|child_uuid, _| child_uuid != &clip_uuid);
                     }
