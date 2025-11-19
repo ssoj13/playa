@@ -10,7 +10,6 @@ pub mod clip;
 pub mod comp;
 pub mod frame;
 pub mod loader;
-pub mod loader_exr;
 pub mod loader_video;
 pub mod project;
 
