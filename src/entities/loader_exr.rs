@@ -9,7 +9,7 @@
 //! - `Exr`: exrs-based implementation (default)
 //! - `OpenExr`: openexr-rs-based implementation (feature gated)
 //! - `ExrImpl`: Type alias that selects implementation at compile time
-use crate::frame::{FrameError, PixelBuffer, PixelFormat};
+use crate::entities::frame::{FrameError, PixelBuffer, PixelFormat};
 use half::f16 as F16;
 use log::debug;
 use std::path::Path;

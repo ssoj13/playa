@@ -96,7 +96,7 @@ pub fn render_timeline(
     let timeline_width = (total_frames as f32 * config.pixels_per_frame * state.zoom)
         .max(ui.available_width() - config.name_column_width);
     // Ensure non-zero height so DnD/drop zone works even for empty comps
-    let total_height = (comp.layers.len().max(1) as f32) * config.layer_height;
+    let total_height = (comp.children.len().max(1) as f32) * config.layer_height;
 
     // Toolbar with transport controls and zoom
     ui.horizontal(|ui| {
@@ -187,18 +187,17 @@ pub fn render_timeline(
         .id_salt("timeline_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            // Create temporary layer order for egui_dnd
-            let mut layer_order: Vec<usize> = (0..comp.layers.len()).collect();
+            // Create temporary child order for egui_dnd
+            let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
 
             // Two-column layout: layer names (with DnD) | timeline bars
             ui.horizontal(|ui| {
                 // Left column: layer names with egui_dnd for smooth reordering
                 {
-                    let dnd_response = dnd(ui, "timeline_layer_names")
-                        .show_vec(&mut layer_order, |ui, layer_idx, handle, _state| {
-                            let idx = *layer_idx;
-                            let layer = &comp.layers[idx];
-                            let layer_name = &layer.source_uuid;
+                    let dnd_response = dnd(ui, "timeline_child_names")
+                        .show_vec(&mut child_order, |ui, child_idx, handle, _state| {
+                            let idx = *child_idx;
+                            let child_uuid = &comp.children[idx];
 
                             ui.horizontal(|ui| {
                                 // Drag handle
@@ -232,11 +231,16 @@ pub fn render_timeline(
                                     );
                                 }
 
-                                // Draw layer name text
+                                // Get child name from attrs or use UUID
+                                let child_name = comp.children_attrs.get(child_uuid)
+                                    .and_then(|attrs| attrs.get_str("name"))
+                                    .unwrap_or(child_uuid.as_str());
+
+                                // Draw child name text
                                 ui.painter().text(
                                     Pos2::new(rect.min.x + 8.0, rect.center().y),
                                     egui::Align2::LEFT_CENTER,
-                                    layer_name,
+                                    child_name,
                                     egui::FontId::proportional(12.0),
                                     Color32::from_gray(200),
                                 );
@@ -269,46 +273,47 @@ pub fn render_timeline(
                     if ui.is_rect_visible(timeline_rect) {
                         let painter = ui.painter();
 
-                        // Draw layer bars in same order as layer names (using layer_order from DnD)
-                        for (display_idx, &original_idx) in layer_order.iter().enumerate() {
+                        // Draw child bars in same order as child names (using child_order from DnD)
+                        for (display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;
-                            let layer = &comp.layers[idx];
-                            let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
-                            let layer_rect = Rect::from_min_size(
-                                Pos2::new(timeline_rect.min.x, layer_y),
+                            let child_uuid = &comp.children[idx];
+                            let child_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
+                            let child_rect = Rect::from_min_size(
+                                Pos2::new(timeline_rect.min.x, child_y),
                                 Vec2::new(timeline_width, config.layer_height),
                             );
 
-                          // Layer background (alternating colors)
+                          // Child background (alternating colors)
                           let bg_color = if idx % 2 == 0 {
                               Color32::from_gray(30)
                           } else {
                               Color32::from_gray(35)
                           };
-                          painter.rect_filled(layer_rect, 0.0, bg_color);
+                          painter.rect_filled(child_rect, 0.0, bg_color);
 
-                            // Get layer start/end from attrs
-                            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
-                            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
-                            let play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
+                            // Get child start/end from attrs
+                            let attrs = comp.children_attrs.get(child_uuid);
+                            let child_start = attrs.and_then(|a| Some(a.get_u32("start").unwrap_or(0) as usize)).unwrap_or(0);
+                            let child_end = attrs.and_then(|a| Some(a.get_u32("end").unwrap_or(0) as usize)).unwrap_or(0);
+                            let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
+                            let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
 
                             // Calculate full clip range and visible (play) range
-                            let full_start = layer_start;
-                            let full_end = layer_end;
-                            let visible_start = layer_start + play_start as usize;
-                            let visible_end = layer_end.saturating_sub(play_end as usize);
+                            let full_start = child_start;
+                            let full_end = child_end;
+                            let visible_start = child_start + play_start as usize;
+                            let visible_end = child_end.saturating_sub(play_end as usize);
 
-                            // Draw full clip bar (grayed out, semi-transparent)
+                            // Draw full child bar (grayed out, semi-transparent)
                             let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
                             let full_bar_x_end = frame_to_screen_x((full_end + 1) as f32, timeline_rect.min.x, config, state);
                             let full_bar_rect = Rect::from_min_max(
-                                Pos2::new(full_bar_x_start, layer_y + 4.0),
-                                Pos2::new(full_bar_x_end, layer_y + config.layer_height - 4.0),
+                                Pos2::new(full_bar_x_start, child_y + 4.0),
+                                Pos2::new(full_bar_x_end, child_y + config.layer_height - 4.0),
                             );
 
-                            // Layer bar color (use hash of source_uuid for stable color)
-                            let base_color = hash_color(&layer.source_uuid);
+                            // Child bar color (use hash of child_uuid for stable color)
+                            let base_color = hash_color(child_uuid);
                             let is_selected = comp.selected_layer == Some(idx);
                             let gray_color = if is_selected {
                                 // Slightly brighter grey with a blue tint when selected
@@ -324,8 +329,8 @@ pub fn render_timeline(
                                 let visible_bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
                                 let visible_bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x, config, state);
                                 let visible_bar_rect = Rect::from_min_max(
-                                    Pos2::new(visible_bar_x_start, layer_y + 4.0),
-                                    Pos2::new(visible_bar_x_end, layer_y + config.layer_height - 4.0),
+                                    Pos2::new(visible_bar_x_start, child_y + 4.0),
+                                    Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
                                 );
                                 painter.rect_filled(visible_bar_rect, 4.0, base_color);
                             }
@@ -345,21 +350,24 @@ pub fn render_timeline(
                               );
                         }
 
-                        // Handle layer bar interactions using proper response system
+                        // Handle child bar interactions using proper response system
                         // We need to do this in a second pass after drawing to ensure responses are on top
-                        for (display_idx, &original_idx) in layer_order.iter().enumerate() {
+                        for (display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;
-                            let layer = &comp.layers[idx];
-                            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
-                            let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
-                            let play_end = layer.attrs.get_i32("play_end").unwrap_or(0);
+                            let child_uuid = &comp.children[idx];
+
+                            // Get child attrs
+                            let attrs = comp.children_attrs.get(child_uuid);
+                            let child_start = attrs.and_then(|a| Some(a.get_u32("start").unwrap_or(0) as usize)).unwrap_or(0);
+                            let child_end = attrs.and_then(|a| Some(a.get_u32("end").unwrap_or(0) as usize)).unwrap_or(0);
+                            let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
+                            let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
 
                             // Calculate visible (play) range for interaction
-                            let visible_start = layer_start + play_start as usize;
-                            let visible_end = layer_end.saturating_sub(play_end as usize);
+                            let visible_start = child_start + play_start as usize;
+                            let visible_end = child_end.saturating_sub(play_end as usize);
 
-                            let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
+                            let child_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
 
                             // Use visible range for interaction rect (user should interact with visible edges)
                             let bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
@@ -396,28 +404,31 @@ pub fn render_timeline(
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
                                         let new_start = (*initial_start as i32 + delta_frames).max(0) as usize;
 
-                                        // Determine target layer index from vertical position
-                                        let delta_layers = (delta_y / config.layer_height).round() as i32;
-                                        let target_layer = (*layer_idx as i32 + delta_layers).max(0).min(comp.layers.len() as i32 - 1) as usize;
+                                        // Determine target child index from vertical position
+                                        let delta_children = (delta_y / config.layer_height).round() as i32;
+                                        let target_child = (*layer_idx as i32 + delta_children).max(0).min(comp.children.len() as i32 - 1) as usize;
 
                                         // Visual feedback: draw ghost bar at new position
-                                        if let Some(layer) = comp.layers.get(*layer_idx) {
-                                            let ghost_layer_y = timeline_rect.min.y + (target_layer as f32 * config.layer_height);
-                                            let duration = (layer.attrs.get_u32("end").unwrap_or(0) as i32
-                                                          - layer.attrs.get_u32("start").unwrap_or(0) as i32).max(0) as usize;
+                                        if *layer_idx < comp.children.len() {
+                                            let child_uuid = &comp.children[*layer_idx];
+                                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
+                                                let ghost_child_y = timeline_rect.min.y + (target_child as f32 * config.layer_height);
+                                                let duration = (attrs.get_u32("end").unwrap_or(0) as i32
+                                                              - attrs.get_u32("start").unwrap_or(0) as i32).max(0) as usize;
 
-                                            let ghost_x_start = frame_to_screen_x(new_start as f32, timeline_rect.min.x, config, state);
-                                            let ghost_x_end = frame_to_screen_x((new_start + duration) as f32, timeline_rect.min.x, config, state);
-                                            let ghost_rect = Rect::from_min_max(
-                                                Pos2::new(ghost_x_start, ghost_layer_y + 4.0),
-                                                Pos2::new(ghost_x_end, ghost_layer_y + config.layer_height - 4.0),
-                                            );
-                                            painter.rect_stroke(
-                                                ghost_rect,
-                                                4.0,
-                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 128)),
-                                                egui::epaint::StrokeKind::Middle,
-                                            );
+                                                let ghost_x_start = frame_to_screen_x(new_start as f32, timeline_rect.min.x, config, state);
+                                                let ghost_x_end = frame_to_screen_x((new_start + duration) as f32, timeline_rect.min.x, config, state);
+                                                let ghost_rect = Rect::from_min_max(
+                                                    Pos2::new(ghost_x_start, ghost_child_y + 4.0),
+                                                    Pos2::new(ghost_x_end, ghost_child_y + config.layer_height - 4.0),
+                                                );
+                                                painter.rect_stroke(
+                                                    ghost_rect,
+                                                    4.0,
+                                                    egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 128)),
+                                                    egui::epaint::StrokeKind::Middle,
+                                                );
+                                            }
                                         }
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -445,26 +456,29 @@ pub fn render_timeline(
                                         let new_play_start = (*initial_play_start + delta_frames).max(0);
 
                                         // Visual feedback: draw ghost play range preview
-                                        if let Some(layer) = comp.layers.get(*layer_idx) {
-                                            let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
-                                            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                                            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+                                        if *layer_idx < comp.children.len() {
+                                            let child_uuid = &comp.children[*layer_idx];
+                                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
+                                                let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
+                                                let layer_start = attrs.get_u32("start").unwrap_or(0) as usize;
+                                                let layer_end = attrs.get_u32("end").unwrap_or(0) as usize;
 
-                                            // New visual start accounting for play_start
-                                            let visual_start = layer_start + new_play_start as usize;
-                                            let ghost_x_start = frame_to_screen_x(visual_start as f32, timeline_rect.min.x, config, state);
-                                            let ghost_x_end = frame_to_screen_x(layer_end as f32, timeline_rect.min.x, config, state);
+                                                // New visual start accounting for play_start
+                                                let visual_start = layer_start + new_play_start as usize;
+                                                let ghost_x_start = frame_to_screen_x(visual_start as f32, timeline_rect.min.x, config, state);
+                                                let ghost_x_end = frame_to_screen_x(layer_end as f32, timeline_rect.min.x, config, state);
 
-                                            let ghost_rect = Rect::from_min_max(
-                                                Pos2::new(ghost_x_start, layer_y + 4.0),
-                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
-                                            );
-                                            painter.rect_stroke(
-                                                ghost_rect,
-                                                4.0,
-                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
-                                                egui::epaint::StrokeKind::Middle,
-                                            );
+                                                let ghost_rect = Rect::from_min_max(
+                                                    Pos2::new(ghost_x_start, layer_y + 4.0),
+                                                    Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
+                                                );
+                                                painter.rect_stroke(
+                                                    ghost_rect,
+                                                    4.0,
+                                                    egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
+                                                    egui::epaint::StrokeKind::Middle,
+                                                );
+                                            }
                                         }
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -484,26 +498,29 @@ pub fn render_timeline(
                                         let new_play_end = (*initial_play_end - delta_frames).max(0); // Note: inverted for end
 
                                         // Visual feedback: draw ghost play range preview
-                                        if let Some(layer) = comp.layers.get(*layer_idx) {
-                                            let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
-                                            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                                            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+                                        if *layer_idx < comp.children.len() {
+                                            let child_uuid = &comp.children[*layer_idx];
+                                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
+                                                let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
+                                                let layer_start = attrs.get_u32("start").unwrap_or(0) as usize;
+                                                let layer_end = attrs.get_u32("end").unwrap_or(0) as usize;
 
-                                            // New visual end accounting for play_end
-                                            let visual_end = layer_end.saturating_sub(new_play_end as usize);
-                                            let ghost_x_start = frame_to_screen_x(layer_start as f32, timeline_rect.min.x, config, state);
-                                            let ghost_x_end = frame_to_screen_x(visual_end as f32, timeline_rect.min.x, config, state);
+                                                // New visual end accounting for play_end
+                                                let visual_end = layer_end.saturating_sub(new_play_end as usize);
+                                                let ghost_x_start = frame_to_screen_x(layer_start as f32, timeline_rect.min.x, config, state);
+                                                let ghost_x_end = frame_to_screen_x(visual_end as f32, timeline_rect.min.x, config, state);
 
-                                            let ghost_rect = Rect::from_min_max(
-                                                Pos2::new(ghost_x_start, layer_y + 4.0),
-                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
-                                            );
-                                            painter.rect_stroke(
-                                                ghost_rect,
-                                                4.0,
-                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
-                                                egui::epaint::StrokeKind::Middle,
-                                            );
+                                                let ghost_rect = Rect::from_min_max(
+                                                    Pos2::new(ghost_x_start, layer_y + 4.0),
+                                                    Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
+                                                );
+                                                painter.rect_stroke(
+                                                    ghost_rect,
+                                                    4.0,
+                                                    egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
+                                                    egui::epaint::StrokeKind::Middle,
+                                                );
+                                            }
                                         }
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);

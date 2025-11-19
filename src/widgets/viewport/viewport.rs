@@ -3,7 +3,7 @@ use eframe::glow;
 use eframe::glow::HasContext;
 use log::{debug, error, info};
 
-use crate::frame::{PixelBuffer, PixelFormat};
+use crate::entities::frame::{PixelBuffer, PixelFormat};
 use crate::shaders::Shaders;
 
 /// Scrubber line color when inside image bounds (white, 50% transparent)

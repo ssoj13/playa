@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{Attrs, Comp};
 use crate::compositor::CompositorType;
-use crate::media::MediaSource;
 
 /// Top-level project / scene.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -20,8 +19,8 @@ pub struct Project {
     /// Global project attributes (fps defaults, resolution presets, etc.)
     pub attrs: Attrs,
 
-    /// Unified media pool: all clips and comps keyed by UUID
-    pub media: HashMap<String, MediaSource>,
+    /// Unified media pool: all comps (both Layer and File modes) keyed by UUID
+    pub media: HashMap<String, Comp>,
 
     /// Order for clips in playlist (UUIDs)
     pub clips_order: Vec<String>,

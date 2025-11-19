@@ -2,10 +2,12 @@
 //!
 //! OpenGL renderer with scrubbing support
 
-mod viewport;
 mod renderer;
+mod shaders;
+mod viewport;
 mod viewport_ui;
 
-pub use viewport::{ViewportMode, ViewportState, ViewportScrubber};
 pub use renderer::ViewportRenderer;
+pub use shaders::Shaders;
+pub use viewport::{ViewportMode, ViewportState, ViewportScrubber};
 pub use viewport_ui::{ViewportActions, render_viewport};

@@ -1,4 +1,4 @@
-use crate::frame::{Frame, PixelFormat};
+use crate::entities::frame::{Frame, PixelFormat};
 use crate::player::Player;
 use crate::viewport::ViewportState;
 use eframe::egui;

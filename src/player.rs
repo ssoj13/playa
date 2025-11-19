@@ -29,8 +29,7 @@ use log::{debug, info};
 use std::time::Instant;
 use crate::entities::Clip;
 use crate::entities::Comp;
-use crate::frame::Frame;
-use crate::entities::Layer;
+use crate::entities::frame::Frame;
 use crate::entities::Project;
 
 /// FPS presets for jog/shuttle control
@@ -173,38 +172,39 @@ impl Player {
             self.active_comp = Some(default_uuid);
         }
 
-        // Add clip as Layer to active comp
+        // Add clip as child to active comp
         if let Some(comp_uuid) = &self.active_comp.clone() {
             if let Some(source) = self.project.media.get_mut(comp_uuid) {
                 if let Some(comp) = source.as_comp_mut() {
-                    log::info!("Creating layer from clip {} with {} frames", uuid, clip_len);
+                    log::info!("Creating child from clip {} with {} frames", uuid, clip_len);
 
-                    // Position layer at end of comp timeline (sequential stacking)
-                    // If comp is empty, start from 0, otherwise stack after last layer
-                    let layer_start = if comp.layers.is_empty() {
-                        0  // First layer starts at frame 0
+                    // Position child at end of comp timeline (sequential stacking)
+                    // If comp is empty, start from 0, otherwise stack after last child
+                    let child_start = if comp.children.is_empty() {
+                        0  // First child starts at frame 0
                     } else {
-                        comp.end() + 1  // Subsequent layers stack sequentially
+                        comp.end() + 1  // Subsequent children stack sequentially
                     };
-                    let layer_end = layer_start + clip_len.saturating_sub(1);
 
-                    // Create Layer with UUID reference
-                    let layer = Layer::new(uuid.clone(), layer_start, layer_end);
+                    // If this is the first child, reset comp start to 0
+                    let is_first_child = comp.children.is_empty();
 
-                    // If this is the first layer, reset comp start to 0
-                    let is_first_layer = comp.layers.is_empty();
+                    // Use add_child() instead of creating Layer
+                    if let Err(e) = comp.add_child(uuid.clone(), child_start, &self.project) {
+                        log::error!("Failed to add child: {}", e);
+                        return;
+                    }
 
-                    comp.layers.push(layer);
-
-                    // Extend comp timeline to include new layer
-                    if is_first_layer {
+                    // Extend comp timeline to include new child
+                    if is_first_child {
                         comp.set_start(0);
                         comp.current_frame = 0;  // Reset playhead to start
                     }
-                    comp.set_end(layer_end);
+                    let child_end = child_start + clip_len.saturating_sub(1);
+                    comp.set_end(child_end);
 
-                    log::info!("Added clip {} as Layer to comp {} (timeline: {}..{})",
-                        uuid, comp_uuid, layer_start, layer_end);
+                    log::info!("Added clip {} as child to comp {} (timeline: {}..{})",
+                        uuid, comp_uuid, child_start, child_end);
                 }
             }
         }
@@ -249,15 +249,17 @@ impl Player {
 
     /// Helper: set active clip by UUID (for playlist navigation).
     pub fn set_active_clip_by_uuid(&mut self, clip_uuid: &str) {
-        // Find which layer in active comp contains this clip
+        // Find which child in active comp contains this clip
         if let Some(comp) = self.active_comp_mut() {
-            for layer in comp.layers.iter() {
-                if layer.source_uuid == clip_uuid {
-                    // Jump to start of this layer
-                    let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-                    comp.set_current_frame(layer_start);
-                    log::debug!("Jumped to clip {} at frame {}", clip_uuid, layer_start);
-                    return;
+            for child_uuid in comp.children.iter() {
+                if child_uuid == clip_uuid {
+                    if let Some(attrs) = comp.children_attrs.get(child_uuid) {
+                        // Jump to start of this child
+                        let child_start = attrs.get_u32("start").unwrap_or(0) as usize;
+                        comp.set_current_frame(child_start);
+                        log::debug!("Jumped to clip {} at frame {}", clip_uuid, child_start);
+                        return;
+                    }
                 }
             }
         }

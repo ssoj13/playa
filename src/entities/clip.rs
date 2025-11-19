@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use eframe::egui;
 
-use crate::frame::{Frame, FrameError};
+use super::frame::{Frame, FrameError};
 use super::{Attrs, AttrValue};
 
 /// Detect clips from a list of paths (ported from original Sequence::detect).

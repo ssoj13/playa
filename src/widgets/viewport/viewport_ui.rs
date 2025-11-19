@@ -5,7 +5,7 @@ use log::info;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::frame::{Frame, FrameStatus};
+use crate::entities::frame::{Frame, FrameStatus};
 use crate::player::Player;
 use crate::shaders::Shaders;
 use super::{ViewportState, ViewportRenderer};

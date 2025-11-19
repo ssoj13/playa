@@ -3,7 +3,7 @@ use log::info;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::frame::{Frame, FrameStatus};
+use crate::entities::frame::{Frame, FrameStatus};
 use crate::player::Player;
 use crate::shaders::Shaders;
 use crate::timeline::{render_timeline, TimelineConfig, TimelineAction, TimelineState};
@@ -376,8 +376,8 @@ pub fn render_timeline_panel(
                             player.stop();
                         }
                         TimelineAction::JumpToPrevEdge => {
-                            // Get layer edges sorted by distance from current frame
-                            let edges = comp.get_layer_edges_near(comp.current_frame);
+                            // Get child edges sorted by distance from current frame
+                            let edges = comp.get_child_edges_near(comp.current_frame);
 
                             // Find first edge that is before current frame
                             if let Some(&(frame, _)) = edges.iter().find(|(f, _)| *f < comp.current_frame) {
@@ -385,8 +385,8 @@ pub fn render_timeline_panel(
                             }
                         }
                         TimelineAction::JumpToNextEdge => {
-                            // Get layer edges sorted by distance from current frame
-                            let edges = comp.get_layer_edges_near(comp.current_frame);
+                            // Get child edges sorted by distance from current frame
+                            let edges = comp.get_child_edges_near(comp.current_frame);
 
                             // Find first edge that is after current frame
                             if let Some(&(frame, _)) = edges.iter().find(|(f, _)| *f > comp.current_frame) {
@@ -395,28 +395,19 @@ pub fn render_timeline_panel(
                         }
                         TimelineAction::AddLayer { source_uuid, start_frame } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
-                                // Get duration first (immutable borrow)
-                                let duration_opt = player.project.media.get(&source_uuid)
-                                    .map(|s| s.total_frames());
-
-                                if let Some(duration) = duration_opt {
-                                    // Then get mutable comp
-                                    if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                        let end_frame = start_frame + duration - 1;
-                                        let layer = crate::entities::layer::Layer::new(source_uuid.clone(), start_frame, end_frame);
-                                        comp.layers.push(layer);
-                                        comp.clear_cache();
+                                // Use add_child method
+                                if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
+                                    if let Err(e) = comp.add_child(source_uuid, start_frame, &player.project) {
+                                        eprintln!("Failed to add child: {}", e);
                                     }
-                                } else {
-                                    eprintln!("Source {} not found", source_uuid);
                                 }
                             }
                         }
                         TimelineAction::MoveLayer { layer_idx, new_start } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    if let Err(e) = comp.move_layer(layer_idx, new_start) {
-                                        eprintln!("Failed to move layer: {}", e);
+                                    if let Err(e) = comp.move_child(layer_idx, new_start) {
+                                        eprintln!("Failed to move child: {}", e);
                                     }
                                 }
                             }
@@ -424,9 +415,9 @@ pub fn render_timeline_panel(
                         TimelineAction::ReorderLayer { from_idx, to_idx } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    if from_idx != to_idx && from_idx < comp.layers.len() && to_idx < comp.layers.len() {
-                                        let layer = comp.layers.remove(from_idx);
-                                        comp.layers.insert(to_idx, layer);
+                                    if from_idx != to_idx && from_idx < comp.children.len() && to_idx < comp.children.len() {
+                                        let child_uuid = comp.children.remove(from_idx);
+                                        comp.children.insert(to_idx, child_uuid);
                                         comp.clear_cache();
                                     }
                                 }
@@ -435,8 +426,8 @@ pub fn render_timeline_panel(
                         TimelineAction::SetLayerPlayStart { layer_idx, new_play_start } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    if let Err(e) = comp.set_layer_play_start(layer_idx, new_play_start) {
-                                        eprintln!("Failed to set layer play start: {}", e);
+                                    if let Err(e) = comp.set_child_play_start(layer_idx, new_play_start) {
+                                        eprintln!("Failed to set child play start: {}", e);
                                     }
                                 }
                             }
@@ -444,8 +435,8 @@ pub fn render_timeline_panel(
                         TimelineAction::SetLayerPlayEnd { layer_idx, new_play_end } => {
                             if let Some(comp_uuid) = &player.active_comp.clone() {
                                 if let Some(comp) = player.project.media.get_mut(comp_uuid).and_then(|s| s.as_comp_mut()) {
-                                    if let Err(e) = comp.set_layer_play_end(layer_idx, new_play_end) {
-                                        eprintln!("Failed to set layer play end: {}", e);
+                                    if let Err(e) = comp.set_child_play_end(layer_idx, new_play_end) {
+                                        eprintln!("Failed to set child play end: {}", e);
                                     }
                                 }
                             }

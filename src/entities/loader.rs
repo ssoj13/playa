@@ -10,7 +10,7 @@ use log::debug;
 use half::f16 as F16;
 
 use crate::entities::{Attrs, AttrValue};
-use crate::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
+use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
 
 /// Image loader with metadata support
 pub struct Loader;

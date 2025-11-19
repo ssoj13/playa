@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::entities::{Attrs, Clip, Comp};
-use crate::frame::Frame;
+use crate::entities::frame::Frame;
 
 /// Unified media source - can be either Clip or Comp
 #[derive(Clone, Debug, Serialize, Deserialize)]

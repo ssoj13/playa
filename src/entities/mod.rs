@@ -8,11 +8,18 @@
 pub mod attrs;
 pub mod clip;
 pub mod comp;
+pub mod frame;
+pub mod loader;
+pub mod loader_exr;
+pub mod loader_video;
 pub mod project;
 
 pub use attrs::{Attrs, AttrValue};
 pub use clip::Clip;
 pub use comp::Comp;
+pub use frame::Frame;
+pub use loader::Loader;
+pub use loader_video::VideoMetadata;
 pub use project::Project;
 
 use eframe::egui::{self, Ui, Response, Rect};

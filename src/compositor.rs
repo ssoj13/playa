@@ -5,7 +5,7 @@
 //! - CPU compositor (default, works everywhere)
 //! - GPU compositor (future, requires OpenGL/WGPU context)
 
-use crate::frame::{Frame, PixelBuffer};
+use crate::entities::frame::{Frame, PixelBuffer};
 
 /// Compositor type enum - allows switching between CPU/GPU backends.
 #[derive(Clone, Debug)]

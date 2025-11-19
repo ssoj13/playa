@@ -1,40 +1,26 @@
 mod compositor;
-mod convert;
 mod dialogs;
-mod encode;
 mod entities;
 mod events;
-mod exr;
-mod frame;
-mod loader;
-mod media;
 mod paths;
 mod player;
-mod prefs;
-mod progress;
-mod progress_bar;
-mod shaders;
-mod status_bar;
-mod timeslider;
 mod ui;
-mod ui_encode;
 mod utils;
-mod video;
 mod widgets;
 mod workers;
 
 use clap::Parser;
 use eframe::{egui, glow};
-use frame::Frame;
+use entities::Frame;
 use log::{debug, error, info, warn};
 use player::Player;
 use entities::Project;
-use prefs::{AppSettings, render_settings_window};
-use shaders::Shaders;
-use status_bar::StatusBar;
+use dialogs::prefs::{AppSettings, render_settings_window};
+use dialogs::encode::EncodeDialog;
+use widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
+use widgets::status_bar::StatusBar;
 use std::path::PathBuf;
 use std::sync::Arc;
-use viewport::{ViewportRenderer, ViewportState};
 use workers::Workers;
 
 
@@ -138,7 +124,7 @@ struct PlayaApp {
     #[serde(skip)]
     show_encode_dialog: bool,
     #[serde(skip)]
-    encode_dialog: Option<ui_encode::EncodeDialog>,
+    encode_dialog: Option<EncodeDialog>,
     #[serde(skip)]
     is_fullscreen: bool,
     #[serde(skip)]
@@ -270,47 +256,52 @@ impl Default for PlayaApp {
             return;
         };
 
-        debug!("Enqueuing frame loads around frame {} (radius: {}), comp has {} layers",
-               current_frame, radius, comp.layers.len());
+        debug!("Enqueuing frame loads around frame {} (radius: {}), comp has {} children",
+               current_frame, radius, comp.children.len());
 
-        // Enqueue loads for all layers in comp
-        for (layer_idx, layer) in comp.layers.iter().enumerate() {
+        // Enqueue loads for all children in comp
+        for (child_idx, child_uuid) in comp.children.iter().enumerate() {
+            let Some(attrs) = comp.children_attrs.get(child_uuid) else {
+                debug!("Child {} missing attrs", child_idx);
+                continue;
+            };
+
             // Resolve source from Project.media by UUID
-            let Some(source) = self.player.project.media.get(&layer.source_uuid) else {
-                debug!("Layer {} references missing source {}", layer_idx, layer.source_uuid);
+            let Some(source) = self.player.project.media.get(child_uuid) else {
+                debug!("Child {} references missing source {}", child_idx, child_uuid);
                 continue;
             };
 
             // Only process Clip sources for frame loading (Comps are composed on-demand)
             let Some(clip) = source.as_clip() else {
-                debug!("Layer {} references comp, skipping frame loading", layer_idx);
+                debug!("Child {} references comp, skipping frame loading", child_idx);
                 continue;
             };
 
-            debug!("Processing layer {}: clip {} has {} frames", layer_idx, layer.source_uuid, clip.len());
+            debug!("Processing child {}: clip {} has {} frames", child_idx, child_uuid, clip.len());
 
-            // Get layer range from attrs
-            let layer_start = layer.attrs.get_u32("start").unwrap_or(0) as usize;
-            let layer_end = layer.attrs.get_u32("end").unwrap_or(0) as usize;
+            // Get child range from attrs
+            let child_start = attrs.get_u32("start").unwrap_or(0) as usize;
+            let child_end = attrs.get_u32("end").unwrap_or(0) as usize;
 
-            // Frames to load: [current - radius, current + radius] within layer bounds
-            let load_start = current_frame.saturating_sub(radius).max(layer_start);
-            let load_end = (current_frame + radius).min(layer_end);
+            // Frames to load: [current - radius, current + radius] within child bounds
+            let load_start = current_frame.saturating_sub(radius).max(child_start);
+            let load_end = (current_frame + radius).min(child_end);
 
-            debug!("Layer {}: range [{}, {}], will load frames [{}, {}]",
-                   layer_idx, layer_start, layer_end, load_start, load_end);
+            debug!("Child {}: range [{}, {}], will load frames [{}, {}]",
+                   child_idx, child_start, child_end, load_start, load_end);
 
             for global_idx in load_start..=load_end {
-                // Check if frame is within layer range
-                if global_idx < layer_start || global_idx > layer_end {
+                // Check if frame is within child range
+                if global_idx < child_start || global_idx > child_end {
                     continue;
                 }
 
                 // Convert global comp frame to local clip frame
-                let play_start = layer.attrs.get_i32("play_start").unwrap_or(0);
-                let clip_idx = (global_idx - layer_start) as i32 + play_start;
+                let play_start = attrs.get_i32("play_start").unwrap_or(0);
+                let clip_idx = (global_idx - child_start) as i32 + play_start;
                 if clip_idx < 0 {
-                    debug!("Frame {} not active in layer {} (negative play_start)", global_idx, layer_idx);
+                    debug!("Frame {} not active in child {} (negative play_start)", global_idx, child_idx);
                     continue;
                 }
                 let clip_idx = clip_idx as usize;
@@ -562,7 +553,7 @@ impl Default for PlayaApp {
             // Load dialog state from settings when opening
             if self.show_encode_dialog && self.encode_dialog.is_none() {
                 debug!("[F4] Opening encode dialog, loading settings from AppSettings");
-                self.encode_dialog = Some(ui_encode::EncodeDialog::load_from_settings(
+                self.encode_dialog = Some(EncodeDialog::load_from_settings(
                     &self.settings.encode_dialog,
                 ));
             }
@@ -902,10 +893,11 @@ impl eframe::App for PlayaApp {
                 self.player.project.media.remove(&clip_uuid);
                 self.player.project.clips_order.retain(|uuid| uuid != &clip_uuid);
 
-                // Also remove from all comp layers
+                // Also remove from all comp children
                 for source in self.player.project.media.values_mut() {
                     if let Some(comp) = source.as_comp_mut() {
-                        comp.layers.retain(|layer| layer.source_uuid != clip_uuid);
+                        comp.children.retain(|child_uuid| child_uuid != &clip_uuid);
+                        comp.children_attrs.retain(|child_uuid, _| child_uuid != &clip_uuid);
                     }
                 }
 
@@ -923,7 +915,6 @@ impl eframe::App for PlayaApp {
             // Create new composition
             if project_actions.new_comp {
                 use crate::entities::Comp;
-                use crate::media::MediaSource;
                 let fps = 30.0;
                 let end = (fps * 5.0) as usize; // 5 seconds
                 let mut comp = Comp::new("New Comp", 0, end, fps);
@@ -932,7 +923,7 @@ impl eframe::App for PlayaApp {
                 // Set event sender for the new comp
                 comp.set_event_sender(self.comp_event_sender.clone());
 
-                self.player.project.media.insert(uuid.clone(), MediaSource::Comp(comp));
+                self.player.project.media.insert(uuid.clone(), comp);
                 self.player.project.comps_order.push(uuid.clone());
 
                 // Activate the new comp

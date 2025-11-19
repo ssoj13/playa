@@ -287,14 +287,14 @@ impl Frame {
     ///
     /// Supports: EXR, PNG, JPG, TIFF, HDR, TGA
     pub fn file_header(path: &Path) -> Result<Attrs, FrameError> {
-        crate::loader::Loader::header(path)
+        super::loader::Loader::header(path)
     }
 
     /// Load complete image file into Frame (unified Loader interface)
     ///
     /// Supports: EXR (with/without openexr feature), PNG, JPG, TIFF, HDR, TGA
     pub fn file_load(path: &Path) -> Result<Frame, FrameError> {
-        crate::loader::Loader::load(path)
+        super::loader::Loader::load(path)
     }
 
     /// Create frame from F16 buffer (used by compositor)
@@ -437,7 +437,7 @@ impl Frame {
         }
 
         // For images, use unified Loader
-        let attrs = crate::loader::Loader::header(&actual_path)?;
+        let attrs = super::loader::Loader::header(&actual_path)?;
 
         let width = attrs.get_uint("width").unwrap_or(1) as usize;
         let height = attrs.get_uint("height").unwrap_or(1) as usize;
@@ -540,7 +540,7 @@ impl Frame {
         debug!("Loading EXR: {}", path.as_ref().display());
 
         // Load via unified Loader
-        let frame = crate::loader::Loader::load(path.as_ref())?;
+        let frame = super::loader::Loader::load(path.as_ref())?;
 
         let buffer = frame.buffer();
         let pixel_format = frame.pixel_format();

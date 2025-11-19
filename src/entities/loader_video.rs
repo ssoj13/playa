@@ -1,4 +1,8 @@
-use crate::frame::{FrameError, PixelBuffer, PixelFormat};
+//! Video decoder - FFmpeg-based video frame decoding
+//!
+//! Provides video metadata reading and frame-by-frame decoding
+
+use super::frame::{FrameError, PixelBuffer, PixelFormat};
 use playa_ffmpeg as ffmpeg;
 use std::path::Path;
 use std::sync::Once;

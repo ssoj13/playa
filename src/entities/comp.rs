@@ -17,7 +17,7 @@ use regex::Regex;
 
 use super::{Attrs, AttrValue};
 use crate::events::{CompEvent, CompEventSender};
-use crate::frame::{Frame, FrameError};
+use super::frame::{Frame, FrameError};
 
 /// Comp operating mode: Layer composition or File sequence loading
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -989,7 +989,6 @@ impl crate::entities::AttributeEditorUI for Comp {
 mod tests {
     use super::*;
     use super::super::Clip;
-    use crate::media::MediaSource;
     use super::super::Project;
 
     /// Helper: create dummy frame
@@ -1007,25 +1006,25 @@ mod tests {
         let frames: Vec<Frame> = (0..10).map(|i| dummy_frame(i * 10)).collect();
         let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
         let clip_uuid = clip.uuid.clone();
-        project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
+        project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
         project.clips_order.push(clip_uuid.clone());
 
         // Create Comp B with clip as child
         let mut comp_b = Comp::new("Comp B", 0, 9, 24.0);
         comp_b.add_child(clip_uuid.clone(), 0, &project).unwrap();
         let comp_b_uuid = comp_b.uuid.clone();
-        project.media.insert(comp_b_uuid.clone(), MediaSource::Comp(comp_b));
+        project.media.insert(comp_b_uuid.clone(), comp_b);
         project.comps_order.push(comp_b_uuid.clone());
 
         // Create Comp A with Comp B as child
         let mut comp_a = Comp::new("Comp A", 0, 9, 24.0);
         comp_a.add_child(comp_b_uuid.clone(), 0, &project).unwrap();
         let comp_a_uuid = comp_a.uuid.clone();
-        project.media.insert(comp_a_uuid.clone(), MediaSource::Comp(comp_a));
+        project.media.insert(comp_a_uuid.clone(), comp_a);
         project.comps_order.push(comp_a_uuid.clone());
 
         // Test: Get frame from Comp A (should recursively resolve through Comp B to Clip)
-        let comp_a = project.media.get(&comp_a_uuid).unwrap().as_comp().unwrap();
+        let comp_a = project.media.get(&comp_a_uuid).unwrap();
         let frame = comp_a.get_frame(5, &project);
         assert!(frame.is_some(), "Frame should be resolved recursively");
 
@@ -1043,16 +1042,16 @@ mod tests {
         let frames: Vec<Frame> = (0..5).map(|i| dummy_frame(i * 20)).collect();
         let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
         let clip_uuid = clip.uuid.clone();
-        project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
+        project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
 
         // Create Comp with clip as child
         let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
         comp.add_child(clip_uuid.clone(), 0, &project).unwrap();
         let comp_uuid = comp.uuid.clone();
-        project.media.insert(comp_uuid.clone(), MediaSource::Comp(comp));
+        project.media.insert(comp_uuid.clone(), comp);
 
         // Get frame 2 - should cache it
-        let comp = project.media.get(&comp_uuid).unwrap().as_comp().unwrap();
+        let comp = project.media.get(&comp_uuid).unwrap();
         let _frame1 = comp.get_frame(2, &project).unwrap();
         let cache_size_before = comp.cache.borrow().len();
         assert_eq!(cache_size_before, 1, "Cache should have 1 entry");
@@ -1069,7 +1068,7 @@ mod tests {
         } // Release mutable borrow
 
         // Get frame again - cache should add new entry with different hash
-        let comp = project.media.get(&comp_uuid).unwrap().as_comp().unwrap();
+        let comp = project.media.get(&comp_uuid).unwrap();
         let _frame3 = comp.get_frame(2, &project).unwrap();
         assert_eq!(comp.cache.borrow().len(), 2, "Cache should have both old and new entries (different hashes)");
         // Success - cache uses hash-based keys, old entry with old hash remains, new entry with new hash added
@@ -1124,7 +1123,7 @@ mod tests {
             let frames: Vec<Frame> = (0..5).map(|_| dummy_frame(i * 30)).collect();
             let clip = Clip::from_frames(frames, format!("clip_{}", i), 2, 2);
             let clip_uuid = clip.uuid.clone();
-            project.media.insert(clip_uuid.clone(), MediaSource::Clip(clip));
+            project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
             project.clips_order.push(clip_uuid.clone());
         }
 
@@ -1165,10 +1164,10 @@ mod tests {
         comp.children_attrs.insert(uuid2, attrs2);
 
         let comp_uuid = comp.uuid.clone();
-        project.media.insert(comp_uuid.clone(), MediaSource::Comp(comp));
+        project.media.insert(comp_uuid.clone(), comp);
 
         // Get frame - should blend all 3 layers
-        let comp = project.media.get(&comp_uuid).unwrap().as_comp().unwrap();
+        let comp = project.media.get(&comp_uuid).unwrap();
         let frame = comp.get_frame(2, &project);
 
         assert!(frame.is_some(), "Multi-layer composition should succeed");
