@@ -20,10 +20,18 @@ use dialogs::prefs::{AppSettings, render_settings_window};
 use dialogs::encode::EncodeDialog;
 use widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
 use widgets::status::StatusBar;
+use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use std::path::PathBuf;
 use std::sync::Arc;
 use workers::Workers;
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum DockTab {
+    Viewport,
+    Timeline,
+    Project,
+    Attributes,
+}
 
 
 /// Main application state
@@ -82,6 +90,8 @@ struct PlayaApp {
     /// Global event bus for application-wide events
     #[serde(skip)]
     event_bus: events::EventBus,
+    #[serde(skip, default = "PlayaApp::default_dock_state")]
+    dock_state: DockState<DockTab>,
 }
 
 impl Default for PlayaApp {
@@ -123,11 +133,31 @@ impl Default for PlayaApp {
             comp_event_receiver: event_rx,
             comp_event_sender,
             event_bus: events::EventBus::new(),
+            dock_state: PlayaApp::default_dock_state(),
         }
     }
 }
 
   impl PlayaApp {
+      fn default_dock_state() -> DockState<DockTab> {
+          let mut dock_state = DockState::new(vec![DockTab::Viewport]);
+
+          let [viewport, _timeline] = dock_state
+              .main_surface_mut()
+              .split_below(NodeIndex::root(), 0.65, vec![DockTab::Timeline]);
+
+          let [_viewport, _project] = dock_state
+              .main_surface_mut()
+              .split_right(viewport, 0.75, vec![DockTab::Project]);
+
+          // Add attributes tab as an extra tab in the focused leaf
+          dock_state
+              .main_surface_mut()
+              .push_to_focused_leaf(DockTab::Attributes);
+
+          dock_state
+      }
+
       /// Attach composition event sender to all comps in the current project.
       fn attach_comp_event_sender(&mut self) {
           let sender = self.comp_event_sender.clone();
@@ -837,22 +867,203 @@ impl Default for PlayaApp {
         } // End of !ctx.wants_keyboard_input()
     }
 
-    fn reset_settings(&mut self, ctx: &egui::Context) {
-        info!("Resetting settings to default");
-        self.settings = AppSettings::default();
-        self.player.reset_settings();
-        self.viewport_state = ViewportState::new();
-        self.shader_manager.reset_settings();
+      fn reset_settings(&mut self, ctx: &egui::Context) {
+          info!("Resetting settings to default");
+          self.settings = AppSettings::default();
+          self.player.reset_settings();
+          self.viewport_state = ViewportState::new();
+          self.shader_manager.reset_settings();
 
         // Reset window size
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1280.0, 720.0)));
 
         // Re-apply image-dependent viewport settings if an image is loaded
-        if let Some(frame) = &self.frame {
-            let (width, height) = frame.resolution();
-            self.viewport_state
-                .set_image_size(egui::vec2(width as f32, height as f32));
-            self.viewport_state.set_mode_fit();
+          if let Some(frame) = &self.frame {
+              let (width, height) = frame.resolution();
+              self.viewport_state
+                  .set_image_size(egui::vec2(width as f32, height as f32));
+              self.viewport_state.set_mode_fit();
+          }
+      }
+
+      fn render_project_tab(&mut self, ui: &mut egui::Ui) {
+          if !self.show_playlist {
+              ui.centered_and_justified(|ui| {
+                  ui.label("Project panel hidden (enable playlist to show)");
+              });
+              return;
+          }
+
+          let project_actions = widgets::project::render(ui, &mut self.player);
+
+          // Load media files
+          if let Some(path) = project_actions.load_sequence {
+              let _ = self.load_sequences(vec![path]);
+          }
+
+          // Save/Load project
+          if let Some(path) = project_actions.save_project {
+              self.save_project(path);
+          }
+          if let Some(path) = project_actions.load_project {
+              self.load_project(path);
+          }
+
+          // Remove clip from media pool
+          if let Some(clip_uuid) = project_actions.remove_clip {
+              self.player.project.media.remove(&clip_uuid);
+              self.player.project.clips_order.retain(|uuid| uuid != &clip_uuid);
+
+              // Also remove from all comp children
+              for comp in self.player.project.media.values_mut() {
+                  comp.children.retain(|child_uuid| child_uuid != &clip_uuid);
+                  comp.children_attrs.retain(|child_uuid, _| child_uuid != &clip_uuid);
+              }
+
+              info!("Removed clip {}", clip_uuid);
+          }
+
+          // Switch active composition (double-click)
+          if let Some(comp_uuid) = project_actions.set_active_comp {
+              self.player.set_active_comp(comp_uuid.clone());
+
+              // Trigger frame loading around new current_frame
+              self.enqueue_frame_loads_around_playhead(10);
+          }
+
+          // Create new composition
+          if project_actions.new_comp {
+              use crate::entities::Comp;
+              let fps = 30.0;
+              let end = (fps * 5.0) as usize; // 5 seconds
+              let mut comp = Comp::new("New Comp", 0, end, fps);
+              let uuid = comp.uuid.clone();
+
+              // Set event sender for the new comp
+              comp.set_event_sender(self.comp_event_sender.clone());
+
+              self.player.project.media.insert(uuid.clone(), comp);
+              self.player.project.comps_order.push(uuid.clone());
+
+              // Activate the new comp
+              self.player.set_active_comp(uuid.clone());
+
+              info!("Created new comp: {}", uuid);
+          }
+
+          // Remove composition
+          if let Some(comp_uuid) = project_actions.remove_comp {
+              self.player.project.media.remove(&comp_uuid);
+              self.player.project.comps_order.retain(|uuid| uuid != &comp_uuid);
+
+              // If removed comp was active, switch to first available or None
+              if self.player.active_comp.as_ref() == Some(&comp_uuid) {
+                  let first_comp = self.player.project.comps_order.first().cloned();
+                  if let Some(new_active) = first_comp {
+                      self.player.set_active_comp(new_active);
+                  } else {
+                      self.player.active_comp = None;
+                  }
+              }
+
+              info!("Removed comp {}", comp_uuid);
+          }
+
+          // Clear all compositions
+          if project_actions.clear_all_comps {
+              // Remove all clips and comps from media
+              self.player.project.media.clear();
+              self.player.project.clips_order.clear();
+              self.player.project.comps_order.clear();
+              self.player.active_comp = None;
+              info!("All clips and compositions cleared");
+          }
+      }
+
+      fn render_timeline_tab(&mut self, ui: &mut egui::Ui) {
+          // Render timeline panel with transport controls and status
+          let shader_changed = ui::render_timeline_panel(
+              ui,
+              &mut self.player,
+              &mut self.shader_manager,
+              self.settings.show_frame_numbers,
+              self.frame.as_ref(),
+              &self.viewport_state,
+              self.last_render_time_ms,
+              &mut self.timeline_state,
+          );
+          if shader_changed {
+              let mut renderer = self.viewport_renderer.lock().unwrap();
+              renderer.update_shader(&self.shader_manager);
+              log::info!("Shader changed to: {}", self.shader_manager.current_shader);
+          }
+      }
+
+      fn render_viewport_tab(&mut self, ui: &mut egui::Ui) {
+          // Determine if the texture needs to be re-uploaded by checking if the frame has changed
+          let texture_needs_upload = self.displayed_frame != Some(self.player.current_frame());
+
+          // If the frame has changed, update our cached frame
+          if texture_needs_upload {
+              self.frame = self.player.get_current_frame();
+              self.displayed_frame = Some(self.player.current_frame());
+          }
+
+          let (viewport_actions, render_time) = widgets::viewport::render(
+              ui,
+              self.frame.as_ref(),
+              self.error_msg.as_ref(),
+              &mut self.player,
+              &mut self.viewport_state,
+              &self.viewport_renderer,
+              &mut self.shader_manager,
+              self.show_help,
+              self.is_fullscreen,
+              texture_needs_upload,
+          );
+          self.last_render_time_ms = render_time;
+          if let Some(path) = viewport_actions.load_sequence {
+              let _ = self.load_sequences(vec![path]);
+          }
+      }
+
+      fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
+          ui.heading("Attributes");
+          if let Some(active) = self.player.active_comp.clone() {
+              if let Some(comp) = self.player.project.media.get_mut(&active) {
+                  ui.label(format!("Comp: {}", comp.name()));
+                  crate::widgets::ae::render(ui, &mut comp.attrs);
+              } else {
+                  ui.label("No active comp");
+              }
+          } else {
+              ui.label("No active comp");
+          }
+      }
+  }
+
+struct DockTabs<'a> {
+    app: &'a mut PlayaApp,
+}
+
+impl<'a> TabViewer for DockTabs<'a> {
+    type Tab = DockTab;
+
+    fn title(&mut self, tab: &mut DockTab) -> egui::WidgetText {
+        match tab {
+            DockTab::Viewport => "Viewport".into(),
+            DockTab::Timeline => "Timeline".into(),
+            DockTab::Project => "Project".into(),
+            DockTab::Attributes => "Attributes".into(),
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
+        match tab {
+            DockTab::Viewport => self.app.render_viewport_tab(ui),
+            DockTab::Timeline => self.app.render_timeline_tab(ui),
+            DockTab::Project => self.app.render_project_tab(ui),
+            DockTab::Attributes => self.app.render_attributes_tab(ui),
         }
     }
 }
@@ -877,6 +1088,11 @@ impl eframe::App for PlayaApp {
             font_id.size = self.settings.font_size;
         }
         ctx.set_style(style);
+
+        // Enable multipass for better taffy layout recalculation responsiveness
+        ctx.options_mut(|opts| {
+            opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
+        });
 
         self.handle_keyboard_input(ctx);
 
@@ -904,145 +1120,10 @@ impl eframe::App for PlayaApp {
             ctx.request_repaint();
         }
 
-          // Determine if the texture needs to be re-uploaded by checking if the frame has changed
-        let texture_needs_upload = self.displayed_frame != Some(self.player.current_frame());
-
-          // If the frame has changed, update our cached frame
-          if texture_needs_upload {
-              self.frame = self.player.get_current_frame();
-            self.displayed_frame = Some(self.player.current_frame());
-        }
-
         // Update status messages BEFORE laying out panels
         self.status_bar.update(ctx);
 
-        // Project window on the right (hidden in cinema mode or when toggled off)
-        if !self.is_fullscreen && self.show_playlist {
-            let project_actions = widgets::project::render(ctx, &mut self.player);
-
-            // Load media files
-            if let Some(path) = project_actions.load_sequence {
-                let _ = self.load_sequences(vec![path]);
-            }
-
-            // Save/Load project
-            if let Some(path) = project_actions.save_project {
-                self.save_project(path);
-            }
-            if let Some(path) = project_actions.load_project {
-                self.load_project(path);
-            }
-
-            // Remove clip from media pool
-            if let Some(clip_uuid) = project_actions.remove_clip {
-                self.player.project.media.remove(&clip_uuid);
-                self.player.project.clips_order.retain(|uuid| uuid != &clip_uuid);
-
-                // Also remove from all comp children
-                for comp in self.player.project.media.values_mut() {
-                    comp.children.retain(|child_uuid| child_uuid != &clip_uuid);
-                    comp.children_attrs.retain(|child_uuid, _| child_uuid != &clip_uuid);
-                }
-
-                info!("Removed clip {}", clip_uuid);
-            }
-
-            // Switch active composition (double-click)
-            if let Some(comp_uuid) = project_actions.set_active_comp {
-                self.player.set_active_comp(comp_uuid.clone());
-
-                // Trigger frame loading around new current_frame
-                self.enqueue_frame_loads_around_playhead(10);
-            }
-
-            // Create new composition
-            if project_actions.new_comp {
-                use crate::entities::Comp;
-                let fps = 30.0;
-                let end = (fps * 5.0) as usize; // 5 seconds
-                let mut comp = Comp::new("New Comp", 0, end, fps);
-                let uuid = comp.uuid.clone();
-
-                // Set event sender for the new comp
-                comp.set_event_sender(self.comp_event_sender.clone());
-
-                self.player.project.media.insert(uuid.clone(), comp);
-                self.player.project.comps_order.push(uuid.clone());
-
-                // Activate the new comp
-                self.player.set_active_comp(uuid.clone());
-
-                info!("Created new comp: {}", uuid);
-            }
-
-            // Remove composition
-            if let Some(comp_uuid) = project_actions.remove_comp {
-                self.player.project.media.remove(&comp_uuid);
-                self.player.project.comps_order.retain(|uuid| uuid != &comp_uuid);
-
-                // If removed comp was active, switch to first available or None
-                if self.player.active_comp.as_ref() == Some(&comp_uuid) {
-                    let first_comp = self.player.project.comps_order.first().cloned();
-                    if let Some(new_active) = first_comp {
-                        self.player.set_active_comp(new_active);
-                    } else {
-                        self.player.active_comp = None;
-                    }
-                }
-
-                info!("Removed comp {}", comp_uuid);
-            }
-
-            // Clear all compositions
-            if project_actions.clear_all_comps {
-                // Remove all clips and comps from media
-                self.player.project.media.clear();
-                self.player.project.clips_order.clear();
-                self.player.project.comps_order.clear();
-                self.player.active_comp = None;
-                info!("All clips and compositions cleared");
-            }
-        }
-
-        if !self.is_fullscreen {
-            // Render timeline panel with transport controls and status bar (bottom, resizable)
-            // Note: egui automatically persists panel size via panel id
-            let shader_changed = ui::render_timeline_panel(
-                ctx,
-                &mut self.player,
-                &mut self.shader_manager,
-                self.settings.show_frame_numbers,
-                self.frame.as_ref(),
-                &self.viewport_state,
-                self.last_render_time_ms,
-                &mut self.timeline_state,
-            );
-            if shader_changed {
-                let mut renderer = self.viewport_renderer.lock().unwrap();
-                renderer.update_shader(&self.shader_manager);
-                log::info!("Shader changed to: {}", self.shader_manager.current_shader);
-            }
-        }
-
-        // Render viewport (central panel)
-        let (viewport_actions, render_time) = widgets::viewport::render(
-            ctx,
-            self.frame.as_ref(),
-            self.error_msg.as_ref(),
-            &mut self.player,
-            &mut self.viewport_state,
-            &self.viewport_renderer,
-            &mut self.shader_manager,
-            self.show_help,
-            self.is_fullscreen,
-            texture_needs_upload,
-        );
-        self.last_render_time_ms = render_time;
-        if let Some(path) = viewport_actions.load_sequence {
-            let _ = self.load_sequences(vec![path]);
-        }
-
-        // Status bar (bottom panel - render before central viewport panel)
+        // Status bar (bottom panel)
         if !self.is_fullscreen {
             self.status_bar.render(
                 ctx,
@@ -1052,6 +1133,22 @@ impl eframe::App for PlayaApp {
                 self.last_render_time_ms,
             );
         }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if self.is_fullscreen {
+                self.render_viewport_tab(ui);
+            } else {
+                let dock_style = egui_dock::Style::from_egui(ctx.style().as_ref());
+                let mut dock_state = std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
+                {
+                    let mut tabs = DockTabs { app: self };
+                    DockArea::new(&mut dock_state)
+                        .style(dock_style)
+                        .show_inside(ui, &mut tabs);
+                }
+                self.dock_state = dock_state;
+            }
+        });
 
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {

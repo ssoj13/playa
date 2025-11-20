@@ -23,9 +23,9 @@ fn create_image_dialog(title: &str) -> rfd::FileDialog {
         .set_title(title)
 }
 
-/// Render viewport (central panel)
+/// Render viewport inside provided UI (dock tab or fullscreen panel)
 pub fn render(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     frame: Option<&Frame>,
     error_msg: Option<&String>,
     player: &mut Player,
@@ -41,14 +41,12 @@ pub fn render(
     };
     let mut render_time_ms = 0.0;
 
-    let central = if is_fullscreen {
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(egui::Color32::BLACK))
-    } else {
-        egui::CentralPanel::default()
-    };
-
-    central.show(ctx, |ui| {
-        let panel_rect = ui.max_rect();
+    let ctx = ui.ctx().clone();
+    let panel_rect = ui.max_rect();
+    if is_fullscreen {
+        ui.painter()
+            .rect_filled(panel_rect, 0.0, egui::Color32::BLACK);
+    }
 
         let response = ui.interact(
             panel_rect,
@@ -56,133 +54,132 @@ pub fn render(
             egui::Sense::click_and_drag(),
         );
 
-        let double_clicked = response.double_clicked()
-            || (ctx.input(|i| {
-                i.pointer.button_double_clicked(egui::PointerButton::Primary)
-            }) && response.hovered());
+    let double_clicked = response.double_clicked()
+        || (ctx.input(|i| {
+            i.pointer.button_double_clicked(egui::PointerButton::Primary)
+        }) && response.hovered());
 
-        if double_clicked {
-            info!("Double-click detected, opening file dialog");
-            if let Some(path) = create_image_dialog("Select Image File").pick_file() {
-                info!("File selected: {}", path.display());
-                actions.load_sequence = Some(path);
+    if double_clicked {
+        info!("Double-click detected, opening file dialog");
+        if let Some(path) = create_image_dialog("Select Image File").pick_file() {
+            info!("File selected: {}", path.display());
+            actions.load_sequence = Some(path);
+        }
+    }
+
+    if let Some(error) = error_msg {
+        ui.centered_and_justified(|ui| {
+            ui.colored_label(egui::Color32::RED, error);
+        });
+    } else if let Some(img) = frame {
+        let w = img.width();
+        let h = img.height();
+        let frame_state = img.status();
+        let available_size = panel_rect.size();
+
+        if viewport_state.viewport_size != available_size {
+            viewport_state.set_viewport_size(available_size);
+        }
+        let image_size = egui::vec2(w as f32, h as f32);
+        if viewport_state.image_size != image_size {
+            viewport_state.set_image_size(image_size);
+        }
+
+        handle_viewport_input(&ctx, ui, panel_rect, viewport_state);
+
+        if let Some(frame_idx) =
+            viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames())
+        {
+            player.set_frame(frame_idx);
+        }
+
+        let render_start = std::time::Instant::now();
+
+        let renderer = viewport_renderer.clone();
+        let state = viewport_state.clone();
+        let mut needs_upload = texture_needs_upload;
+        {
+            let r = renderer.lock().unwrap();
+            if r.needs_texture_update(w, h) {
+                needs_upload = true;
             }
         }
 
-        if let Some(error) = error_msg {
-            ui.centered_and_justified(|ui| {
-                ui.colored_label(egui::Color32::RED, error);
-            });
-        } else if let Some(img) = frame {
-            let w = img.width();
-            let h = img.height();
-            let frame_state = img.status();
-            let available_size = panel_rect.size();
-
-            if viewport_state.viewport_size != available_size {
-                viewport_state.set_viewport_size(available_size);
-            }
-            let image_size = egui::vec2(w as f32, h as f32);
-            if viewport_state.image_size != image_size {
-                viewport_state.set_image_size(image_size);
-            }
-
-            handle_viewport_input(ctx, ui, panel_rect, viewport_state);
-
-            if let Some(frame_idx) =
-                viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames())
-            {
-                player.set_frame(frame_idx);
-            }
-
-            let render_start = std::time::Instant::now();
-
-            let renderer = viewport_renderer.clone();
-            let state = viewport_state.clone();
-            let mut needs_upload = texture_needs_upload;
-            {
-                let r = renderer.lock().unwrap();
-                if r.needs_texture_update(w, h) {
-                    needs_upload = true;
-                }
-            }
-
-            let maybe_pixels = if needs_upload {
-                Some((img.buffer(), img.pixel_format()))
-            } else {
-                None
-            };
-
-            ui.painter().add(egui::PaintCallback {
-                rect: panel_rect,
-                callback: Arc::new(egui_glow::CallbackFn::new(
-                    move |_info, painter| {
-                        let gl = painter.gl();
-                        let mut renderer = renderer.lock().unwrap();
-                        if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
-                            renderer.upload_texture(gl, w, h, &*pixels, *pixel_format);
-                        }
-                        renderer.render(gl, &state);
-                    },
-                )),
-            });
-
-            render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
-
-            match frame_state {
-                FrameStatus::Loading => {
-                    ui.painter().text(
-                        panel_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        format!("Loading frame {}...", player.current_frame()),
-                        egui::FontId::proportional(24.0),
-                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
-                    );
-                }
-                FrameStatus::Error => {
-                    ui.painter().text(
-                        panel_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        format!("Failed to load frame {}", player.current_frame()),
-                        egui::FontId::proportional(24.0),
-                        egui::Color32::from_rgb(255, 100, 100),
-                    );
-                }
-                FrameStatus::Loaded | FrameStatus::Header | FrameStatus::Placeholder => {}
-            }
-
-            // Draw viewport overlays (scrubber, guides, etc.)
-            viewport_state.draw(ui, panel_rect);
+        let maybe_pixels = if needs_upload {
+            Some((img.buffer(), img.pixel_format()))
         } else {
-            ui.centered_and_justified(|ui| {
-                ui.label("No frame loaded. Drag'n'drop a file or use the playlist.");
-            });
+            None
+        };
+
+        ui.painter().add(egui::PaintCallback {
+            rect: panel_rect,
+            callback: Arc::new(egui_glow::CallbackFn::new(
+                move |_info, painter| {
+                    let gl = painter.gl();
+                    let mut renderer = renderer.lock().unwrap();
+                    if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
+                        renderer.upload_texture(gl, w, h, &*pixels, *pixel_format);
+                    }
+                    renderer.render(gl, &state);
+                },
+            )),
+        });
+
+        render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
+
+        match frame_state {
+            FrameStatus::Loading => {
+                ui.painter().text(
+                    panel_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("Loading frame {}...", player.current_frame()),
+                    egui::FontId::proportional(24.0),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
+                );
+            }
+            FrameStatus::Error => {
+                ui.painter().text(
+                    panel_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("Failed to load frame {}", player.current_frame()),
+                    egui::FontId::proportional(24.0),
+                    egui::Color32::from_rgb(255, 100, 100),
+                );
+            }
+            FrameStatus::Loaded | FrameStatus::Header | FrameStatus::Placeholder => {}
         }
 
-        if show_help {
-            render_help_overlay(ui, panel_rect);
-        }
+        // Draw viewport overlays (scrubber, guides, etc.)
+        viewport_state.draw(ui, panel_rect);
+    } else {
+        ui.centered_and_justified(|ui| {
+            ui.label("No frame loaded. Drag'n'drop a file or use the playlist.");
+        });
+    }
 
-        // Shader selector overlay (top-right corner)
-        egui::Area::new(ui.id().with("shader_overlay"))
-            .fixed_pos(egui::pos2(panel_rect.max.x - 200.0, panel_rect.min.y + 10.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Shader:");
-                    egui::ComboBox::from_id_salt("shader_selector_viewport")
-                        .selected_text(&shader_manager.current_shader)
-                        .show_ui(ui, |ui| {
-                            for shader_name in shader_manager.get_shader_names() {
-                                ui.selectable_value(
-                                    &mut shader_manager.current_shader,
-                                    shader_name.to_string(),
-                                    shader_name,
-                                );
-                            }
-                        });
-                });
+    if show_help {
+        render_help_overlay(ui, panel_rect);
+    }
+
+    // Shader selector overlay (top-right corner)
+    egui::Area::new(ui.id().with("shader_overlay"))
+        .fixed_pos(egui::pos2(panel_rect.max.x - 200.0, panel_rect.min.y + 10.0))
+        .show(&ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Shader:");
+                egui::ComboBox::from_id_salt("shader_selector_viewport")
+                    .selected_text(&shader_manager.current_shader)
+                    .show_ui(ui, |ui| {
+                        for shader_name in shader_manager.get_shader_names() {
+                            ui.selectable_value(
+                                &mut shader_manager.current_shader,
+                                shader_name.to_string(),
+                                shader_name,
+                            );
+                        }
+                    });
             });
-    });
+        });
 
     (actions, render_time_ms)
 }

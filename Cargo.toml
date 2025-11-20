@@ -30,6 +30,7 @@ eframe = { version = "0.33", features = ["persistence"] }
 egui_dnd = "0.14"
 egui_dock = "0.18"
 egui_glow = "0.33"
+egui_taffy = "0.10.0"
 egui_ltreeview = { version = "0.6.0", features = ["persistence"] }
 env_logger = "0.11"
 glob = "0.3"
@@ -48,6 +49,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sysinfo = "0.37"
 uuid = { version = "1.0", features = ["v4", "serde"] }
+taffy = "0.7.7"
 
 # Build dependencies moved to xtask/
 # Use `cargo xtask build` to build with automatic dependency management
