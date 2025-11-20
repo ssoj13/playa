@@ -456,6 +456,16 @@ impl Comp {
         attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
         attrs.set("speed", AttrValue::Float(1.0));
 
+        // Extend comp duration if needed so the layer is visible on timeline
+        let comp_end = self.end();
+        if end_frame > comp_end {
+            self.attrs.set("end", AttrValue::UInt(end_frame as u32));
+        }
+        let comp_start = self.start();
+        if start_frame < comp_start {
+            self.attrs.set("start", AttrValue::UInt(start_frame as u32));
+        }
+
         // Add to children (top)
         self.children.push(source_uuid.clone());
         self.children_attrs.insert(source_uuid, attrs);

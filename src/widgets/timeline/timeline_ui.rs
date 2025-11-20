@@ -9,7 +9,7 @@ use crate::entities::Comp;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 use super::{TimelineAction, TimelineConfig, TimelineState, GlobalDragState};
-use super::timeline_helpers::{LayerTool, detect_layer_tool, frame_to_screen_x, screen_x_to_frame, draw_frame_ruler, draw_playhead, hash_color};
+use super::timeline_helpers::{LayerTool, detect_layer_tool, frame_to_screen_x, screen_x_to_frame, draw_frame_ruler, hash_color};
 
 /// Render After Effects-style timeline
 pub fn render(
@@ -84,6 +84,8 @@ pub fn render(
     ui.add_space(4.0);
 
     // Options + time ruler row (split: left options, right ruler)
+    let mut ruler_rect: Option<Rect> = None;
+    let mut timeline_rect_global: Option<Rect> = None;
     let ruler_height = 20.0;
     ui.horizontal(|ui| {
         let (opt_rect, _) = ui.allocate_exact_size(
@@ -104,13 +106,23 @@ pub fn render(
         cfg_for_ruler.show_frame_numbers = state.show_frame_numbers;
         let ruler_width = (total_frames as f32 * cfg_for_ruler.pixels_per_frame * state.zoom)
             .max(ui.available_width());
-        if cfg_for_ruler.show_frame_numbers {
-            if let Some(frame) = draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width) {
-                action = TimelineAction::SetFrame(frame);
-            }
-        } else {
-            ui.allocate_exact_size(Vec2::new(ruler_width, ruler_height), Sense::hover());
-        }
+        egui::ScrollArea::horizontal()
+            .id_salt("timeline_h_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_height(ruler_height);
+                ui.set_width(ruler_width);
+                if cfg_for_ruler.show_frame_numbers {
+                    let (frame_opt, rect) = draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
+                    ruler_rect = Some(rect);
+                    if let Some(frame) = frame_opt {
+                        action = TimelineAction::SetFrame(frame);
+                    }
+                } else {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ruler_width, ruler_height), Sense::hover());
+                    ruler_rect = Some(rect);
+                }
+            });
     });
 
     ui.add_space(4.0);
@@ -136,17 +148,10 @@ pub fn render(
         action = TimelineAction::SetCompPlayEnd { frame: comp.current_frame };
     }
 
-    // Header: frame numbers ruler
-    if config.show_frame_numbers {
-        if let Some(frame) = draw_frame_ruler(ui, comp, config, state, timeline_width) {
-            action = TimelineAction::SetFrame(frame);
-        }
-    }
-
     // Scrollable area for layers
-    // Use id_salt for persistence and let egui manage sizing naturally
-    egui::ScrollArea::both()
-        .id_salt("timeline_scroll")
+    // Vertical scroll for rows; horizontal scroll only on bars side
+    egui::ScrollArea::vertical()
+        .id_salt("timeline_scroll_v")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             // Create temporary child order for egui_dnd
@@ -249,18 +254,22 @@ pub fn render(
                     }
                 }
 
-                // Right column: timeline bars
-                ui.vertical(|ui| {
-                    ui.set_width(timeline_width);
-                    ui.set_height(total_height);
+                // Right column: timeline bars (horizontal scroll synced with ruler)
+                egui::ScrollArea::horizontal()
+                    .id_salt("timeline_h_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(timeline_width);
+                        ui.set_height(total_height);
 
-                    let (timeline_rect, timeline_response) = ui.allocate_exact_size(
-                        Vec2::new(timeline_width, total_height),
-                        Sense::click_and_drag(),
-                    );
+                        let (timeline_rect, timeline_response) = ui.allocate_exact_size(
+                            Vec2::new(timeline_width, total_height),
+                            Sense::click_and_drag(),
+                        );
+                        timeline_rect_global = Some(timeline_rect);
 
-                    if ui.is_rect_visible(timeline_rect) {
-                        let painter = ui.painter();
+                        if ui.is_rect_visible(timeline_rect) {
+                            let painter = ui.painter();
 
                         // Draw child bars in same order as child names (using child_order from DnD)
                         for (display_idx, &original_idx) in child_order.iter().enumerate() {
@@ -568,9 +577,6 @@ pub fn render(
                             painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 51));
                         }
 
-                        // Draw playhead (current_frame) as vertical line
-                        draw_playhead(painter, timeline_rect, comp.current_frame, config, state);
-
                         // Check for drag'n'drop from Project Window using global drag state
                         let global_drag: Option<GlobalDragState> = ui.ctx().data(|data| {
                             data.get_temp(egui::Id::new("global_drag_state"))
@@ -663,6 +669,28 @@ pub fn render(
                 });
             });
         });
+
+    // Draw playhead once across ruler + bars
+    if let (Some(ruler_rect), Some(timeline_rect)) = (ruler_rect, timeline_rect_global) {
+        let painter = ui.painter();
+        let x = frame_to_screen_x(comp.current_frame as f32, ruler_rect.min.x, config, state);
+        painter.line_segment(
+            [Pos2::new(x, ruler_rect.min.y), Pos2::new(x, timeline_rect.max.y)],
+            (2.0, Color32::from_rgb(255, 220, 100)),
+        );
+        let triangle_size = 8.0;
+        let top_y = ruler_rect.min.y;
+        let points = [
+            Pos2::new(x, top_y),
+            Pos2::new(x - triangle_size / 2.0, top_y - triangle_size),
+            Pos2::new(x + triangle_size / 2.0, top_y - triangle_size),
+        ];
+        painter.add(egui::Shape::convex_polygon(
+            points.to_vec(),
+            Color32::from_rgb(255, 220, 100),
+            (0.0, Color32::TRANSPARENT),
+        ));
+    }
 
     action
 }

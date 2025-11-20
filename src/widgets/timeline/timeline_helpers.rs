@@ -75,11 +75,11 @@ pub(super) fn draw_frame_ruler(
     config: &TimelineConfig,
     state: &TimelineState,
     timeline_width: f32,
-) -> Option<usize> {
+) -> (Option<usize>, Rect) {
     let total_frames = comp.frame_count();
     let ruler_height = 20.0;
 
-    ui.horizontal(|ui| {
+    let (frame, rect) = ui.horizontal(|ui| {
         ui.allocate_exact_size(Vec2::new(config.name_column_width, ruler_height), Sense::hover());
 
         let (rect, ruler_response) = ui.allocate_exact_size(
@@ -147,13 +147,15 @@ pub(super) fn draw_frame_ruler(
             if ruler_response.clicked() || ruler_response.dragged() {
                 if let Some(pos) = ruler_response.interact_pointer_pos() {
                     let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as usize;
-                    return Some(frame.min(total_frames.saturating_sub(1)));
+                    return (Some(frame.min(total_frames.saturating_sub(1))), rect);
                 }
             }
         }
 
-        None
-    }).inner
+        (None, rect)
+    }).inner;
+
+    (frame, rect)
 }
 
 pub(super) fn draw_playhead(
