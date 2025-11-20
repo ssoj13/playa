@@ -47,7 +47,7 @@ pub struct Player {
     pub loop_enabled: bool,
     pub play_direction: f32, // 1.0 forward, -1.0 backward
     last_frame_time: Option<Instant>,
-    /// Index of selected clip in Project.clips_order (playlist)
+    /// Index of selected media in Project.comps_order (playlist)
     pub selected_seq_idx: Option<usize>,
 }
 
@@ -452,11 +452,11 @@ impl Player {
 
     /// Jump to next sequence start (] key)
     pub fn jump_next_sequence(&mut self) {
-        if self.project.clips_order.is_empty() {
+        if self.project.comps_order.is_empty() {
             return;
         }
 
-        let len = self.project.clips_order.len();
+        let len = self.project.comps_order.len();
         let idx = self.selected_seq_idx.unwrap_or(0);
 
         let next_idx = if idx + 1 < len {
@@ -468,10 +468,10 @@ impl Player {
         };
 
         if next_idx != idx {
-            if let Some(uuid) = self.project.clips_order.get(next_idx).cloned() {
+            if let Some(uuid) = self.project.comps_order.get(next_idx).cloned() {
                 self.set_active_clip_by_uuid(&uuid);
                 self.selected_seq_idx = Some(next_idx);
-                debug!("Jumped to next clip index {}", next_idx);
+                debug!("Jumped to next media index {}", next_idx);
             }
         }
 
@@ -480,11 +480,11 @@ impl Player {
 
     /// Jump to previous sequence start ([ key)
     pub fn jump_prev_sequence(&mut self) {
-        if self.project.clips_order.is_empty() {
+        if self.project.comps_order.is_empty() {
             return;
         }
 
-        let len = self.project.clips_order.len();
+        let len = self.project.comps_order.len();
         let idx = self.selected_seq_idx.unwrap_or(0);
 
         let prev_idx = if idx > 0 {
@@ -496,10 +496,10 @@ impl Player {
         };
 
         if prev_idx != idx {
-            if let Some(uuid) = self.project.clips_order.get(prev_idx).cloned() {
+            if let Some(uuid) = self.project.comps_order.get(prev_idx).cloned() {
                 self.set_active_clip_by_uuid(&uuid);
                 self.selected_seq_idx = Some(prev_idx);
-                debug!("Jumped to previous clip index {}", prev_idx);
+                debug!("Jumped to previous media index {}", prev_idx);
             }
         }
 

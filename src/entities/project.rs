@@ -21,10 +21,7 @@ pub struct Project {
     /// Unified media pool: all comps (both Layer and File modes) keyed by UUID
     pub media: HashMap<String, Comp>,
 
-    /// Order for clips in playlist (UUIDs)
-    pub clips_order: Vec<String>,
-
-    /// Order for compositions in UI (UUIDs)
+    /// Order for all media (clips + comps) in UI (UUIDs)
     pub comps_order: Vec<String>,
 
     /// Frame compositor (runtime-only, not serialized)
@@ -39,7 +36,6 @@ impl Project {
         Self {
             attrs: Attrs::new(),
             media: HashMap::new(),
-            clips_order: Vec::new(),
             comps_order: Vec::new(),
             compositor: CompositorType::default(), // CPU compositor by default
         }
@@ -153,7 +149,6 @@ impl Project {
     /// Remove media (clip or comp) by UUID.
     pub fn remove_media(&mut self, uuid: &str) {
         self.media.remove(uuid);
-        self.clips_order.retain(|u| u != uuid);
         self.comps_order.retain(|u| u != uuid);
     }
 }

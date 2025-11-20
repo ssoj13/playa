@@ -262,8 +262,16 @@ pub fn render(
                         ui.set_width(timeline_width);
                         ui.set_height(total_height);
 
-                        let (timeline_rect, timeline_response) = ui.allocate_exact_size(
+                        // Allocate rect for timeline without hover highlight
+                        let timeline_rect = Rect::from_min_size(
+                            ui.cursor().min,
                             Vec2::new(timeline_width, total_height),
+                        );
+
+                        // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
+                        let timeline_response = ui.interact(
+                            timeline_rect,
+                            ui.id().with("timeline_interaction"),
                             Sense::click_and_drag(),
                         );
                         timeline_rect_global = Some(timeline_rect);
@@ -399,9 +407,14 @@ pub fn render(
                             }
                         }
 
-                        // Process active drag operations
+                        // Process active drag operations (only if pointer is still down)
                         if let Some(drag) = &state.drag_state.clone() {
-                            if let Some(current_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                            let pointer_down = ui.ctx().input(|i| i.pointer.primary_down());
+
+                            // Clear drag state if pointer released (safety fallback)
+                            if !pointer_down {
+                                state.drag_state = None;
+                            } else if let Some(current_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 match drag {
                                     GlobalDragState::MovingLayer { layer_idx, initial_start, drag_start_x, drag_start_y, .. } => {
                                         let delta_x = current_pos.x - drag_start_x;
@@ -583,41 +596,44 @@ pub fn render(
                         });
 
                         if let Some(GlobalDragState::ProjectItem { source_uuid, display_name, duration, .. }) = global_drag {
-                            // Show drop preview
+                            // Show drop preview (shadow bar)
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 // Treat full vertical span of timeline area as drop zone; only X matters.
                                 if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
                                     let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as usize;
+                                    let drop_duration = duration.unwrap_or(100);
 
-                                    // Draw drop indicator (vertical line)
-                                    let drop_x = frame_to_screen_x(drop_frame as f32, timeline_rect.min.x, config, state);
-                                    painter.line_segment(
-                                        [Pos2::new(drop_x, timeline_rect.min.y), Pos2::new(drop_x, timeline_rect.max.y)],
-                                        (3.0, Color32::from_rgb(100, 220, 255)),
+                                    // Calculate bar position and size
+                                    let start_x = frame_to_screen_x(drop_frame as f32, timeline_rect.min.x, config, state);
+                                    let end_x = frame_to_screen_x((drop_frame + drop_duration) as f32, timeline_rect.min.x, config, state);
+                                    let bar_width = (end_x - start_x).max(2.0);
+
+                                    // Draw semi-transparent shadow bar
+                                    let shadow_rect = Rect::from_min_size(
+                                        Pos2::new(start_x, timeline_rect.min.y),
+                                        Vec2::new(bar_width, timeline_rect.height()),
+                                    );
+                                    painter.rect_filled(
+                                        shadow_rect,
+                                        2.0,
+                                        Color32::from_rgba_premultiplied(100, 220, 255, 60), // Semi-transparent cyan
                                     );
 
-                                    // Optional ghost bar to visualize approximate layer span
-                                    if let Some(len) = duration {
-                                        let ghost_start = drop_frame as f32;
-                                        let ghost_end = ghost_start + len as f32;
-                                        let ghost_x_start = frame_to_screen_x(ghost_start, timeline_rect.min.x, config, state);
-                                        let ghost_x_end = frame_to_screen_x(ghost_end, timeline_rect.min.x, config, state);
-                                        let ghost_rect = Rect::from_min_max(
-                                            Pos2::new(ghost_x_start, timeline_rect.min.y + 4.0),
-                                            Pos2::new(ghost_x_end, timeline_rect.min.y + config.layer_height - 4.0),
-                                        );
-                                        painter.rect_filled(
-                                            ghost_rect,
-                                            4.0,
-                                            Color32::from_rgba_unmultiplied(100, 220, 255, 40),
-                                        );
-                                        // Draw name inside ghost bar
+                                    // Draw left edge line (brighter)
+                                    painter.line_segment(
+                                        [Pos2::new(start_x, timeline_rect.min.y), Pos2::new(start_x, timeline_rect.max.y)],
+                                        (2.0, Color32::from_rgb(100, 220, 255)),
+                                    );
+
+                                    // Draw name label inside shadow bar
+                                    if bar_width > 40.0 {
+                                        let label_pos = Pos2::new(start_x + 4.0, timeline_rect.min.y + 4.0);
                                         painter.text(
-                                            Pos2::new((ghost_x_start + ghost_x_end) * 0.5, ghost_rect.center().y),
-                                            egui::Align2::CENTER_CENTER,
+                                            label_pos,
+                                            egui::Align2::LEFT_TOP,
                                             display_name,
-                                            egui::FontId::proportional(12.0),
-                                            Color32::from_rgb(200, 230, 255),
+                                            egui::FontId::proportional(11.0),
+                                            Color32::from_rgb(200, 240, 255),
                                         );
                                     }
 

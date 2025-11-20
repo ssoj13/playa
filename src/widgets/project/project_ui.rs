@@ -65,15 +65,34 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                 ui.separator();
             });
 
-            // === COMPOSITIONS LIST ===
+            // === MEDIA LIST (Unified Clips & Comps) ===
             tui.ui(|ui: &mut egui::Ui| {
-                ui.heading("Compositions");
+                ui.heading("Media");
 
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        // List all compositions (both File and Layer modes)
-                        for comp_uuid in &player.project.comps_order {
+                        // Collect all comps to render (unified order)
+                        let all_comps: Vec<String> = player.project.comps_order.clone();
+
+                        if all_comps.is_empty() {
+                            // Empty state message
+                            ui.add_space(20.0);
+                            ui.vertical_centered(|ui| {
+                                ui.colored_label(
+                                    ui.visuals().weak_text_color(),
+                                    "No media loaded"
+                                );
+                                ui.colored_label(
+                                    ui.visuals().weak_text_color(),
+                                    "Click 'Add Clip' to load files"
+                                );
+                            });
+                            return;
+                        }
+
+                        // Render all comps
+                        for comp_uuid in &all_comps {
                             let comp = match player.project.media.get(comp_uuid) {
                                 Some(c) => c,
                                 None => continue,
@@ -81,50 +100,75 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
 
                             let is_active = player.active_comp.as_ref() == Some(comp_uuid);
 
-                            let frame = if is_active {
-                                egui::Frame::new()
-                                    .fill(ui.style().visuals.selection.bg_fill)
-                                    .inner_margin(4.0)
-                                    .corner_radius(2.0)
+                            // Bar background with selection highlight
+                            let bg_color = if is_active {
+                                ui.style().visuals.selection.bg_fill
                             } else {
-                                egui::Frame::new().inner_margin(4.0)
+                                ui.style().visuals.faint_bg_color
                             };
 
-                            frame.show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    // Comp icon (different for File vs Layer mode)
-                                    let icon = match comp.mode {
-                                        crate::entities::comp::CompMode::File => "dY\"1", // File mode (image sequence)
-                                        crate::entities::comp::CompMode::Layer => "dYZ�", // Layer mode (composition)
-                                    };
-                                    ui.label(icon);
+                            let available_width = ui.available_width();
 
-                                    // Comp name - clickable for activation and draggable
-                                    // Use allocate_rect instead of Label to prevent text selection
-                                    let text_color = ui.visuals().text_color();
+                            let frame = egui::Frame::new()
+                                .fill(bg_color)
+                                .inner_margin(egui::vec2(4.0, 2.0))
+                                .corner_radius(2.0)
+                                .stroke(egui::Stroke::new(1.0, ui.style().visuals.window_stroke.color));
+
+                            frame.show(ui, |ui| {
+                                ui.set_width(available_width);
+                                ui.horizontal(|ui| {
+                                    // Icon based on mode
+                                    let (icon, icon_color) = match comp.mode {
+                                        crate::entities::comp::CompMode::File => {
+                                            ("[F]", egui::Color32::from_rgb(100, 150, 255))
+                                        }
+                                        crate::entities::comp::CompMode::Layer => {
+                                            ("[C]", egui::Color32::from_rgb(255, 150, 100))
+                                        }
+                                    };
+                                    ui.colored_label(icon_color, icon);
+
+                                    // Compact name + info in one line
+                                    let display_text = match comp.mode {
+                                        crate::entities::comp::CompMode::File => {
+                                            if let Some(mask) = &comp.file_mask {
+                                                let filename = std::path::Path::new(mask)
+                                                    .file_name()
+                                                    .and_then(|s| s.to_str())
+                                                    .unwrap_or(mask);
+                                                format!("{} • {}", comp.name(), filename)
+                                            } else {
+                                                comp.name().to_string()
+                                            }
+                                        }
+                                        crate::entities::comp::CompMode::Layer => {
+                                            format!("{} (Layer)", comp.name())
+                                        }
+                                    };
+
                                     let text_galley = ui.painter().layout_no_wrap(
-                                        comp.name().to_string(),
-                                        egui::FontId::default(),
-                                        text_color,
+                                        display_text,
+                                        egui::FontId::proportional(12.0),
+                                        ui.visuals().text_color(),
                                     );
-                                    let desired_size = text_galley.size();
-                                    let (rect, name_response) = ui.allocate_exact_size(
-                                        desired_size,
+                                    let (text_rect, response) = ui.allocate_exact_size(
+                                        text_galley.size(),
                                         egui::Sense::click_and_drag(),
                                     );
 
-                                    if ui.is_rect_visible(rect) {
-                                        ui.painter().galley(rect.min, text_galley, text_color);
+                                    if ui.is_rect_visible(text_rect) {
+                                        ui.painter().galley(text_rect.min, text_galley, ui.visuals().text_color());
                                     }
 
-                                    // Double-click to activate
-                                    if name_response.double_clicked() {
+                                    // Click to activate
+                                    if response.clicked() {
                                         actions.set_active_comp = Some(comp_uuid.clone());
                                     }
 
-                                    // Handle drag for comps - store drag state
-                                    if name_response.drag_started() {
-                                        if let Some(pos) = name_response.interact_pointer_pos() {
+                                    // Drag handling
+                                    if response.drag_started() {
+                                        if let Some(pos) = response.interact_pointer_pos() {
                                             let duration = comp.frame_count();
                                             let display_name = comp.name().to_string();
                                             ui.ctx().data_mut(|data| {
@@ -141,24 +185,34 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                                         }
                                     }
 
-                                    // Update cursor based on drag state
-                                    if name_response.dragged() {
+                                    // Cursor feedback
+                                    if response.dragged() {
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                                    } else if name_response.hovered() {
+                                    } else if response.hovered() {
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                                     }
 
+                                    // Right side: frame count, FPS, Delete
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if ui.small_button("�o-").clicked() {
+                                        // Delete button
+                                        if ui.small_button("X").clicked() {
                                             actions.remove_comp = Some(comp_uuid.clone());
                                         }
-                                        ui.label(format!("{}fps", comp.fps() as u32));
-                                        ui.label(format!("{}f", comp.frame_count()));
+                                        // FPS
+                                        ui.colored_label(
+                                            ui.visuals().weak_text_color(),
+                                            format!("{}fps", comp.fps() as u32)
+                                        );
+                                        // Frame count
+                                        ui.colored_label(
+                                            ui.visuals().weak_text_color(),
+                                            format!("{}f", comp.frame_count())
+                                        );
                                     });
-                                })
+                                });
                             });
 
-                            ui.add_space(2.0);
+                            ui.add_space(1.0);
                         }
                     });
             });

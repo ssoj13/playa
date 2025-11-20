@@ -743,7 +743,7 @@ mod tests {
         let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
         let clip_uuid = clip.uuid.clone();
         project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
-        project.clips_order.push(clip_uuid.clone());
+        project.comps_order.push(clip_uuid.clone());
 
         // Create Comp B with clip as child
         let mut comp_b = Comp::new("Comp B", 0, 9, 24.0);
@@ -862,14 +862,14 @@ mod tests {
             let clip = Clip::from_frames(frames, format!("clip_{}", i), 2, 2);
             let clip_uuid = clip.uuid.clone();
             project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
-            project.clips_order.push(clip_uuid.clone());
+            project.comps_order.push(clip_uuid.clone());
         }
 
         // Create Comp with all 3 clips as layers
         let mut comp = Comp::new("Multi-layer Comp", 0, 4, 24.0);
 
         // Child 0: clip 0, full opacity
-        let uuid0 = project.clips_order[0].clone();
+        let uuid0 = project.comps_order[0].clone();
         comp.children.push(uuid0.clone());
         let mut attrs0 = Attrs::new();
         attrs0.set("start", AttrValue::UInt(0));
@@ -880,7 +880,7 @@ mod tests {
         comp.children_attrs.insert(uuid0, attrs0);
 
         // Child 1: clip 1, 50% opacity
-        let uuid1 = project.clips_order[1].clone();
+        let uuid1 = project.comps_order[1].clone();
         comp.children.push(uuid1.clone());
         let mut attrs1 = Attrs::new();
         attrs1.set("start", AttrValue::UInt(0));
@@ -891,7 +891,7 @@ mod tests {
         comp.children_attrs.insert(uuid1, attrs1);
 
         // Child 2: clip 2, 30% opacity
-        let uuid2 = project.clips_order[2].clone();
+        let uuid2 = project.comps_order[2].clone();
         comp.children.push(uuid2.clone());
         let mut attrs2 = Attrs::new();
         attrs2.set("start", AttrValue::UInt(0));

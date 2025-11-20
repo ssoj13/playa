@@ -187,14 +187,15 @@ impl Default for PlayaApp {
                       return Err(error_msg);
                   }
 
-                  // Add all detected sequences to project as clips (File mode)
+                  // Add all detected sequences to unified media pool (File mode comps)
+                  let comps_count = comps.len();
                   for comp in comps {
                       let uuid = comp.uuid.clone();
                       let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
-                      info!("Adding sequence: {} ({})", name, uuid);
+                      info!("Adding clip (File mode): {} ({})", name, uuid);
 
                       self.player.project.media.insert(uuid.clone(), comp);
-                      self.player.project.clips_order.push(uuid.clone());
+                      self.player.project.comps_order.push(uuid.clone());
 
                       // Activate first sequence
                       if self.player.active_comp.is_none() {
@@ -204,7 +205,7 @@ impl Default for PlayaApp {
 
                   self.attach_comp_event_sender();
                   self.error_msg = None;
-                  info!("Loaded {} sequence(s)", self.player.project.clips_order.len());
+                  info!("Loaded {} clip(s)", comps_count);
                   Ok(())
               }
               Err(e) => {
@@ -909,19 +910,6 @@ impl Default for PlayaApp {
               self.load_project(path);
           }
 
-          // Remove clip from media pool
-          if let Some(clip_uuid) = project_actions.remove_clip {
-              self.player.project.media.remove(&clip_uuid);
-              self.player.project.clips_order.retain(|uuid| uuid != &clip_uuid);
-
-              // Also remove from all comp children
-              for comp in self.player.project.media.values_mut() {
-                  comp.children.retain(|child_uuid| child_uuid != &clip_uuid);
-                  comp.children_attrs.retain(|child_uuid, _| child_uuid != &clip_uuid);
-              }
-
-              info!("Removed clip {}", clip_uuid);
-          }
 
           // Switch active composition (double-click)
           if let Some(comp_uuid) = project_actions.set_active_comp {
@@ -971,12 +959,11 @@ impl Default for PlayaApp {
 
           // Clear all compositions
           if project_actions.clear_all_comps {
-              // Remove all clips and comps from media
+              // Remove all media (clips and comps are unified now)
               self.player.project.media.clear();
-              self.player.project.clips_order.clear();
               self.player.project.comps_order.clear();
               self.player.active_comp = None;
-              info!("All clips and compositions cleared");
+              info!("All media cleared");
           }
       }
 
