@@ -160,8 +160,8 @@ pub fn render(
             // Two-column layout: layer names (with DnD) | timeline bars
             ui.horizontal(|ui| {
                 // Left column: layer names with egui_dnd for smooth reordering
-                {
-                    let dnd_response = dnd(ui, "timeline_child_names")
+                let dnd_response = ui.vertical(|ui| {
+                    dnd(ui, "timeline_child_names")
                         .show_vec(&mut child_order, |ui, child_idx, handle, _state| {
                             let idx = *child_idx;
                             let child_uuid = &comp.children[idx];
@@ -243,15 +243,15 @@ pub fn render(
                             if response.clicked() {
                                 action = TimelineAction::SelectLayer(idx);
                             }
-                        });
+                        })
+                }).inner;
 
-                    // Check if layer order changed and emit ReorderLayer action
-                    if let Some(update) = dnd_response.final_update() {
-                        action = TimelineAction::ReorderLayer {
-                            from_idx: update.from,
-                            to_idx: update.to,
-                        };
-                    }
+                // Check if layer order changed and emit ReorderLayer action
+                if let Some(update) = dnd_response.final_update() {
+                    action = TimelineAction::ReorderLayer {
+                        from_idx: update.from,
+                        to_idx: update.to,
+                    };
                 }
 
                 // Right column: timeline bars (horizontal scroll synced with ruler)
