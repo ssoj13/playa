@@ -918,7 +918,7 @@ impl eframe::App for PlayaApp {
 
         // Project window on the right (hidden in cinema mode or when toggled off)
         if !self.is_fullscreen && self.show_playlist {
-            let project_actions = ui::render_project_window(ctx, &mut self.player);
+            let project_actions = widgets::project::render(ctx, &mut self.player);
 
             // Load media files
             if let Some(path) = project_actions.load_sequence {
@@ -1025,7 +1025,7 @@ impl eframe::App for PlayaApp {
         }
 
         // Render viewport (central panel)
-        let (viewport_actions, render_time) = ui::render_viewport(
+        let (viewport_actions, render_time) = widgets::viewport::render(
             ctx,
             self.frame.as_ref(),
             self.error_msg.as_ref(),

@@ -82,7 +82,7 @@ fn screen_x_to_frame(x: f32, timeline_rect_min_x: f32, config: &TimelineConfig, 
 }
 
 /// Render After Effects-style timeline
-pub fn render_timeline(
+pub fn render(
     ui: &mut Ui,
     comp: &Comp,
     config: &TimelineConfig,

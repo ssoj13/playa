@@ -11,4 +11,4 @@ pub use timeline::{
     GlobalDragState, // deprecated
     TimelineAction,
 };
-pub use timeline_ui::render_timeline;
+pub use timeline_ui::render;
