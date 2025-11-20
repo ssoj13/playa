@@ -7,7 +7,7 @@
 
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use crate::entities::Comp;
-use egui_dnd::{dnd, DragDropItem};
+use egui_dnd::dnd;
 use super::{TimelineConfig, TimelineState, GlobalDragState, TimelineAction};
 
 /// Tool/interaction mode detected at cursor position over a layer bar

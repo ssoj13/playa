@@ -4,6 +4,6 @@
 
 pub mod ae;
 pub mod project;
-pub mod status_bar;
+pub mod status;
 pub mod timeline;
 pub mod viewport;

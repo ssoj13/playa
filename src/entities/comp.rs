@@ -8,16 +8,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use eframe::egui;
-use log::info;
-use regex::Regex;
 
 use super::{Attrs, AttrValue};
 use crate::events::{CompEvent, CompEventSender};
-use super::frame::{Frame, FrameError};
+use super::frame::Frame;
 
 /// Comp operating mode: Layer composition or File sequence loading
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -96,11 +93,6 @@ pub struct Comp {
     #[serde(default)]
     pub file_end: Option<usize>,
 
-    /// Loaded frames (runtime-only, for File mode)
-    #[serde(skip)]
-    #[serde(default)]
-    frames: Vec<Frame>,
-
     // ===== Common Fields =====
     /// Currently selected layer/child index (if any)
     #[serde(default)]
@@ -121,13 +113,6 @@ pub struct Comp {
     #[serde(skip)]
     #[serde(default)]
     cache: RefCell<HashMap<(u64, usize), Frame>>,
-
-    /// Composition hash (for cache invalidation)
-    /// Layer mode: accumulated hash of all children
-    /// File mode: hash of file_mask + file_start/end
-    #[serde(skip)]
-    #[serde(default)]
-    comp_hash: u64,
 }
 
 impl Comp {
@@ -156,12 +141,10 @@ impl Comp {
             file_mask: None,
             file_start: None,
             file_end: None,
-            frames: Vec::new(),
             current_frame: start,
             selected_layer: None,
             event_sender: CompEventSender::dummy(),
             cache: RefCell::new(HashMap::new()),
-            comp_hash: 0,
         }
     }
 
@@ -647,231 +630,6 @@ impl Comp {
     fn invalidate_cache(&self) {
         self.cache.borrow_mut().clear();
         // comp_hash will be recalculated on next get_frame()
-    }
-
-    // ===== File Mode Methods (ex-Clip functionality) =====
-
-    /// Initialize from file pattern (glob or printf-style)
-    /// Supports: "/path/seq.*.exr", "/path/seq.%04d.exr", or single file
-    pub fn init_from_pattern(&mut self, pattern: &str) -> Result<(), FrameError> {
-        if pattern.contains('*') {
-            self.init_from_glob(pattern)?;
-        } else if pattern.contains('%') {
-            // Printf-style pattern: frame.%04d.exr
-            let re = Regex::new(r"%0(\d+)d")
-                .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
-            if let Some(caps) = re.captures(pattern)
-                && let Some(m) = caps.get(1)
-            {
-                let padding_val = m.as_str().parse::<usize>().unwrap_or(4);
-                self.attrs.set("padding", AttrValue::UInt(padding_val as u32));
-            }
-            // Convert to glob pattern for discovery
-            let glob_pattern = re.replace_all(pattern, "*").to_string();
-            self.init_from_glob(&glob_pattern)?;
-        } else {
-            // Single file - auto-detect sequence
-            self.init_from_file(pattern)?;
-        }
-
-        self.file_mask = Some(pattern.to_string());
-        Ok(())
-    }
-
-    /// Initialize from glob pattern
-    fn init_from_glob(&mut self, pattern: &str) -> Result<(), FrameError> {
-        let paths = glob_paths(pattern)?;
-        if paths.is_empty() {
-            return Err(FrameError::Image(format!("No files matched pattern: {}", pattern)));
-        }
-
-        // Group by (prefix, ext), storing (number, path, padding)
-        let mut groups: HashMap<(String, String), Vec<(usize, PathBuf, usize)>> = HashMap::new();
-
-        for path in paths {
-            if let Some((prefix, number, ext, padding)) = split_sequence_path(&path)? {
-                let key = (prefix, ext);
-                groups.entry(key).or_default().push((number, path, padding));
-            }
-        }
-
-        // Select largest group as main sequence
-        let (key, frames_data) = groups
-            .into_iter()
-            .max_by_key(|(_, v)| v.len())
-            .ok_or_else(|| FrameError::Image("No valid sequence files found".into()))?;
-
-        let (prefix, ext) = key;
-        let (min_frame, max_frame) = frames_data
-            .iter()
-            .fold((usize::MAX, 0usize), |(min_f, max_f), (num, _, _)| {
-                (min_f.min(*num), max_f.max(*num))
-            });
-
-        self.file_start = Some(min_frame);
-        self.file_end = Some(max_frame);
-        self.attrs.set("start", AttrValue::UInt(min_frame as u32));
-        self.attrs.set("end", AttrValue::UInt(max_frame as u32));
-
-        // Use padding from first frame
-        let padding_val = frames_data.first().map(|(_, _, p)| *p).unwrap_or(4);
-        self.attrs.set("padding", AttrValue::UInt(padding_val as u32));
-        self.file_mask = Some(format!("{}*.{}", prefix, ext));
-
-        // Create Frame::new_unloaded for each frame
-        self.frames.clear();
-        for frame_num in min_frame..=max_frame {
-            let path = self.frame_path_from_mask(frame_num);
-            self.frames.push(Frame::new_unloaded(path));
-        }
-
-        info!("Loaded sequence: {} frames ({}..{})", self.frames.len(), min_frame, max_frame);
-        Ok(())
-    }
-
-    /// Initialize from single file path - auto-detect sequence
-    fn init_from_file(&mut self, file_path: &str) -> Result<(), FrameError> {
-        let path = Path::new(file_path);
-        if !path.exists() {
-            return Err(FrameError::Image(format!("File not found: {}", file_path)));
-        }
-
-        // Try to detect sequence pattern
-        if let Some((prefix, number, ext, padding)) = split_sequence_path(path)? {
-            self.attrs.set("padding", AttrValue::UInt(padding as u32));
-            let pattern = format!("{}*.{}", prefix, ext);
-            self.init_from_glob(&pattern)?;
-        } else {
-            // Single file, not a sequence
-            self.file_start = Some(0);
-            self.file_end = Some(0);
-            self.attrs.set("start", AttrValue::UInt(0));
-            self.attrs.set("end", AttrValue::UInt(0));
-            self.file_mask = Some(file_path.to_string());
-            self.frames.clear();
-            self.frames.push(Frame::new_unloaded(PathBuf::from(file_path)));
-        }
-
-        Ok(())
-    }
-
-    /// Restore frames from file_mask after deserialization
-    pub fn restore_frames_from_mask(&mut self) {
-        if self.mode != CompMode::File {
-            return;
-        }
-
-        self.frames.clear();
-
-        let start = self.file_start.unwrap_or(0);
-        let end = self.file_end.unwrap_or(0);
-        for frame_num in start..=end {
-            let path = self.frame_path_from_mask(frame_num);
-            self.frames.push(Frame::new_unloaded(path));
-        }
-    }
-
-    /// Generate file path for given frame number based on file_mask
-    fn frame_path_from_mask(&self, frame_num: usize) -> PathBuf {
-        let mask = self.file_mask.as_deref().unwrap_or("");
-        let padding = self.attrs.get_u32("padding").unwrap_or(4) as usize;
-
-        if mask.contains('*') {
-            let number = format!("{:0width$}", frame_num, width = padding);
-            mask.replace('*', &number).into()
-        } else if mask.contains("####") {
-            let number = format!("{:0width$}", frame_num, width = padding);
-            mask.replace("####", &number).into()
-        } else {
-            let path = Path::new(mask);
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("frame");
-            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("exr");
-            let number = format!("{:0width$}", frame_num, width = padding);
-            let mut name = String::with_capacity(stem.len() + 1 + padding + ext.len() + 1);
-            name.push_str(stem);
-            name.push('.');
-            name.push_str(&number);
-            name.push('.');
-            name.push_str(ext);
-            if let Some(parent) = path.parent() {
-                parent.join(name)
-            } else {
-                PathBuf::from(name)
-            }
-        }
-    }
-
-    /// Get frame by index for File mode
-    pub fn get_file_frame(&self, idx: usize) -> Option<&Frame> {
-        if self.mode != CompMode::File {
-            return None;
-        }
-        self.frames.get(idx)
-    }
-
-    /// Get mutable frame by index for File mode
-    pub fn get_file_frame_mut(&mut self, idx: usize) -> Option<&mut Frame> {
-        if self.mode != CompMode::File {
-            return None;
-        }
-        self.frames.get_mut(idx)
-    }
-}
-
-// ===== Helper Functions for File Mode =====
-
-/// Expand a glob pattern into a list of paths
-fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
-    let mut paths = Vec::new();
-    for entry in glob::glob(pattern)
-        .map_err(|e| FrameError::Image(format!("Glob error for pattern {}: {}", pattern, e)))?
-    {
-        match entry {
-            Ok(path) => paths.push(path),
-            Err(e) => return Err(FrameError::Image(format!("Glob entry error: {}", e))),
-        }
-    }
-    Ok(paths)
-}
-
-/// Split a sequence filename into (prefix, number, ext, padding)
-///
-/// Example: "/path/seq.0001.exr" -> ("/path/seq.", 1, "exr", 4)
-fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usize)>, FrameError> {
-    let ext = match path.extension().and_then(|s| s.to_str()) {
-        Some(e) => e.to_string(),
-        None => return Ok(None),
-    };
-
-    let file_stem = match path.file_stem().and_then(|s| s.to_str()) {
-        Some(s) => s,
-        None => return Ok(None),
-    };
-
-    // Find trailing digits
-    let re = Regex::new(r"^(.+?)(\d+)$")
-        .map_err(|e| FrameError::Image(format!("Regex error: {}", e)))?;
-
-    if let Some(caps) = re.captures(file_stem) {
-        let prefix_part = caps.get(1).unwrap().as_str();
-        let number_str = caps.get(2).unwrap().as_str();
-        let padding = number_str.len();
-        let number: usize = number_str.parse()
-            .map_err(|e| FrameError::Image(format!("Parse error: {}", e)))?;
-
-        let parent = path.parent()
-            .and_then(|p| p.to_str())
-            .unwrap_or("");
-
-        let prefix = if parent.is_empty() {
-            format!("{}", prefix_part)
-        } else {
-            format!("{}/{}", parent, prefix_part)
-        };
-
-        Ok(Some((prefix, number, ext, padding)))
-    } else {
-        Ok(None)
     }
 }
 

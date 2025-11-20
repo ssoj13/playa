@@ -15,7 +15,7 @@ use crate::dialogs::encode::{
     CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
     ProResProfile, VideoCodec,
 };
-use crate::widgets::timeline::progress_bar::ProgressBar;
+use crate::widgets::status::progress_bar::ProgressBar;
 
 /// Encoding dialog state
 pub struct EncodeDialog {

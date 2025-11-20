@@ -4,6 +4,8 @@
 //!
 //! **Used by**: cache, sequence, frame, ui modules
 
+pub mod sequences;
+
 /// Media file type detection
 pub mod media {
     use std::path::Path;

@@ -27,7 +27,6 @@
 
 use log::{debug, info};
 use std::time::Instant;
-use crate::entities::Clip;
 use crate::entities::Comp;
 use crate::entities::frame::Frame;
 use crate::entities::Project;
@@ -68,22 +67,6 @@ impl Player {
             last_frame_time: None,
             selected_seq_idx: None,
         }
-    }
-
-    /// Convert Clip to Comp with File mode
-    fn clip_to_comp(clip: Clip) -> Comp {
-        let uuid = clip.uuid.clone();
-        let pattern = clip.pattern().to_string();
-        let fps = clip.fps();
-        let start = clip.start();
-        let end = clip.end();
-
-        // Create Comp with File mode
-        let mut comp = Comp::new_file_comp(pattern.clone(), start, end, fps);
-        comp.uuid = uuid; // Preserve original UUID
-        comp.attrs = clip.attrs.clone();
-
-        comp
     }
 
     fn active_comp_mut(&mut self) -> Option<&mut Comp> {
@@ -171,68 +154,6 @@ impl Player {
         let comp_uuid = self.active_comp.clone()?;
         let comp = self.project.media.get(&comp_uuid)?;
         comp.get_frame(frame_idx, &self.project)
-    }
-
-    /// Append detected clip to project playlist and add as Layer to active Comp.
-    pub fn append_clip(&mut self, clip: Clip) {
-        let uuid = clip.uuid.clone();
-        let clip_len = clip.len();
-
-        // Convert Clip to Comp with File mode
-        let comp = Self::clip_to_comp(clip);
-
-        // Insert comp into unified media HashMap
-        self.project.media.insert(uuid.clone(), comp);
-        self.project.clips_order.push(uuid.clone());
-
-        // Ensure we have an active comp (creates "Main" if none exist)
-        if self.active_comp.is_none() {
-            let default_uuid = self.project.ensure_default_comp();
-            self.active_comp = Some(default_uuid);
-        }
-
-        // Add clip as child to active comp
-        if let Some(comp_uuid) = &self.active_comp.clone() {
-            // Get duration before mutable borrow
-            let duration = clip_len;
-
-            if let Some(comp) = self.project.media.get_mut(comp_uuid) {
-                log::info!("Creating child from clip {} with {} frames", uuid, clip_len);
-
-                    // Position child at end of comp timeline (sequential stacking)
-                    // If comp is empty, start from 0, otherwise stack after last child
-                    let child_start = if comp.children.is_empty() {
-                        0  // First child starts at frame 0
-                    } else {
-                        comp.end() + 1  // Subsequent children stack sequentially
-                    };
-
-                    // If this is the first child, reset comp start to 0
-                    let is_first_child = comp.children.is_empty();
-
-                    // Use add_child_with_duration() to avoid borrow checker issues
-                    if let Err(e) = comp.add_child_with_duration(uuid.clone(), child_start, duration) {
-                        log::error!("Failed to add child: {}", e);
-                        return;
-                    }
-
-                    // Extend comp timeline to include new child
-                    if is_first_child {
-                        comp.set_start(0);
-                        comp.current_frame = 0;  // Reset playhead to start
-                    }
-                    let child_end = child_start + clip_len.saturating_sub(1);
-                    comp.set_end(child_end);
-
-                log::info!("Added clip {} as child to comp {} (timeline: {}..{})",
-                    uuid, comp_uuid, child_start, child_end);
-            }
-        }
-
-        // Set selected index
-        if self.selected_seq_idx.is_none() {
-            self.selected_seq_idx = Some(0);
-        }
     }
 
     /// Switch to a different composition by UUID.

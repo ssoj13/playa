@@ -81,7 +81,7 @@ impl Loader {
         debug!("Reading EXR header with image crate: {}", path.display());
 
         // Use image crate for header reading (it uses exrs internally)
-        let reader = image::io::Reader::open(path)
+        let reader = image::ImageReader::open(path)
             .map_err(|e| FrameError::Image(format!("Failed to open EXR: {}", e)))?;
 
         let format = reader.format()
@@ -210,7 +210,7 @@ impl Loader {
     fn header_generic(path: &Path) -> Result<Attrs, FrameError> {
         debug!("Reading generic image header: {}", path.display());
 
-        let reader = image::io::Reader::open(path)
+        let reader = image::ImageReader::open(path)
             .map_err(|e| FrameError::Image(format!("Failed to open image: {}", e)))?;
 
         let format = reader.format()

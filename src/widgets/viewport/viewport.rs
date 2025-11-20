@@ -1,10 +1,6 @@
 ﻿use eframe::egui;
-use eframe::glow;
-use eframe::glow::HasContext;
-use log::{debug, error, info};
+use log::{debug, info};
 
-use crate::entities::frame::{PixelBuffer, PixelFormat};
-use super::shaders::Shaders;
 
 /// Scrubber line color when inside image bounds (white, 50% transparent)
 const SCRUB_NORMAL: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.5);

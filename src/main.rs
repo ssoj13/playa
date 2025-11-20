@@ -1,14 +1,15 @@
-mod compositor;
+mod cli;
+mod config;
 mod dialogs;
 mod entities;
 mod events;
-mod paths;
 mod player;
 mod ui;
 mod utils;
 mod widgets;
 mod workers;
 
+use cli::Args;
 use clap::Parser;
 use eframe::{egui, glow};
 use entities::Frame;
@@ -18,76 +19,12 @@ use entities::Project;
 use dialogs::prefs::{AppSettings, render_settings_window};
 use dialogs::encode::EncodeDialog;
 use widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
-use widgets::status_bar::StatusBar;
+use widgets::status::StatusBar;
 use std::path::PathBuf;
 use std::sync::Arc;
 use workers::Workers;
 
 
-/// Image sequence player
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Path to the image file to load (EXR, PNG, JPEG, TIFF, TGA) - optional, can also drag-and-drop
-    #[arg(value_name = "FILE")]
-    file_path: Option<PathBuf>,
-
-    /// Additional files to load (can be specified multiple times)
-    #[arg(short = 'f', long = "file", value_name = "FILE")]
-    files: Vec<PathBuf>,
-
-    /// Load playlist from JSON file
-    #[arg(short = 'p', long = "playlist", value_name = "PLAYLIST")]
-    playlist: Option<PathBuf>,
-
-    /// Start in fullscreen mode
-    #[arg(short = 'F', long = "fullscreen")]
-    fullscreen: bool,
-
-    /// Start frame number (0-based)
-    #[arg(long = "frame", value_name = "N")]
-    start_frame: Option<usize>,
-
-    /// Auto-play on startup
-    #[arg(short = 'a', long = "autoplay")]
-    autoplay: bool,
-
-    /// Enable looping (default: true)
-    #[arg(short = 'o', long = "loop", value_name = "0|1", default_value = "1")]
-    loop_playback: u8,
-
-    /// Play range start frame
-    #[arg(long = "start", value_name = "N")]
-    range_start: Option<usize>,
-
-    /// Play range end frame
-    #[arg(long = "end", value_name = "N")]
-    range_end: Option<usize>,
-
-    /// Play range (shorthand for --start and --end)
-    #[arg(long = "range", value_names = ["START", "END"], num_args = 2)]
-    range: Option<Vec<usize>>,
-
-    /// Enable debug logging to file (default: playa.log)
-    #[arg(short = 'l', long = "log", value_name = "LOG_FILE")]
-    log_file: Option<Option<PathBuf>>,
-
-    /// Increase logging verbosity (default: warn, -v: info, -vv: debug, -vvv+: trace)
-    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
-    verbosity: u8,
-
-    /// Custom configuration directory (overrides default platform paths)
-    #[arg(short = 'c', long = "config-dir", value_name = "DIR")]
-    config_dir: Option<PathBuf>,
-
-    /// Deprecated: cache memory budget (was used for old frame cache, now ignored)
-    #[arg(long = "mem", value_name = "PERCENT", hide = true)]
-    mem_percent: Option<f64>,
-
-    /// Deprecated: worker threads override for old frame cache (now ignored)
-    #[arg(long = "workers", value_name = "N", hide = true)]
-    workers: Option<usize>,
-}
 
 /// Main application state
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -132,7 +69,7 @@ struct PlayaApp {
     #[serde(skip)]
     applied_workers: Option<usize>,
     #[serde(skip)]
-    path_config: paths::PathConfig,
+    path_config: config::PathConfig,
     /// Global worker pool for background tasks (frame loading, encoding)
     #[serde(skip)]
     workers: Arc<Workers>,
@@ -181,7 +118,7 @@ impl Default for PlayaApp {
             is_fullscreen: false,
             applied_mem_fraction: 0.75,
             applied_workers: None,
-            path_config: paths::PathConfig::from_env_and_cli(None),
+            path_config: config::PathConfig::from_env_and_cli(None),
             workers,
             comp_event_receiver: event_rx,
             comp_event_sender,
@@ -211,26 +148,42 @@ impl Default for PlayaApp {
     /// * `Ok(())` - Sequences loaded successfully
     /// * `Err(String)` - Detection or loading failed with error message
       fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
-          match entities::clip::detect(paths.clone()) {
-              Ok(clips) => {
-                      for clip in clips {
-                          self.player.append_clip(clip);
-                      }
-                  // Ensure all comps have a valid event sender after clips/comps were modified
-                  self.attach_comp_event_sender();
+          match crate::utils::sequences::detect_sequences(paths) {
+              Ok(comps) => {
+                  if comps.is_empty() {
+                      let error_msg = "No valid sequences detected".to_string();
+                      warn!("{}", error_msg);
+                      self.error_msg = Some(error_msg.clone());
+                      return Err(error_msg);
+                  }
 
-                  // Clear error message on successful load
+                  // Add all detected sequences to project as clips (File mode)
+                  for comp in comps {
+                      let uuid = comp.uuid.clone();
+                      let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
+                      info!("Adding sequence: {} ({})", name, uuid);
+
+                      self.player.project.media.insert(uuid.clone(), comp);
+                      self.player.project.clips_order.push(uuid.clone());
+
+                      // Activate first sequence
+                      if self.player.active_comp.is_none() {
+                          self.player.active_comp = Some(uuid);
+                      }
+                  }
+
+                  self.attach_comp_event_sender();
                   self.error_msg = None;
-                info!("Loaded {} path(s)", paths.len());
-                Ok(())
-            }
-            Err(e) => {
-                let error_msg = format!("Failed to load sequence: {}", e);
-                warn!("{}", error_msg);
-                self.error_msg = Some(error_msg.clone());
-                Err(error_msg)
-            }
-        }
+                  info!("Loaded {} sequence(s)", self.player.project.clips_order.len());
+                  Ok(())
+              }
+              Err(e) => {
+                  let error_msg = format!("Failed to load sequences: {}", e);
+                  warn!("{}", error_msg);
+                  self.error_msg = Some(error_msg.clone());
+                  Err(error_msg)
+              }
+          }
     }
 
     /// Enqueue frame loading around playhead for active comp.
@@ -1183,10 +1136,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create path configuration from CLI args and environment
-    let path_config = paths::PathConfig::from_env_and_cli(args.config_dir.clone());
+    let path_config = config::PathConfig::from_env_and_cli(args.config_dir.clone());
 
     // Ensure directories exist
-    if let Err(e) = paths::ensure_dirs(&path_config) {
+    if let Err(e) = config::ensure_dirs(&path_config) {
         eprintln!("Warning: Failed to create application directories: {}", e);
     }
 
@@ -1205,7 +1158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let log_path = log_path_opt
             .as_ref()
             .cloned()
-            .unwrap_or_else(|| paths::data_file("playa.log", &path_config));
+            .unwrap_or_else(|| config::data_file("playa.log", &path_config));
 
         let file = std::fs::File::create(&log_path).expect("Failed to create log file");
 
@@ -1236,11 +1189,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Log application paths
     info!(
         "Config path: {}",
-        paths::config_file("playa.json", &path_config).display()
+        config::config_file("playa.json", &path_config).display()
     );
     info!(
         "Data path: {}",
-        paths::data_file("playa_data.json", &path_config)
+        config::data_file("playa_data.json", &path_config)
             .parent()
             .unwrap()
             .display()
@@ -1270,7 +1223,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_drag_and_drop(true),
         persist_window: true,
         #[cfg(not(target_arch = "wasm32"))]
-        persistence_path: Some(paths::config_file("playa.json", &path_config)),
+        persistence_path: Some(config::config_file("playa.json", &path_config)),
         ..Default::default()
     };
 

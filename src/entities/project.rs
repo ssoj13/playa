@@ -10,8 +10,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Attrs, Comp};
-use crate::compositor::CompositorType;
+use super::{Attrs, Comp, CompositorType};
 
 /// Top-level project / scene.
 #[derive(Clone, Debug, Serialize, Deserialize)]

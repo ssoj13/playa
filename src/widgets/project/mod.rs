@@ -5,5 +5,4 @@
 mod project;
 mod project_ui;
 
-pub use project::{ProjectActions, PlaylistActions};
-pub use project_ui::render_project_window;
+pub use project::ProjectActions;

@@ -241,11 +241,6 @@ impl Frame {
         }
     }
 
-    /// Convenience method: Create 8-bit U8 frame
-    pub fn new_u8(width: usize, height: usize) -> Self {
-        Self::new(width, height, PixelDepth::U8)
-    }
-
     /// Convenience method: Create 16-bit half-float F16 frame
     /// Note: Rarely used - EXR loader creates F16 frames directly via PixelBuffer
     #[allow(dead_code)]
@@ -275,26 +270,6 @@ impl Frame {
             data: Arc::new(Mutex::new(data)),
             filename: None,
         }
-    }
-
-    /// Load image header from file (unified Loader interface)
-    ///
-    /// Returns metadata as Attrs with:
-    /// - "width", "height" (UInt) - image dimensions
-    /// - "channels" (UInt) - number of channels
-    /// - "format" (Str) - pixel format description
-    /// - Additional format-specific metadata
-    ///
-    /// Supports: EXR, PNG, JPG, TIFF, HDR, TGA
-    pub fn file_header(path: &Path) -> Result<Attrs, FrameError> {
-        super::loader::Loader::header(path)
-    }
-
-    /// Load complete image file into Frame (unified Loader interface)
-    ///
-    /// Supports: EXR (with/without openexr feature), PNG, JPG, TIFF, HDR, TGA
-    pub fn file_load(path: &Path) -> Result<Frame, FrameError> {
-        super::loader::Loader::load(path)
     }
 
     /// Create frame from F16 buffer (used by compositor)
@@ -366,12 +341,6 @@ impl Frame {
             data: Arc::new(Mutex::new(data)),
             filename: Some(path),
         }
-    }
-
-    /// Set filename but don't load yet (sets status to Header)
-    pub fn set_file(&mut self, path: PathBuf) {
-        self.filename = Some(path);
-        let _ = self.set_status(FrameStatus::Header);
     }
 
     /// Get filename if set
