@@ -24,6 +24,9 @@ pub fn render(ui: &mut Ui, attrs: &mut Attrs) {
             // Attribute value editor (type-specific widget)
             if let Some(value) = attrs.get_mut(&key) {
                 match value {
+                    AttrValue::Bool(v) => {
+                        ui.checkbox(v, "");
+                    }
                     AttrValue::Str(s) => {
                         ui.text_edit_singleline(s);
                     }

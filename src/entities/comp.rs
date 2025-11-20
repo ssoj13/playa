@@ -127,6 +127,7 @@ impl Comp {
         attrs.set("play_end", AttrValue::Int(0));   // Full range by default
 
         // Transform defaults
+        attrs.set("visible", AttrValue::Bool(true));
         attrs.set("transparency", AttrValue::Float(1.0)); // Fully opaque
         attrs.set("layer_mode", AttrValue::Str("normal".to_string()));
         attrs.set("speed", AttrValue::Float(1.0)); // Normal speed
@@ -287,8 +288,14 @@ impl Comp {
                         attrs.get_u32("end").unwrap_or(0).hash(&mut hasher);
                         attrs.get_i32("play_start").unwrap_or(0).hash(&mut hasher);
                         attrs.get_i32("play_end").unwrap_or(0).hash(&mut hasher);
+                        attrs.get_bool("visible").unwrap_or(true).hash(&mut hasher);
                         let opacity_bits = attrs.get_float("opacity").unwrap_or(1.0).to_bits();
                         opacity_bits.hash(&mut hasher);
+                        if let Some(blend) = attrs.get_str("blend_mode") {
+                            blend.hash(&mut hasher);
+                        }
+                        let speed_bits = attrs.get_float("speed").unwrap_or(1.0).to_bits();
+                        speed_bits.hash(&mut hasher);
                     }
                 }
             }
@@ -392,6 +399,10 @@ impl Comp {
 
             // Resolve source from Project.media
             if let Some(source) = project.media.get(child_uuid) {
+                // Visibility toggle
+                if attrs.get_bool("visible").unwrap_or(true) == false {
+                    continue;
+                }
                 // Recursively get frame from source (Clip or Comp)
                 if let Some(frame) = source.get_frame(local_frame as usize, project) {
                     let opacity = attrs.get_float("opacity").unwrap_or(1.0);
@@ -441,6 +452,9 @@ impl Comp {
         attrs.set("play_start", AttrValue::Int(0));
         attrs.set("play_end", AttrValue::Int(0));
         attrs.set("opacity", AttrValue::Float(1.0));
+        attrs.set("visible", AttrValue::Bool(true));
+        attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
+        attrs.set("speed", AttrValue::Float(1.0));
 
         // Add to children (top)
         self.children.push(source_uuid.clone());

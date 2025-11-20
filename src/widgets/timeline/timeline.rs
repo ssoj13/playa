@@ -1,6 +1,7 @@
 //! Timeline widget - state and configuration
 
 use eframe::egui::Pos2;
+use serde::{Serialize, Deserialize};
 
 /// Configuration for timeline widget
 #[derive(Clone, Debug)]
@@ -23,12 +24,16 @@ impl Default for TimelineConfig {
 }
 
 /// Timeline state (persistent between frames)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimelineState {
     pub zoom: f32,                              // Zoom multiplier (1.0 = default, range 0.1..4.0)
     pub pan_offset: f32,                        // Horizontal scroll offset in frames
     pub selected_layer: Option<usize>,          // Currently selected layer index
+    #[serde(skip)]
     pub drag_state: Option<GlobalDragState>,    // Active drag operation (centralized for all drag types)
+    pub snap_enabled: bool,
+    pub lock_work_area: bool,
+    pub show_frame_numbers: bool,
 }
 
 impl Default for TimelineState {
@@ -38,6 +43,9 @@ impl Default for TimelineState {
             pan_offset: 0.0,
             selected_layer: None,
             drag_state: None,
+            snap_enabled: true,
+            lock_work_area: false,
+            show_frame_numbers: true,
         }
     }
 }

@@ -53,7 +53,6 @@ pub fn render_timeline_panel(
     ui: &mut egui::Ui,
     player: &mut Player,
     shader_manager: &mut Shaders,
-    show_frame_numbers: bool,
     frame: Option<&Frame>,
     viewport_state: &crate::widgets::viewport::ViewportState,
     render_time_ms: f32,
@@ -76,11 +75,11 @@ pub fn render_timeline_panel(
 
         // Timeline section (with integrated transport controls)
         if let Some(comp_uuid) = &player.active_comp.clone() {
-            if let Some(comp) = player.project.media.get(comp_uuid) {
+                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                 let mut config = TimelineConfig::default();
-                config.show_frame_numbers = show_frame_numbers;
+                    config.show_frame_numbers = timeline_state.show_frame_numbers;
 
-                match crate::widgets::timeline::render(ui, comp, &config, timeline_state) {
+                    match crate::widgets::timeline::render(ui, comp, &config, timeline_state) {
                     TimelineAction::SetFrame(new_frame) => {
                         player.set_frame(new_frame);
                     }

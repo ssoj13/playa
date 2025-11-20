@@ -42,6 +42,8 @@ pub struct AppSettings {
     pub show_frame_numbers: bool, // Show frame numbers on timeslider
     pub dark_mode: bool,
     pub font_size: f32,
+    pub timeline_snap_enabled: bool,
+    pub timeline_lock_work_area: bool,
 
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
@@ -64,6 +66,8 @@ impl Default for AppSettings {
             show_frame_numbers: true,
             dark_mode: true,
             font_size: 13.0,
+            timeline_snap_enabled: true,
+            timeline_lock_work_area: false,
             workers_override: 0,
             encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
             selected_settings_category: Some("UI".to_string()),

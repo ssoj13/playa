@@ -981,12 +981,16 @@ impl Default for PlayaApp {
       }
 
       fn render_timeline_tab(&mut self, ui: &mut egui::Ui) {
+          // Sync timeline toggles from settings
+          self.timeline_state.snap_enabled = self.settings.timeline_snap_enabled;
+          self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
+          self.timeline_state.show_frame_numbers = self.settings.show_frame_numbers;
+
           // Render timeline panel with transport controls and status
           let shader_changed = ui::render_timeline_panel(
               ui,
               &mut self.player,
               &mut self.shader_manager,
-              self.settings.show_frame_numbers,
               self.frame.as_ref(),
               &self.viewport_state,
               self.last_render_time_ms,
@@ -1025,6 +1029,11 @@ impl Default for PlayaApp {
           if let Some(path) = viewport_actions.load_sequence {
               let _ = self.load_sequences(vec![path]);
           }
+
+          // Persist timeline options back to settings
+          self.settings.show_frame_numbers = self.timeline_state.show_frame_numbers;
+          self.settings.timeline_snap_enabled = self.timeline_state.snap_enabled;
+          self.settings.timeline_lock_work_area = self.timeline_state.lock_work_area;
       }
 
       fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 /// Generic attribute value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AttrValue {
+    Bool(bool),
     Str(String),
     Int(i32),
     UInt(u32),
@@ -64,6 +65,13 @@ impl Attrs {
     pub fn get_float(&self, key: &str) -> Option<f32> {
         match self.map.get(key) {
             Some(AttrValue::Float(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn get_bool(&self, key: &str) -> Option<bool> {
+        match self.map.get(key) {
+            Some(AttrValue::Bool(v)) => Some(*v),
             _ => None,
         }
     }
