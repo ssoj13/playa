@@ -91,9 +91,6 @@ pub enum GlobalDragState {
     },
 }
 
-/// Deprecated - use GlobalDragState instead
-pub type LayerDragState = GlobalDragState;
-
 /// Timeline interaction result
 #[derive(Debug, Clone)]
 pub enum TimelineAction {
