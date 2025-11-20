@@ -696,52 +696,6 @@ impl crate::entities::TimelineUI for Comp {
     }
 }
 
-impl crate::entities::AttributeEditorUI for Comp {
-    fn ae_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Composition");
-
-        // All editable properties are now in attrs
-        crate::entities::render_attrs_editor(ui, &mut self.attrs);
-
-        ui.separator();
-
-        // Info section (read-only runtime state)
-        egui::CollapsingHeader::new("Info")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("UUID:");
-                    ui.label(&self.uuid);
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Current Frame:");
-                    ui.label(format!("{}", self.current_frame));
-                });
-
-                ui.horizontal(|ui| {
-                    ui.label("Children:");
-                    ui.label(format!("{}", self.children.len()));
-                });
-
-                // Show children list
-                for (idx, child_uuid) in self.children.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        let is_selected = self.selected_layer == Some(idx);
-                        if ui.selectable_label(is_selected, format!("Child {}", idx)).clicked() {
-                            self.selected_layer = Some(idx);
-                        }
-
-                        if let Some(attrs) = self.children_attrs.get(child_uuid) {
-                            let start = attrs.get_u32("start").unwrap_or(0);
-                            let end = attrs.get_u32("end").unwrap_or(0);
-                            ui.label(format!("({}-{})", start, end));
-                        }
-                    });
-                }
-            });
-    }
-}
 
 #[cfg(test)]
 mod tests {

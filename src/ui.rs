@@ -71,9 +71,6 @@ pub struct ProjectActions {
     pub clear_all_comps: bool,           // clear all compositions
 }
 
-// Deprecated - use ProjectActions
-pub type PlaylistActions = ProjectActions;
-
 /// Render project window (right panel): Unified list of Clips & Compositions
 pub fn render_project_window(ctx: &egui::Context, player: &mut Player) -> ProjectActions {
     let mut actions = ProjectActions {
