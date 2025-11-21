@@ -981,14 +981,11 @@ impl Default for PlayaApp {
           self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
           self.timeline_state.show_frame_numbers = self.settings.show_frame_numbers;
 
-          // Render timeline panel with transport controls and status
+          // Render timeline panel with transport controls
           let shader_changed = ui::render_timeline_panel(
               ui,
               &mut self.player,
               &mut self.shader_manager,
-              self.frame.as_ref(),
-              &self.viewport_state,
-              self.last_render_time_ms,
               &mut self.timeline_state,
           );
           if shader_changed {

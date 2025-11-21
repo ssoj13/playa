@@ -53,9 +53,6 @@ pub fn render_timeline_panel(
     ui: &mut egui::Ui,
     player: &mut Player,
     shader_manager: &mut Shaders,
-    frame: Option<&Frame>,
-    viewport_state: &crate::widgets::viewport::ViewportState,
-    render_time_ms: f32,
     timeline_state: &mut TimelineState,
 ) -> bool {
     let old_shader = shader_manager.current_shader.clone();
@@ -236,61 +233,6 @@ pub fn render_timeline_panel(
             });
         }
 
-        ui.add_space(4.0);
-        ui.separator();
-
-        // Status bar section (bottom of panel)
-        ui.horizontal(|ui| {
-            // Filename
-            if let Some(frame) = frame {
-                if let Some(path) = frame.file() {
-                    if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                        ui.monospace(filename);
-                    } else {
-                        ui.monospace("---");
-                    }
-                } else {
-                    ui.monospace("No file");
-                }
-            } else {
-                ui.monospace("No file");
-            }
-
-            ui.separator();
-
-            // Resolution
-            if let Some(img) = frame {
-                ui.monospace(format!("{:>4}x{:<4}", img.width(), img.height()));
-            } else {
-                ui.monospace("   0x0   ");
-            }
-
-            ui.separator();
-
-            // Pixel format
-            if let Some(img) = frame {
-                let format_str = match img.pixel_format() {
-                    crate::entities::frame::PixelFormat::Rgba8 => "RGBA u8",
-                    crate::entities::frame::PixelFormat::RgbaF16 => "RGBA f16",
-                    crate::entities::frame::PixelFormat::RgbaF32 => "RGBA f32",
-                };
-                ui.monospace(format_str);
-            } else {
-                ui.monospace("---");
-            }
-
-            ui.separator();
-
-            // Zoom
-            ui.monospace(format!("{:>6.1}%", viewport_state.zoom * 100.0));
-
-            ui.separator();
-
-            // Render time
-            ui.monospace(format!("{:.1}ms", render_time_ms));
-        });
-
-        ui.add_space(4.0);
     });
 
     old_shader != shader_manager.current_shader
