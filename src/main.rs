@@ -189,6 +189,7 @@ impl Default for PlayaApp {
 
                   // Add all detected sequences to unified media pool (File mode comps)
                   let comps_count = comps.len();
+                  let mut first_uuid: Option<String> = None;
                   for comp in comps {
                       let uuid = comp.uuid.clone();
                       let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
@@ -197,13 +198,20 @@ impl Default for PlayaApp {
                       self.player.project.media.insert(uuid.clone(), comp);
                       self.player.project.comps_order.push(uuid.clone());
 
-                      // Activate first sequence
-                      if self.player.active_comp.is_none() {
-                          self.player.active_comp = Some(uuid);
+                      // Remember first sequence for activation
+                      if self.player.active_comp.is_none() && first_uuid.is_none() {
+                          first_uuid = Some(uuid);
                       }
                   }
 
                   self.attach_comp_event_sender();
+
+                  // Activate first sequence and trigger frame loading
+                  if let Some(uuid) = first_uuid {
+                      self.player.active_comp = Some(uuid);
+                      self.enqueue_frame_loads_around_playhead(10);
+                  }
+
                   self.error_msg = None;
                   info!("Loaded {} clip(s)", comps_count);
                   Ok(())
@@ -234,8 +242,53 @@ impl Default for PlayaApp {
             return;
         };
 
-        debug!("Enqueuing frame loads around frame {} (radius: {}), comp has {} children",
-               current_frame, radius, comp.children.len());
+        debug!("Enqueuing frame loads around frame {} (radius: {}), comp mode: {:?}, children: {}",
+               current_frame, radius, comp.mode, comp.children.len());
+
+        // Handle File mode comp (directly loads frames from file sequence)
+        if comp.mode == crate::entities::comp::CompMode::File {
+            debug!("Active comp is File mode, loading frames directly");
+
+            let play_start = comp.play_start();
+            let play_end = comp.play_end();
+            let comp_start = comp.start();
+
+            // Calculate frame range to load
+            let load_start_i32 = (current_frame - radius as i32).max(comp_start + play_start).max(0);
+            let load_end_i32 = (current_frame + radius as i32).min(comp.end() - play_end);
+
+            debug!("Loading File mode frames [{}, {}]", load_start_i32, load_end_i32);
+
+            for frame_idx in load_start_i32..=load_end_i32 {
+                if frame_idx < 0 {
+                    continue;
+                }
+
+                // Get frame from File mode comp
+                let frame = match comp.get_frame(frame_idx, &self.player.project) {
+                    Some(f) => f,
+                    None => {
+                        debug!("Failed to get frame {}", frame_idx);
+                        continue;
+                    }
+                };
+
+                // Skip if already loaded
+                let status = frame.status();
+                if status == crate::entities::frame::FrameStatus::Loaded {
+                    continue;
+                }
+
+                // Queue for loading
+                debug!("Queueing frame {} for load (status: {:?})", frame_idx, status);
+                frame.set_status(crate::entities::frame::FrameStatus::Loading);
+            }
+
+            return;
+        }
+
+        // Handle Layer mode comp (recursively loads frames from File mode children)
+        debug!("Active comp is Layer mode, processing {} children", comp.children.len());
 
         // Enqueue loads for all children in comp
         for (child_idx, child_uuid) in comp.children.iter().enumerate() {
@@ -269,9 +322,24 @@ impl Default for PlayaApp {
             let child_end = attrs.get_i32("end").unwrap_or(0);
 
             // Frames to load: [current - radius, current + radius] within child bounds
-            let current_i32 = current_frame as i32;
-            let load_start = (current_i32 - radius as i32).max(child_start).max(0) as usize;
-            let load_end = (current_i32 + radius as i32).min(child_end).max(0) as usize;
+            let current_i32 = current_frame;
+            let window_start = current_i32 - radius as i32;
+            let window_end = current_i32 + radius as i32;
+
+            // Find intersection between load window and child range
+            let load_start_i32 = window_start.max(child_start);
+            let load_end_i32 = window_end.min(child_end);
+
+            // Skip child if no intersection (current_frame too far from child range)
+            if load_start_i32 > load_end_i32 {
+                debug!("Child {}: range [{}, {}] outside load window [{}, {}], skipping",
+                       child_idx, child_start, child_end, window_start, window_end);
+                continue;
+            }
+
+            // Ensure positive indices for iteration
+            let load_start = load_start_i32.max(0) as usize;
+            let load_end = load_end_i32.max(0) as usize;
 
             debug!("Child {}: range [{}, {}], will load frames [{}, {}]",
                    child_idx, child_start, child_end, load_start, load_end);
