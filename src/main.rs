@@ -697,19 +697,17 @@ impl PlayaApp {
             AppEvent::TimelineLockWorkAreaChanged(locked) => {
                 self.timeline_state.lock_work_area = locked;
             }
-            AppEvent::TimelineFitAll => {
-                // Fit all clips in timeline to view
+            AppEvent::TimelineFitAll(canvas_width) => {
+                // Fit all clips in timeline to view using actual canvas width
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.media.get(comp_uuid) {
                         let start = comp.start();
                         let end = comp.end();
                         let duration = (end - start).max(1);
 
-                        // Target: fit duration into ~800 pixels canvas width
                         // pixels_per_frame = canvas_width / duration
                         // zoom = pixels_per_frame / default_pixels_per_frame (2.0)
-                        let target_canvas_width = 800.0;
-                        let pixels_per_frame = target_canvas_width / duration as f32;
+                        let pixels_per_frame = canvas_width / duration as f32;
                         let default_pixels_per_frame = 2.0;
                         let zoom = (pixels_per_frame / default_pixels_per_frame).clamp(0.1, 4.0);
 

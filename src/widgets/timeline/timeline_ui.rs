@@ -69,7 +69,7 @@ pub fn render_outline(
             .on_hover_text("Fit all clips to view")
             .clicked()
         {
-            dispatch(AppEvent::TimelineFitAll);
+            dispatch(AppEvent::TimelineFitAll(state.last_canvas_width));
         }
 
         if ui
@@ -212,6 +212,9 @@ pub fn render_canvas(
     state: &mut TimelineState,
     mut dispatch: impl FnMut(AppEvent),
 ) {
+    // Save canvas width for Fit button calculation
+    state.last_canvas_width = ui.available_width();
+
     let comp_id = comp_uuid.to_string();
     // Calculate dimensions (use full frame count for timeline width, not just play_range)
     let total_frames = comp.frame_count().max(100); // Minimum 100 frames for empty comps

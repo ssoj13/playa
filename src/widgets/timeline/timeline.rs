@@ -40,6 +40,8 @@ pub struct TimelineState {
     pub show_frame_numbers: bool,
     pub last_comp_uuid: Option<String>, // Track last active comp to recenter on change
     pub view_mode: TimelineViewMode,
+    #[serde(skip)]
+    pub last_canvas_width: f32, // Last known canvas width for Fit calculation
 }
 
 impl Default for TimelineState {
@@ -54,6 +56,7 @@ impl Default for TimelineState {
             show_frame_numbers: true,
             last_comp_uuid: None,
             view_mode: TimelineViewMode::Split,
+            last_canvas_width: 800.0, // Default estimate
         }
     }
 }
