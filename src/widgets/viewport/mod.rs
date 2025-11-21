@@ -10,4 +10,4 @@ mod viewport_ui;
 pub use renderer::ViewportRenderer;
 pub use shaders::Shaders;
 pub use viewport::ViewportState;
-pub use viewport_ui::{ViewportActions, render};
+pub use viewport_ui::render;

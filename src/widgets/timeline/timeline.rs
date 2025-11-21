@@ -1,6 +1,6 @@
 //! Timeline widget - state and configuration.
 //! Shared by outline/canvas renderers and the UI tab. Data flow: UI mutations
-//! update `TimelineState` (zoom/pan/selection) and emit `TimelineAction`s which
+//! update `TimelineState` (zoom/pan/selection) and emit `AppEvent`s which
 //! are bridged to the EventBus; renderers read `TimelineConfig`/`TimelineState`
 //! to draw rows/bars and handle interactions.
 
@@ -64,12 +64,8 @@ pub enum GlobalDragState {
     /// Dragging clip/comp from Project Window to timeline
     ProjectItem {
         source_uuid: String,
-        display_name: String,
         duration: Option<i32>,
-        drag_start_pos: Pos2,
     },
-    /// Scrubbing timeline by dragging on ruler or timeline area
-    TimelineScrub { drag_start_pos: Pos2 },
     /// Panning timeline horizontally (middle mouse button)
     TimelinePan {
         drag_start_pos: Pos2,
@@ -79,7 +75,6 @@ pub enum GlobalDragState {
     MovingLayer {
         layer_idx: usize,
         initial_start: i32, // Now supports negative values
-        initial_end: i32,   // Now supports negative values
         drag_start_x: f32,
         drag_start_y: f32,
     },
@@ -95,49 +90,6 @@ pub enum GlobalDragState {
         initial_play_end: i32,
         drag_start_x: f32,
     },
-}
-
-/// Timeline interaction result
-#[derive(Debug, Clone)]
-pub enum TimelineAction {
-    None,
-    SetFrame(i32),      // User clicked/dragged on timeline
-    SelectLayer(usize), // User clicked on layer name
-    ClearSelection,     // User clicked on empty space
-    ToStart,            // Jump to start
-    ToEnd,              // Jump to end
-    TogglePlay,         // Toggle play/pause
-    Stop,               // Stop playback
-    JumpToPrevEdge,     // Jump to previous layer edge ([)
-    JumpToNextEdge,     // Jump to next layer edge (])
-    AddLayer {
-        source_uuid: String,
-        start_frame: i32,
-    }, // Drop item on timeline
-    ReorderLayer {
-        from_idx: usize,
-        to_idx: usize,
-    }, // Reorder layer vertically (DnD in left column)
-    MoveAndReorderLayer {
-        layer_idx: usize,
-        new_start: i32,
-        new_idx: usize,
-    }, // Move layer both horizontally and vertically
-    SetLayerPlayStart {
-        layer_idx: usize,
-        new_play_start: i32,
-    }, // Adjust layer play start
-    SetLayerPlayEnd {
-        layer_idx: usize,
-        new_play_end: i32,
-    }, // Adjust layer play end
-    SetCompPlayStart {
-        frame: i32,
-    }, // Set comp work area start (B key)
-    SetCompPlayEnd {
-        frame: i32,
-    }, // Set comp work area end (N key)
-    ResetCompPlayArea,  // Reset comp work area to full (Ctrl+B)
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]

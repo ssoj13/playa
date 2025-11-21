@@ -4,45 +4,48 @@
 //! - Layer name / clip name
 //! - Start..End range as horizontal bar
 //! - Visual indication of current_frame (playhead)
-//! Consumed by: `ui::render_timeline_panel`. Emits `TimelineAction` through
+//! Consumed by: `ui::render_timeline_panel`. Emits `AppEvent` through
 //! dispatch closures to EventBus, driven by shared `TimelineState` from
 //! `timeline.rs` and helper routines in `timeline_helpers.rs`. Data flow:
-//! egui input → dispatch(TimelineAction) → EventBus → Project/Comp mutations.
+//! egui input → dispatch(AppEvent) → EventBus → Project/Comp mutations.
 
 use super::timeline_helpers::{
     detect_layer_tool, draw_drop_preview, draw_frame_ruler, frame_to_screen_x, hash_color,
     screen_x_to_frame,
 };
-use super::{GlobalDragState, TimelineAction, TimelineConfig, TimelineState};
+use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
+use crate::events::AppEvent;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 
 /// Render left outline: toolbar + layer list (no zoom/pan/scroll on X)
 pub fn render_outline(
     ui: &mut Ui,
+    comp_uuid: &str,
     comp: &mut Comp,
     config: &TimelineConfig,
     state: &mut TimelineState,
-    mut dispatch: impl FnMut(TimelineAction),
+    mut dispatch: impl FnMut(AppEvent),
 ) {
+    let comp_id = comp_uuid.to_string();
     // Toolbar with transport controls and zoom controls (zoom propagates via events)
     ui.horizontal(|ui| {
         if ui.button("↞").on_hover_text("To Start").clicked() {
-            dispatch(TimelineAction::ToStart);
+            dispatch(AppEvent::JumpToStart);
         }
 
         let play_icon = "▶"; // Placeholder - real icon controlled by playback status
         if ui.button(play_icon).on_hover_text("Play/Pause").clicked() {
-            dispatch(TimelineAction::TogglePlay);
+            dispatch(AppEvent::TogglePlayPause);
         }
 
         if ui.button("■").on_hover_text("Stop").clicked() {
-            dispatch(TimelineAction::Stop);
+            dispatch(AppEvent::Stop);
         }
 
         if ui.button("↠").on_hover_text("To End").clicked() {
-            dispatch(TimelineAction::ToEnd);
+            dispatch(AppEvent::JumpToEnd);
         }
 
         ui.separator();
@@ -52,15 +55,24 @@ pub fn render_outline(
         let mut zoom_tmp = state.zoom;
         let zoom_response = ui.add(egui::Slider::new(&mut zoom_tmp, 0.1..=4.0).fixed_decimals(2));
         if zoom_response.changed() {
-            state.zoom = zoom_tmp;
+            dispatch(AppEvent::TimelineZoomChanged(zoom_tmp));
         }
         if ui.button("R").on_hover_text("Reset Zoom to 1.0").clicked() {
-            state.zoom = 1.0;
+            dispatch(AppEvent::TimelineZoomChanged(1.0));
         }
 
-        ui.checkbox(&mut state.show_frame_numbers, "Frames");
-        ui.checkbox(&mut state.snap_enabled, "Snap");
-        ui.checkbox(&mut state.lock_work_area, "Lock");
+        let mut show_frames = state.show_frame_numbers;
+        if ui.checkbox(&mut show_frames, "Frames").changed() {
+            dispatch(AppEvent::TimelineFrameNumbersChanged(show_frames));
+        }
+        let mut snap_enabled = state.snap_enabled;
+        if ui.checkbox(&mut snap_enabled, "Snap").changed() {
+            dispatch(AppEvent::TimelineSnapChanged(snap_enabled));
+        }
+        let mut lock_work_area = state.lock_work_area;
+        if ui.checkbox(&mut lock_work_area, "Lock").changed() {
+            dispatch(AppEvent::TimelineLockWorkAreaChanged(lock_work_area));
+        }
     });
 
     ui.add_space(4.0);
@@ -161,7 +173,7 @@ pub fn render_outline(
                     }
 
                     if response.clicked() {
-                        dispatch(TimelineAction::SelectLayer(idx));
+                        dispatch(AppEvent::SelectLayer(idx));
                     }
                 },
             )
@@ -169,7 +181,8 @@ pub fn render_outline(
         .inner;
 
     if let Some(update) = dnd_response.final_update() {
-        dispatch(TimelineAction::ReorderLayer {
+        dispatch(AppEvent::ReorderLayer {
+            comp_uuid: comp_id.clone(),
             from_idx: update.from,
             to_idx: update.to,
         });
@@ -179,11 +192,13 @@ pub fn render_outline(
 /// Render After Effects-style timeline (right canvas)
 pub fn render_canvas(
     ui: &mut Ui,
+    comp_uuid: &str,
     comp: &mut Comp,
     config: &TimelineConfig,
     state: &mut TimelineState,
-    mut dispatch: impl FnMut(TimelineAction),
+    mut dispatch: impl FnMut(AppEvent),
 ) {
+    let comp_id = comp_uuid.to_string();
     // Calculate dimensions (use full frame count for timeline width, not just play_range)
     let total_frames = comp.frame_count().max(100); // Minimum 100 frames for empty comps
 
@@ -199,7 +214,7 @@ pub fn render_canvas(
     let status_strip = comp.file_frame_statuses();
     let status_bar_height = status_strip.as_ref().map(|_| 6.0).unwrap_or(0.0);
 
-    // Options + time ruler row (split: left spacer, right ruler)
+    // Options + time ruler row (fixed ruler; pan is state-driven, not ScrollArea)
     let mut ruler_rect: Option<Rect> = None;
     let mut timeline_rect_global: Option<Rect> = None;
     let ruler_height = 20.0;
@@ -209,25 +224,38 @@ pub fn render_canvas(
             Sense::hover(),
         );
 
-        egui::ScrollArea::horizontal()
-            .id_salt("timeline_h_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_height(ruler_height);
-                ui.set_width(ruler_width);
-                if cfg_for_ruler.show_frame_numbers {
-                    let (frame_opt, rect) =
-                        draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
-                    ruler_rect = Some(rect);
-                    if let Some(frame) = frame_opt {
-                        dispatch(TimelineAction::SetFrame(frame));
-                    }
-                } else {
-                    let (rect, _) = ui
-                        .allocate_exact_size(Vec2::new(ruler_width, ruler_height), Sense::hover());
-                    ruler_rect = Some(rect);
+        ui.allocate_ui(Vec2::new(ruler_width, ruler_height), |ui| {
+            ui.set_height(ruler_height);
+            ui.set_width(ruler_width);
+            let ruler_rect_local = if cfg_for_ruler.show_frame_numbers {
+                let (frame_opt, rect) =
+                    draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
+                if let Some(frame) = frame_opt {
+                    dispatch(AppEvent::SetFrame(frame));
                 }
-            });
+                rect
+            } else {
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(ruler_width, ruler_height), Sense::hover());
+                rect
+            };
+            ruler_rect = Some(ruler_rect_local);
+
+            // Middle-drag pan on ruler
+            if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                if ui.rect_contains_pointer(ruler_rect_local) {
+                    if ui
+                        .ctx()
+                        .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
+                    {
+                        state.drag_state = Some(GlobalDragState::TimelinePan {
+                            drag_start_pos: pos,
+                            initial_pan_offset: state.pan_offset,
+                        });
+                    }
+                }
+            }
+        });
     });
 
     if let Some(statuses) = &status_strip {
@@ -248,25 +276,29 @@ pub fn render_canvas(
 
     // Handle keyboard shortcuts for jumping to layer edges
     if ui.ctx().input(|i| i.key_pressed(egui::Key::OpenBracket)) {
-        dispatch(TimelineAction::JumpToPrevEdge);
+        dispatch(AppEvent::JumpToPrevEdge);
     }
     if ui.ctx().input(|i| i.key_pressed(egui::Key::CloseBracket)) {
-        dispatch(TimelineAction::JumpToNextEdge);
+        dispatch(AppEvent::JumpToNextEdge);
     }
 
     // Handle keyboard shortcuts for work area
     if ui.ctx().input(|i| i.key_pressed(egui::Key::B)) {
         let ctrl_pressed = ui.ctx().input(|i| i.modifiers.ctrl);
         if ctrl_pressed {
-            dispatch(TimelineAction::ResetCompPlayArea);
+            dispatch(AppEvent::ResetCompPlayArea {
+                comp_uuid: comp_id.clone(),
+            });
         } else {
-            dispatch(TimelineAction::SetCompPlayStart {
+            dispatch(AppEvent::SetCompPlayStart {
+                comp_uuid: comp_id.clone(),
                 frame: comp.current_frame,
             });
         }
     }
     if ui.ctx().input(|i| i.key_pressed(egui::Key::N)) {
-        dispatch(TimelineAction::SetCompPlayEnd {
+        dispatch(AppEvent::SetCompPlayEnd {
+            comp_uuid: comp_id.clone(),
             frame: comp.current_frame,
         });
     }
@@ -274,32 +306,46 @@ pub fn render_canvas(
     // Two-column layout without vertical scroll (timeline panel height is fixed)
     ui.push_id("timeline_layers", |ui| {
         // Create temporary child order (layers displayed in original order from comp.children)
-        let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
+        let child_order: Vec<usize> = (0..comp.children.len()).collect();
 
-        // Timeline bars (horizontal scroll synced with ruler)
-        egui::ScrollArea::horizontal()
-            .id_salt("timeline_h_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_width(timeline_width);
-                ui.set_height(total_height);
+        // Timeline bars (pan synced to state.pan_offset)
+        ui.allocate_ui(Vec2::new(timeline_width, total_height), |ui| {
+            ui.set_width(timeline_width);
+            ui.set_height(total_height);
 
-                // Allocate rect for timeline without hover highlight
-                let timeline_rect = Rect::from_min_size(
-                    ui.cursor().min,
-                    Vec2::new(timeline_width, total_height),
-                );
+            // Allocate rect for timeline without hover highlight
+            let timeline_rect = Rect::from_min_size(
+                ui.cursor().min,
+                Vec2::new(timeline_width, total_height),
+            );
 
-                // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
-                let timeline_response = ui.interact(
-                    timeline_rect,
-                    ui.id().with("timeline_interaction"),
-                    Sense::click_and_drag(),
-                );
-                timeline_rect_global = Some(timeline_rect);
+            // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
+            let timeline_response = ui.interact(
+                timeline_rect,
+                ui.id().with("timeline_interaction"),
+                Sense::click_and_drag(),
+            );
+            timeline_rect_global = Some(timeline_rect);
 
-                if ui.is_rect_visible(timeline_rect) {
-                    let painter = ui.painter();
+            // Middle-drag pan on canvas
+            if let Some(pos) = timeline_response.hover_pos() {
+                if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
+                    state.drag_state = Some(GlobalDragState::TimelinePan {
+                        drag_start_pos: pos,
+                        initial_pan_offset: state.pan_offset,
+                    });
+                }
+            }
+
+            // Scroll wheel horizontal pan
+            let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+            if scroll_delta.x.abs() > 0.0 {
+                let delta_frames = scroll_delta.x / (config.pixels_per_frame * state.zoom);
+                dispatch(AppEvent::TimelinePanChanged(state.pan_offset - delta_frames));
+            }
+
+            if ui.is_rect_visible(timeline_rect) {
+                let painter = ui.painter();
 
                         // Draw child bars in same order as child names (using child_order from DnD)
                         for (display_idx, &original_idx) in child_order.iter().enumerate() {
@@ -464,6 +510,15 @@ pub fn render_canvas(
                         if let Some(drag) = &state.drag_state.clone() {
                             if let Some(current_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 match drag {
+                                    GlobalDragState::TimelinePan { drag_start_pos, initial_pan_offset } => {
+                                        let delta_x = current_pos.x - drag_start_pos.x;
+                                        let delta_frames = delta_x / (config.pixels_per_frame * state.zoom);
+                                        dispatch(AppEvent::TimelinePanChanged(initial_pan_offset - delta_frames));
+
+                                        if ui.ctx().input(|i| i.pointer.any_released()) {
+                                            state.drag_state = None;
+                                        }
+                                    }
                                     GlobalDragState::MovingLayer { layer_idx, initial_start, drag_start_x, drag_start_y, .. } => {
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_y = current_pos.y - drag_start_y;
@@ -509,7 +564,8 @@ pub fn render_canvas(
                                                 has_horizontal_move, has_vertical_move, layer_idx, new_start, target_child);
 
                                             if has_horizontal_move || has_vertical_move {
-                                                dispatch(TimelineAction::MoveAndReorderLayer {
+                                                dispatch(AppEvent::MoveAndReorderLayer {
+                                                    comp_uuid: comp_id.clone(),
                                                     layer_idx: *layer_idx,
                                                     new_start,
                                                     new_idx: target_child,
@@ -556,7 +612,8 @@ pub fn render_canvas(
 
                                         // On release, commit the play start adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            dispatch(TimelineAction::SetLayerPlayStart {
+                                            dispatch(AppEvent::SetLayerPlayStart {
+                                                comp_uuid: comp_id.clone(),
                                                 layer_idx: *layer_idx,
                                                 new_play_start,
                                             });
@@ -600,7 +657,8 @@ pub fn render_canvas(
 
                                         // On release, commit the play end adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            dispatch(TimelineAction::SetLayerPlayEnd {
+                                            dispatch(AppEvent::SetLayerPlayEnd {
+                                                comp_uuid: comp_id.clone(),
                                                 layer_idx: *layer_idx,
                                                 new_play_end,
                                             });
@@ -671,7 +729,8 @@ pub fn render_canvas(
                                     );
 
                                     if ui.ctx().input(|i| i.pointer.any_released()) {
-                                        dispatch(TimelineAction::AddLayer {
+                                        dispatch(AppEvent::AddLayer {
+                                            comp_uuid: comp_id.clone(),
                                             source_uuid: source_uuid.clone(),
                                             start_frame: drop_frame,
                                         });
@@ -701,16 +760,15 @@ pub fn render_canvas(
                                       }
 
                                       if let Some(idx) = clicked_layer {
-                                          dispatch(TimelineAction::SelectLayer(idx));
+                                          dispatch(AppEvent::SelectLayer(idx));
                                       } else {
                                           // Click on empty space: clear selection and scrub timeline
-                                          state.selected_layer = None;
                                           let frame = screen_x_to_frame(pos.x, timeline_rect.min.x, config, state).round() as i32;
-                                          dispatch(TimelineAction::SetFrame(frame.min(total_frames.saturating_sub(1))));
+                                          dispatch(AppEvent::SetFrame(frame.min(total_frames.saturating_sub(1))));
                                       }
                                   } else {
                                       // Click without position: clear selection
-                                      dispatch(TimelineAction::ClearSelection);
+                                      dispatch(AppEvent::DeselectLayer);
                                   }
                               }
                         }

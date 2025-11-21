@@ -168,17 +168,14 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
 
                                     // Drag handling
                                     if response.drag_started() {
-                                        if let Some(pos) = response.interact_pointer_pos() {
+                                        if let Some(_pos) = response.interact_pointer_pos() {
                                             let duration = comp.frame_count();
-                                            let display_name = comp.name().to_string();
                                             ui.ctx().data_mut(|data| {
                                                 data.insert_temp(
                                                     egui::Id::new("global_drag_state"),
                                                     crate::widgets::timeline::GlobalDragState::ProjectItem {
                                                         source_uuid: comp_uuid.clone(),
-                                                        display_name,
                                                         duration: Some(duration),
-                                                        drag_start_pos: pos,
                                                     },
                                                 );
                                             });

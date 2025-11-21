@@ -681,6 +681,21 @@ impl PlayaApp {
             AppEvent::ToggleFrameNumbers => {
                 self.settings.show_frame_numbers = !self.settings.show_frame_numbers;
             }
+            AppEvent::TimelineZoomChanged(zoom) => {
+                self.timeline_state.zoom = zoom.clamp(0.1, 4.0);
+            }
+            AppEvent::TimelinePanChanged(pan) => {
+                self.timeline_state.pan_offset = pan;
+            }
+            AppEvent::TimelineSnapChanged(enabled) => {
+                self.timeline_state.snap_enabled = enabled;
+            }
+            AppEvent::TimelineFrameNumbersChanged(enabled) => {
+                self.timeline_state.show_frame_numbers = enabled;
+            }
+            AppEvent::TimelineLockWorkAreaChanged(locked) => {
+                self.timeline_state.lock_work_area = locked;
+            }
             AppEvent::ZoomViewport(factor) => {
                 self.viewport_state.zoom *= factor;
             }
@@ -1375,7 +1390,7 @@ impl eframe::App for PlayaApp {
             self.status_bar.render(
                 ctx,
                 self.frame.as_ref(),
-                &self.player,
+                &mut self.player,
                 &self.viewport_state,
                 self.last_render_time_ms,
             );

@@ -25,7 +25,7 @@ impl StatusBar {
         &self,
         ctx: &egui::Context,
         frame: Option<&Frame>,
-        _player: &Player,
+        player: &mut Player,
         viewport_state: &ViewportState,
         render_time_ms: f32,
     ) {
@@ -73,6 +73,21 @@ impl StatusBar {
 
                 // Render time
                 ui.monospace(format!("{:.1}ms", render_time_ms));
+
+                ui.separator();
+
+                // Loop toggle
+                ui.checkbox(&mut player.loop_enabled, "Loop");
+
+                ui.separator();
+
+                // FPS info (play vs base)
+                let fps = if player.is_playing {
+                    player.fps_play
+                } else {
+                    player.fps_base
+                };
+                ui.monospace(format!("FPS:{:.2}", fps));
 
                 // Status message (if any)
                 if !self.current_message.is_empty() {

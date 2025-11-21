@@ -134,6 +134,16 @@ pub enum AppEvent {
     ToggleLoop,
     /// Toggle frame numbers display
     ToggleFrameNumbers,
+    /// Timeline zoom changed (Right/Timeline)
+    TimelineZoomChanged(f32),
+    /// Timeline pan offset changed (frames)
+    TimelinePanChanged(f32),
+    /// Timeline snap toggle
+    TimelineSnapChanged(bool),
+    /// Timeline frame numbers visibility changed
+    TimelineFrameNumbersChanged(bool),
+    /// Timeline work area lock toggled
+    TimelineLockWorkAreaChanged(bool),
     /// Zoom viewport by factor
     ZoomViewport(f32),
     /// Reset viewport zoom to fit

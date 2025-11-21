@@ -6,9 +6,7 @@ use eframe::egui;
 
 use crate::events::EventBus;
 use crate::player::Player;
-use crate::widgets::timeline::{
-    TimelineAction, TimelineConfig, TimelineState, render_canvas, render_outline,
-};
+use crate::widgets::timeline::{TimelineConfig, TimelineState, render_canvas, render_outline};
 use crate::widgets::viewport::shaders::Shaders;
 
 /// Help text displayed in overlay
@@ -64,22 +62,6 @@ pub fn render_timeline_panel(
     let old_shader = shader_manager.current_shader.clone();
 
     ui.vertical(|ui| {
-        // Loop and FPS info at top of panel
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut player.loop_enabled, "Loop");
-            ui.add_space(16.0);
-            ui.label("FPS:");
-            let fps = if player.is_playing {
-                player.fps_play
-            } else {
-                player.fps_base
-            };
-            ui.label(format!("{:.2}", fps));
-        });
-
-        ui.add_space(4.0);
-        ui.separator();
-
         // Timeline section (split: outline + canvas)
         if let Some(comp_uuid) = &player.active_comp.clone() {
             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
@@ -107,31 +89,70 @@ pub fn render_timeline_panel(
                     comp.set_comp_play_end(0);
                 }
 
-                let active_comp_uuid = player.active_comp.clone();
-
                 let splitter_height = ui.available_height();
-                let mut timeline_actions: Vec<TimelineAction> = Vec::new();
 
-                egui::SidePanel::left("timeline_outline")
-                    .resizable(true)
-                    .min_width(100.0)
-                    .max_width(400.0)
-                    .show_inside(ui, |ui| {
-                        ui.set_height(splitter_height);
-                        render_outline(ui, comp, &config, timeline_state, |act| {
-                            timeline_actions.push(act);
-                        });
-                    });
-
-                egui::CentralPanel::default().show_inside(ui, |ui| {
-                    ui.set_height(splitter_height);
-                    render_canvas(ui, comp, &config, timeline_state, |act| {
-                        timeline_actions.push(act);
-                    });
+                ui.horizontal(|ui| {
+                    ui.label("View:");
+                    for (label, mode) in [
+                        ("Split", crate::widgets::timeline::TimelineViewMode::Split),
+                        (
+                            "Canvas",
+                            crate::widgets::timeline::TimelineViewMode::CanvasOnly,
+                        ),
+                        (
+                            "Outline",
+                            crate::widgets::timeline::TimelineViewMode::OutlineOnly,
+                        ),
+                    ] {
+                        let selected = timeline_state.view_mode == mode;
+                        if ui.selectable_label(selected, label).clicked() {
+                            timeline_state.view_mode = mode;
+                        }
+                    }
                 });
+                ui.add_space(4.0);
 
-                for act in timeline_actions {
-                    dispatch_timeline_action(act, &active_comp_uuid, event_bus, comp);
+                match timeline_state.view_mode {
+                    crate::widgets::timeline::TimelineViewMode::Split => {
+                        egui::SidePanel::left("timeline_outline")
+                            .resizable(true)
+                            .min_width(100.0)
+                            .max_width(400.0)
+                            .show_inside(ui, |ui| {
+                                ui.set_height(splitter_height);
+                                render_outline(
+                                    ui,
+                                    comp_uuid,
+                                    comp,
+                                    &config,
+                                    timeline_state,
+                                    |evt| event_bus.send(evt),
+                                );
+                            });
+
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                            ui.set_height(splitter_height);
+                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, |evt| {
+                                event_bus.send(evt)
+                            });
+                        });
+                    }
+                    crate::widgets::timeline::TimelineViewMode::CanvasOnly => {
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                            ui.set_height(splitter_height);
+                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, |evt| {
+                                event_bus.send(evt)
+                            });
+                        });
+                    }
+                    crate::widgets::timeline::TimelineViewMode::OutlineOnly => {
+                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                            ui.set_height(splitter_height);
+                            render_outline(ui, comp_uuid, comp, &config, timeline_state, |evt| {
+                                event_bus.send(evt)
+                            });
+                        });
+                    }
                 }
             }
         } else {
@@ -142,131 +163,4 @@ pub fn render_timeline_panel(
     });
 
     old_shader != shader_manager.current_shader
-}
-
-/// Dispatch TimelineAction to EventBus.
-fn dispatch_timeline_action(
-    action: TimelineAction,
-    active_comp_uuid: &Option<String>,
-    event_bus: &EventBus,
-    comp: &crate::entities::Comp,
-) {
-    match action {
-        TimelineAction::SetFrame(new_frame) => {
-            event_bus.send(crate::events::AppEvent::SetFrame(new_frame));
-        }
-        TimelineAction::SelectLayer(idx) => {
-            event_bus.send(crate::events::AppEvent::SelectLayer(idx));
-        }
-        TimelineAction::ClearSelection => {
-            event_bus.send(crate::events::AppEvent::DeselectLayer);
-        }
-        TimelineAction::ToStart => {
-            event_bus.send(crate::events::AppEvent::JumpToStart);
-        }
-        TimelineAction::ToEnd => {
-            event_bus.send(crate::events::AppEvent::JumpToEnd);
-        }
-        TimelineAction::TogglePlay => {
-            event_bus.send(crate::events::AppEvent::TogglePlayPause);
-        }
-        TimelineAction::Stop => {
-            event_bus.send(crate::events::AppEvent::Stop);
-        }
-        TimelineAction::JumpToPrevEdge => {
-            if let Some(frame) = comp
-                .get_child_edges_near(comp.current_frame)
-                .iter()
-                .find(|(f, _)| *f < comp.current_frame)
-                .map(|(f, _)| *f)
-            {
-                event_bus.send(crate::events::AppEvent::SetFrame(frame));
-            }
-        }
-        TimelineAction::JumpToNextEdge => {
-            if let Some(frame) = comp
-                .get_child_edges_near(comp.current_frame)
-                .iter()
-                .find(|(f, _)| *f > comp.current_frame)
-                .map(|(f, _)| *f)
-            {
-                event_bus.send(crate::events::AppEvent::SetFrame(frame));
-            }
-        }
-        TimelineAction::AddLayer {
-            source_uuid,
-            start_frame,
-        } => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::AddLayer {
-                    comp_uuid,
-                    source_uuid,
-                    start_frame,
-                });
-            }
-        }
-        TimelineAction::ReorderLayer { from_idx, to_idx } => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::ReorderLayer {
-                    comp_uuid,
-                    from_idx,
-                    to_idx,
-                });
-            }
-        }
-        TimelineAction::MoveAndReorderLayer {
-            layer_idx,
-            new_start,
-            new_idx,
-        } => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::MoveAndReorderLayer {
-                    comp_uuid,
-                    layer_idx,
-                    new_start,
-                    new_idx,
-                });
-            }
-        }
-        TimelineAction::SetLayerPlayStart {
-            layer_idx,
-            new_play_start,
-        } => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::SetLayerPlayStart {
-                    comp_uuid,
-                    layer_idx,
-                    new_play_start,
-                });
-            }
-        }
-        TimelineAction::SetLayerPlayEnd {
-            layer_idx,
-            new_play_end,
-        } => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::SetLayerPlayEnd {
-                    comp_uuid,
-                    layer_idx,
-                    new_play_end,
-                });
-            }
-        }
-        TimelineAction::SetCompPlayStart { frame } => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::SetCompPlayStart { comp_uuid, frame });
-            }
-        }
-        TimelineAction::SetCompPlayEnd { frame } => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::SetCompPlayEnd { comp_uuid, frame });
-            }
-        }
-        TimelineAction::ResetCompPlayArea => {
-            if let Some(comp_uuid) = active_comp_uuid.clone() {
-                event_bus.send(crate::events::AppEvent::ResetCompPlayArea { comp_uuid });
-            }
-        }
-        TimelineAction::None => {}
-    }
 }

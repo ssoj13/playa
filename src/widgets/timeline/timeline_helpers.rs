@@ -46,11 +46,9 @@ impl LayerTool {
             }
             LayerTool::Move => {
                 let initial_start = attrs.get_i32("start").unwrap_or(0);
-                let initial_end = attrs.get_i32("end").unwrap_or(0);
                 GlobalDragState::MovingLayer {
                     layer_idx,
                     initial_start,
-                    initial_end,
                     drag_start_x: drag_start_pos.x,
                     drag_start_y: drag_start_pos.y,
                 }
