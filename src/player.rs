@@ -86,12 +86,12 @@ impl Player {
     }
 
     /// Get total frames of active comp (play_frame_count - work area)
-    pub fn total_frames(&self) -> usize {
+    pub fn total_frames(&self) -> i32 {
         self.active_comp().map(|c| c.play_frame_count()).unwrap_or(0)
     }
 
     /// Get current play range of active comp (start, end), or (0, 0) if none.
-    pub fn play_range(&self) -> (usize, usize) {
+    pub fn play_range(&self) -> (i32, i32) {
         if let Some(comp) = self.active_comp() {
             comp.play_range()
         } else {
@@ -102,7 +102,7 @@ impl Player {
     /// Set play range of active comp in global comp frame indices (inclusive).
     ///
     /// Internally this is mapped to comp.play_start / comp.play_end offsets.
-    pub fn set_play_range(&mut self, start: usize, end: usize) {
+    pub fn set_play_range(&mut self, start: i32, end: i32) {
         if let Some(comp) = self.active_comp_mut() {
             if comp.end() < comp.start() {
                 return;
@@ -118,8 +118,8 @@ impl Player {
                 return;
             }
 
-            let play_start = (clamped_start as i32 - comp_start as i32).max(0);
-            let play_end = (comp_end as i32 - clamped_end as i32).max(0);
+            let play_start = (clamped_start - comp_start).max(0);
+            let play_end = (comp_end - clamped_end).max(0);
 
             comp.set_comp_play_start(play_start);
             comp.set_comp_play_end(play_end);
@@ -144,7 +144,7 @@ impl Player {
     }
 
     /// Get current frame index from active comp
-    pub fn current_frame(&self) -> usize {
+    pub fn current_frame(&self) -> i32 {
         self.active_comp().map(|c| c.current_frame).unwrap_or(0)
     }
 
@@ -189,7 +189,7 @@ impl Player {
                 if child_uuid == clip_uuid {
                     if let Some(attrs) = comp.children_attrs.get(child_uuid) {
                         // Jump to start of this child
-                        let child_start = attrs.get_u32("start").unwrap_or(0) as usize;
+                        let child_start = attrs.get_i32("start").unwrap_or(0);
                         comp.set_current_frame(child_start);
                         log::debug!("Jumped to clip {} at frame {}", clip_uuid, child_start);
                         return;
@@ -326,7 +326,7 @@ impl Player {
     /// Clamps to full comp timeline [comp.start..=comp.end], not play_range,
     /// so scrubbing/timeline can move outside work area while playback still
     /// respects play_range.
-    pub fn set_frame(&mut self, frame: usize) {
+    pub fn set_frame(&mut self, frame: i32) {
         if let Some(comp) = self.active_comp_mut() {
             let comp_start = comp.start();
             let comp_end = comp.end();
@@ -352,9 +352,9 @@ impl Player {
 
         // Calculate target frame with saturating arithmetic
         let target = if count > 0 {
-            current.saturating_add(count as usize)
+            current.saturating_add(count)
         } else {
-            current.saturating_sub(count.unsigned_abs() as usize)
+            current.saturating_sub(count.unsigned_abs() as i32)
         };
 
         // Apply loop/clamp logic based on loop_enabled

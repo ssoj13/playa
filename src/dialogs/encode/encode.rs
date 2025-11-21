@@ -391,8 +391,8 @@ impl std::fmt::Display for QualityMode {
 /// Progress updates during encoding
 #[derive(Clone, Debug)]
 pub struct EncodeProgress {
-    pub current_frame: usize,
-    pub total_frames: usize,
+    pub current_frame: i32,
+    pub total_frames: i32,
     pub stage: EncodeStage,
 }
 
@@ -1081,7 +1081,7 @@ pub fn encode_sequence_from_comp(
             stage: EncodeStage::Encoding,
         });
 
-        if current_frame.is_multiple_of(10) {
+        if current_frame % 10 == 0 {
             info!("Encoded frame {}/{}", current_frame, total_frames);
         }
     }

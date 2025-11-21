@@ -41,7 +41,7 @@ struct PlayaApp {
     #[serde(skip)]
     frame: Option<Frame>,
     #[serde(skip)]
-    displayed_frame: Option<usize>,
+    displayed_frame: Option<i32>,
     #[serde(skip)]
     player: Player,
     #[serde(skip)]
@@ -264,31 +264,33 @@ impl Default for PlayaApp {
 
             debug!("Processing child {}: comp {} has {} frames", child_idx, child_uuid, source.play_frame_count());
 
-            // Get child range from attrs
-            let child_start = attrs.get_u32("start").unwrap_or(0) as usize;
-            let child_end = attrs.get_u32("end").unwrap_or(0) as usize;
+            // Get child range from attrs (supports negative values)
+            let child_start = attrs.get_i32("start").unwrap_or(0);
+            let child_end = attrs.get_i32("end").unwrap_or(0);
 
             // Frames to load: [current - radius, current + radius] within child bounds
-            let load_start = current_frame.saturating_sub(radius).max(child_start);
-            let load_end = (current_frame + radius).min(child_end);
+            let current_i32 = current_frame as i32;
+            let load_start = (current_i32 - radius as i32).max(child_start).max(0) as usize;
+            let load_end = (current_i32 + radius as i32).min(child_end).max(0) as usize;
 
             debug!("Child {}: range [{}, {}], will load frames [{}, {}]",
                    child_idx, child_start, child_end, load_start, load_end);
 
             for global_idx in load_start..=load_end {
+                let global_i32 = global_idx as i32;
+
                 // Check if frame is within child range
-                if global_idx < child_start || global_idx > child_end {
+                if global_i32 < child_start || global_i32 > child_end {
                     continue;
                 }
 
                 // Convert global comp frame to local frame index
                 let play_start = attrs.get_i32("play_start").unwrap_or(0);
-                let frame_idx = (global_idx - child_start) as i32 + play_start;
+                let frame_idx = (global_i32 - child_start) + play_start;
                 if frame_idx < 0 {
                     debug!("Frame {} not active in child {} (negative play_start)", global_idx, child_idx);
                     continue;
                 }
-                let frame_idx = frame_idx as usize;
 
                 if frame_idx >= source.play_frame_count() {
                     debug!("Frame {} (frame_idx {}) out of bounds (comp len: {})", global_idx, frame_idx, source.play_frame_count());
@@ -437,7 +439,7 @@ impl Default for PlayaApp {
             AppEvent::JumpToStart => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        let play_start = comp.play_start() as usize;
+                        let play_start = comp.play_start();
                         comp.set_current_frame(play_start);
                     }
                 }
@@ -445,7 +447,7 @@ impl Default for PlayaApp {
             AppEvent::JumpToEnd => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        let play_end = comp.play_end() as usize;
+                        let play_end = comp.play_end();
                         comp.set_current_frame(play_end);
                     }
                 }
@@ -576,7 +578,7 @@ impl Default for PlayaApp {
             }
             AppEvent::MoveLayer { comp_uuid, layer_idx, new_start } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    if let Err(e) = comp.move_child(layer_idx, new_start) {
+                    if let Err(e) = comp.move_child(layer_idx, new_start as i32) {
                         log::error!("Failed to move layer: {}", e);
                     }
                 }
@@ -929,7 +931,7 @@ impl Default for PlayaApp {
           if project_actions.new_comp {
               use crate::entities::Comp;
               let fps = 30.0;
-              let end = (fps * 5.0) as usize; // 5 seconds
+              let end = (fps * 5.0) as i32; // 5 seconds
               let mut comp = Comp::new("New Comp", 0, end, fps);
               let uuid = comp.uuid.clone();
 

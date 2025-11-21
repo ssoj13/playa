@@ -92,7 +92,7 @@ fn detect_sequence_from_pattern(pattern: &str, padding: usize) -> Result<Comp, F
 
     // Create Comp with File mode
     let file_mask = format!("{}*.{}", prefix, ext);
-    let mut comp = Comp::new_file_comp(file_mask.clone(), min_frame, max_frame, 24.0);
+    let mut comp = Comp::new_file_comp(file_mask.clone(), min_frame as i32, max_frame as i32, 24.0);
 
     // Store dimensions and padding
     comp.attrs.set("width", AttrValue::UInt(width as u32));

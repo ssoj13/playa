@@ -20,7 +20,7 @@ pub enum AppEvent {
     /// Stop playback and reset to start
     Stop,
     /// Set current frame to specific value
-    SetFrame(usize),
+    SetFrame(i32),
     /// Step forward one frame
     StepForward,
     /// Step backward one frame
@@ -70,7 +70,7 @@ pub enum AppEvent {
     AddLayer {
         comp_uuid: String,
         source_uuid: String,
-        start_frame: usize,
+        start_frame: i32,
     },
     /// Remove layer from composition
     RemoveLayer {
@@ -81,7 +81,7 @@ pub enum AppEvent {
     MoveLayer {
         comp_uuid: String,
         layer_idx: usize,
-        new_start: usize,
+        new_start: i32,
     },
     /// Remove selected layer
     RemoveSelectedLayer,
@@ -166,8 +166,8 @@ pub enum CompEvent {
     /// Current frame changed in a composition
     CurrentFrameChanged {
         comp_uuid: String,
-        old_frame: usize,
-        new_frame: usize,
+        old_frame: i32,
+        new_frame: i32,
     },
     /// Layers were modified (added, removed, reordered)
     LayersChanged {

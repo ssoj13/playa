@@ -23,7 +23,7 @@ pub struct Args {
 
     /// Start frame number (0-based)
     #[arg(long = "frame", value_name = "N")]
-    pub start_frame: Option<usize>,
+    pub start_frame: Option<i32>,
 
     /// Auto-play on startup
     #[arg(short = 'a', long = "autoplay")]
@@ -35,15 +35,15 @@ pub struct Args {
 
     /// Play range start frame
     #[arg(long = "start", value_name = "N")]
-    pub range_start: Option<usize>,
+    pub range_start: Option<i32>,
 
     /// Play range end frame
     #[arg(long = "end", value_name = "N")]
-    pub range_end: Option<usize>,
+    pub range_end: Option<i32>,
 
     /// Play range (shorthand for --start and --end)
     #[arg(long = "range", value_names = ["START", "END"], num_args = 2)]
-    pub range: Option<Vec<usize>>,
+    pub range: Option<Vec<i32>>,
 
     /// Enable debug logging to file (default: playa.log)
     #[arg(short = 'l', long = "log", value_name = "LOG_FILE")]

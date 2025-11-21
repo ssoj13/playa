@@ -148,12 +148,8 @@ pub fn render(
         action = TimelineAction::SetCompPlayEnd { frame: comp.current_frame };
     }
 
-    // Scrollable area for layers
-    // Vertical scroll for rows; horizontal scroll only on bars side
-    egui::ScrollArea::vertical()
-        .id_salt("timeline_scroll_v")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    // Two-column layout without vertical scroll (timeline panel height is fixed)
+    ui.push_id("timeline_layers", |ui| {
             // Create temporary child order for egui_dnd
             let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
 
@@ -297,10 +293,10 @@ pub fn render(
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
 
-                            // Get child start/end from attrs
+                            // Get child start/end from attrs (now supports negative values)
                             let attrs = comp.children_attrs.get(child_uuid);
-                            let child_start = attrs.and_then(|a| Some(a.get_u32("start").unwrap_or(0) as usize)).unwrap_or(0);
-                            let child_end = attrs.and_then(|a| Some(a.get_u32("end").unwrap_or(0) as usize)).unwrap_or(0);
+                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
+                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
                             let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
                             let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
                             let is_visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
@@ -308,8 +304,8 @@ pub fn render(
                             // Calculate full clip range and visible (play) range
                             let full_start = child_start;
                             let full_end = child_end;
-                            let visible_start = child_start + play_start as usize;
-                            let visible_end = child_end.saturating_sub(play_end as usize);
+                            let visible_start = child_start + play_start;
+                            let visible_end = child_end - play_end;
 
                             // Draw full child bar (grayed out, semi-transparent)
                             let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
@@ -367,18 +363,18 @@ pub fn render(
                             let idx = original_idx;
                             let child_uuid = &comp.children[idx];
 
-                            // Get child attrs
+                            // Get child attrs (now supports negative values)
                             let attrs = comp.children_attrs.get(child_uuid);
-                            let child_start = attrs.and_then(|a| Some(a.get_u32("start").unwrap_or(0) as usize)).unwrap_or(0);
-                            let child_end = attrs.and_then(|a| Some(a.get_u32("end").unwrap_or(0) as usize)).unwrap_or(0);
+                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
+                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
                             let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
                             let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
 
                             // Calculate full clip range and visible (play) range
                             let full_start = child_start;
                             let full_end = child_end;
-                            let visible_start = child_start + play_start as usize;
-                            let visible_end = child_end.saturating_sub(play_end as usize);
+                            let visible_start = child_start + play_start;
+                            let visible_end = child_end - play_end;
 
                             let child_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
 
@@ -444,7 +440,7 @@ pub fn render(
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_y = current_pos.y - drag_start_y;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
-                                        let new_start = (*initial_start as i32 + delta_frames).max(0) as usize;
+                                        let new_start = *initial_start as i32 + delta_frames;  // Allow negative values
 
                                         // Determine target child index from vertical position
                                         // Calculate from display position, then convert to physical
@@ -458,8 +454,8 @@ pub fn render(
                                         let child_uuid = &comp.children[*layer_idx];
                                         if let Some(attrs) = comp.children_attrs.get(child_uuid) {
                                             let ghost_child_y = timeline_rect.min.y + (target_display_idx as f32 * config.layer_height);
-                                            let duration = (attrs.get_u32("end").unwrap_or(0) as i32
-                                                          - attrs.get_u32("start").unwrap_or(0) as i32).max(0) as usize;
+                                            let duration = (attrs.get_i32("end").unwrap_or(0)
+                                                          - attrs.get_i32("start").unwrap_or(0)).max(0);
 
                                             let ghost_x_start = frame_to_screen_x(new_start as f32, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x((new_start + duration) as f32, timeline_rect.min.x, config, state);
@@ -632,7 +628,7 @@ pub fn render(
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 // Treat full vertical span of timeline area as drop zone; only X matters.
                                 if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
-                                    let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as usize;
+                                    let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
                                     let drop_duration = duration.unwrap_or(100);
 
                                     // Calculate bar position and size
@@ -704,7 +700,9 @@ pub fn render(
                                       if let Some(idx) = clicked_layer {
                                           action = TimelineAction::SelectLayer(idx);
                                       } else {
-                                          let frame = screen_x_to_frame(pos.x, timeline_rect.min.x, config, state).round() as usize;
+                                          // Click on empty space: clear selection and scrub timeline
+                                          state.selected_layer = None;
+                                          let frame = screen_x_to_frame(pos.x, timeline_rect.min.x, config, state).round() as i32;
                                           action = TimelineAction::SetFrame(frame.min(total_frames.saturating_sub(1)));
                                       }
                                   } else {
@@ -716,7 +714,7 @@ pub fn render(
                     }
                 });
             });
-        });
+    });
 
     // Draw playhead once across ruler + bars
     if let (Some(ruler_rect), Some(timeline_rect)) = (ruler_rect, timeline_rect_global) {

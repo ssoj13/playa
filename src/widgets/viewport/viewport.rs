@@ -229,8 +229,8 @@ impl ViewportState {
         &mut self,
         response: &egui::Response,
         double_clicked: bool,
-        total_frames: usize,
-    ) -> Option<usize> {
+        total_frames: i32,
+    ) -> Option<i32> {
         if double_clicked || total_frames == 0 {
             return None;
         }
@@ -461,8 +461,8 @@ impl ViewportScrubber {
         self.visual_x = Some(x);
     }
 
-    pub fn set_current_frame(&mut self, frame: usize) {
-        self.current_frame = Some(frame);
+    pub fn set_current_frame(&mut self, frame: i32) {
+        self.current_frame = Some(frame.max(0) as usize);
     }
 
     pub fn set_clamped(&mut self, clamped: bool) {
@@ -501,10 +501,10 @@ impl ViewportScrubber {
         left + normalized * (right - left)
     }
 
-    pub fn normalized_to_frame(normalized: f32, total_frames: usize) -> usize {
+    pub fn normalized_to_frame(normalized: f32, total_frames: i32) -> i32 {
         if total_frames > 1 {
             let clamped = normalized.clamp(0.0, 1.0);
-            (clamped * (total_frames - 1) as f32).round() as usize
+            (clamped * (total_frames - 1) as f32).round() as i32
         } else {
             0
         }

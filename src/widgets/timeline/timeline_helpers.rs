@@ -30,8 +30,8 @@ impl LayerTool {
                 GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x: drag_start_pos.x }
             }
             LayerTool::Move => {
-                let initial_start = attrs.get_u32("start").unwrap_or(0) as usize;
-                let initial_end = attrs.get_u32("end").unwrap_or(0) as usize;
+                let initial_start = attrs.get_i32("start").unwrap_or(0);
+                let initial_end = attrs.get_i32("end").unwrap_or(0);
                 GlobalDragState::MovingLayer {
                     layer_idx,
                     initial_start,
@@ -75,7 +75,7 @@ pub(super) fn draw_frame_ruler(
     config: &TimelineConfig,
     state: &TimelineState,
     timeline_width: f32,
-) -> (Option<usize>, Rect) {
+) -> (Option<i32>, Rect) {
     let total_frames = comp.frame_count();
     let ruler_height = 20.0;
 
@@ -146,7 +146,7 @@ pub(super) fn draw_frame_ruler(
 
             if ruler_response.clicked() || ruler_response.dragged() {
                 if let Some(pos) = ruler_response.interact_pointer_pos() {
-                    let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as usize;
+                    let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
                     return (Some(frame.min(total_frames.saturating_sub(1))), rect);
                 }
             }

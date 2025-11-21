@@ -57,7 +57,7 @@ pub enum GlobalDragState {
     ProjectItem {
         source_uuid: String,
         display_name: String,
-        duration: Option<usize>,
+        duration: Option<i32>,
         drag_start_pos: Pos2,
     },
     /// Scrubbing timeline by dragging on ruler or timeline area
@@ -72,8 +72,8 @@ pub enum GlobalDragState {
     /// Moving layer horizontally and/or vertically
     MovingLayer {
         layer_idx: usize,
-        initial_start: usize,
-        initial_end: usize,
+        initial_start: i32,  // Now supports negative values
+        initial_end: i32,    // Now supports negative values
         drag_start_x: f32,
         drag_start_y: f32,
     },
@@ -95,7 +95,7 @@ pub enum GlobalDragState {
 #[derive(Debug, Clone)]
 pub enum TimelineAction {
     None,
-    SetFrame(usize),                                    // User clicked/dragged on timeline
+    SetFrame(i32),                                      // User clicked/dragged on timeline
     SelectLayer(usize),                                 // User clicked on layer name
     ClearSelection,                                     // User clicked on empty space
     ToStart,                                            // Jump to start
@@ -104,12 +104,12 @@ pub enum TimelineAction {
     Stop,                                               // Stop playback
     JumpToPrevEdge,                                     // Jump to previous layer edge ([)
     JumpToNextEdge,                                     // Jump to next layer edge (])
-    AddLayer { source_uuid: String, start_frame: usize }, // Drop item on timeline
+    AddLayer { source_uuid: String, start_frame: i32 }, // Drop item on timeline
     ReorderLayer { from_idx: usize, to_idx: usize },    // Reorder layer vertically (DnD in left column)
-    MoveAndReorderLayer { layer_idx: usize, new_start: usize, new_idx: usize }, // Move layer both horizontally and vertically
+    MoveAndReorderLayer { layer_idx: usize, new_start: i32, new_idx: usize }, // Move layer both horizontally and vertically
     SetLayerPlayStart { layer_idx: usize, new_play_start: i32 }, // Adjust layer play start
     SetLayerPlayEnd { layer_idx: usize, new_play_end: i32 },   // Adjust layer play end
-    SetCompPlayStart { frame: usize },                  // Set comp work area start (B key)
-    SetCompPlayEnd { frame: usize },                    // Set comp work area end (N key)
+    SetCompPlayStart { frame: i32 },                    // Set comp work area start (B key)
+    SetCompPlayEnd { frame: i32 },                      // Set comp work area end (N key)
     ResetCompPlayArea,                                  // Reset comp work area to full (Ctrl+B)
 }

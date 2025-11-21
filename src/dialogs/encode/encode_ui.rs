@@ -414,7 +414,7 @@ impl EncodeDialog {
 
                         // Progress bar
                         self.progress_bar
-                            .set_progress(progress.current_frame, progress.total_frames);
+                            .set_progress(progress.current_frame.max(0) as usize, progress.total_frames.max(0) as usize);
                         self.progress_bar.render(ui);
 
                         // Encoder name

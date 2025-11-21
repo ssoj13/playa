@@ -86,12 +86,12 @@ pub struct Comp {
     /// First frame number in sequence
     /// Only used in File mode
     #[serde(default)]
-    pub file_start: Option<usize>,
+    pub file_start: Option<i32>,
 
     /// Last frame number in sequence
     /// Only used in File mode
     #[serde(default)]
-    pub file_end: Option<usize>,
+    pub file_end: Option<i32>,
 
     // ===== Common Fields =====
     /// Currently selected layer/child index (if any)
@@ -100,7 +100,7 @@ pub struct Comp {
 
     /// Current playback position within this comp (persisted)
     #[serde(default)]
-    pub current_frame: usize,
+    pub current_frame: i32,
 
     /// Event sender for emitting comp events (runtime-only, rebuilt after deserialization)
     #[serde(skip)]
@@ -117,11 +117,11 @@ pub struct Comp {
 
 impl Comp {
     /// Create new composition in Layer mode (default)
-    pub fn new(name: impl Into<String>, start: usize, end: usize, fps: f32) -> Self {
+    pub fn new(name: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
         let mut attrs = Attrs::new();
         attrs.set("name", AttrValue::Str(name.into()));
-        attrs.set("start", AttrValue::UInt(start as u32));
-        attrs.set("end", AttrValue::UInt(end as u32));
+        attrs.set("start", AttrValue::Int(start));
+        attrs.set("end", AttrValue::Int(end));
         attrs.set("fps", AttrValue::Float(fps));
         attrs.set("play_start", AttrValue::Int(0)); // Full range by default
         attrs.set("play_end", AttrValue::Int(0));   // Full range by default
@@ -152,8 +152,8 @@ impl Comp {
     /// Create new composition in File mode for loading image sequences
     pub fn new_file_comp(
         pattern: impl Into<String>,
-        start: usize,
-        end: usize,
+        start: i32,
+        end: i32,
         fps: f32,
     ) -> Self {
         let mut comp = Self::new("File Comp", start, end, fps);
@@ -169,12 +169,12 @@ impl Comp {
         self.attrs.get_str("name").unwrap_or("Untitled")
     }
 
-    pub fn start(&self) -> usize {
-        self.attrs.get_u32("start").unwrap_or(0) as usize
+    pub fn start(&self) -> i32 {
+        self.attrs.get_i32("start").unwrap_or(0)
     }
 
-    pub fn end(&self) -> usize {
-        self.attrs.get_u32("end").unwrap_or(100) as usize
+    pub fn end(&self) -> i32 {
+        self.attrs.get_i32("end").unwrap_or(100)
     }
 
     pub fn fps(&self) -> f32 {
@@ -194,12 +194,12 @@ impl Comp {
         self.attrs.set("name", AttrValue::Str(name.into()));
     }
 
-    pub fn set_start(&mut self, start: usize) {
-        self.attrs.set("start", AttrValue::UInt(start as u32));
+    pub fn set_start(&mut self, start: i32) {
+        self.attrs.set("start", AttrValue::Int(start));
     }
 
-    pub fn set_end(&mut self, end: usize) {
-        self.attrs.set("end", AttrValue::UInt(end as u32));
+    pub fn set_end(&mut self, end: i32) {
+        self.attrs.set("end", AttrValue::Int(end));
     }
 
     pub fn set_fps(&mut self, fps: f32) {
@@ -216,14 +216,14 @@ impl Comp {
 
     /// Inclusive play range (work area) used for rendering/encoding
     /// Returns the visible portion considering play_start/play_end offsets
-    pub fn play_range(&self) -> (usize, usize) {
-        let visible_start = self.start() + self.play_start().max(0) as usize;
-        let visible_end = self.end().saturating_sub(self.play_end().max(0) as usize);
+    pub fn play_range(&self) -> (i32, i32) {
+        let visible_start = self.start() + self.play_start().max(0);
+        let visible_end = self.end() - self.play_end().max(0);
         (visible_start, visible_end)
     }
 
     /// Number of frames in full composition (not limited by play_area)
-    pub fn frame_count(&self) -> usize {
+    pub fn frame_count(&self) -> i32 {
         let start = self.start();
         let end = self.end();
         if end >= start {
@@ -234,7 +234,7 @@ impl Comp {
     }
 
     /// Number of frames in play range (work area)
-    pub fn play_frame_count(&self) -> usize {
+    pub fn play_frame_count(&self) -> i32 {
         let (visible_start, visible_end) = self.play_range();
         if visible_end >= visible_start {
             visible_end - visible_start + 1
@@ -323,7 +323,7 @@ impl Comp {
     /// Set current frame and emit CurrentFrameChanged event.
     ///
     /// This is the proper way to change frame position - emits event that triggers frame loading.
-    pub fn set_current_frame(&mut self, new_frame: usize) {
+    pub fn set_current_frame(&mut self, new_frame: i32) {
         let old_frame = self.current_frame;
         if old_frame != new_frame {
             self.current_frame = new_frame;
@@ -342,7 +342,7 @@ impl Comp {
     /// Recursively resolves layer sources from Project.media and composes them.
     /// Uses hash-based cache that invalidates when layers configuration changes.
     /// Only frames within play_area (work area) are composed - frames outside return None.
-    pub fn get_frame(&self, frame_idx: usize, project: &super::Project) -> Option<Frame> {
+    pub fn get_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         // Check if frame is within play area (work area)
         let (play_start, play_end) = self.play_range();
         if frame_idx < play_start || frame_idx > play_end {
@@ -351,7 +351,7 @@ impl Comp {
 
         // Compute composition hash for cache key
         let comp_hash = self.compute_comp_hash();
-        let cache_key = (comp_hash, frame_idx);
+        let cache_key = (comp_hash, frame_idx.max(0) as usize);  // Cache key uses positive values
 
         // Check cache
         if let Some(frame) = self.cache.borrow().get(&cache_key) {
@@ -373,7 +373,7 @@ impl Comp {
     /// - Resolves Comp from Project.media by UUID
     /// - Recursively gets frames (supports nested Comps)
     /// - Blends multiple children with CPU compositor (GPU compositor planned)
-    fn compose(&self, frame_idx: usize, project: &super::Project) -> Option<Frame> {
+    fn compose(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
 
         // Collect frames from all active children
@@ -381,18 +381,19 @@ impl Comp {
             // Get child attributes
             let attrs = self.children_attrs.get(child_uuid)?;
 
-            // Get child range from attrs
-            let child_start = attrs.get_u32("start").unwrap_or(0) as usize;
-            let child_end = attrs.get_u32("end").unwrap_or(0) as usize;
+            // Get child range from attrs (supports negative values)
+            let child_start = attrs.get_i32("start").unwrap_or(0);
+            let child_end = attrs.get_i32("end").unwrap_or(0);
 
             // Check if child is active at this frame
-            if frame_idx < child_start || frame_idx > child_end {
+            let frame_idx_i32 = frame_idx as i32;
+            if frame_idx_i32 < child_start || frame_idx_i32 > child_end {
                 continue; // Child not active
             }
 
             // Convert comp frame to local source frame
             let play_start = attrs.get_i32("play_start").unwrap_or(0);
-            let local_frame = (frame_idx - child_start) as i32 + play_start;
+            let local_frame = (frame_idx_i32 - child_start) + play_start;
             if local_frame < 0 {
                 continue;
             }
@@ -409,7 +410,7 @@ impl Comp {
                     continue;
                 }
                 // Recursively get frame from source (Clip or Comp)
-                if let Some(frame) = source.get_frame(local_frame as usize, project) {
+                if let Some(frame) = source.get_frame(local_frame, project) {
                     let opacity = attrs.get_float("opacity").unwrap_or(1.0);
                     source_frames.push((frame, opacity));
                 }
@@ -427,7 +428,7 @@ impl Comp {
     pub fn add_child(
         &mut self,
         source_uuid: String,
-        start_frame: usize,
+        start_frame: i32,
         project: &super::Project,
     ) -> anyhow::Result<()> {
         // Get source to determine duration
@@ -444,8 +445,8 @@ impl Comp {
     pub fn add_child_with_duration(
         &mut self,
         source_uuid: String,
-        start_frame: usize,
-        duration: usize,
+        start_frame: i32,
+        duration: i32,
     ) -> anyhow::Result<()> {
         let end_frame = start_frame + duration - 1;
 
@@ -456,8 +457,8 @@ impl Comp {
         let mut attrs = Attrs::new();
         attrs.set("uuid", AttrValue::Str(source_uuid));  // Reference to source comp
         attrs.set("name", AttrValue::Str("Child".to_string()));
-        attrs.set("start", AttrValue::UInt(start_frame as u32));
-        attrs.set("end", AttrValue::UInt(end_frame as u32));
+        attrs.set("start", AttrValue::Int(start_frame));
+        attrs.set("end", AttrValue::Int(end_frame));
         attrs.set("play_start", AttrValue::Int(0));
         attrs.set("play_end", AttrValue::Int(0));
         attrs.set("opacity", AttrValue::Float(1.0));
@@ -466,13 +467,13 @@ impl Comp {
         attrs.set("speed", AttrValue::Float(1.0));
 
         // Extend comp duration if needed so the layer is visible on timeline
-        let comp_end = self.end();
+        let comp_end = self.attrs.get_i32("end").unwrap_or(0);
         if end_frame > comp_end {
-            self.attrs.set("end", AttrValue::UInt(end_frame as u32));
+            self.attrs.set("end", AttrValue::Int(end_frame));
         }
-        let comp_start = self.start();
+        let comp_start = self.attrs.get_i32("start").unwrap_or(0);
         if start_frame < comp_start {
-            self.attrs.set("start", AttrValue::UInt(start_frame as u32));
+            self.attrs.set("start", AttrValue::Int(start_frame));
         }
 
         // Add to children using instance UUID
@@ -489,7 +490,8 @@ impl Comp {
     }
 
     /// Move a child to a new start position, preserving duration.
-    pub fn move_child(&mut self, child_idx: usize, new_start: usize) -> anyhow::Result<()> {
+    /// Supports negative start positions and automatically extends parent comp boundaries.
+    pub fn move_child(&mut self, child_idx: usize, new_start: i32) -> anyhow::Result<()> {
         let child_uuid = self
             .children
             .get(child_idx)
@@ -501,16 +503,24 @@ impl Comp {
             .get_mut(&child_uuid)
             .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
 
-        let old_start = attrs.get_u32("start").unwrap_or(0) as usize;
-        let old_end = attrs.get_u32("end").unwrap_or(0) as usize;
-        let duration = if old_end >= old_start {
-            old_end - old_start
-        } else {
-            0
-        };
+        let old_start = attrs.get_i32("start").unwrap_or(0);
+        let old_end = attrs.get_i32("end").unwrap_or(0);
+        let duration = (old_end - old_start).max(0);
+        let new_end = new_start + duration;
 
-        attrs.set("start", AttrValue::UInt(new_start as u32));
-        attrs.set("end", AttrValue::UInt((new_start + duration) as u32));
+        attrs.set("start", AttrValue::Int(new_start));
+        attrs.set("end", AttrValue::Int(new_end));
+
+        // Extend parent comp boundaries if needed
+        let comp_start = self.attrs.get_i32("start").unwrap_or(0);
+        let comp_end = self.attrs.get_i32("end").unwrap_or(0);
+
+        if new_start < comp_start {
+            self.attrs.set("start", AttrValue::Int(new_start));
+        }
+        if new_end > comp_end {
+            self.attrs.set("end", AttrValue::Int(new_end));
+        }
 
         // Clear cache and emit event
         self.clear_cache();
@@ -591,19 +601,19 @@ impl Comp {
 
     /// Get all child edges (start and end frames) sorted by distance from given frame
     /// Returns vec of (frame_number, is_start) tuples
-    pub fn get_child_edges_near(&self, from_frame: usize) -> Vec<(usize, bool)> {
+    pub fn get_child_edges_near(&self, from_frame: i32) -> Vec<(i32, bool)> {
         let mut edges = Vec::new();
 
         for child_uuid in &self.children {
             if let Some(attrs) = self.children_attrs.get(child_uuid) {
-                let start = attrs.get_u32("start").unwrap_or(0) as usize;
-                let end = attrs.get_u32("end").unwrap_or(0) as usize;
+                let start = attrs.get_i32("start").unwrap_or(0);
+                let end = attrs.get_i32("end").unwrap_or(0);
                 let play_start = attrs.get_i32("play_start").unwrap_or(0);
                 let play_end = attrs.get_i32("play_end").unwrap_or(0);
 
                 // Visible range accounting for play range
-                let visible_start = start + play_start as usize;
-                let visible_end = end.saturating_sub(play_end as usize);
+                let visible_start = start + play_start;
+                let visible_end = end - play_end;
 
                 if visible_start < visible_end {
                     edges.push((visible_start, true));   // Start edge
@@ -691,7 +701,7 @@ impl crate::entities::TimelineUI for Comp {
         &self,
         ui: &mut egui::Ui,
         bar_rect: egui::Rect,
-        current_frame: usize,
+        current_frame: i32,
     ) -> egui::Response {
         let painter = ui.painter();
 

@@ -30,7 +30,7 @@ pub trait ProjectUI {
 /// Widget for timeline - shows entity as a bar/clip
 pub trait TimelineUI {
     /// Render entity in timeline
-    fn timeline_ui(&self, ui: &mut Ui, bar_rect: Rect, current_frame: usize) -> Response;
+    fn timeline_ui(&self, ui: &mut Ui, bar_rect: Rect, current_frame: i32) -> Response;
 }
 
 /// Widget for Attribute Editor - shows all entity properties
