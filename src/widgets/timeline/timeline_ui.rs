@@ -199,63 +199,6 @@ pub fn render_canvas(
     let status_strip = comp.file_frame_statuses();
     let status_bar_height = status_strip.as_ref().map(|_| 6.0).unwrap_or(0.0);
 
-    // Toolbar with transport controls and zoom
-    ui.horizontal(|ui| {
-        // Transport controls
-        if ui.button("⏮").on_hover_text("To Start").clicked() {
-            dispatch(TimelineAction::ToStart);
-        }
-
-        let play_icon = "▶"; // Will be updated based on playback state
-        if ui.button(play_icon).on_hover_text("Play/Pause").clicked() {
-            dispatch(TimelineAction::TogglePlay);
-        }
-
-        if ui.button("⏹").on_hover_text("Stop").clicked() {
-            dispatch(TimelineAction::Stop);
-        }
-
-        if ui.button("⏭").on_hover_text("To End").clicked() {
-            dispatch(TimelineAction::ToEnd);
-        }
-
-        ui.separator();
-
-        // Zoom slider
-        ui.label("Zoom:");
-        let mut zoom_changed = false;
-        let old_zoom = state.zoom;
-
-        let zoom_response = ui.add(
-            egui::Slider::new(&mut state.zoom, 0.1..=4.0)
-                .fixed_decimals(2)
-                .show_value(true),
-        );
-
-        if zoom_response.changed() {
-            zoom_changed = true;
-        }
-
-        // Reset zoom button
-        if ui.button("R").on_hover_text("Reset Zoom to 1.0").clicked() {
-            state.zoom = 1.0;
-            zoom_changed = true;
-        }
-
-        // When zoom changes, adjust pan_offset to keep playhead centered
-        if zoom_changed && old_zoom != state.zoom {
-            // Keep playhead position stable when zooming
-            let playhead_pos = comp.current_frame as f32;
-            let old_screen_x =
-                (playhead_pos - state.pan_offset) * config.pixels_per_frame * old_zoom;
-            // After zoom change, adjust pan so playhead stays at same screen position
-            state.pan_offset =
-                playhead_pos - (old_screen_x / (config.pixels_per_frame * state.zoom));
-        }
-    });
-
-    ui.add_space(4.0);
-
     // Options + time ruler row (split: left spacer, right ruler)
     let mut ruler_rect: Option<Rect> = None;
     let mut timeline_rect_global: Option<Rect> = None;
@@ -330,130 +273,33 @@ pub fn render_canvas(
 
     // Two-column layout without vertical scroll (timeline panel height is fixed)
     ui.push_id("timeline_layers", |ui| {
-            // Create temporary child order for egui_dnd
-            let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
+        // Create temporary child order (layers displayed in original order from comp.children)
+        let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
 
-            // Two-column layout: layer names (with DnD) | timeline bars
-            ui.horizontal(|ui| {
-                // Left column: layer names with egui_dnd for smooth reordering
-                let dnd_response = ui.vertical(|ui| {
-                    dnd(ui, "timeline_child_names")
-                        .show_vec(&mut child_order, |ui, child_idx, handle, _state| {
-                            let idx = *child_idx;
-                            let child_uuid = &comp.children[idx];
-                            let attrs = comp.children_attrs.get(child_uuid);
+        // Timeline bars (horizontal scroll synced with ruler)
+        egui::ScrollArea::horizontal()
+            .id_salt("timeline_h_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(timeline_width);
+                ui.set_height(total_height);
 
-                            let (row_rect, response) = ui.allocate_exact_size(
-                                Vec2::new(config.name_column_width, config.layer_height),
-                                Sense::click(),
-                            );
-                            let mut row_ui = ui.child_ui(
-                                row_rect,
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                None,
-                            );
-                            row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                            row_ui.set_min_height(config.layer_height);
+                // Allocate rect for timeline without hover highlight
+                let timeline_rect = Rect::from_min_size(
+                    ui.cursor().min,
+                    Vec2::new(timeline_width, total_height),
+                );
 
-                            // Drag handle
-                            handle.ui(&mut row_ui, |ui| {
-                                ui.label("☰");
-                            });
+                // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
+                let timeline_response = ui.interact(
+                    timeline_rect,
+                    ui.id().with("timeline_interaction"),
+                    Sense::click_and_drag(),
+                );
+                timeline_rect_global = Some(timeline_rect);
 
-                            // Visibility toggle
-                            let mut visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
-                            let mut opacity = attrs.and_then(|a| a.get_float("opacity")).unwrap_or(1.0);
-                            let prev_blend = attrs.and_then(|a| a.get_str("blend_mode")).unwrap_or("normal").to_string();
-                            let mut blend = prev_blend.clone();
-                            let mut speed = attrs.and_then(|a| a.get_float("speed")).unwrap_or(1.0);
-                            let mut dirty = false;
-
-                            if row_ui.checkbox(&mut visible, "").changed() {
-                                dirty = true;
-                            }
-
-                            // Layer name
-                            let child_name = comp.children_attrs.get(child_uuid)
-                                .and_then(|attrs| attrs.get_str("name"))
-                                .unwrap_or(child_uuid.as_str());
-                            row_ui.label(child_name);
-
-                            // Opacity slider
-                            if row_ui.add(
-                                egui::Slider::new(&mut opacity, 0.0..=1.0)
-                                    .show_value(false)
-                                    .smallest_positive(0.01)
-                                    .text(""),
-                            ).changed() {
-                                dirty = true;
-                            }
-
-                            // Blend mode combo
-                            egui::ComboBox::from_id_salt(format!("blend_{}", child_uuid))
-                                .width(80.0)
-                                .selected_text(blend.clone())
-                                .show_ui(&mut row_ui, |ui| {
-                                    for mode in ["normal", "screen", "add", "subtract", "multiply", "divide"] {
-                                        ui.selectable_value(&mut blend, mode.to_string(), mode);
-                                    }
-                                });
-                            if blend != prev_blend {
-                                dirty = true;
-                            }
-
-                            // Speed
-                            if row_ui.add(egui::DragValue::new(&mut speed).speed(0.1).range(0.01..=8.0)).changed() {
-                                dirty = true;
-                            }
-
-                            if dirty {
-                                if let Some(attrs_mut) = comp.children_attrs.get_mut(child_uuid) {
-                                    attrs_mut.set("visible", crate::entities::AttrValue::Bool(visible));
-                                    attrs_mut.set("opacity", crate::entities::AttrValue::Float(opacity));
-                                    attrs_mut.set("blend_mode", crate::entities::AttrValue::Str(blend));
-                                    attrs_mut.set("speed", crate::entities::AttrValue::Float(speed));
-                                    comp.clear_cache();
-                                }
-                            }
-
-                            if response.clicked() {
-                                dispatch(TimelineAction::SelectLayer(idx));
-                            }
-                        })
-                }).inner;
-
-                // Check if layer order changed and emit ReorderLayer action
-                if let Some(update) = dnd_response.final_update() {
-                    dispatch(TimelineAction::ReorderLayer {
-                        from_idx: update.from,
-                        to_idx: update.to,
-                    });
-                }
-
-                // Right column: timeline bars (horizontal scroll synced with ruler)
-                egui::ScrollArea::horizontal()
-                    .id_salt("timeline_h_scroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_width(timeline_width);
-                        ui.set_height(total_height);
-
-                        // Allocate rect for timeline without hover highlight
-                        let timeline_rect = Rect::from_min_size(
-                            ui.cursor().min,
-                            Vec2::new(timeline_width, total_height),
-                        );
-
-                        // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
-                        let timeline_response = ui.interact(
-                            timeline_rect,
-                            ui.id().with("timeline_interaction"),
-                            Sense::click_and_drag(),
-                        );
-                        timeline_rect_global = Some(timeline_rect);
-
-                        if ui.is_rect_visible(timeline_rect) {
-                            let painter = ui.painter();
+                if ui.is_rect_visible(timeline_rect) {
+                    let painter = ui.painter();
 
                         // Draw child bars in same order as child names (using child_order from DnD)
                         for (display_idx, &original_idx) in child_order.iter().enumerate() {
@@ -870,7 +716,6 @@ pub fn render_canvas(
                         }
                     }
                 });
-            });
     });
 
     // Draw playhead once across ruler + bars
