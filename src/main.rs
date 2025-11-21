@@ -583,6 +583,32 @@ impl PlayaApp {
                     }
                 }
             }
+            AppEvent::JumpToPrevEdge => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        if let Some(&(frame, _)) = comp
+                            .get_child_edges_near(comp.current_frame)
+                            .iter()
+                            .find(|(f, _)| *f < comp.current_frame)
+                        {
+                            comp.set_current_frame(frame);
+                        }
+                    }
+                }
+            }
+            AppEvent::JumpToNextEdge => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                        if let Some(&(frame, _)) = comp
+                            .get_child_edges_near(comp.current_frame)
+                            .iter()
+                            .find(|(f, _)| *f > comp.current_frame)
+                        {
+                            comp.set_current_frame(frame);
+                        }
+                    }
+                }
+            }
 
             // ===== Project Management =====
             AppEvent::AddClip(path) => {
@@ -612,10 +638,25 @@ impl PlayaApp {
                 // TODO: implement select media
             }
             AppEvent::SelectLayer(_index) => {
-                // TODO: implement select layer
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
+                        comp.set_selected_layer(Some(_index));
+                    }
+                }
             }
             AppEvent::DeselectAll => {
-                // TODO: implement deselect all
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
+                        comp.set_selected_layer(None);
+                    }
+                }
+            }
+            AppEvent::DeselectLayer => {
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
+                        comp.set_selected_layer(None);
+                    }
+                }
             }
 
             // ===== UI State =====
@@ -675,6 +716,24 @@ impl PlayaApp {
                     }
                 }
             }
+            AppEvent::SetCompPlayStart { comp_uuid, frame } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let play_start = (frame - comp.start()).max(0);
+                    comp.set_comp_play_start(play_start);
+                }
+            }
+            AppEvent::SetCompPlayEnd { comp_uuid, frame } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let play_end = (comp.end() - frame).max(0);
+                    comp.set_comp_play_end(play_end);
+                }
+            }
+            AppEvent::ResetCompPlayArea { comp_uuid } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    comp.set_comp_play_start(0);
+                    comp.set_comp_play_end(0);
+                }
+            }
 
             // ===== FPS Control =====
             AppEvent::IncreaseFPS => {
@@ -728,6 +787,60 @@ impl PlayaApp {
                     if let Err(e) = comp.move_child(layer_idx, new_start as i32) {
                         log::error!("Failed to move layer: {}", e);
                     }
+                }
+            }
+            AppEvent::ReorderLayer {
+                comp_uuid,
+                from_idx,
+                to_idx,
+            } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    if from_idx != to_idx
+                        && from_idx < comp.children.len()
+                        && to_idx < comp.children.len()
+                    {
+                        let child_uuid = comp.children.remove(from_idx);
+                        comp.children.insert(to_idx, child_uuid);
+                        comp.clear_cache();
+                    }
+                }
+            }
+            AppEvent::MoveAndReorderLayer {
+                comp_uuid,
+                layer_idx,
+                new_start,
+                new_idx,
+            } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    if layer_idx != new_idx
+                        && layer_idx < comp.children.len()
+                        && new_idx < comp.children.len()
+                    {
+                        let child_uuid = comp.children.remove(layer_idx);
+                        comp.children.insert(new_idx, child_uuid);
+                    }
+
+                    let final_idx = new_idx.min(comp.children.len().saturating_sub(1));
+                    let new_start_i32 = new_start as i32;
+                    let _ = comp.move_child(final_idx, new_start_i32);
+                }
+            }
+            AppEvent::SetLayerPlayStart {
+                comp_uuid,
+                layer_idx,
+                new_play_start,
+            } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let _ = comp.set_child_play_start(layer_idx, new_play_start);
+                }
+            }
+            AppEvent::SetLayerPlayEnd {
+                comp_uuid,
+                layer_idx,
+                new_play_end,
+            } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let _ = comp.set_child_play_end(layer_idx, new_play_end);
                 }
             }
             AppEvent::RemoveSelectedLayer => {
@@ -1119,6 +1232,7 @@ impl PlayaApp {
             &mut self.player,
             &mut self.shader_manager,
             &mut self.timeline_state,
+            &self.event_bus,
         );
         if shader_changed {
             let mut renderer = self.viewport_renderer.lock().unwrap();

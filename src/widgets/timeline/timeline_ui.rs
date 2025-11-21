@@ -4,25 +4,186 @@
 //! - Layer name / clip name
 //! - Start..End range as horizontal bar
 //! - Visual indication of current_frame (playhead)
+//! Consumed by: `ui::render_timeline_panel`. Emits `TimelineAction` through
+//! dispatch closures to EventBus, driven by shared `TimelineState` from
+//! `timeline.rs` and helper routines in `timeline_helpers.rs`. Data flow:
+//! egui input → dispatch(TimelineAction) → EventBus → Project/Comp mutations.
 
 use super::timeline_helpers::{
-    LayerTool, detect_layer_tool, draw_drop_preview, draw_frame_ruler, frame_to_screen_x,
-    hash_color, screen_x_to_frame,
+    detect_layer_tool, draw_drop_preview, draw_frame_ruler, frame_to_screen_x, hash_color,
+    screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineAction, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 
-/// Render After Effects-style timeline
-pub fn render(
+/// Render left outline: toolbar + layer list (no zoom/pan/scroll on X)
+pub fn render_outline(
     ui: &mut Ui,
     comp: &mut Comp,
     config: &TimelineConfig,
     state: &mut TimelineState,
-) -> TimelineAction {
-    let mut action = TimelineAction::None;
+    mut dispatch: impl FnMut(TimelineAction),
+) {
+    // Toolbar with transport controls and zoom controls (zoom propagates via events)
+    ui.horizontal(|ui| {
+        if ui.button("↞").on_hover_text("To Start").clicked() {
+            dispatch(TimelineAction::ToStart);
+        }
 
+        let play_icon = "▶"; // Placeholder - real icon controlled by playback status
+        if ui.button(play_icon).on_hover_text("Play/Pause").clicked() {
+            dispatch(TimelineAction::TogglePlay);
+        }
+
+        if ui.button("■").on_hover_text("Stop").clicked() {
+            dispatch(TimelineAction::Stop);
+        }
+
+        if ui.button("↠").on_hover_text("To End").clicked() {
+            dispatch(TimelineAction::ToEnd);
+        }
+
+        ui.separator();
+
+        // Zoom controls emit actions; actual zoom applies in canvas via events
+        ui.label("Zoom:");
+        let mut zoom_tmp = state.zoom;
+        let zoom_response = ui.add(egui::Slider::new(&mut zoom_tmp, 0.1..=4.0).fixed_decimals(2));
+        if zoom_response.changed() {
+            state.zoom = zoom_tmp;
+        }
+        if ui.button("R").on_hover_text("Reset Zoom to 1.0").clicked() {
+            state.zoom = 1.0;
+        }
+
+        ui.checkbox(&mut state.show_frame_numbers, "Frames");
+        ui.checkbox(&mut state.snap_enabled, "Snap");
+        ui.checkbox(&mut state.lock_work_area, "Lock");
+    });
+
+    ui.add_space(4.0);
+
+    // Render layer list with DnD (no horizontal scroll)
+    let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
+    let dnd_response = ui
+        .vertical(|ui| {
+            dnd(ui, "timeline_child_names_outline").show_vec(
+                &mut child_order,
+                |ui, child_idx, handle, _state| {
+                    let idx = *child_idx;
+                    let child_uuid = &comp.children[idx];
+                    let attrs = comp.children_attrs.get(child_uuid);
+
+                    let (row_rect, response) = ui.allocate_exact_size(
+                        Vec2::new(config.name_column_width, config.layer_height),
+                        Sense::click(),
+                    );
+                    let mut row_ui = ui.child_ui(
+                        row_rect,
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        None,
+                    );
+                    row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                    row_ui.set_min_height(config.layer_height);
+
+                    handle.ui(&mut row_ui, |ui| {
+                        ui.label("≡");
+                    });
+
+                    let mut visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
+                    let mut opacity = attrs.and_then(|a| a.get_float("opacity")).unwrap_or(1.0);
+                    let prev_blend = attrs
+                        .and_then(|a| a.get_str("blend_mode"))
+                        .unwrap_or("normal")
+                        .to_string();
+                    let mut blend = prev_blend.clone();
+                    let mut speed = attrs.and_then(|a| a.get_float("speed")).unwrap_or(1.0);
+                    let mut dirty = false;
+
+                    if row_ui.checkbox(&mut visible, "").changed() {
+                        dirty = true;
+                    }
+
+                    let child_name = comp
+                        .children_attrs
+                        .get(child_uuid)
+                        .and_then(|attrs| attrs.get_str("name"))
+                        .unwrap_or(child_uuid.as_str());
+                    row_ui.label(child_name);
+
+                    if row_ui
+                        .add(
+                            egui::Slider::new(&mut opacity, 0.0..=1.0)
+                                .show_value(false)
+                                .smallest_positive(0.01)
+                                .text(""),
+                        )
+                        .changed()
+                    {
+                        dirty = true;
+                    }
+
+                    egui::ComboBox::from_id_salt(format!("blend_outline_{}", child_uuid))
+                        .width(80.0)
+                        .selected_text(blend.clone())
+                        .show_ui(&mut row_ui, |ui| {
+                            for mode in
+                                ["normal", "screen", "add", "subtract", "multiply", "divide"]
+                            {
+                                ui.selectable_value(&mut blend, mode.to_string(), mode);
+                            }
+                        });
+                    if blend != prev_blend {
+                        dirty = true;
+                    }
+
+                    if row_ui
+                        .add(
+                            egui::DragValue::new(&mut speed)
+                                .speed(0.1)
+                                .range(0.01..=8.0),
+                        )
+                        .changed()
+                    {
+                        dirty = true;
+                    }
+
+                    if dirty {
+                        if let Some(attrs_mut) = comp.children_attrs.get_mut(child_uuid) {
+                            attrs_mut.set("visible", crate::entities::AttrValue::Bool(visible));
+                            attrs_mut.set("opacity", crate::entities::AttrValue::Float(opacity));
+                            attrs_mut.set("blend_mode", crate::entities::AttrValue::Str(blend));
+                            attrs_mut.set("speed", crate::entities::AttrValue::Float(speed));
+                            comp.clear_cache();
+                        }
+                    }
+
+                    if response.clicked() {
+                        dispatch(TimelineAction::SelectLayer(idx));
+                    }
+                },
+            )
+        })
+        .inner;
+
+    if let Some(update) = dnd_response.final_update() {
+        dispatch(TimelineAction::ReorderLayer {
+            from_idx: update.from,
+            to_idx: update.to,
+        });
+    }
+}
+
+/// Render After Effects-style timeline (right canvas)
+pub fn render_canvas(
+    ui: &mut Ui,
+    comp: &mut Comp,
+    config: &TimelineConfig,
+    state: &mut TimelineState,
+    mut dispatch: impl FnMut(TimelineAction),
+) {
     // Calculate dimensions (use full frame count for timeline width, not just play_range)
     let total_frames = comp.frame_count().max(100); // Minimum 100 frames for empty comps
 
@@ -42,20 +203,20 @@ pub fn render(
     ui.horizontal(|ui| {
         // Transport controls
         if ui.button("⏮").on_hover_text("To Start").clicked() {
-            action = TimelineAction::ToStart;
+            dispatch(TimelineAction::ToStart);
         }
 
         let play_icon = "▶"; // Will be updated based on playback state
         if ui.button(play_icon).on_hover_text("Play/Pause").clicked() {
-            action = TimelineAction::TogglePlay;
+            dispatch(TimelineAction::TogglePlay);
         }
 
         if ui.button("⏹").on_hover_text("Stop").clicked() {
-            action = TimelineAction::Stop;
+            dispatch(TimelineAction::Stop);
         }
 
         if ui.button("⏭").on_hover_text("To End").clicked() {
-            action = TimelineAction::ToEnd;
+            dispatch(TimelineAction::ToEnd);
         }
 
         ui.separator();
@@ -95,24 +256,15 @@ pub fn render(
 
     ui.add_space(4.0);
 
-    // Options + time ruler row (split: left options, right ruler)
+    // Options + time ruler row (split: left spacer, right ruler)
     let mut ruler_rect: Option<Rect> = None;
     let mut timeline_rect_global: Option<Rect> = None;
     let ruler_height = 20.0;
     ui.horizontal(|ui| {
-        let (opt_rect, _) = ui.allocate_exact_size(
+        ui.allocate_exact_size(
             Vec2::new(config.name_column_width, ruler_height),
             Sense::hover(),
         );
-        let mut opt_ui = ui.child_ui(
-            opt_rect,
-            egui::Layout::left_to_right(egui::Align::Center),
-            None,
-        );
-        opt_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-        opt_ui.checkbox(&mut state.show_frame_numbers, "Frames");
-        opt_ui.checkbox(&mut state.snap_enabled, "Snap");
-        opt_ui.checkbox(&mut state.lock_work_area, "Lock");
 
         egui::ScrollArea::horizontal()
             .id_salt("timeline_h_scroll")
@@ -125,7 +277,7 @@ pub fn render(
                         draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
                     ruler_rect = Some(rect);
                     if let Some(frame) = frame_opt {
-                        action = TimelineAction::SetFrame(frame);
+                        dispatch(TimelineAction::SetFrame(frame));
                     }
                 } else {
                     let (rect, _) = ui
@@ -153,27 +305,27 @@ pub fn render(
 
     // Handle keyboard shortcuts for jumping to layer edges
     if ui.ctx().input(|i| i.key_pressed(egui::Key::OpenBracket)) {
-        action = TimelineAction::JumpToPrevEdge;
+        dispatch(TimelineAction::JumpToPrevEdge);
     }
     if ui.ctx().input(|i| i.key_pressed(egui::Key::CloseBracket)) {
-        action = TimelineAction::JumpToNextEdge;
+        dispatch(TimelineAction::JumpToNextEdge);
     }
 
     // Handle keyboard shortcuts for work area
     if ui.ctx().input(|i| i.key_pressed(egui::Key::B)) {
         let ctrl_pressed = ui.ctx().input(|i| i.modifiers.ctrl);
         if ctrl_pressed {
-            action = TimelineAction::ResetCompPlayArea;
+            dispatch(TimelineAction::ResetCompPlayArea);
         } else {
-            action = TimelineAction::SetCompPlayStart {
+            dispatch(TimelineAction::SetCompPlayStart {
                 frame: comp.current_frame,
-            };
+            });
         }
     }
     if ui.ctx().input(|i| i.key_pressed(egui::Key::N)) {
-        action = TimelineAction::SetCompPlayEnd {
+        dispatch(TimelineAction::SetCompPlayEnd {
             frame: comp.current_frame,
-        };
+        });
     }
 
     // Two-column layout without vertical scroll (timeline panel height is fixed)
@@ -265,17 +417,17 @@ pub fn render(
                             }
 
                             if response.clicked() {
-                                action = TimelineAction::SelectLayer(idx);
+                                dispatch(TimelineAction::SelectLayer(idx));
                             }
                         })
                 }).inner;
 
                 // Check if layer order changed and emit ReorderLayer action
                 if let Some(update) = dnd_response.final_update() {
-                    action = TimelineAction::ReorderLayer {
+                    dispatch(TimelineAction::ReorderLayer {
                         from_idx: update.from,
                         to_idx: update.to,
-                    };
+                    });
                 }
 
                 // Right column: timeline bars (horizontal scroll synced with ruler)
@@ -511,11 +663,11 @@ pub fn render(
                                                 has_horizontal_move, has_vertical_move, layer_idx, new_start, target_child);
 
                                             if has_horizontal_move || has_vertical_move {
-                                                action = TimelineAction::MoveAndReorderLayer {
+                                                dispatch(TimelineAction::MoveAndReorderLayer {
                                                     layer_idx: *layer_idx,
                                                     new_start,
                                                     new_idx: target_child,
-                                                };
+                                                });
                                                 log::debug!("[TIMELINE] Emitting MoveAndReorderLayer action");
                                             }
                                             state.drag_state = None;
@@ -558,10 +710,10 @@ pub fn render(
 
                                         // On release, commit the play start adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            action = TimelineAction::SetLayerPlayStart {
+                                            dispatch(TimelineAction::SetLayerPlayStart {
                                                 layer_idx: *layer_idx,
                                                 new_play_start,
-                                            };
+                                            });
                                             state.drag_state = None;
                                         }
                                     }
@@ -602,10 +754,10 @@ pub fn render(
 
                                         // On release, commit the play end adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            action = TimelineAction::SetLayerPlayEnd {
+                                            dispatch(TimelineAction::SetLayerPlayEnd {
                                                 layer_idx: *layer_idx,
                                                 new_play_end,
-                                            };
+                                            });
                                             state.drag_state = None;
                                         }
                                     }
@@ -673,10 +825,10 @@ pub fn render(
                                     );
 
                                     if ui.ctx().input(|i| i.pointer.any_released()) {
-                                        action = TimelineAction::AddLayer {
+                                        dispatch(TimelineAction::AddLayer {
                                             source_uuid: source_uuid.clone(),
                                             start_frame: drop_frame,
-                                        };
+                                        });
                                         ui.ctx().data_mut(|data| {
                                             data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));
                                         });
@@ -703,16 +855,16 @@ pub fn render(
                                       }
 
                                       if let Some(idx) = clicked_layer {
-                                          action = TimelineAction::SelectLayer(idx);
+                                          dispatch(TimelineAction::SelectLayer(idx));
                                       } else {
                                           // Click on empty space: clear selection and scrub timeline
                                           state.selected_layer = None;
                                           let frame = screen_x_to_frame(pos.x, timeline_rect.min.x, config, state).round() as i32;
-                                          action = TimelineAction::SetFrame(frame.min(total_frames.saturating_sub(1)));
+                                          dispatch(TimelineAction::SetFrame(frame.min(total_frames.saturating_sub(1))));
                                       }
                                   } else {
                                       // Click without position: clear selection
-                                      action = TimelineAction::ClearSelection;
+                                      dispatch(TimelineAction::ClearSelection);
                                   }
                               }
                         }
@@ -745,8 +897,6 @@ pub fn render(
             (0.0, Color32::TRANSPARENT),
         ));
     }
-
-    action
 }
 
 fn draw_status_strip(ui: &Ui, rect: Rect, statuses: &[FrameStatus]) {

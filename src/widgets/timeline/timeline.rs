@@ -1,4 +1,8 @@
-//! Timeline widget - state and configuration
+//! Timeline widget - state and configuration.
+//! Shared by outline/canvas renderers and the UI tab. Data flow: UI mutations
+//! update `TimelineState` (zoom/pan/selection) and emit `TimelineAction`s which
+//! are bridged to the EventBus; renderers read `TimelineConfig`/`TimelineState`
+//! to draw rows/bars and handle interactions.
 
 use eframe::egui::Pos2;
 use serde::{Deserialize, Serialize};
@@ -35,6 +39,7 @@ pub struct TimelineState {
     pub lock_work_area: bool,
     pub show_frame_numbers: bool,
     pub last_comp_uuid: Option<String>, // Track last active comp to recenter on change
+    pub view_mode: TimelineViewMode,
 }
 
 impl Default for TimelineState {
@@ -48,6 +53,7 @@ impl Default for TimelineState {
             lock_work_area: false,
             show_frame_numbers: true,
             last_comp_uuid: None,
+            view_mode: TimelineViewMode::Split,
         }
     }
 }
@@ -132,4 +138,11 @@ pub enum TimelineAction {
         frame: i32,
     }, // Set comp work area end (N key)
     ResetCompPlayArea,  // Reset comp work area to full (Ctrl+B)
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TimelineViewMode {
+    Split,
+    CanvasOnly,
+    OutlineOnly,
 }

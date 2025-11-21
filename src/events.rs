@@ -33,6 +33,10 @@ pub enum AppEvent {
     JumpToStart,
     /// Jump to end of playback range
     JumpToEnd,
+    /// Jump to previous layer edge (timeline)
+    JumpToPrevEdge,
+    /// Jump to next layer edge (timeline)
+    JumpToNextEdge,
     /// Previous clip
     PreviousClip,
     /// Next clip
@@ -77,6 +81,31 @@ pub enum AppEvent {
         layer_idx: usize,
         new_start: i32,
     },
+    /// Reorder layer vertically within a composition
+    ReorderLayer {
+        comp_uuid: String,
+        from_idx: usize,
+        to_idx: usize,
+    },
+    /// Move and reorder layer in one op (drag)
+    MoveAndReorderLayer {
+        comp_uuid: String,
+        layer_idx: usize,
+        new_start: i32,
+        new_idx: usize,
+    },
+    /// Adjust layer play start (trim in)
+    SetLayerPlayStart {
+        comp_uuid: String,
+        layer_idx: usize,
+        new_play_start: i32,
+    },
+    /// Adjust layer play end (trim out)
+    SetLayerPlayEnd {
+        comp_uuid: String,
+        layer_idx: usize,
+        new_play_end: i32,
+    },
     /// Remove selected layer
     RemoveSelectedLayer,
 
@@ -87,6 +116,8 @@ pub enum AppEvent {
     SelectLayer(usize),
     /// Deselect all items
     DeselectAll,
+    /// Deselect timeline layer (alias for DeselectAll for now)
+    DeselectLayer,
 
     // ===== UI State =====
     /// Toggle playlist panel visibility
@@ -117,6 +148,12 @@ pub enum AppEvent {
     SetPlayRangeEnd,
     /// Reset play range to full
     ResetPlayRange,
+    /// Set comp play area start to absolute frame
+    SetCompPlayStart { comp_uuid: String, frame: i32 },
+    /// Set comp play area end to absolute frame
+    SetCompPlayEnd { comp_uuid: String, frame: i32 },
+    /// Reset comp play area to full
+    ResetCompPlayArea { comp_uuid: String },
 
     // ===== FPS Control =====
     /// Increase base FPS

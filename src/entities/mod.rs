@@ -1,9 +1,8 @@
-//! Entities module - core types with separation of business logic and GUI
-//!
-//! Each entity (Clip, Comp, Project) can have multiple UI representations:
-//! - Project panel view (name, metadata)
-//! - Timeline view (bars, handles)
-//! - Attribute Editor view (all properties)
+//! Entities module - core types with separation of business logic and GUI.
+//! Data flow: UI/EventBus drives mutations on `Project`/`Comp`/`Attrs`; loaders
+//! and compositor produce `Frame` data that UI/encoding consume.
+//! Each entity may render itself in various contexts (project list, timeline,
+//! attribute editor) via the optional UI traits below.
 
 pub mod attrs;
 pub mod comp;

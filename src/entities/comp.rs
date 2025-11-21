@@ -3,6 +3,10 @@
 //! `Comp` is now a unified entity that can work in two modes:
 //! - Layer mode: composes children comps
 //! - File mode: loads image sequence from disk (ex-Clip functionality)
+//! Used by: timeline rendering (`widgets::timeline`), encoding (`dialogs::encode`),
+//! playback (`player.rs`), and project serialization. Data flow: UI emits events →
+//! `Comp` mutates attrs/children → cached frames/computed hashes drive compositor
+//! work and encoding output.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -882,107 +886,87 @@ impl crate::entities::TimelineUI for Comp {
 
 #[cfg(test)]
 mod tests {
-    use super::super::Clip;
-    use super::super::Project;
     use super::*;
+    use crate::entities::{AttrValue, Project};
 
-    /// Helper: create dummy frame
-    fn dummy_frame(_value: u8) -> Frame {
-        // Create 2x2 F32 frame with test pattern
-        Frame::new(2, 2, crate::frame::PixelDepth::F32)
+    fn file_comp(name: &str, start: i32, end: i32, fps: f32) -> Comp {
+        let mut comp = Comp::new_file_comp("placeholder", start, end, fps);
+        comp.attrs.set("name", AttrValue::Str(name.to_string()));
+        comp.attrs.set("width", AttrValue::UInt(32));
+        comp.attrs.set("height", AttrValue::UInt(32));
+        comp
     }
 
-    /// Test recursive composition: Comp A contains Comp B
     #[test]
     fn test_recursive_composition() {
         let mut project = Project::new();
 
-        // Create Clip with 10 frames
-        let frames: Vec<Frame> = (0..10).map(|i| dummy_frame(i * 10)).collect();
-        let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
-        let clip_uuid = clip.uuid.clone();
-        project.media.insert(
-            clip_uuid.clone(),
-            todo!("Convert Clip to Comp with File mode"),
+        // Leaf: file-mode comp that yields placeholder frames
+        let leaf = file_comp("Leaf", 0, 9, 24.0);
+        let leaf_uuid = leaf.uuid.clone();
+        project.comps_order.push(leaf_uuid.clone());
+        project.media.insert(leaf_uuid.clone(), leaf);
+
+        // Middle: layer comp that references leaf
+        let mut inner = Comp::new("Inner", 0, 9, 24.0);
+        inner.add_child(leaf_uuid.clone(), 0, &project).unwrap();
+        let inner_uuid = inner.uuid.clone();
+        project.comps_order.push(inner_uuid.clone());
+        project.media.insert(inner_uuid.clone(), inner);
+
+        // Root: layer comp that references inner
+        let mut root = Comp::new("Root", 0, 9, 24.0);
+        root.add_child(inner_uuid.clone(), 0, &project).unwrap();
+        let root_uuid = root.uuid.clone();
+        project.media.insert(root_uuid.clone(), root);
+
+        let root_ref = project.media.get(&root_uuid).unwrap();
+        let frame = root_ref.get_frame(5, &project);
+        assert!(
+            frame.is_some(),
+            "Recursive composition should resolve a frame"
         );
-        project.comps_order.push(clip_uuid.clone());
-
-        // Create Comp B with clip as child
-        let mut comp_b = Comp::new("Comp B", 0, 9, 24.0);
-        comp_b.add_child(clip_uuid.clone(), 0, &project).unwrap();
-        let comp_b_uuid = comp_b.uuid.clone();
-        project.media.insert(comp_b_uuid.clone(), comp_b);
-        project.comps_order.push(comp_b_uuid.clone());
-
-        // Create Comp A with Comp B as child
-        let mut comp_a = Comp::new("Comp A", 0, 9, 24.0);
-        comp_a.add_child(comp_b_uuid.clone(), 0, &project).unwrap();
-        let comp_a_uuid = comp_a.uuid.clone();
-        project.media.insert(comp_a_uuid.clone(), comp_a);
-        project.comps_order.push(comp_a_uuid.clone());
-
-        // Test: Get frame from Comp A (should recursively resolve through Comp B to Clip)
-        let comp_a = project.media.get(&comp_a_uuid).unwrap();
-        let frame = comp_a.get_frame(5, &project);
-        assert!(frame.is_some(), "Frame should be resolved recursively");
-
-        // Verify frame was composed (detailed data verification would require frame comparison helper)
-        let _frame = frame.unwrap();
-        // Success if we got a frame - recursive composition worked
     }
 
-    /// Test hash-based cache invalidation
     #[test]
-    fn test_cache_invalidation() {
+    fn test_cache_invalidation_on_attr_change() {
         let mut project = Project::new();
 
-        // Create Clip with 5 frames
-        let frames: Vec<Frame> = (0..5).map(|i| dummy_frame(i * 20)).collect();
-        let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
+        // Source clip placeholder
+        let clip = file_comp("Clip", 0, 4, 24.0);
         let clip_uuid = clip.uuid.clone();
-        project.media.insert(
-            clip_uuid.clone(),
-            todo!("Convert Clip to Comp with File mode"),
-        );
+        project.media.insert(clip_uuid.clone(), clip);
 
-        // Create Comp with clip as child
+        // Comp with single child
         let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
         comp.add_child(clip_uuid.clone(), 0, &project).unwrap();
         let comp_uuid = comp.uuid.clone();
         project.media.insert(comp_uuid.clone(), comp);
 
-        // Get frame 2 - should cache it
-        let comp = project.media.get(&comp_uuid).unwrap();
-        let _frame1 = comp.get_frame(2, &project).unwrap();
-        let cache_size_before = comp.cache.borrow().len();
-        assert_eq!(cache_size_before, 1, "Cache should have 1 entry");
+        // First render populates cache
+        {
+            let comp_ref = project.media.get(&comp_uuid).unwrap();
+            let _frame = comp_ref.get_frame(2, &project).unwrap();
+            assert_eq!(comp_ref.cache.borrow().len(), 1);
+        }
 
-        // Get same frame - should hit cache
-        let _frame2 = comp.get_frame(2, &project).unwrap();
-        // Frames should be clones (cache hit)
-        assert_eq!(
-            comp.cache.borrow().len(),
-            1,
-            "Cache size should stay the same"
-        );
-
-        // Modify layer (change opacity) - should invalidate cache
+        // Change child opacity to alter comp hash without clearing cache
         {
             let comp_mut = project.media.get_mut(&comp_uuid).unwrap();
-            // TODO: Update test to work with children API instead of layers
-            // comp_mut.children[0].attrs...
-            comp_mut.clear_cache();
-        } // Release mutable borrow
+            let child_uuid = comp_mut.children.first().cloned().unwrap();
+            if let Some(attrs) = comp_mut.children_attrs.get_mut(&child_uuid) {
+                attrs.set("opacity", AttrValue::Float(0.5));
+            }
+        }
 
-        // Get frame again - cache should add new entry with different hash
-        let comp = project.media.get(&comp_uuid).unwrap();
-        let _frame3 = comp.get_frame(2, &project).unwrap();
+        // Second render should insert a new cache entry (hash changed)
+        let comp_ref = project.media.get(&comp_uuid).unwrap();
+        let _frame = comp_ref.get_frame(2, &project).unwrap();
         assert_eq!(
-            comp.cache.borrow().len(),
+            comp_ref.cache.borrow().len(),
             2,
-            "Cache should have both old and new entries (different hashes)"
+            "Cache should contain entries for old and new hashes"
         );
-        // Success - cache uses hash-based keys, old entry with old hash remains, new entry with new hash added
     }
 
     /// Test hash computation consistency
@@ -1019,9 +1003,9 @@ mod tests {
         assert_eq!(hash1, hash2, "Identical layers should produce same hash");
 
         // Different opacity should produce different hash
-        comp2.layers[0]
-            .attrs
-            .set("opacity", crate::attrs::AttrValue::Float(0.7));
+        if let Some(attrs) = comp2.children_attrs.get_mut(&"uuid1".to_string()) {
+            attrs.set("opacity", AttrValue::Float(0.7));
+        }
         let hash3 = comp2.compute_comp_hash();
         assert_ne!(
             hash1, hash3,
@@ -1029,73 +1013,44 @@ mod tests {
         );
     }
 
-    /// Test multi-layer blending with compositor
     #[test]
-    fn test_multi_layer_blending() {
+    fn test_multi_layer_blending_placeholder_sources() {
         let mut project = Project::new();
 
-        // Create 3 clips with different frames
+        // Three placeholder sources
+        let mut sources: Vec<String> = Vec::new();
         for i in 0..3 {
-            let frames: Vec<Frame> = (0..5).map(|_| dummy_frame(i * 30)).collect();
-            let clip = Clip::from_frames(frames, format!("clip_{}", i), 2, 2);
-            let clip_uuid = clip.uuid.clone();
-            project.media.insert(
-                clip_uuid.clone(),
-                todo!("Convert Clip to Comp with File mode"),
-            );
-            project.comps_order.push(clip_uuid.clone());
+            let comp = file_comp(&format!("Src{}", i), 0, 4, 24.0);
+            let uuid = comp.uuid.clone();
+            project.media.insert(uuid.clone(), comp);
+            sources.push(uuid);
         }
 
-        // Create Comp with all 3 clips as layers
-        let mut comp = Comp::new("Multi-layer Comp", 0, 4, 24.0);
-
-        // Child 0: clip 0, full opacity
-        let uuid0 = project.comps_order[0].clone();
-        comp.children.push(uuid0.clone());
-        let mut attrs0 = Attrs::new();
-        attrs0.set("start", AttrValue::UInt(0));
-        attrs0.set("end", AttrValue::UInt(4));
-        attrs0.set("play_start", AttrValue::Int(0));
-        attrs0.set("play_end", AttrValue::Int(0));
-        attrs0.set("opacity", AttrValue::Float(1.0));
-        comp.children_attrs.insert(uuid0, attrs0);
-
-        // Child 1: clip 1, 50% opacity
-        let uuid1 = project.comps_order[1].clone();
-        comp.children.push(uuid1.clone());
-        let mut attrs1 = Attrs::new();
-        attrs1.set("start", AttrValue::UInt(0));
-        attrs1.set("end", AttrValue::UInt(4));
-        attrs1.set("play_start", AttrValue::Int(0));
-        attrs1.set("play_end", AttrValue::Int(0));
-        attrs1.set("opacity", AttrValue::Float(0.5));
-        comp.children_attrs.insert(uuid1, attrs1);
-
-        // Child 2: clip 2, 30% opacity
-        let uuid2 = project.comps_order[2].clone();
-        comp.children.push(uuid2.clone());
-        let mut attrs2 = Attrs::new();
-        attrs2.set("start", AttrValue::UInt(0));
-        attrs2.set("end", AttrValue::UInt(4));
-        attrs2.set("play_start", AttrValue::Int(0));
-        attrs2.set("play_end", AttrValue::Int(0));
-        attrs2.set("opacity", AttrValue::Float(0.3));
-        comp.children_attrs.insert(uuid2, attrs2);
+        // Parent comp blending three children with different opacities
+        let mut comp = Comp::new("Blend", 0, 4, 24.0);
+        for (idx, uuid) in sources.iter().enumerate() {
+            comp.add_child(uuid.clone(), 0, &project).unwrap();
+            // Set opacity based on order
+            let child_uuid = comp.children.last().unwrap().clone();
+            let opacity = match idx {
+                0 => 1.0,
+                1 => 0.5,
+                _ => 0.3,
+            };
+            if let Some(attrs) = comp.children_attrs.get_mut(&child_uuid) {
+                attrs.set("opacity", AttrValue::Float(opacity));
+            }
+        }
 
         let comp_uuid = comp.uuid.clone();
         project.media.insert(comp_uuid.clone(), comp);
 
-        // Get frame - should blend all 3 layers
-        let comp = project.media.get(&comp_uuid).unwrap();
-        let frame = comp.get_frame(2, &project);
-
-        assert!(frame.is_some(), "Multi-layer composition should succeed");
-
-        // Verify cache contains the blended result
-        assert_eq!(
-            comp.cache.borrow().len(),
-            1,
-            "Cache should contain blended frame"
+        let comp_ref = project.media.get(&comp_uuid).unwrap();
+        let frame = comp_ref.get_frame(2, &project);
+        assert!(
+            frame.is_some(),
+            "Multi-layer composition with placeholder sources should succeed"
         );
+        assert_eq!(comp_ref.cache.borrow().len(), 1);
     }
 }

@@ -6,6 +6,8 @@
 //! - EXR FLOAT: 32-bit float (f32, native precision)
 //!
 //! **Used by**: Viewport (pixel data for GPU upload)
+//! Data flow: loaders populate `Frame` buffers, comps cache and blend them,
+//! encoder pulls them sequentially for video output.
 //!
 //! # Pixel Formats
 //!
@@ -1250,7 +1252,7 @@ mod tests {
     /// Validates: Initial state is correct
     #[test]
     fn test_frame_creation() {
-        let frame = Frame::new_u8(1920, 1080);
+        let frame = Frame::new(1920, 1080, PixelDepth::U8);
 
         assert_eq!(frame.width(), 1920);
         assert_eq!(frame.height(), 1080);
@@ -1312,7 +1314,7 @@ mod tests {
     /// Validates: Status lifecycle is correct
     #[test]
     fn test_status_transitions() {
-        let frame = Frame::new_u8(100, 100);
+        let frame = Frame::new(100, 100, PixelDepth::U8);
         assert_eq!(frame.status(), FrameStatus::Placeholder);
 
         // Set filename → Header

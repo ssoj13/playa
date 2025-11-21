@@ -1,7 +1,14 @@
+//! Top-level egui wiring for the Playa UI.
+//! - Drives timeline/viewport panels using shared Player/TimelineState/Shader state.
+//! - Bridges widget events into the central EventBus (set frame, layer ops, playback).
+//! Data flow: UI interactions → EventBus → Player/Project/Comps → next UI frame/render.
 use eframe::egui;
 
+use crate::events::EventBus;
 use crate::player::Player;
-use crate::widgets::timeline::{TimelineAction, TimelineConfig, TimelineState};
+use crate::widgets::timeline::{
+    TimelineAction, TimelineConfig, TimelineState, render_canvas, render_outline,
+};
 use crate::widgets::viewport::shaders::Shaders;
 
 /// Help text displayed in overlay
@@ -52,6 +59,7 @@ pub fn render_timeline_panel(
     player: &mut Player,
     shader_manager: &mut Shaders,
     timeline_state: &mut TimelineState,
+    event_bus: &EventBus,
 ) -> bool {
     let old_shader = shader_manager.current_shader.clone();
 
@@ -72,7 +80,7 @@ pub fn render_timeline_panel(
         ui.add_space(4.0);
         ui.separator();
 
-        // Timeline section (with integrated transport controls)
+        // Timeline section (split: outline + canvas)
         if let Some(comp_uuid) = &player.active_comp.clone() {
             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                 let mut config = TimelineConfig::default();
@@ -99,192 +107,31 @@ pub fn render_timeline_panel(
                     comp.set_comp_play_end(0);
                 }
 
-                match crate::widgets::timeline::render(ui, comp, &config, timeline_state) {
-                    TimelineAction::SetFrame(new_frame) => {
-                        player.set_frame(new_frame);
-                    }
-                    TimelineAction::SelectLayer(idx) => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                comp.set_selected_layer(Some(idx));
-                            }
-                        }
-                    }
-                    TimelineAction::ClearSelection => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                comp.set_selected_layer(None);
-                            }
-                        }
-                    }
-                    TimelineAction::ToStart => {
-                        player.to_start();
-                    }
-                    TimelineAction::ToEnd => {
-                        player.to_end();
-                    }
-                    TimelineAction::TogglePlay => {
-                        player.toggle_play_pause();
-                    }
-                    TimelineAction::Stop => {
-                        player.stop();
-                    }
-                    TimelineAction::JumpToPrevEdge => {
-                        // Get child edges sorted by distance from current frame
-                        let edges = comp.get_child_edges_near(comp.current_frame);
+                let active_comp_uuid = player.active_comp.clone();
 
-                        // Find first edge that is before current frame
-                        if let Some(&(frame, _)) =
-                            edges.iter().find(|(f, _)| *f < comp.current_frame)
-                        {
-                            player.set_frame(frame);
-                        }
-                    }
-                    TimelineAction::JumpToNextEdge => {
-                        // Get child edges sorted by distance from current frame
-                        let edges = comp.get_child_edges_near(comp.current_frame);
+                let splitter_height = ui.available_height();
+                let mut timeline_actions: Vec<TimelineAction> = Vec::new();
 
-                        // Find first edge that is after current frame
-                        if let Some(&(frame, _)) =
-                            edges.iter().find(|(f, _)| *f > comp.current_frame)
-                        {
-                            player.set_frame(frame);
-                        }
-                    }
-                    TimelineAction::AddLayer {
-                        source_uuid,
-                        start_frame,
-                    } => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            // Get duration before mutable borrow to avoid borrow checker issues
-                            let duration = player
-                                .project
-                                .media
-                                .get(&source_uuid)
-                                .map(|s| s.frame_count())
-                                .unwrap_or(1);
+                egui::SidePanel::left("timeline_outline")
+                    .resizable(true)
+                    .min_width(100.0)
+                    .max_width(400.0)
+                    .show_inside(ui, |ui| {
+                        ui.set_height(splitter_height);
+                        render_outline(ui, comp, &config, timeline_state, |act| {
+                            timeline_actions.push(act);
+                        });
+                    });
 
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if let Err(e) =
-                                    comp.add_child_with_duration(source_uuid, start_frame, duration)
-                                {
-                                    eprintln!("Failed to add child: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    TimelineAction::ReorderLayer { from_idx, to_idx } => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if from_idx != to_idx
-                                    && from_idx < comp.children.len()
-                                    && to_idx < comp.children.len()
-                                {
-                                    let child_uuid = comp.children.remove(from_idx);
-                                    comp.children.insert(to_idx, child_uuid);
-                                    comp.clear_cache();
-                                }
-                            }
-                        }
-                    }
-                    TimelineAction::MoveAndReorderLayer {
-                        layer_idx,
-                        new_start,
-                        new_idx,
-                    } => {
-                        eprintln!(
-                            "[DEBUG] MoveAndReorderLayer: layer_idx={}, new_start={}, new_idx={}",
-                            layer_idx, new_start, new_idx
-                        );
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                eprintln!(
-                                    "[DEBUG] Active comp has {} children",
-                                    comp.children.len()
-                                );
+                egui::CentralPanel::default().show_inside(ui, |ui| {
+                    ui.set_height(splitter_height);
+                    render_canvas(ui, comp, &config, timeline_state, |act| {
+                        timeline_actions.push(act);
+                    });
+                });
 
-                                // Step 1: Reorder if needed
-                                if layer_idx != new_idx
-                                    && layer_idx < comp.children.len()
-                                    && new_idx < comp.children.len()
-                                {
-                                    eprintln!(
-                                        "[DEBUG] Reordering from {} to {}",
-                                        layer_idx, new_idx
-                                    );
-                                    let child_uuid = comp.children.remove(layer_idx);
-                                    comp.children.insert(new_idx, child_uuid);
-                                }
-
-                                // Step 2: Move horizontally (use new_idx if reordered)
-                                let final_idx = if layer_idx != new_idx {
-                                    new_idx
-                                } else {
-                                    layer_idx
-                                };
-                                eprintln!(
-                                    "[DEBUG] Moving child at index {} to start={}",
-                                    final_idx, new_start
-                                );
-
-                                if let Err(e) = comp.move_child(final_idx, new_start) {
-                                    eprintln!("Failed to move child: {}", e);
-                                } else {
-                                    eprintln!("[DEBUG] Move successful!");
-                                }
-                            }
-                        }
-                    }
-                    TimelineAction::SetLayerPlayStart {
-                        layer_idx,
-                        new_play_start,
-                    } => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if let Err(e) = comp.set_child_play_start(layer_idx, new_play_start)
-                                {
-                                    eprintln!("Failed to set child play start: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    TimelineAction::SetLayerPlayEnd {
-                        layer_idx,
-                        new_play_end,
-                    } => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if let Err(e) = comp.set_child_play_end(layer_idx, new_play_end) {
-                                    eprintln!("Failed to set child play end: {}", e);
-                                }
-                            }
-                        }
-                    }
-                    TimelineAction::SetCompPlayStart { frame } => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                let play_start = (frame as i32 - comp.start() as i32).max(0);
-                                comp.set_comp_play_start(play_start);
-                            }
-                        }
-                    }
-                    TimelineAction::SetCompPlayEnd { frame } => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                let play_end = (comp.end() as i32 - frame as i32).max(0);
-                                comp.set_comp_play_end(play_end);
-                            }
-                        }
-                    }
-                    TimelineAction::ResetCompPlayArea => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                comp.set_comp_play_start(0);
-                                comp.set_comp_play_end(0);
-                            }
-                        }
-                    }
-                    TimelineAction::None => {}
+                for act in timeline_actions {
+                    dispatch_timeline_action(act, &active_comp_uuid, event_bus, comp);
                 }
             }
         } else {
@@ -295,4 +142,131 @@ pub fn render_timeline_panel(
     });
 
     old_shader != shader_manager.current_shader
+}
+
+/// Dispatch TimelineAction to EventBus.
+fn dispatch_timeline_action(
+    action: TimelineAction,
+    active_comp_uuid: &Option<String>,
+    event_bus: &EventBus,
+    comp: &crate::entities::Comp,
+) {
+    match action {
+        TimelineAction::SetFrame(new_frame) => {
+            event_bus.send(crate::events::AppEvent::SetFrame(new_frame));
+        }
+        TimelineAction::SelectLayer(idx) => {
+            event_bus.send(crate::events::AppEvent::SelectLayer(idx));
+        }
+        TimelineAction::ClearSelection => {
+            event_bus.send(crate::events::AppEvent::DeselectLayer);
+        }
+        TimelineAction::ToStart => {
+            event_bus.send(crate::events::AppEvent::JumpToStart);
+        }
+        TimelineAction::ToEnd => {
+            event_bus.send(crate::events::AppEvent::JumpToEnd);
+        }
+        TimelineAction::TogglePlay => {
+            event_bus.send(crate::events::AppEvent::TogglePlayPause);
+        }
+        TimelineAction::Stop => {
+            event_bus.send(crate::events::AppEvent::Stop);
+        }
+        TimelineAction::JumpToPrevEdge => {
+            if let Some(frame) = comp
+                .get_child_edges_near(comp.current_frame)
+                .iter()
+                .find(|(f, _)| *f < comp.current_frame)
+                .map(|(f, _)| *f)
+            {
+                event_bus.send(crate::events::AppEvent::SetFrame(frame));
+            }
+        }
+        TimelineAction::JumpToNextEdge => {
+            if let Some(frame) = comp
+                .get_child_edges_near(comp.current_frame)
+                .iter()
+                .find(|(f, _)| *f > comp.current_frame)
+                .map(|(f, _)| *f)
+            {
+                event_bus.send(crate::events::AppEvent::SetFrame(frame));
+            }
+        }
+        TimelineAction::AddLayer {
+            source_uuid,
+            start_frame,
+        } => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::AddLayer {
+                    comp_uuid,
+                    source_uuid,
+                    start_frame,
+                });
+            }
+        }
+        TimelineAction::ReorderLayer { from_idx, to_idx } => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::ReorderLayer {
+                    comp_uuid,
+                    from_idx,
+                    to_idx,
+                });
+            }
+        }
+        TimelineAction::MoveAndReorderLayer {
+            layer_idx,
+            new_start,
+            new_idx,
+        } => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::MoveAndReorderLayer {
+                    comp_uuid,
+                    layer_idx,
+                    new_start,
+                    new_idx,
+                });
+            }
+        }
+        TimelineAction::SetLayerPlayStart {
+            layer_idx,
+            new_play_start,
+        } => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::SetLayerPlayStart {
+                    comp_uuid,
+                    layer_idx,
+                    new_play_start,
+                });
+            }
+        }
+        TimelineAction::SetLayerPlayEnd {
+            layer_idx,
+            new_play_end,
+        } => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::SetLayerPlayEnd {
+                    comp_uuid,
+                    layer_idx,
+                    new_play_end,
+                });
+            }
+        }
+        TimelineAction::SetCompPlayStart { frame } => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::SetCompPlayStart { comp_uuid, frame });
+            }
+        }
+        TimelineAction::SetCompPlayEnd { frame } => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::SetCompPlayEnd { comp_uuid, frame });
+            }
+        }
+        TimelineAction::ResetCompPlayArea => {
+            if let Some(comp_uuid) = active_comp_uuid.clone() {
+                event_bus.send(crate::events::AppEvent::ResetCompPlayArea { comp_uuid });
+            }
+        }
+        TimelineAction::None => {}
+    }
 }
