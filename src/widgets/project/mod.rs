@@ -6,4 +6,3 @@ mod project;
 mod project_ui;
 
 pub use project_ui::render;
-

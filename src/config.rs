@@ -92,9 +92,10 @@ fn get_config_dir(config: &PathConfig) -> PathBuf {
 
     // Priority 2: Local folder IF config files exist there
     if let Ok(current_dir) = std::env::current_dir()
-        && has_local_config_files(&current_dir) {
-            return current_dir;
-        }
+        && has_local_config_files(&current_dir)
+    {
+        return current_dir;
+    }
 
     // Priority 3: Platform-specific config directory
     if let Some(dir) = dirs_next::config_dir() {
@@ -114,9 +115,10 @@ fn get_data_dir(config: &PathConfig) -> PathBuf {
 
     // Priority 2: Local folder IF config files exist there
     if let Ok(current_dir) = std::env::current_dir()
-        && has_local_config_files(&current_dir) {
-            return current_dir;
-        }
+        && has_local_config_files(&current_dir)
+    {
+        return current_dir;
+    }
 
     // Priority 3: Platform-specific data directory
     if let Some(dir) = dirs_next::data_dir() {

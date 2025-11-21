@@ -159,21 +159,22 @@ impl Shaders {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("glsl")
-                && let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
-                    match fs::read_to_string(&path) {
-                        Ok(fragment_shader) => {
-                            // Use the embedded vertex shader for all fragment shaders
-                            self.shaders.insert(
-                                filename.to_string(),
-                                (VERTEX_SHADER.to_string(), fragment_shader),
-                            );
-                            log::info!("Loaded shader: {}", filename);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to read shader file {:?}: {}", path, e);
-                        }
+                && let Some(filename) = path.file_stem().and_then(|s| s.to_str())
+            {
+                match fs::read_to_string(&path) {
+                    Ok(fragment_shader) => {
+                        // Use the embedded vertex shader for all fragment shaders
+                        self.shaders.insert(
+                            filename.to_string(),
+                            (VERTEX_SHADER.to_string(), fragment_shader),
+                        );
+                        log::info!("Loaded shader: {}", filename);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to read shader file {:?}: {}", path, e);
                     }
                 }
+            }
         }
 
         // Set default shader if available

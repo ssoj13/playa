@@ -1,9 +1,8 @@
 use eframe::egui;
 
-use crate::entities::frame::Frame;
 use crate::player::Player;
+use crate::widgets::timeline::{TimelineAction, TimelineConfig, TimelineState};
 use crate::widgets::viewport::shaders::Shaders;
-use crate::widgets::timeline::{TimelineConfig, TimelineAction, TimelineState};
 
 /// Help text displayed in overlay
 pub fn help_text() -> &'static str {
@@ -47,7 +46,6 @@ pub fn help_text() -> &'static str {
     Left Click - Scrub"
 }
 
-
 /// Render timeline panel inside a dock tab. Returns true if shader changed.
 pub fn render_timeline_panel(
     ui: &mut egui::Ui,
@@ -63,7 +61,11 @@ pub fn render_timeline_panel(
             ui.checkbox(&mut player.loop_enabled, "Loop");
             ui.add_space(16.0);
             ui.label("FPS:");
-            let fps = if player.is_playing { player.fps_play } else { player.fps_base };
+            let fps = if player.is_playing {
+                player.fps_play
+            } else {
+                player.fps_base
+            };
             ui.label(format!("{:.2}", fps));
         });
 
@@ -72,32 +74,45 @@ pub fn render_timeline_panel(
 
         // Timeline section (with integrated transport controls)
         if let Some(comp_uuid) = &player.active_comp.clone() {
-                if let Some(comp) = player.project.media.get_mut(comp_uuid) {
+            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                 let mut config = TimelineConfig::default();
-                    config.show_frame_numbers = timeline_state.show_frame_numbers;
+                config.show_frame_numbers = timeline_state.show_frame_numbers;
 
-                    match crate::widgets::timeline::render(ui, comp, &config, timeline_state) {
+                // Recenter pan when switching comps so start is visible (supports negative starts)
+                if timeline_state
+                    .last_comp_uuid
+                    .as_ref()
+                    .map(|u| u != comp_uuid)
+                    .unwrap_or(true)
+                {
+                    timeline_state.pan_offset = comp.start() as f32;
+                    timeline_state.last_comp_uuid = Some(comp_uuid.clone());
+                }
+
+                // Recalculate bounds on activation; realign play_range only if it matched full range
+                let old_start = comp.start();
+                let old_end = comp.end();
+                let old_play = comp.play_range();
+                comp.rebound();
+                if old_play == (old_start, old_end) {
+                    comp.set_comp_play_start(0);
+                    comp.set_comp_play_end(0);
+                }
+
+                match crate::widgets::timeline::render(ui, comp, &config, timeline_state) {
                     TimelineAction::SetFrame(new_frame) => {
                         player.set_frame(new_frame);
                     }
                     TimelineAction::SelectLayer(idx) => {
                         if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player
-                                .project
-                                .media
-                                .get_mut(comp_uuid)
-                            {
+                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                 comp.set_selected_layer(Some(idx));
                             }
                         }
                     }
                     TimelineAction::ClearSelection => {
                         if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player
-                                .project
-                                .media
-                                .get_mut(comp_uuid)
-                            {
+                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                 comp.set_selected_layer(None);
                             }
                         }
@@ -119,7 +134,9 @@ pub fn render_timeline_panel(
                         let edges = comp.get_child_edges_near(comp.current_frame);
 
                         // Find first edge that is before current frame
-                        if let Some(&(frame, _)) = edges.iter().find(|(f, _)| *f < comp.current_frame) {
+                        if let Some(&(frame, _)) =
+                            edges.iter().find(|(f, _)| *f < comp.current_frame)
+                        {
                             player.set_frame(frame);
                         }
                     }
@@ -128,19 +145,29 @@ pub fn render_timeline_panel(
                         let edges = comp.get_child_edges_near(comp.current_frame);
 
                         // Find first edge that is after current frame
-                        if let Some(&(frame, _)) = edges.iter().find(|(f, _)| *f > comp.current_frame) {
+                        if let Some(&(frame, _)) =
+                            edges.iter().find(|(f, _)| *f > comp.current_frame)
+                        {
                             player.set_frame(frame);
                         }
                     }
-                    TimelineAction::AddLayer { source_uuid, start_frame } => {
+                    TimelineAction::AddLayer {
+                        source_uuid,
+                        start_frame,
+                    } => {
                         if let Some(comp_uuid) = &player.active_comp.clone() {
                             // Get duration before mutable borrow to avoid borrow checker issues
-                            let duration = player.project.media.get(&source_uuid)
+                            let duration = player
+                                .project
+                                .media
+                                .get(&source_uuid)
                                 .map(|s| s.frame_count())
                                 .unwrap_or(1);
 
                             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if let Err(e) = comp.add_child_with_duration(source_uuid, start_frame, duration) {
+                                if let Err(e) =
+                                    comp.add_child_with_duration(source_uuid, start_frame, duration)
+                                {
                                     eprintln!("Failed to add child: {}", e);
                                 }
                             }
@@ -149,7 +176,10 @@ pub fn render_timeline_panel(
                     TimelineAction::ReorderLayer { from_idx, to_idx } => {
                         if let Some(comp_uuid) = &player.active_comp.clone() {
                             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if from_idx != to_idx && from_idx < comp.children.len() && to_idx < comp.children.len() {
+                                if from_idx != to_idx
+                                    && from_idx < comp.children.len()
+                                    && to_idx < comp.children.len()
+                                {
                                     let child_uuid = comp.children.remove(from_idx);
                                     comp.children.insert(to_idx, child_uuid);
                                     comp.clear_cache();
@@ -157,22 +187,45 @@ pub fn render_timeline_panel(
                             }
                         }
                     }
-                    TimelineAction::MoveAndReorderLayer { layer_idx, new_start, new_idx } => {
-                        eprintln!("[DEBUG] MoveAndReorderLayer: layer_idx={}, new_start={}, new_idx={}", layer_idx, new_start, new_idx);
+                    TimelineAction::MoveAndReorderLayer {
+                        layer_idx,
+                        new_start,
+                        new_idx,
+                    } => {
+                        eprintln!(
+                            "[DEBUG] MoveAndReorderLayer: layer_idx={}, new_start={}, new_idx={}",
+                            layer_idx, new_start, new_idx
+                        );
                         if let Some(comp_uuid) = &player.active_comp.clone() {
                             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                eprintln!("[DEBUG] Active comp has {} children", comp.children.len());
+                                eprintln!(
+                                    "[DEBUG] Active comp has {} children",
+                                    comp.children.len()
+                                );
 
                                 // Step 1: Reorder if needed
-                                if layer_idx != new_idx && layer_idx < comp.children.len() && new_idx < comp.children.len() {
-                                    eprintln!("[DEBUG] Reordering from {} to {}", layer_idx, new_idx);
+                                if layer_idx != new_idx
+                                    && layer_idx < comp.children.len()
+                                    && new_idx < comp.children.len()
+                                {
+                                    eprintln!(
+                                        "[DEBUG] Reordering from {} to {}",
+                                        layer_idx, new_idx
+                                    );
                                     let child_uuid = comp.children.remove(layer_idx);
                                     comp.children.insert(new_idx, child_uuid);
                                 }
 
                                 // Step 2: Move horizontally (use new_idx if reordered)
-                                let final_idx = if layer_idx != new_idx { new_idx } else { layer_idx };
-                                eprintln!("[DEBUG] Moving child at index {} to start={}", final_idx, new_start);
+                                let final_idx = if layer_idx != new_idx {
+                                    new_idx
+                                } else {
+                                    layer_idx
+                                };
+                                eprintln!(
+                                    "[DEBUG] Moving child at index {} to start={}",
+                                    final_idx, new_start
+                                );
 
                                 if let Err(e) = comp.move_child(final_idx, new_start) {
                                     eprintln!("Failed to move child: {}", e);
@@ -182,16 +235,23 @@ pub fn render_timeline_panel(
                             }
                         }
                     }
-                    TimelineAction::SetLayerPlayStart { layer_idx, new_play_start } => {
+                    TimelineAction::SetLayerPlayStart {
+                        layer_idx,
+                        new_play_start,
+                    } => {
                         if let Some(comp_uuid) = &player.active_comp.clone() {
                             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if let Err(e) = comp.set_child_play_start(layer_idx, new_play_start) {
+                                if let Err(e) = comp.set_child_play_start(layer_idx, new_play_start)
+                                {
                                     eprintln!("Failed to set child play start: {}", e);
                                 }
                             }
                         }
                     }
-                    TimelineAction::SetLayerPlayEnd { layer_idx, new_play_end } => {
+                    TimelineAction::SetLayerPlayEnd {
+                        layer_idx,
+                        new_play_end,
+                    } => {
                         if let Some(comp_uuid) = &player.active_comp.clone() {
                             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
                                 if let Err(e) = comp.set_child_play_end(layer_idx, new_play_end) {
@@ -232,9 +292,7 @@ pub fn render_timeline_panel(
                 ui.label("No active composition");
             });
         }
-
     });
 
     old_shader != shader_manager.current_shader
 }
-

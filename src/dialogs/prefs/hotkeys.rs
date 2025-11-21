@@ -2,8 +2,8 @@
 //!
 //! TODO: To be implemented in Phase 3
 
-use std::collections::HashMap;
 use crate::events::{AppEvent, HotkeyWindow};
+use std::collections::HashMap;
 
 /// Hotkey handler for managing keyboard shortcuts
 pub struct HotkeyHandler {

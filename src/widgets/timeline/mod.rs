@@ -3,13 +3,8 @@
 //! Vertical stack of layers with horizontal bars
 
 mod timeline;
-mod timeline_ui;
 mod timeline_helpers;
+mod timeline_ui;
 
-pub use timeline::{
-    TimelineConfig,
-    TimelineState,
-    GlobalDragState,
-    TimelineAction,
-};
+pub use timeline::{GlobalDragState, TimelineAction, TimelineConfig, TimelineState};
 pub use timeline_ui::render;

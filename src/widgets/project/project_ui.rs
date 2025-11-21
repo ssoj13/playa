@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui_taffy::{tui, TuiBuilderLogic};
+use egui_taffy::{TuiBuilderLogic, tui};
 use taffy::style::Style;
 
 use crate::player::Player;

@@ -1,7 +1,7 @@
 //! Attribute Editor widget - UI rendering
 
+use crate::entities::{AttrValue, Attrs};
 use eframe::egui::{self, Ui};
-use crate::entities::{Attrs, AttrValue};
 
 /// Render generic attributes editor
 ///
@@ -35,7 +35,14 @@ pub fn render(ui: &mut Ui, attrs: &mut Attrs) {
                     }
                     AttrValue::UInt(v) => {
                         let mut temp = *v as i32;
-                        if ui.add(egui::DragValue::new(&mut temp).speed(1.0).range(0..=i32::MAX)).changed() {
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut temp)
+                                    .speed(1.0)
+                                    .range(0..=i32::MAX),
+                            )
+                            .changed()
+                        {
                             *v = temp.max(0) as u32;
                         }
                     }

@@ -5,10 +5,10 @@ use log::info;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use super::shaders::Shaders;
+use super::{ViewportRenderer, ViewportState};
 use crate::entities::frame::{Frame, FrameStatus};
 use crate::player::Player;
-use super::shaders::Shaders;
-use super::{ViewportState, ViewportRenderer};
 
 /// Viewport actions result
 #[derive(Default)]
@@ -48,15 +48,16 @@ pub fn render(
             .rect_filled(panel_rect, 0.0, egui::Color32::BLACK);
     }
 
-        let response = ui.interact(
-            panel_rect,
-            ui.id().with("viewport_interaction"),
-            egui::Sense::click_and_drag(),
-        );
+    let response = ui.interact(
+        panel_rect,
+        ui.id().with("viewport_interaction"),
+        egui::Sense::click_and_drag(),
+    );
 
     let double_clicked = response.double_clicked()
         || (ctx.input(|i| {
-            i.pointer.button_double_clicked(egui::PointerButton::Primary)
+            i.pointer
+                .button_double_clicked(egui::PointerButton::Primary)
         }) && response.hovered());
 
     if double_clicked {
@@ -113,16 +114,14 @@ pub fn render(
 
         ui.painter().add(egui::PaintCallback {
             rect: panel_rect,
-            callback: Arc::new(egui_glow::CallbackFn::new(
-                move |_info, painter| {
-                    let gl = painter.gl();
-                    let mut renderer = renderer.lock().unwrap();
-                    if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
-                        renderer.upload_texture(gl, w, h, &*pixels, *pixel_format);
-                    }
-                    renderer.render(gl, &state);
-                },
-            )),
+            callback: Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
+                let gl = painter.gl();
+                let mut renderer = renderer.lock().unwrap();
+                if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
+                    renderer.upload_texture(gl, w, h, &*pixels, *pixel_format);
+                }
+                renderer.render(gl, &state);
+            })),
         });
 
         render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
@@ -163,7 +162,10 @@ pub fn render(
 
     // Shader selector overlay (top-right corner)
     egui::Area::new(ui.id().with("shader_overlay"))
-        .fixed_pos(egui::pos2(panel_rect.max.x - 200.0, panel_rect.min.y + 10.0))
+        .fixed_pos(egui::pos2(
+            panel_rect.max.x - 200.0,
+            panel_rect.min.y + 10.0,
+        ))
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Shader:");

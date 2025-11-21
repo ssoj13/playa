@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
-use crate::entities::frame::{CropAlign, FrameConversion, TonemapMode, PixelFormat};
 use crate::entities::Comp;
+use crate::entities::frame::{CropAlign, FrameConversion, PixelFormat, TonemapMode};
 use playa_ffmpeg as ffmpeg;
 
 /// Encode dialog settings (persistent via AppSettings)
@@ -123,7 +123,7 @@ pub struct H265Settings {
     pub quality_value: u32, // CRF 0-51 or bitrate kbps
     pub preset: String,     // ultrafast/fast/medium/slow/veryslow (libx265) or p1-p7 (nvenc)
     #[serde(default)]
-    pub profile: String,    // "main" (8-bit) or "main10" (10-bit)
+    pub profile: String, // "main" (8-bit) or "main10" (10-bit)
 }
 
 impl Default for H265Settings {
@@ -560,13 +560,19 @@ pub fn encode_sequence_from_comp(
     cancel_flag: Arc<AtomicBool>,
 ) -> Result<(), EncodeError> {
     let start_time = std::time::Instant::now();
-    info!("========== encode_sequence() ENTERED at {:?} ==========", start_time);
+    info!(
+        "========== encode_sequence() ENTERED at {:?} ==========",
+        start_time
+    );
 
     // Get play range from Comp
     let play_range = comp.play_range();
     let total_frames = play_range.1.saturating_sub(play_range.0) + 1;
 
-    info!("Play range: {:?}, total frames: {}", play_range, total_frames);
+    info!(
+        "Play range: {:?}, total frames: {}",
+        play_range, total_frames
+    );
     info!(
         "Starting encode: {} frames ({}..{}) to {:?}",
         total_frames, play_range.0, play_range.1, settings.output_path
@@ -580,15 +586,16 @@ pub fn encode_sequence_from_comp(
     });
 
     // Get first frame to determine target dimensions
-    let first_frame = comp
-        .get_frame(play_range.0, project)
-        .ok_or_else(|| {
-            EncodeError::EncodeFrameFailed(format!("First frame {} not available", play_range.0))
-        })?;
+    let first_frame = comp.get_frame(play_range.0, project).ok_or_else(|| {
+        EncodeError::EncodeFrameFailed(format!("First frame {} not available", play_range.0))
+    })?;
 
     let (width, height) = first_frame.resolution();
     let (width, height) = (width as u32, height as u32);
-    info!("Using first frame dimensions as target: {}x{}", width, height);
+    info!(
+        "Using first frame dimensions as target: {}x{}",
+        width, height
+    );
 
     // Check for cancellation
     if cancel_flag.load(Ordering::Relaxed) {
@@ -620,7 +627,11 @@ pub fn encode_sequence_from_comp(
     let encoder_name = get_encoder_name(settings.codec, settings.encoder_impl)?;
     info!("Looking for encoder: {}", encoder_name);
 
-    info!("[{:?}] Looking for encoder '{}'...", start_time.elapsed(), encoder_name);
+    info!(
+        "[{:?}] Looking for encoder '{}'...",
+        start_time.elapsed(),
+        encoder_name
+    );
     let codec = ffmpeg::encoder::find_by_name(encoder_name).ok_or_else(|| {
         info!("Encoder '{}' not found", encoder_name);
         EncodeError::EncoderNotFound
@@ -628,7 +639,9 @@ pub fn encode_sequence_from_comp(
 
     info!(
         "[{:?}] Using encoder: {} for codec {:?}",
-        start_time.elapsed(), encoder_name, settings.codec
+        start_time.elapsed(),
+        encoder_name,
+        settings.codec
     );
 
     // Create encoder context
@@ -666,7 +679,12 @@ pub fn encode_sequence_from_comp(
     let pixel_format = if encoder_name == "prores_ks" {
         // ProRes always uses YUV422P10 (10-bit 4:2:2)
         ffmpeg::format::Pixel::YUV422P10LE
-    } else if encoder_name == "libx265" || encoder_name == "hevc_nvenc" || encoder_name == "hevc_qsv" || encoder_name == "hevc_amf" || encoder_name == "hevc_videotoolbox" {
+    } else if encoder_name == "libx265"
+        || encoder_name == "hevc_nvenc"
+        || encoder_name == "hevc_qsv"
+        || encoder_name == "hevc_amf"
+        || encoder_name == "hevc_videotoolbox"
+    {
         // HEVC: check profile for 10-bit (main10)
         let hevc_10bit = settings
             .profile
@@ -705,9 +723,10 @@ pub fn encode_sequence_from_comp(
                 opts.set("rc", "constqp"); // Rate control mode
                 opts.set("cq", &settings.quality_value.to_string()); // Quality (0-51, lower is better)
                 if let Some(ref preset) = settings.preset
-                    && !preset.is_empty() {
-                        opts.set("preset", preset); // NVENC preset (p1-p7)
-                    }
+                    && !preset.is_empty()
+                {
+                    opts.set("preset", preset); // NVENC preset (p1-p7)
+                }
                 // Force regular keyframes for seekability
                 opts.set("forced-idr", "1"); // Force IDR frames at GOP boundaries
                 opts.set("no-scenecut", "1"); // Disable scene change detection (consistent GOP)
@@ -715,9 +734,10 @@ pub fn encode_sequence_from_comp(
                 // libx264 with customizable preset and profile
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset
-                    && !preset.is_empty() {
-                        opts.set("preset", preset);
-                    }
+                    && !preset.is_empty()
+                {
+                    opts.set("preset", preset);
+                }
                 if let Some(ref profile) = settings.profile {
                     opts.set("profile", profile);
                 }
@@ -728,18 +748,20 @@ pub fn encode_sequence_from_comp(
                 // libx265 with customizable preset
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset
-                    && !preset.is_empty() {
-                        opts.set("preset", preset);
-                    }
+                    && !preset.is_empty()
+                {
+                    opts.set("preset", preset);
+                }
                 // Force keyframes for seekability
                 opts.set("keyint", &gop_size.to_string()); // Maximum GOP size
                 opts.set("scenecut", "0"); // Disable scene change detection
 
                 // Set profile (main or main10)
                 if let Some(ref profile) = settings.profile
-                    && !profile.is_empty() {
-                        opts.set("profile", profile); // "main" (8-bit) or "main10" (10-bit)
-                    }
+                    && !profile.is_empty()
+                {
+                    opts.set("profile", profile); // "main" (8-bit) or "main10" (10-bit)
+                }
             } else if encoder_name == "h264_qsv" || encoder_name == "hevc_qsv" {
                 // QSV uses global_quality
                 opts.set("global_quality", &settings.quality_value.to_string());
@@ -763,9 +785,10 @@ pub fn encode_sequence_from_comp(
                 opts.set("rc", "constqp");
                 opts.set("qp", &settings.quality_value.to_string()); // QP 0-255
                 if let Some(ref preset) = settings.preset
-                    && !preset.is_empty() {
-                        opts.set("preset", preset); // 0-18 or named presets
-                    }
+                    && !preset.is_empty()
+                {
+                    opts.set("preset", preset); // 0-18 or named presets
+                }
             } else if encoder_name == "av1_qsv" {
                 // QSV AV1 uses global_quality
                 opts.set("global_quality", &settings.quality_value.to_string());
@@ -777,16 +800,18 @@ pub fn encode_sequence_from_comp(
                 // SVT-AV1: CRF 0-63, preset 0-13 (0=slowest/best, 13=fastest)
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset
-                    && !preset.is_empty() {
-                        opts.set("preset", preset); // 0-13
-                    }
+                    && !preset.is_empty()
+                {
+                    opts.set("preset", preset); // 0-13
+                }
             } else if encoder_name == "libaom-av1" {
                 // libaom-av1: CRF 0-63, cpu-used 0-8 (0=slowest, 8=fastest)
                 opts.set("crf", &settings.quality_value.to_string());
                 if let Some(ref preset) = settings.preset
-                    && !preset.is_empty() {
-                        opts.set("cpu-used", preset); // Map preset to cpu-used
-                    }
+                    && !preset.is_empty()
+                {
+                    opts.set("cpu-used", preset); // Map preset to cpu-used
+                }
             } else if encoder_name == "prores_ks" {
                 // ProRes profile from settings or default to Standard
                 let profile = settings
@@ -895,9 +920,15 @@ pub fn encode_sequence_from_comp(
         } else {
             ffmpeg::format::Pixel::RGB24 // 8-bit: RGB24 → YUV420P
         };
-        info!("Creating SwsContext for {:?} → {:?} conversion", src_format, pixel_format);
-        Some(SwsContext::new(src_format, pixel_format, width, height)
-            .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create swscale context: {}", e)))?)
+        info!(
+            "Creating SwsContext for {:?} → {:?} conversion",
+            src_format, pixel_format
+        );
+        Some(
+            SwsContext::new(src_format, pixel_format, width, height).map_err(|e| {
+                EncodeError::OutputCreateFailed(format!("Failed to create swscale context: {}", e))
+            })?,
+        )
     } else {
         info!("Using RGB24 directly (no YUV conversion)");
         None
@@ -906,21 +937,25 @@ pub fn encode_sequence_from_comp(
     let mut pts = 0i64;
     info!("Entering frame encoding loop...");
 
-      #[allow(clippy::explicit_counter_loop)]
-      for frame_idx in play_range.0..=play_range.1 {
+    #[allow(clippy::explicit_counter_loop)]
+    for frame_idx in play_range.0..=play_range.1 {
         // Check for cancellation
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(EncodeError::Cancelled);
         }
 
         if frame_idx % 10 == 0 {
-            info!("Processing frame {}/{}", frame_idx - play_range.0, total_frames);
+            info!(
+                "Processing frame {}/{}",
+                frame_idx - play_range.0,
+                total_frames
+            );
         }
 
-          // Get composed frame from Comp
-          let frame = comp.get_frame(frame_idx, project).ok_or_else(|| {
-              EncodeError::EncodeFrameFailed(format!("Frame {} not available in comp", frame_idx))
-          })?;
+        // Get composed frame from Comp
+        let frame = comp.get_frame(frame_idx, project).ok_or_else(|| {
+            EncodeError::EncodeFrameFailed(format!("Frame {} not available in comp", frame_idx))
+        })?;
 
         // STEP 1: Crop to target dimensions if needed (handles mixed resolutions)
         let (frame_width, frame_height) = frame.resolution();
@@ -950,7 +985,10 @@ pub fn encode_sequence_from_comp(
                 settings.tonemap_mode
             );
             frame_cropped.tonemap(settings.tonemap_mode).map_err(|e| {
-                EncodeError::EncodeFrameFailed(format!("Frame {} tonemapping failed: {}", frame_idx, e))
+                EncodeError::EncodeFrameFailed(format!(
+                    "Frame {} tonemapping failed: {}",
+                    frame_idx, e
+                ))
             })?
         } else {
             // No tonemapping needed (either 10-bit encoding or source is already LDR)
@@ -964,13 +1002,21 @@ pub fn encode_sequence_from_comp(
                 info!("Frame {}: Converting RGBA → RGB48 (10-bit path)", frame_idx);
             }
             let rgb48_data = frame_for_encode.to_rgb48().map_err(|e| {
-                EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB48 conversion failed: {}", frame_idx, e))
+                EncodeError::EncodeFrameFailed(format!(
+                    "Frame {} RGBA→RGB48 conversion failed: {}",
+                    frame_idx, e
+                ))
             })?;
 
             if frame_idx % 10 == 0 {
-                info!("Frame {}: RGB48 conversion OK, calling swscale RGB48→YUV10", frame_idx);
+                info!(
+                    "Frame {}: RGB48 conversion OK, calling swscale RGB48→YUV10",
+                    frame_idx
+                );
             }
-            sws_ctx.as_mut().unwrap()
+            sws_ctx
+                .as_mut()
+                .unwrap()
                 .convert_rgb48(&rgb48_data, width, height)
                 .map_err(|e| {
                     EncodeError::EncodeFrameFailed(format!("RGB48→YUV10 conversion failed: {}", e))
@@ -978,10 +1024,15 @@ pub fn encode_sequence_from_comp(
         } else if needs_yuv {
             // 8-bit YUV path: RGBA8 → RGB24 → YUV420P
             let rgb24_data = frame_for_encode.to_rgb24().map_err(|e| {
-                EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB24 conversion failed: {}", frame_idx, e))
+                EncodeError::EncodeFrameFailed(format!(
+                    "Frame {} RGBA→RGB24 conversion failed: {}",
+                    frame_idx, e
+                ))
             })?;
 
-            sws_ctx.as_mut().unwrap()
+            sws_ctx
+                .as_mut()
+                .unwrap()
                 .convert(&rgb24_data, width, height)
                 .map_err(|e| {
                     EncodeError::EncodeFrameFailed(format!("RGB24→YUV conversion failed: {}", e))
@@ -989,7 +1040,10 @@ pub fn encode_sequence_from_comp(
         } else {
             // 8-bit RGB24 direct path (libx264/libx265)
             let rgb24_data = frame_for_encode.to_rgb24().map_err(|e| {
-                EncodeError::EncodeFrameFailed(format!("Frame {} RGBA→RGB24 conversion failed: {}", frame_idx, e))
+                EncodeError::EncodeFrameFailed(format!(
+                    "Frame {} RGBA→RGB24 conversion failed: {}",
+                    frame_idx, e
+                ))
             })?;
 
             let mut ffmpeg_frame =
@@ -1050,9 +1104,10 @@ pub fn encode_sequence_from_comp(
             let dts_val = encoded.dts();
 
             if dts_val.is_none()
-                && let Some(pts) = pts_val {
-                    encoded.set_dts(Some(pts));
-                }
+                && let Some(pts) = pts_val
+            {
+                encoded.set_dts(Some(pts));
+            }
 
             // Debug: log first few packets
             if frame_idx - play_range.0 < 3 {
@@ -1119,16 +1174,20 @@ pub fn encode_sequence_from_comp(
 
         // Ensure DTS is set
         if encoded.dts().is_none()
-            && let Some(pts) = encoded.pts() {
-                encoded.set_dts(Some(pts));
-            }
+            && let Some(pts) = encoded.pts()
+        {
+            encoded.set_dts(Some(pts));
+        }
 
         encoded.write_interleaved(&mut octx).map_err(|e| {
             EncodeError::EncodeFrameFailed(format!("Failed to write packet: {}", e))
         })?;
     }
 
-    info!("Flushed {} remaining packets", total_frames - (play_range.1 - play_range.0 + 1));
+    info!(
+        "Flushed {} remaining packets",
+        total_frames - (play_range.1 - play_range.0 + 1)
+    );
 
     // Write container trailer (CRITICAL: without this, no moov atom = no timeline)
     info!("Writing trailer...");
@@ -1167,8 +1226,8 @@ pub fn encode_comp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::frame::Frame;
     use crate::entities::Clip;
+    use crate::entities::frame::Frame;
 
     /// Test encoding with placeholder frames
     #[test]
@@ -1405,11 +1464,7 @@ impl SwsContext {
         }
 
         // Create source RGB24 frame
-        let mut src_frame = ffmpeg::util::frame::video::Video::new(
-            self.src_format,
-            width,
-            height,
-        );
+        let mut src_frame = ffmpeg::util::frame::video::Video::new(self.src_format, width, height);
 
         // Copy RGB24 data to source frame
         let src_stride = src_frame.stride(0);
@@ -1426,11 +1481,7 @@ impl SwsContext {
         }
 
         // Create destination frame with configured format
-        let mut dst_frame = ffmpeg::util::frame::video::Video::new(
-            self.dst_format,
-            width,
-            height,
-        );
+        let mut dst_frame = ffmpeg::util::frame::video::Video::new(self.dst_format, width, height);
 
         // Convert using swscale context
         self.ctx
@@ -1476,11 +1527,8 @@ impl SwsContext {
         }
 
         // Create source RGB48LE frame (48-bit RGB, little-endian)
-        let mut src_frame = ffmpeg::util::frame::video::Video::new(
-            ffmpeg::format::Pixel::RGB48LE,
-            width,
-            height,
-        );
+        let mut src_frame =
+            ffmpeg::util::frame::video::Video::new(ffmpeg::format::Pixel::RGB48LE, width, height);
 
         // Copy RGB48 data to source frame (u16 → bytes, little-endian)
         let src_stride = src_frame.stride(0);
@@ -1506,11 +1554,7 @@ impl SwsContext {
         }
 
         // Create destination frame with configured format (YUV420P10LE / YUV422P10LE)
-        let mut dst_frame = ffmpeg::util::frame::video::Video::new(
-            self.dst_format,
-            width,
-            height,
-        );
+        let mut dst_frame = ffmpeg::util::frame::video::Video::new(self.dst_format, width, height);
 
         // Convert RGB48LE → YUV10 using swscale context
         self.ctx
@@ -1541,4 +1585,3 @@ impl SwsContext {
         Ok(())
     }
 }
-

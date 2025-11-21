@@ -5,12 +5,12 @@
 //! - Default: `image` crate (uses exrs for EXR)
 //! - Feature "openexr": openexr-rs (C++ bindings, full DWAA/DWAB support)
 
-use std::path::Path;
-use log::debug;
 use half::f16 as F16;
+use log::debug;
+use std::path::Path;
 
-use crate::entities::{Attrs, AttrValue};
 use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
+use crate::entities::{AttrValue, Attrs};
 
 /// Image loader with metadata support
 pub struct Loader;
@@ -24,7 +24,8 @@ impl Loader {
     /// - "format" (Str) - pixel format description
     /// - Additional format-specific metadata
     pub fn header(path: &Path) -> Result<Attrs, FrameError> {
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_lowercase();
@@ -37,7 +38,8 @@ impl Loader {
 
     /// Load complete image file into Frame
     pub fn load(path: &Path) -> Result<Frame, FrameError> {
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_lowercase();
@@ -84,20 +86,21 @@ impl Loader {
         let reader = image::ImageReader::open(path)
             .map_err(|e| FrameError::Image(format!("Failed to open EXR: {}", e)))?;
 
-        let format = reader.format()
+        let format = reader
+            .format()
             .ok_or_else(|| FrameError::Image("Failed to detect image format".to_string()))?;
 
-        let img = reader.decode()
-            .map_err(|e| {
-                let err_str = e.to_string();
-                if err_str.contains("DWAA") || err_str.contains("DWAB") {
-                    FrameError::UnsupportedFormat(
-                        "DWAA/DWAB compression not supported. Build with: cargo xtask build --openexr".to_string()
-                    )
-                } else {
-                    FrameError::Image(format!("EXR decode error: {}", e))
-                }
-            })?;
+        let img = reader.decode().map_err(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("DWAA") || err_str.contains("DWAB") {
+                FrameError::UnsupportedFormat(
+                    "DWAA/DWAB compression not supported. Build with: cargo xtask build --openexr"
+                        .to_string(),
+                )
+            } else {
+                FrameError::Image(format!("EXR decode error: {}", e))
+            }
+        })?;
 
         let mut meta = Attrs::new();
         meta.set("width", AttrValue::UInt(img.width()));
@@ -178,7 +181,8 @@ impl Loader {
             let err_str = e.to_string();
             if err_str.contains("DWAA") || err_str.contains("DWAB") {
                 return FrameError::UnsupportedFormat(
-                    "DWAA/DWAB compression not supported. Build with: cargo xtask build --openexr".to_string()
+                    "DWAA/DWAB compression not supported. Build with: cargo xtask build --openexr"
+                        .to_string(),
                 );
             }
             FrameError::Image(format!("EXR load error: {}", e))
@@ -213,10 +217,12 @@ impl Loader {
         let reader = image::ImageReader::open(path)
             .map_err(|e| FrameError::Image(format!("Failed to open image: {}", e)))?;
 
-        let format = reader.format()
+        let format = reader
+            .format()
             .ok_or_else(|| FrameError::Image("Failed to detect image format".to_string()))?;
 
-        let img = reader.decode()
+        let img = reader
+            .decode()
             .map_err(|e| FrameError::Image(format!("Image decode error: {}", e)))?;
 
         let mut meta = Attrs::new();
@@ -239,8 +245,8 @@ impl Loader {
     fn load_generic(path: &Path) -> Result<Frame, FrameError> {
         debug!("Loading generic image: {}", path.display());
 
-        let img = image::open(path)
-            .map_err(|e| FrameError::Image(format!("Image load error: {}", e)))?;
+        let img =
+            image::open(path).map_err(|e| FrameError::Image(format!("Image load error: {}", e)))?;
 
         let width = img.width() as usize;
         let height = img.height() as usize;

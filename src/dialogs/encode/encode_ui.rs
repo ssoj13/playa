@@ -59,11 +59,15 @@ impl EncodeDialog {
     /// Increment the last number in filename
     /// Examples: aaa001.mp4 -> aaa002.mp4, test999.mp4 -> test1000.mp4
     fn increment_filename(&mut self) {
-        let file_stem = self.output_path.file_stem()
+        let file_stem = self
+            .output_path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("output");
 
-        let extension = self.output_path.extension()
+        let extension = self
+            .output_path
+            .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("mp4");
 
@@ -126,23 +130,34 @@ impl EncodeDialog {
     pub fn load_from_settings(settings: &crate::dialogs::encode::EncodeDialogSettings) -> Self {
         log::debug!("========== LOADING ENCODE DIALOG SETTINGS ==========");
         log::debug!("  Output: {}", settings.output_path.display());
-        log::debug!("  Container: {:?}, FPS: {}, Codec: {:?}", settings.container, settings.fps, settings.selected_codec);
-        log::debug!("  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+        log::debug!(
+            "  Container: {:?}, FPS: {}, Codec: {:?}",
+            settings.container,
+            settings.fps,
+            settings.selected_codec
+        );
+        log::debug!(
+            "  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             settings.codec_settings.h264.encoder_impl,
             settings.codec_settings.h264.quality_mode,
             settings.codec_settings.h264.quality_value,
             settings.codec_settings.h264.preset,
             settings.codec_settings.h264.profile
         );
-        log::debug!("  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+        log::debug!(
+            "  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             settings.codec_settings.h265.encoder_impl,
             settings.codec_settings.h265.quality_mode,
             settings.codec_settings.h265.quality_value,
             settings.codec_settings.h265.preset,
             settings.codec_settings.h265.profile
         );
-        log::debug!("  ProRes: profile={:?}", settings.codec_settings.prores.profile);
-        log::debug!("  AV1: impl={:?}, mode={:?}, value={}, preset={}",
+        log::debug!(
+            "  ProRes: profile={:?}",
+            settings.codec_settings.prores.profile
+        );
+        log::debug!(
+            "  AV1: impl={:?}, mode={:?}, value={}, preset={}",
             settings.codec_settings.av1.encoder_impl,
             settings.codec_settings.av1.quality_mode,
             settings.codec_settings.av1.quality_value,
@@ -171,15 +186,22 @@ impl EncodeDialog {
     pub fn save_to_settings(&self) -> crate::dialogs::encode::EncodeDialogSettings {
         log::debug!("========== SAVING ENCODE DIALOG SETTINGS ==========");
         log::debug!("  Output: {}", self.output_path.display());
-        log::debug!("  Container: {:?}, FPS: {}, Codec: {:?}", self.container, self.fps, self.selected_codec);
-        log::debug!("  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+        log::debug!(
+            "  Container: {:?}, FPS: {}, Codec: {:?}",
+            self.container,
+            self.fps,
+            self.selected_codec
+        );
+        log::debug!(
+            "  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             self.codec_settings.h264.encoder_impl,
             self.codec_settings.h264.quality_mode,
             self.codec_settings.h264.quality_value,
             self.codec_settings.h264.preset,
             self.codec_settings.h264.profile
         );
-        log::debug!("  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
+        log::debug!(
+            "  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             self.codec_settings.h265.encoder_impl,
             self.codec_settings.h265.quality_mode,
             self.codec_settings.h265.quality_value,
@@ -187,7 +209,8 @@ impl EncodeDialog {
             self.codec_settings.h265.profile
         );
         log::debug!("  ProRes: profile={:?}", self.codec_settings.prores.profile);
-        log::debug!("  AV1: impl={:?}, mode={:?}, value={}, preset={}",
+        log::debug!(
+            "  AV1: impl={:?}, mode={:?}, value={}, preset={}",
             self.codec_settings.av1.encoder_impl,
             self.codec_settings.av1.quality_mode,
             self.codec_settings.av1.quality_value,
@@ -284,19 +307,20 @@ impl EncodeDialog {
 
         // Check if encoding completed (only process once while encoding)
         if self.is_encoding
-            && let Some(ref progress) = self.progress {
-                match &progress.stage {
-                    EncodeStage::Complete => {
-                        info!("Encoding completed successfully");
-                        self.reset_encoding_state();
-                    }
-                    EncodeStage::Error(msg) => {
-                        info!("Encoding failed: {}", msg);
-                        self.reset_encoding_state();
-                    }
-                    _ => {}
+            && let Some(ref progress) = self.progress
+        {
+            match &progress.stage {
+                EncodeStage::Complete => {
+                    info!("Encoding completed successfully");
+                    self.reset_encoding_state();
                 }
+                EncodeStage::Error(msg) => {
+                    info!("Encoding failed: {}", msg);
+                    self.reset_encoding_state();
+                }
+                _ => {}
             }
+        }
 
         egui::Window::new("Video Encoder")
             .resizable(false)
@@ -315,8 +339,11 @@ impl EncodeDialog {
                         }
 
                         // Increment filename button
-                        if ui.button("+")
-                            .on_hover_text("Increment number in filename (e.g., file001.mp4 → file002.mp4)")
+                        if ui
+                            .button("+")
+                            .on_hover_text(
+                                "Increment number in filename (e.g., file001.mp4 → file002.mp4)",
+                            )
                             .clicked()
                         {
                             self.increment_filename();
@@ -365,7 +392,8 @@ impl EncodeDialog {
                                     // Auto-update container and file extension based on codec
                                     let preferred_container = codec.preferred_container();
                                     self.container = preferred_container;
-                                    self.output_path.set_extension(preferred_container.extension());
+                                    self.output_path
+                                        .set_extension(preferred_container.extension());
                                 }
                             });
 
@@ -391,7 +419,7 @@ impl EncodeDialog {
                 ui.add_space(12.0);
 
                 // === Frame Range Info ===
-                  ui.label("Frame Range: (use active Comp)");
+                ui.label("Frame Range: (use active Comp)");
 
                 ui.add_space(12.0);
 
@@ -413,8 +441,10 @@ impl EncodeDialog {
                         ui.label(stage_text);
 
                         // Progress bar
-                        self.progress_bar
-                            .set_progress(progress.current_frame.max(0) as usize, progress.total_frames.max(0) as usize);
+                        self.progress_bar.set_progress(
+                            progress.current_frame.max(0) as usize,
+                            progress.total_frames.max(0) as usize,
+                        );
                         self.progress_bar.render(ui);
 
                         // Encoder name
@@ -434,8 +464,8 @@ impl EncodeDialog {
 
                 ui.separator();
 
-                  // === Readiness check ===
-                  let ready_to_encode = true;
+                // === Readiness check ===
+                let ready_to_encode = true;
 
                 if !ready_to_encode {
                     ui.colored_label(
@@ -465,10 +495,11 @@ impl EncodeDialog {
                         ui.add_enabled_ui(ready_to_encode, |ui| {
                             let mut button = ui.button("Encode");
                             if !ready_to_encode {
-                                button = button.on_disabled_hover_text("Wait for all frames to load");
+                                button =
+                                    button.on_disabled_hover_text("Wait for all frames to load");
                             }
-                              if button.clicked() {
-                                  self.start_encoding();
+                            if button.clicked() {
+                                self.start_encoding();
                             }
                         });
                     }
@@ -483,7 +514,10 @@ impl EncodeDialog {
     fn start_encoding(&mut self) {
         let settings = self.build_encoder_settings();
         info!("========== STARTING ENCODING ==========");
-        info!("Codec: {:?}, Container: {:?}", settings.codec, settings.container);
+        info!(
+            "Codec: {:?}, Container: {:?}",
+            settings.codec, settings.container
+        );
         info!("Settings: {:?}", settings);
 
         // Reset state for new encoding
@@ -494,25 +528,25 @@ impl EncodeDialog {
         let (tx, rx) = channel();
         self.progress_rx = Some(rx);
 
-          // Clone data for thread
+        // Clone data for thread
         let settings_clone = self.build_encoder_settings();
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
 
-          // Spawn encoder thread (Comp-based)
-            use crate::dialogs::encode::encode_comp;
+        // Spawn encoder thread (Comp-based)
+        use crate::dialogs::encode::encode_comp;
         use std::thread;
 
-            let handle = thread::spawn(move || {
-                info!("Encoder thread started");
+        let handle = thread::spawn(move || {
+            info!("Encoder thread started");
 
-                // TODO: Get real comp and project from UI state
-                // For now we build minimal empty comp and project
-                let comp = crate::entities::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
-                let project = crate::entities::project::Project::new();
+            // TODO: Get real comp and project from UI state
+            // For now we build minimal empty comp and project
+            let comp = crate::entities::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
+            let project = crate::entities::project::Project::new();
 
-                info!("Calling encode_comp()...");
-                encode_comp(&comp, &project, &settings_clone, tx, cancel_flag_clone)
-            });
+            info!("Calling encode_comp()...");
+            encode_comp(&comp, &project, &settings_clone, tx, cancel_flag_clone)
+        });
 
         self.encode_thread = Some(handle);
         self.is_encoding = true;
@@ -643,11 +677,25 @@ impl EncodeDialog {
             let presets = match self.codec_settings.h264.encoder_impl {
                 EncoderImpl::Hardware => {
                     // NVENC/QSV/AMF
-                    vec!["default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6", "p7"]
+                    vec![
+                        "default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6",
+                        "p7",
+                    ]
                 }
                 EncoderImpl::Software | EncoderImpl::Auto => {
                     // libx264
-                    vec!["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"]
+                    vec![
+                        "ultrafast",
+                        "superfast",
+                        "veryfast",
+                        "faster",
+                        "fast",
+                        "medium",
+                        "slow",
+                        "slower",
+                        "veryslow",
+                        "placebo",
+                    ]
                 }
             };
 
@@ -740,11 +788,25 @@ impl EncodeDialog {
             let presets = match self.codec_settings.h265.encoder_impl {
                 EncoderImpl::Hardware => {
                     // NVENC/QSV/AMF
-                    vec!["default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6", "p7"]
+                    vec![
+                        "default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6",
+                        "p7",
+                    ]
                 }
                 EncoderImpl::Software | EncoderImpl::Auto => {
                     // libx265
-                    vec!["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"]
+                    vec![
+                        "ultrafast",
+                        "superfast",
+                        "veryfast",
+                        "faster",
+                        "fast",
+                        "medium",
+                        "slow",
+                        "slower",
+                        "veryslow",
+                        "placebo",
+                    ]
                 }
             };
 
@@ -857,49 +919,56 @@ impl EncodeDialog {
             ui.label("Preset:");
 
             // Determine available presets based on encoder
-            let (presets, descriptions): (Vec<&str>, Vec<&str>) = match self.codec_settings.av1.encoder_impl {
-                EncoderImpl::Hardware => {
-                    // NVENC/QSV/AMF: p1-p7 + named presets
-                    (
-                        vec!["p1", "p2", "p3", "p4", "p5", "p6", "p7", "default", "slow", "medium", "fast"],
-                        vec![
-                            "P1 (fastest, lowest quality)",
-                            "P2 (faster, lower quality)",
-                            "P3 (fast, low quality)",
-                            "P4 (medium, default)",
-                            "P5 (slow, good quality)",
-                            "P6 (slower, better quality)",
-                            "P7 (slowest, best quality)",
-                            "Default",
-                            "Slow (HQ 2 passes)",
-                            "Medium (HQ 1 pass)",
-                            "Fast (HP 1 pass)",
-                        ],
-                    )
-                }
-                EncoderImpl::Software | EncoderImpl::Auto => {
-                    // SVT-AV1/libaom: numeric 0-13 presets
-                    (
-                        vec!["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"],
-                        vec![
-                            "0 (slowest, best)",
-                            "1",
-                            "2",
-                            "3",
-                            "4",
-                            "5",
-                            "6 (balanced)",
-                            "7",
-                            "8",
-                            "9",
-                            "10",
-                            "11",
-                            "12",
-                            "13 (fastest)",
-                        ],
-                    )
-                }
-            };
+            let (presets, descriptions): (Vec<&str>, Vec<&str>) =
+                match self.codec_settings.av1.encoder_impl {
+                    EncoderImpl::Hardware => {
+                        // NVENC/QSV/AMF: p1-p7 + named presets
+                        (
+                            vec![
+                                "p1", "p2", "p3", "p4", "p5", "p6", "p7", "default", "slow",
+                                "medium", "fast",
+                            ],
+                            vec![
+                                "P1 (fastest, lowest quality)",
+                                "P2 (faster, lower quality)",
+                                "P3 (fast, low quality)",
+                                "P4 (medium, default)",
+                                "P5 (slow, good quality)",
+                                "P6 (slower, better quality)",
+                                "P7 (slowest, best quality)",
+                                "Default",
+                                "Slow (HQ 2 passes)",
+                                "Medium (HQ 1 pass)",
+                                "Fast (HP 1 pass)",
+                            ],
+                        )
+                    }
+                    EncoderImpl::Software | EncoderImpl::Auto => {
+                        // SVT-AV1/libaom: numeric 0-13 presets
+                        (
+                            vec![
+                                "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
+                                "13",
+                            ],
+                            vec![
+                                "0 (slowest, best)",
+                                "1",
+                                "2",
+                                "3",
+                                "4",
+                                "5",
+                                "6 (balanced)",
+                                "7",
+                                "8",
+                                "9",
+                                "10",
+                                "11",
+                                "12",
+                                "13 (fastest)",
+                            ],
+                        )
+                    }
+                };
 
             egui::ComboBox::from_id_salt("av1_preset")
                 .selected_text(&self.codec_settings.av1.preset)
@@ -922,4 +991,3 @@ impl EncodeDialog {
         ui.label("");
     }
 }
-

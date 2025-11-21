@@ -2,13 +2,13 @@
 //!
 //! Detects image sequences from file paths and creates Comp objects in File mode
 
+use log::info;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use log::info;
 
-use crate::entities::{Comp, AttrValue};
 use crate::entities::frame::FrameError;
 use crate::entities::loader::Loader;
+use crate::entities::{AttrValue, Comp};
 
 /// Detect image sequences from a list of file paths
 ///
@@ -24,7 +24,11 @@ pub fn detect_sequences(paths: Vec<PathBuf>) -> Result<Vec<Comp>, FrameError> {
 
             match detect_sequence_from_pattern(&pattern, padding) {
                 Ok(comp) => {
-                    info!("Detected sequence: {} ({} frames)", pattern, comp.frame_count());
+                    info!(
+                        "Detected sequence: {} ({} frames)",
+                        pattern,
+                        comp.frame_count()
+                    );
                     comps.push(comp);
                 }
                 Err(e) => {
@@ -58,7 +62,10 @@ pub fn detect_sequences(paths: Vec<PathBuf>) -> Result<Vec<Comp>, FrameError> {
 fn detect_sequence_from_pattern(pattern: &str, padding: usize) -> Result<Comp, FrameError> {
     let paths = glob_paths(pattern)?;
     if paths.is_empty() {
-        return Err(FrameError::Image(format!("No files matched pattern: {}", pattern)));
+        return Err(FrameError::Image(format!(
+            "No files matched pattern: {}",
+            pattern
+        )));
     }
 
     // Group by (prefix, ext), storing (number, path, padding)
@@ -104,8 +111,13 @@ fn detect_sequence_from_pattern(pattern: &str, padding: usize) -> Result<Comp, F
         comp.attrs.set("name", AttrValue::Str(filename.to_string()));
     }
 
-    info!("Created sequence comp: {} ({} frames, {}x{})",
-          file_mask, frames_data.len(), width, height);
+    info!(
+        "Created sequence comp: {} ({} frames, {}x{})",
+        file_mask,
+        frames_data.len(),
+        width,
+        height
+    );
 
     Ok(comp)
 }
@@ -126,7 +138,10 @@ fn create_single_file_comp(path: &Path) -> Result<Comp, FrameError> {
         comp.attrs.set("name", AttrValue::Str(filename.to_string()));
     }
 
-    info!("Created single file comp: {} ({}x{})", file_mask, width, height);
+    info!(
+        "Created single file comp: {} ({}x{})",
+        file_mask, width, height
+    );
 
     Ok(comp)
 }

@@ -58,10 +58,7 @@ pub enum AppEvent {
     /// Update drag position
     DragMove { mouse_pos: (f32, f32) },
     /// Drop media at target location
-    DragDrop {
-        target_comp: String,
-        frame: usize,
-    },
+    DragDrop { target_comp: String, frame: usize },
     /// Cancel drag operation
     DragCancel,
 
@@ -73,10 +70,7 @@ pub enum AppEvent {
         start_frame: i32,
     },
     /// Remove layer from composition
-    RemoveLayer {
-        comp_uuid: String,
-        layer_idx: usize,
-    },
+    RemoveLayer { comp_uuid: String, layer_idx: usize },
     /// Move layer to new start position
     MoveLayer {
         comp_uuid: String,
@@ -133,15 +127,9 @@ pub enum AppEvent {
     // ===== Keyboard Shortcuts =====
     /// Generic hotkey pressed event with window context
     /// Format: "hotkey.<key>:pressed" with window prefix
-    HotkeyPressed {
-        key: String,
-        window: HotkeyWindow,
-    },
+    HotkeyPressed { key: String, window: HotkeyWindow },
     /// Generic hotkey released event
-    HotkeyReleased {
-        key: String,
-        window: HotkeyWindow,
-    },
+    HotkeyReleased { key: String, window: HotkeyWindow },
 }
 
 /// Window context for hotkeys
@@ -170,13 +158,9 @@ pub enum CompEvent {
         new_frame: i32,
     },
     /// Layers were modified (added, removed, reordered)
-    LayersChanged {
-        comp_uuid: String,
-    },
+    LayersChanged { comp_uuid: String },
     /// Timeline settings changed (play range, etc.)
-    TimelineChanged {
-        comp_uuid: String,
-    },
+    TimelineChanged { comp_uuid: String },
 }
 
 /// Event sender for Comp to emit CompEvents.

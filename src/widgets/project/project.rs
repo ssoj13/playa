@@ -8,8 +8,8 @@ pub struct ProjectActions {
     pub load_project: Option<PathBuf>,
     pub set_active_comp: Option<String>, // comp UUID to activate (from click)
     pub new_comp: bool,
-    pub remove_comp: Option<String>,     // comp/clip UUID to remove (unified)
-    pub clear_all_comps: bool,           // clear all media
+    pub remove_comp: Option<String>, // comp/clip UUID to remove (unified)
+    pub clear_all_comps: bool,       // clear all media
 }
 
 impl ProjectActions {

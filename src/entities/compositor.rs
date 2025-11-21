@@ -64,8 +64,10 @@ impl CpuCompositor {
             let inv_alpha = 1.0 - top_alpha;
 
             result[i] = f16::from_f32(bottom[i].to_f32() * inv_alpha + top[i].to_f32() * top_alpha);
-            result[i + 1] = f16::from_f32(bottom[i + 1].to_f32() * inv_alpha + top[i + 1].to_f32() * top_alpha);
-            result[i + 2] = f16::from_f32(bottom[i + 2].to_f32() * inv_alpha + top[i + 2].to_f32() * top_alpha);
+            result[i + 1] =
+                f16::from_f32(bottom[i + 1].to_f32() * inv_alpha + top[i + 1].to_f32() * top_alpha);
+            result[i + 2] =
+                f16::from_f32(bottom[i + 2].to_f32() * inv_alpha + top[i + 2].to_f32() * top_alpha);
             result[i + 3] = f16::from_f32(bottom[i + 3].to_f32() * inv_alpha + top_alpha);
         }
     }
@@ -80,8 +82,10 @@ impl CpuCompositor {
             let inv_alpha = 1.0 - top_alpha;
 
             result[i] = (bottom[i] as f32 * inv_alpha + top[i] as f32 * top_alpha) as u8;
-            result[i + 1] = (bottom[i + 1] as f32 * inv_alpha + top[i + 1] as f32 * top_alpha) as u8;
-            result[i + 2] = (bottom[i + 2] as f32 * inv_alpha + top[i + 2] as f32 * top_alpha) as u8;
+            result[i + 1] =
+                (bottom[i + 1] as f32 * inv_alpha + top[i + 1] as f32 * top_alpha) as u8;
+            result[i + 2] =
+                (bottom[i + 2] as f32 * inv_alpha + top[i + 2] as f32 * top_alpha) as u8;
             result[i + 3] = (bottom[i + 3] as f32 * inv_alpha + top_alpha * 255.0) as u8;
         }
     }

@@ -30,7 +30,7 @@ impl SettingsCategory {
 #[serde(default)]
 pub struct AppSettings {
     // Playback
-    pub fps_base: f32,  // Base FPS (persistent)
+    pub fps_base: f32, // Base FPS (persistent)
     pub loop_enabled: bool,
 
     // Shader
@@ -149,13 +149,14 @@ pub fn render_settings_window(
                             // Handle selection from actions
                             for action in actions {
                                 if let egui_ltreeview::Action::SetSelected(node_ids) = action
-                                    && let Some(&node_id) = node_ids.first() {
-                                        selected = match node_id {
-                                            0 => SettingsCategory::General,
-                                            1 => SettingsCategory::UI,
-                                            _ => selected,
-                                        };
-                                    }
+                                    && let Some(&node_id) = node_ids.first()
+                                {
+                                    selected = match node_id {
+                                        0 => SettingsCategory::General,
+                                        1 => SettingsCategory::UI,
+                                        _ => selected,
+                                    };
+                                }
                             }
                         });
 

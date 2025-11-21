@@ -25,11 +25,11 @@
 //! `update()` called at 60Hz, advances frame index based on FPS.
 //! Handles sequence boundaries (loop or stop at end).
 
+use crate::entities::Comp;
+use crate::entities::Project;
+use crate::entities::frame::Frame;
 use log::{debug, info};
 use std::time::Instant;
-use crate::entities::Comp;
-use crate::entities::frame::Frame;
-use crate::entities::Project;
 
 /// FPS presets for jog/shuttle control
 const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0];
@@ -42,8 +42,8 @@ pub struct Player {
     pub project: Project,
     pub active_comp: Option<String>, // UUID of active comp
     pub is_playing: bool,
-    pub fps_base: f32,       // Base FPS (persistent setting)
-    pub fps_play: f32,       // Current playback FPS (temporary, resets on stop)
+    pub fps_base: f32, // Base FPS (persistent setting)
+    pub fps_play: f32, // Current playback FPS (temporary, resets on stop)
     pub loop_enabled: bool,
     pub play_direction: f32, // 1.0 forward, -1.0 backward
     last_frame_time: Option<Instant>,
@@ -87,7 +87,9 @@ impl Player {
 
     /// Get total frames of active comp (play_frame_count - work area)
     pub fn total_frames(&self) -> i32 {
-        self.active_comp().map(|c| c.play_frame_count()).unwrap_or(0)
+        self.active_comp()
+            .map(|c| c.play_frame_count())
+            .unwrap_or(0)
     }
 
     /// Get current play range of active comp (start, end), or (0, 0) if none.
@@ -444,10 +446,11 @@ impl Player {
     /// Increase play FPS to next preset (J/L when playing)
     fn increase_fps_play(&mut self) {
         if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps_play)
-            && idx + 1 < FPS_PRESETS.len() {
-                self.fps_play = FPS_PRESETS[idx + 1];
-                debug!("Play FPS increased to {}", self.fps_play);
-            }
+            && idx + 1 < FPS_PRESETS.len()
+        {
+            self.fps_play = FPS_PRESETS[idx + 1];
+            debug!("Play FPS increased to {}", self.fps_play);
+        }
     }
 
     /// Jump to next sequence start (] key)

@@ -5,11 +5,14 @@
 //! - Start..End range as horizontal bar
 //! - Visual indication of current_frame (playhead)
 
+use super::timeline_helpers::{
+    LayerTool, draw_drop_preview, draw_frame_ruler, frame_to_screen_x, hash_color,
+    screen_x_to_frame,
+};
+use super::{GlobalDragState, TimelineAction, TimelineConfig, TimelineState};
 use crate::entities::Comp;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
-use super::{TimelineAction, TimelineConfig, TimelineState, GlobalDragState};
-use super::timeline_helpers::{LayerTool, frame_to_screen_x, screen_x_to_frame, draw_frame_ruler, hash_color};
 
 /// Render After Effects-style timeline
 pub fn render(
@@ -58,7 +61,7 @@ pub fn render(
         let zoom_response = ui.add(
             egui::Slider::new(&mut state.zoom, 0.1..=4.0)
                 .fixed_decimals(2)
-                .show_value(true)
+                .show_value(true),
         );
 
         if zoom_response.changed() {
@@ -75,9 +78,11 @@ pub fn render(
         if zoom_changed && old_zoom != state.zoom {
             // Keep playhead position stable when zooming
             let playhead_pos = comp.current_frame as f32;
-            let old_screen_x = (playhead_pos - state.pan_offset) * config.pixels_per_frame * old_zoom;
+            let old_screen_x =
+                (playhead_pos - state.pan_offset) * config.pixels_per_frame * old_zoom;
             // After zoom change, adjust pan so playhead stays at same screen position
-            state.pan_offset = playhead_pos - (old_screen_x / (config.pixels_per_frame * state.zoom));
+            state.pan_offset =
+                playhead_pos - (old_screen_x / (config.pixels_per_frame * state.zoom));
         }
     });
 
@@ -113,13 +118,15 @@ pub fn render(
                 ui.set_height(ruler_height);
                 ui.set_width(ruler_width);
                 if cfg_for_ruler.show_frame_numbers {
-                    let (frame_opt, rect) = draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
+                    let (frame_opt, rect) =
+                        draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
                     ruler_rect = Some(rect);
                     if let Some(frame) = frame_opt {
                         action = TimelineAction::SetFrame(frame);
                     }
                 } else {
-                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ruler_width, ruler_height), Sense::hover());
+                    let (rect, _) = ui
+                        .allocate_exact_size(Vec2::new(ruler_width, ruler_height), Sense::hover());
                     ruler_rect = Some(rect);
                 }
             });
@@ -141,11 +148,15 @@ pub fn render(
         if ctrl_pressed {
             action = TimelineAction::ResetCompPlayArea;
         } else {
-            action = TimelineAction::SetCompPlayStart { frame: comp.current_frame };
+            action = TimelineAction::SetCompPlayStart {
+                frame: comp.current_frame,
+            };
         }
     }
     if ui.ctx().input(|i| i.key_pressed(egui::Key::N)) {
-        action = TimelineAction::SetCompPlayEnd { frame: comp.current_frame };
+        action = TimelineAction::SetCompPlayEnd {
+            frame: comp.current_frame,
+        };
     }
 
     // Two-column layout without vertical scroll (timeline panel height is fixed)
@@ -449,25 +460,24 @@ pub fn render(
                                         let target_display_idx = (current_display_idx as i32 + delta_children).max(0).min(comp.children.len() as i32 - 1) as usize;
                                         let target_child = child_order.get(target_display_idx).copied().unwrap_or(*layer_idx);
 
-                                        // Visual feedback: draw ghost bar at new position
-                                        // Use display index for Y positioning (already calculated above)
+                                        // Visual feedback: draw ghost bar at new position using the same helper as project drops
                                         let child_uuid = &comp.children[*layer_idx];
                                         if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                            let ghost_child_y = timeline_rect.min.y + (target_display_idx as f32 * config.layer_height);
+                                            let ghost_child_y = timeline_rect.min.y
+                                                + (target_display_idx as f32 * config.layer_height);
                                             let duration = (attrs.get_i32("end").unwrap_or(0)
-                                                          - attrs.get_i32("start").unwrap_or(0)).max(0);
+                                                - attrs.get_i32("start").unwrap_or(0)
+                                                + 1)
+                                                .max(1);
 
-                                            let ghost_x_start = frame_to_screen_x(new_start as f32, timeline_rect.min.x, config, state);
-                                            let ghost_x_end = frame_to_screen_x((new_start + duration) as f32, timeline_rect.min.x, config, state);
-                                            let ghost_rect = Rect::from_min_max(
-                                                Pos2::new(ghost_x_start, ghost_child_y + 4.0),
-                                                Pos2::new(ghost_x_end, ghost_child_y + config.layer_height - 4.0),
-                                            );
-                                            painter.rect_stroke(
-                                                ghost_rect,
-                                                4.0,
-                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 128)),
-                                                egui::epaint::StrokeKind::Middle,
+                                            draw_drop_preview(
+                                                &painter,
+                                                new_start,
+                                                ghost_child_y,
+                                                duration,
+                                                timeline_rect,
+                                                config,
+                                                state,
                                             );
                                         }
 
@@ -623,55 +633,31 @@ pub fn render(
                             data.get_temp(egui::Id::new("global_drag_state"))
                         });
 
-                        if let Some(GlobalDragState::ProjectItem { source_uuid, display_name, duration, .. }) = global_drag {
-                            // Show drop preview (shadow bar)
+                        if let Some(GlobalDragState::ProjectItem { source_uuid, duration, .. }) = global_drag {
+                            // Reuse layer move preview style: thin outline in target row/column
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                                // Treat full vertical span of timeline area as drop zone; only X matters.
                                 if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
                                     let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
-                                    let drop_duration = duration.unwrap_or(100);
-
-                                    // Calculate bar position and size
-                                    let start_x = frame_to_screen_x(drop_frame as f32, timeline_rect.min.x, config, state);
-                                    let end_x = frame_to_screen_x((drop_frame + drop_duration) as f32, timeline_rect.min.x, config, state);
-                                    let bar_width = (end_x - start_x).max(2.0);
-
-                                    // Draw semi-transparent shadow bar
-                                    let shadow_rect = Rect::from_min_size(
-                                        Pos2::new(start_x, timeline_rect.min.y),
-                                        Vec2::new(bar_width, timeline_rect.height()),
-                                    );
-                                    painter.rect_filled(
-                                        shadow_rect,
-                                        2.0,
-                                        Color32::from_rgba_premultiplied(100, 220, 255, 60), // Semi-transparent cyan
+                                    let row = ((hover_pos.y - timeline_rect.min.y) / config.layer_height)
+                                        .floor()
+                                        .clamp(0.0, child_order.len().max(1) as f32 - 1.0) as usize;
+                                    let row_y = timeline_rect.min.y + (row as f32 * config.layer_height);
+                                    let dur = duration.unwrap_or(10).max(1);
+                                    draw_drop_preview(
+                                        &ui.painter(),
+                                        drop_frame,
+                                        row_y,
+                                        dur,
+                                        timeline_rect,
+                                        config,
+                                        state,
                                     );
 
-                                    // Draw left edge line (brighter)
-                                    painter.line_segment(
-                                        [Pos2::new(start_x, timeline_rect.min.y), Pos2::new(start_x, timeline_rect.max.y)],
-                                        (2.0, Color32::from_rgb(100, 220, 255)),
-                                    );
-
-                                    // Draw name label inside shadow bar
-                                    if bar_width > 40.0 {
-                                        let label_pos = Pos2::new(start_x + 4.0, timeline_rect.min.y + 4.0);
-                                        painter.text(
-                                            label_pos,
-                                            egui::Align2::LEFT_TOP,
-                                            display_name,
-                                            egui::FontId::proportional(11.0),
-                                            Color32::from_rgb(200, 240, 255),
-                                        );
-                                    }
-
-                                    // Check for mouse release (drop)
                                     if ui.ctx().input(|i| i.pointer.any_released()) {
                                         action = TimelineAction::AddLayer {
                                             source_uuid: source_uuid.clone(),
                                             start_frame: drop_frame,
                                         };
-                                        // Clear global drag state
                                         ui.ctx().data_mut(|data| {
                                             data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));
                                         });
@@ -721,7 +707,10 @@ pub fn render(
         let painter = ui.painter();
         let x = frame_to_screen_x(comp.current_frame as f32, ruler_rect.min.x, config, state);
         painter.line_segment(
-            [Pos2::new(x, ruler_rect.min.y), Pos2::new(x, timeline_rect.max.y)],
+            [
+                Pos2::new(x, ruler_rect.min.y),
+                Pos2::new(x, timeline_rect.max.y),
+            ],
             (2.0, Color32::from_rgb(255, 220, 100)),
         );
         let triangle_size = 8.0;
@@ -740,5 +729,3 @@ pub fn render(
 
     action
 }
-
-

@@ -59,8 +59,8 @@ impl Project {
 
     /// Load project from JSON file and rebuild runtime-only state (caches, Arc links).
     pub fn from_json<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let json = fs::read_to_string(path.as_ref())
-            .map_err(|e| format!("Read project error: {}", e))?;
+        let json =
+            fs::read_to_string(path.as_ref()).map_err(|e| format!("Read project error: {}", e))?;
 
         let mut project: Project =
             serde_json::from_str(&json).map_err(|e| format!("Parse project error: {}", e))?;
@@ -87,16 +87,14 @@ impl Project {
             uuid
         } else {
             // Return first comp UUID from order
-            self.comps_order.first()
-                .cloned()
-                .unwrap_or_else(|| {
-                    // Fallback: create new if order is broken
-                    let comp = Comp::new("Main", 0, 0, 24.0);
-                    let uuid = comp.uuid.clone();
-                    self.media.insert(uuid.clone(), comp);
-                    self.comps_order.push(uuid.clone());
-                    uuid
-                })
+            self.comps_order.first().cloned().unwrap_or_else(|| {
+                // Fallback: create new if order is broken
+                let comp = Comp::new("Main", 0, 0, 24.0);
+                let uuid = comp.uuid.clone();
+                self.media.insert(uuid.clone(), comp);
+                self.comps_order.push(uuid.clone());
+                uuid
+            })
         }
     }
 
@@ -152,4 +150,3 @@ impl Project {
         self.comps_order.retain(|u| u != uuid);
     }
 }
-

@@ -13,13 +13,13 @@ pub mod loader;
 pub mod loader_video;
 pub mod project;
 
-pub use attrs::{Attrs, AttrValue};
+pub use attrs::{AttrValue, Attrs};
 pub use comp::Comp;
 pub use compositor::CompositorType;
 pub use frame::Frame;
 pub use project::Project;
 
-use eframe::egui::{Ui, Response, Rect};
+use eframe::egui::{Rect, Response, Ui};
 
 /// Widget for project panel - shows entity in the project list
 pub trait ProjectUI {

@@ -2,7 +2,7 @@
 //!
 //! Uses crossbeam for efficient MPMC queue with closure-based task execution.
 
-use crossbeam::channel::{unbounded, Sender};
+use crossbeam::channel::{Sender, unbounded};
 use log::{debug, error};
 use std::thread;
 

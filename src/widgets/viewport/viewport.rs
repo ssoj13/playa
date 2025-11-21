@@ -1,6 +1,5 @@
-﻿use eframe::egui;
+use eframe::egui;
 use log::{debug, info};
-
 
 /// Scrubber line color when inside image bounds (white, 50% transparent)
 const SCRUB_NORMAL: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.5);
@@ -247,30 +246,25 @@ impl ViewportState {
             && let Some(mouse_pos) = response.interact_pointer_pos()
         {
             // Start scrubbing - freeze bounds
-                if !scrubber.is_active() {
-                    let normalized =
-                        ViewportScrubber::mouse_to_normalized(mouse_pos.x, current_bounds);
-                    scrubber.start_scrubbing(current_bounds, current_size, normalized);
-                    scrubber.set_last_mouse_x(mouse_pos.x);
-                }
+            if !scrubber.is_active() {
+                let normalized = ViewportScrubber::mouse_to_normalized(mouse_pos.x, current_bounds);
+                scrubber.start_scrubbing(current_bounds, current_size, normalized);
+                scrubber.set_last_mouse_x(mouse_pos.x);
+            }
 
-                // Use frozen bounds for entire scrubbing session
-                let image_bounds = scrubber
-                    .frozen_bounds()
-                    .unwrap_or(current_bounds);
+            // Use frozen bounds for entire scrubbing session
+            let image_bounds = scrubber.frozen_bounds().unwrap_or(current_bounds);
 
             let frame_idx = if scrubber.mouse_moved(mouse_pos.x) {
                 // Mouse moved - recalculate normalized from mouse
-                let normalized =
-                    ViewportScrubber::mouse_to_normalized(mouse_pos.x, image_bounds);
+                let normalized = ViewportScrubber::mouse_to_normalized(mouse_pos.x, image_bounds);
                 scrubber.set_normalized_position(normalized);
                 scrubber.set_last_mouse_x(mouse_pos.x);
 
                 let is_clamped = !(0.0..=1.0).contains(&normalized);
                 scrubber.set_clamped(is_clamped);
 
-                let frame_idx =
-                    ViewportScrubber::normalized_to_frame(normalized, total_frames);
+                let frame_idx = ViewportScrubber::normalized_to_frame(normalized, total_frames);
                 scrubber.set_current_frame(frame_idx);
 
                 // Visual line follows mouse everywhere (can be outside image bounds)
@@ -282,10 +276,8 @@ impl ViewportState {
                 let is_clamped = !(0.0..=1.0).contains(&saved_normalized);
                 scrubber.set_clamped(is_clamped);
 
-                let frame_idx = ViewportScrubber::normalized_to_frame(
-                    saved_normalized,
-                    total_frames,
-                );
+                let frame_idx =
+                    ViewportScrubber::normalized_to_frame(saved_normalized, total_frames);
                 scrubber.set_current_frame(frame_idx);
 
                 let visual_x =

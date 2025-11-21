@@ -31,8 +31,8 @@ use std::sync::{Arc, Mutex};
 use half::f16 as F16;
 
 // Import utilities
-use crate::utils::media;
 use crate::entities::Attrs;
+use crate::utils::media;
 
 /// Parse video path with frame suffix
 /// "video.mp4@17" -> (PathBuf("video.mp4"), Some(17))
@@ -79,7 +79,7 @@ pub enum CropAlign {
 /// Pixel bit depth for Frame construction
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PixelDepth {
-    U8,  // 8-bit RGBA (LDR)
+    U8, // 8-bit RGBA (LDR)
     #[allow(dead_code)] // Created automatically by EXR loader (exr.rs), not via Frame::new()
     F16, // 16-bit half-float RGBA (HDR)
     #[allow(dead_code)] // Created automatically by EXR loader (exr.rs), not via Frame::new()
@@ -87,15 +87,13 @@ pub enum PixelDepth {
 }
 
 /// Tonemapping mode for HDR→LDR conversion
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum TonemapMode {
-    Clamp,    // Simple clamp to [0,1] range
+    Clamp, // Simple clamp to [0,1] range
     #[default]
-    ACES,     // ACES filmic tone mapping curve
+    ACES, // ACES filmic tone mapping curve
     Reinhard, // Reinhard tone mapping (photographic)
 }
-
 
 /// Frame loading status
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -112,11 +110,11 @@ impl FrameStatus {
     pub fn color(&self) -> eframe::egui::Color32 {
         use eframe::egui::Color32;
         match self {
-            FrameStatus::Placeholder => Color32::from_rgb(40, 40, 45),  // Dark grey
-            FrameStatus::Header => Color32::from_rgb(60, 100, 180),      // Blue
-            FrameStatus::Loading => Color32::from_rgb(220, 160, 60),     // Orange
-            FrameStatus::Loaded => Color32::from_rgb(80, 200, 120),      // Green
-            FrameStatus::Error => Color32::from_rgb(200, 60, 60),        // Red
+            FrameStatus::Placeholder => Color32::from_rgb(40, 40, 45), // Dark grey
+            FrameStatus::Header => Color32::from_rgb(60, 100, 180),    // Blue
+            FrameStatus::Loading => Color32::from_rgb(220, 160, 60),   // Orange
+            FrameStatus::Loaded => Color32::from_rgb(80, 200, 120),    // Green
+            FrameStatus::Error => Color32::from_rgb(200, 60, 60),      // Red
         }
     }
 }
@@ -307,7 +305,12 @@ impl Frame {
     }
 
     /// Create frame from any PixelBuffer (used by Loader)
-    pub(crate) fn from_buffer(buffer: PixelBuffer, pixel_format: PixelFormat, width: usize, height: usize) -> Self {
+    pub(crate) fn from_buffer(
+        buffer: PixelBuffer,
+        pixel_format: PixelFormat,
+        width: usize,
+        height: usize,
+    ) -> Self {
         let data = FrameData {
             buffer: Arc::new(buffer),
             pixel_format,
@@ -394,7 +397,8 @@ impl Frame {
 
         // For video files, get dimensions from video metadata
         if media::is_video(&actual_path) {
-            let (width, height) = crate::entities::loader_video::get_video_dimensions(&actual_path)?;
+            let (width, height) =
+                crate::entities::loader_video::get_video_dimensions(&actual_path)?;
 
             let mut data = self.data.lock().unwrap();
             data.width = width;
@@ -567,7 +571,10 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        info!("Loaded HDR: {}x{} (HDR f32), {} bytes", width, height, mem_size);
+        info!(
+            "Loaded HDR: {}x{} (HDR f32), {} bytes",
+            width, height, mem_size
+        );
         Ok(mem_size)
     }
 
@@ -752,7 +759,6 @@ impl Frame {
     }
 
     /// Get pixels as u8 slice (for backward compatibility, only works with Rgba8 format)
-
 
     /// Get dimensions
     pub fn width(&self) -> usize {
@@ -1010,7 +1016,9 @@ impl Frame {
                     let a = chunk[3].to_f32();
 
                     let (r_tm, g_tm, b_tm) = match mode {
-                        TonemapMode::Clamp => (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)),
+                        TonemapMode::Clamp => {
+                            (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
+                        }
                         TonemapMode::ACES => {
                             // ACES filmic tone mapping (Narkowicz 2015)
                             let tonemap_aces = |x: f32| {
@@ -1026,7 +1034,11 @@ impl Frame {
                         TonemapMode::Reinhard => {
                             // Reinhard photographic tone mapping
                             let tonemap_reinhard = |x: f32| (x / (1.0 + x)).clamp(0.0, 1.0);
-                            (tonemap_reinhard(r), tonemap_reinhard(g), tonemap_reinhard(b))
+                            (
+                                tonemap_reinhard(r),
+                                tonemap_reinhard(g),
+                                tonemap_reinhard(b),
+                            )
                         }
                     };
 
@@ -1061,7 +1073,9 @@ impl Frame {
                     let a = chunk[3];
 
                     let (r_tm, g_tm, b_tm) = match mode {
-                        TonemapMode::Clamp => (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0)),
+                        TonemapMode::Clamp => {
+                            (r.clamp(0.0, 1.0), g.clamp(0.0, 1.0), b.clamp(0.0, 1.0))
+                        }
                         TonemapMode::ACES => {
                             // ACES filmic tone mapping (Narkowicz 2015)
                             let tonemap_aces = |x: f32| {
@@ -1077,7 +1091,11 @@ impl Frame {
                         TonemapMode::Reinhard => {
                             // Reinhard photographic tone mapping
                             let tonemap_reinhard = |x: f32| (x / (1.0 + x)).clamp(0.0, 1.0);
-                            (tonemap_reinhard(r), tonemap_reinhard(g), tonemap_reinhard(b))
+                            (
+                                tonemap_reinhard(r),
+                                tonemap_reinhard(g),
+                                tonemap_reinhard(b),
+                            )
                         }
                     };
 

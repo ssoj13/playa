@@ -1,0 +1,12 @@
+Набор ворнингов от сборки — это не «устаревшие API», а вывалившиеся/отложенные функции. Надо решить, что привести в порядок:
+- timeline_ui: заменить deprecated `child_ui` на актуальный egui API.
+- viewport/mod.rs: `ViewportActions` реэкспорт вернуть в использование или убрать реэкспорт.
+- dialogs/prefs/hotkeys.rs: добить HotkeyHandler и интегрировать в UI (handle_key / bindings).
+- entities/mod.rs: трейты UI (ProjectUI/TimelineUI/AttributeEditorUI/NodeUI) либо использовать в виджетах, либо удалить/деактивировать.
+- entities/attrs.rs: вспомогательные методы (get/remove/iter_mut/contains/len) вернуть в код или убрать.
+- entities/comp.rs: сеттеры/parent-геттеры вернуть в использование или выпилить; FrameStatus::color задействовать в индикаторе.
+- loader_video.rs: поле frame_count использовать в метаданных.
+- project.rs: set_compositor/get_comp/remove_media либо подключить, либо убрать.
+- events.rs: AppEvent/HotkeyWindow/CompEvent::TimelineChanged — подключить к EventBus или сузить перечисления.
+- timeline.rs: поля drag_state (display_name/drag_start_pos/initial_end) и хелперы detect_layer_tool/draw_playhead — восстановить использование или удалить.
+- viewport/renderer.rs: shader_error задействовать в UI ошибок.

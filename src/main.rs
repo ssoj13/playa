@@ -9,20 +9,20 @@ mod utils;
 mod widgets;
 mod workers;
 
-use cli::Args;
 use clap::Parser;
+use cli::Args;
+use dialogs::encode::EncodeDialog;
+use dialogs::prefs::{AppSettings, render_settings_window};
 use eframe::{egui, glow};
+use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use entities::Frame;
+use entities::Project;
 use log::{debug, error, info, warn};
 use player::Player;
-use entities::Project;
-use dialogs::prefs::{AppSettings, render_settings_window};
-use dialogs::encode::EncodeDialog;
-use widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
-use widgets::status::StatusBar;
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use std::path::PathBuf;
 use std::sync::Arc;
+use widgets::status::StatusBar;
+use widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
 use workers::Workers;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -32,7 +32,6 @@ enum DockTab {
     Project,
     Attributes,
 }
-
 
 /// Main application state
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -138,33 +137,36 @@ impl Default for PlayaApp {
     }
 }
 
-  impl PlayaApp {
-      fn default_dock_state() -> DockState<DockTab> {
-          let mut dock_state = DockState::new(vec![DockTab::Viewport]);
+impl PlayaApp {
+    fn default_dock_state() -> DockState<DockTab> {
+        let mut dock_state = DockState::new(vec![DockTab::Viewport]);
 
-          let [viewport, _timeline] = dock_state
-              .main_surface_mut()
-              .split_below(NodeIndex::root(), 0.65, vec![DockTab::Timeline]);
+        let [viewport, _timeline] = dock_state.main_surface_mut().split_below(
+            NodeIndex::root(),
+            0.65,
+            vec![DockTab::Timeline],
+        );
 
-          let [_viewport, _project] = dock_state
-              .main_surface_mut()
-              .split_right(viewport, 0.75, vec![DockTab::Project]);
+        let [_viewport, _project] =
+            dock_state
+                .main_surface_mut()
+                .split_right(viewport, 0.75, vec![DockTab::Project]);
 
-          // Add attributes tab as an extra tab in the focused leaf
-          dock_state
-              .main_surface_mut()
-              .push_to_focused_leaf(DockTab::Attributes);
+        // Add attributes tab as an extra tab in the focused leaf
+        dock_state
+            .main_surface_mut()
+            .push_to_focused_leaf(DockTab::Attributes);
 
-          dock_state
-      }
+        dock_state
+    }
 
-      /// Attach composition event sender to all comps in the current project.
-      fn attach_comp_event_sender(&mut self) {
-          let sender = self.comp_event_sender.clone();
-          for comp in self.player.project.media.values_mut() {
-              comp.set_event_sender(sender.clone());
-          }
-      }
+    /// Attach composition event sender to all comps in the current project.
+    fn attach_comp_event_sender(&mut self) {
+        let sender = self.comp_event_sender.clone();
+        for comp in self.player.project.media.values_mut() {
+            comp.set_event_sender(sender.clone());
+        }
+    }
 
     /// Load sequences from file paths and append to player/project
     ///
@@ -177,52 +179,52 @@ impl Default for PlayaApp {
     /// # Returns
     /// * `Ok(())` - Sequences loaded successfully
     /// * `Err(String)` - Detection or loading failed with error message
-      fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
-          match crate::utils::sequences::detect_sequences(paths) {
-              Ok(comps) => {
-                  if comps.is_empty() {
-                      let error_msg = "No valid sequences detected".to_string();
-                      warn!("{}", error_msg);
-                      self.error_msg = Some(error_msg.clone());
-                      return Err(error_msg);
-                  }
+    fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
+        match crate::utils::sequences::detect_sequences(paths) {
+            Ok(comps) => {
+                if comps.is_empty() {
+                    let error_msg = "No valid sequences detected".to_string();
+                    warn!("{}", error_msg);
+                    self.error_msg = Some(error_msg.clone());
+                    return Err(error_msg);
+                }
 
-                  // Add all detected sequences to unified media pool (File mode comps)
-                  let comps_count = comps.len();
-                  let mut first_uuid: Option<String> = None;
-                  for comp in comps {
-                      let uuid = comp.uuid.clone();
-                      let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
-                      info!("Adding clip (File mode): {} ({})", name, uuid);
+                // Add all detected sequences to unified media pool (File mode comps)
+                let comps_count = comps.len();
+                let mut first_uuid: Option<String> = None;
+                for comp in comps {
+                    let uuid = comp.uuid.clone();
+                    let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
+                    info!("Adding clip (File mode): {} ({})", name, uuid);
 
-                      self.player.project.media.insert(uuid.clone(), comp);
-                      self.player.project.comps_order.push(uuid.clone());
+                    self.player.project.media.insert(uuid.clone(), comp);
+                    self.player.project.comps_order.push(uuid.clone());
 
-                      // Remember first sequence for activation
-                      if self.player.active_comp.is_none() && first_uuid.is_none() {
-                          first_uuid = Some(uuid);
-                      }
-                  }
+                    // Remember first sequence for activation
+                    if self.player.active_comp.is_none() && first_uuid.is_none() {
+                        first_uuid = Some(uuid);
+                    }
+                }
 
-                  self.attach_comp_event_sender();
+                self.attach_comp_event_sender();
 
-                  // Activate first sequence and trigger frame loading
-                  if let Some(uuid) = first_uuid {
-                      self.player.active_comp = Some(uuid);
-                      self.enqueue_frame_loads_around_playhead(10);
-                  }
+                // Activate first sequence and trigger frame loading
+                if let Some(uuid) = first_uuid {
+                    self.player.active_comp = Some(uuid);
+                    self.enqueue_frame_loads_around_playhead(10);
+                }
 
-                  self.error_msg = None;
-                  info!("Loaded {} clip(s)", comps_count);
-                  Ok(())
-              }
-              Err(e) => {
-                  let error_msg = format!("Failed to load sequences: {}", e);
-                  warn!("{}", error_msg);
-                  self.error_msg = Some(error_msg.clone());
-                  Err(error_msg)
-              }
-          }
+                self.error_msg = None;
+                info!("Loaded {} clip(s)", comps_count);
+                Ok(())
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to load sequences: {}", e);
+                warn!("{}", error_msg);
+                self.error_msg = Some(error_msg.clone());
+                Err(error_msg)
+            }
+        }
     }
 
     /// Enqueue frame loading around playhead for active comp.
@@ -242,8 +244,13 @@ impl Default for PlayaApp {
             return;
         };
 
-        debug!("Enqueuing frame loads around frame {} (radius: {}), comp mode: {:?}, children: {}",
-               current_frame, radius, comp.mode, comp.children.len());
+        debug!(
+            "Enqueuing frame loads around frame {} (radius: {}), comp mode: {:?}, children: {}",
+            current_frame,
+            radius,
+            comp.mode,
+            comp.children.len()
+        );
 
         // Handle File mode comp (directly loads frames from file sequence)
         if comp.mode == crate::entities::comp::CompMode::File {
@@ -254,16 +261,15 @@ impl Default for PlayaApp {
             let comp_start = comp.start();
 
             // Calculate frame range to load
-            let load_start_i32 = (current_frame - radius as i32).max(comp_start + play_start).max(0);
+            let load_start_i32 = (current_frame - radius as i32).max(comp_start + play_start);
             let load_end_i32 = (current_frame + radius as i32).min(comp.end() - play_end);
 
-            debug!("Loading File mode frames [{}, {}]", load_start_i32, load_end_i32);
+            debug!(
+                "Loading File mode frames [{}, {}]",
+                load_start_i32, load_end_i32
+            );
 
             for frame_idx in load_start_i32..=load_end_i32 {
-                if frame_idx < 0 {
-                    continue;
-                }
-
                 // Get frame from File mode comp
                 let frame = match comp.get_frame(frame_idx, &self.player.project) {
                     Some(f) => f,
@@ -273,6 +279,11 @@ impl Default for PlayaApp {
                     }
                 };
 
+                if frame.file().is_none() {
+                    debug!("Frame {} has no backing file, skipping load", frame_idx);
+                    continue;
+                }
+
                 // Skip if already loaded
                 let status = frame.status();
                 if status == crate::entities::frame::FrameStatus::Loaded {
@@ -280,15 +291,23 @@ impl Default for PlayaApp {
                 }
 
                 // Queue for loading
-                debug!("Queueing frame {} for load (status: {:?})", frame_idx, status);
-                frame.set_status(crate::entities::frame::FrameStatus::Loading);
+                debug!(
+                    "Queueing frame {} for load (status: {:?})",
+                    frame_idx, status
+                );
+                if let Err(e) = frame.set_status(crate::entities::frame::FrameStatus::Loading) {
+                    debug!("Failed to mark frame {} as Loading: {}", frame_idx, e);
+                }
             }
 
             return;
         }
 
         // Handle Layer mode comp (recursively loads frames from File mode children)
-        debug!("Active comp is Layer mode, processing {} children", comp.children.len());
+        debug!(
+            "Active comp is Layer mode, processing {} children",
+            comp.children.len()
+        );
 
         // Enqueue loads for all children in comp
         for (child_idx, child_uuid) in comp.children.iter().enumerate() {
@@ -305,17 +324,28 @@ impl Default for PlayaApp {
 
             // Resolve source from Project.media by UUID
             let Some(source) = self.player.project.media.get(source_uuid) else {
-                debug!("Child {} references missing source {}", child_idx, source_uuid);
+                debug!(
+                    "Child {} references missing source {}",
+                    child_idx, source_uuid
+                );
                 continue;
             };
 
             // Only process File mode comps for frame loading (Layer mode comps are composed on-demand)
             if source.mode != crate::entities::comp::CompMode::File {
-                debug!("Child {} is Layer mode comp, skipping frame loading", child_idx);
+                debug!(
+                    "Child {} is Layer mode comp, skipping frame loading",
+                    child_idx
+                );
                 continue;
             }
 
-            debug!("Processing child {}: comp {} has {} frames", child_idx, child_uuid, source.play_frame_count());
+            debug!(
+                "Processing child {}: comp {} has {} frames",
+                child_idx,
+                child_uuid,
+                source.play_frame_count()
+            );
 
             // Get child range from attrs (supports negative values)
             let child_start = attrs.get_i32("start").unwrap_or(0);
@@ -332,21 +362,19 @@ impl Default for PlayaApp {
 
             // Skip child if no intersection (current_frame too far from child range)
             if load_start_i32 > load_end_i32 {
-                debug!("Child {}: range [{}, {}] outside load window [{}, {}], skipping",
-                       child_idx, child_start, child_end, window_start, window_end);
+                debug!(
+                    "Child {}: range [{}, {}] outside load window [{}, {}], skipping",
+                    child_idx, child_start, child_end, window_start, window_end
+                );
                 continue;
             }
 
-            // Ensure positive indices for iteration
-            let load_start = load_start_i32.max(0) as usize;
-            let load_end = load_end_i32.max(0) as usize;
+            debug!(
+                "Child {}: range [{}, {}], will load frames [{}, {}]",
+                child_idx, child_start, child_end, load_start_i32, load_end_i32
+            );
 
-            debug!("Child {}: range [{}, {}], will load frames [{}, {}]",
-                   child_idx, child_start, child_end, load_start, load_end);
-
-            for global_idx in load_start..=load_end {
-                let global_i32 = global_idx as i32;
-
+            for global_i32 in load_start_i32..=load_end_i32 {
                 // Check if frame is within child range
                 if global_i32 < child_start || global_i32 > child_end {
                     continue;
@@ -356,12 +384,20 @@ impl Default for PlayaApp {
                 let play_start = attrs.get_i32("play_start").unwrap_or(0);
                 let frame_idx = (global_i32 - child_start) + play_start;
                 if frame_idx < 0 {
-                    debug!("Frame {} not active in child {} (negative play_start)", global_idx, child_idx);
+                    debug!(
+                        "Frame {} not active in child {} (negative play_start)",
+                        global_i32, child_idx
+                    );
                     continue;
                 }
 
                 if frame_idx >= source.play_frame_count() {
-                    debug!("Frame {} (frame_idx {}) out of bounds (comp len: {})", global_idx, frame_idx, source.play_frame_count());
+                    debug!(
+                        "Frame {} (frame_idx {}) out of bounds (comp len: {})",
+                        global_i32,
+                        frame_idx,
+                        source.play_frame_count()
+                    );
                     continue;
                 }
 
@@ -369,10 +405,21 @@ impl Default for PlayaApp {
                 let frame = match source.get_frame(frame_idx, &self.player.project) {
                     Some(f) => f,
                     None => {
-                        debug!("Failed to get frame {} (frame_idx {})", global_idx, frame_idx);
+                        debug!(
+                            "Failed to get frame {} (frame_idx {})",
+                            global_i32, frame_idx
+                        );
                         continue;
                     }
                 };
+
+                if frame.file().is_none() {
+                    debug!(
+                        "Frame {} (frame_idx {}) has no backing file, skipping load",
+                        global_i32, frame_idx
+                    );
+                    continue;
+                }
 
                 // Skip if already loaded
                 let status = frame.status();
@@ -380,7 +427,10 @@ impl Default for PlayaApp {
                     continue;
                 }
 
-                debug!("Enqueuing load for frame {} (frame_idx {}) with status {:?}", global_idx, frame_idx, status);
+                debug!(
+                    "Enqueuing load for frame {} (frame_idx {}) with status {:?}",
+                    global_i32, frame_idx, status
+                );
 
                 // Enqueue load on worker thread
                 let workers = Arc::clone(&self.workers);
@@ -389,12 +439,18 @@ impl Default for PlayaApp {
                 workers.execute(move || {
                     use crate::entities::frame::FrameStatus;
 
-                    debug!("Worker loading frame with status {:?}", frame_clone.status());
+                    debug!(
+                        "Worker loading frame with status {:?}",
+                        frame_clone.status()
+                    );
                     // Transition to Loaded triggers actual load via Frame::load()
                     if let Err(e) = frame_clone.set_status(FrameStatus::Loaded) {
                         error!("Failed to load frame: {}", e);
                     } else {
-                        debug!("Frame loaded successfully, new status: {:?}", frame_clone.status());
+                        debug!(
+                            "Frame loaded successfully, new status: {:?}",
+                            frame_clone.status()
+                        );
                     }
                 });
             }
@@ -406,8 +462,15 @@ impl Default for PlayaApp {
         // Process all pending events
         while let Ok(event) = self.comp_event_receiver.try_recv() {
             match event {
-                events::CompEvent::CurrentFrameChanged { comp_uuid, old_frame, new_frame } => {
-                    debug!("Comp {} frame changed: {} → {}", comp_uuid, old_frame, new_frame);
+                events::CompEvent::CurrentFrameChanged {
+                    comp_uuid,
+                    old_frame,
+                    new_frame,
+                } => {
+                    debug!(
+                        "Comp {} frame changed: {} → {}",
+                        comp_uuid, old_frame, new_frame
+                    );
 
                     // Trigger frame loading around new position
                     self.enqueue_frame_loads_around_playhead(10);
@@ -443,17 +506,17 @@ impl Default for PlayaApp {
         }
     }
 
-      /// Load project from JSON file
-      fn load_project(&mut self, path: PathBuf) {
-          match crate::entities::Project::from_json(&path) {
-              Ok(mut project) => {
-                  info!("Loaded project from {}", path.display());
+    /// Load project from JSON file
+    fn load_project(&mut self, path: PathBuf) {
+        match crate::entities::Project::from_json(&path) {
+            Ok(mut project) => {
+                info!("Loaded project from {}", path.display());
 
-                  // Rebuild runtime with event sender for all comps
-                  project.rebuild_runtime(Some(self.comp_event_sender.clone()));
-                  self.player.project = project;
-                  self.error_msg = None;
-              }
+                // Rebuild runtime with event sender for all comps
+                project.rebuild_runtime(Some(self.comp_event_sender.clone()));
+                self.player.project = project;
+                self.error_msg = None;
+            }
             Err(e) => {
                 error!("{}", e);
                 self.error_msg = Some(e);
@@ -622,19 +685,31 @@ impl Default for PlayaApp {
             }
 
             // ===== Layer Operations =====
-            AppEvent::AddLayer { comp_uuid, source_uuid, start_frame } => {
+            AppEvent::AddLayer {
+                comp_uuid,
+                source_uuid,
+                start_frame,
+            } => {
                 // Get duration before mutable borrow
-                let duration = self.player.project.media.get(&source_uuid)
+                let duration = self
+                    .player
+                    .project
+                    .media
+                    .get(&source_uuid)
                     .map(|s| s.frame_count())
                     .unwrap_or(1);
 
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    if let Err(e) = comp.add_child_with_duration(source_uuid, start_frame, duration) {
+                    if let Err(e) = comp.add_child_with_duration(source_uuid, start_frame, duration)
+                    {
                         log::error!("Failed to add layer: {}", e);
                     }
                 }
             }
-            AppEvent::RemoveLayer { comp_uuid, layer_idx } => {
+            AppEvent::RemoveLayer {
+                comp_uuid,
+                layer_idx,
+            } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     // Get child UUID by index
                     if let Some(child_uuid) = comp.children.get(layer_idx).cloned() {
@@ -644,7 +719,11 @@ impl Default for PlayaApp {
                     }
                 }
             }
-            AppEvent::MoveLayer { comp_uuid, layer_idx, new_start } => {
+            AppEvent::MoveLayer {
+                comp_uuid,
+                layer_idx,
+                new_start,
+            } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     if let Err(e) = comp.move_child(layer_idx, new_start as i32) {
                         log::error!("Failed to move layer: {}", e);
@@ -721,9 +800,10 @@ impl Default for PlayaApp {
             else if input.key_pressed(egui::Key::Escape) && self.show_encode_dialog {
                 // Close encode dialog (stop encoding if in progress)
                 if let Some(ref mut dialog) = self.encode_dialog
-                    && dialog.is_encoding() {
-                        dialog.stop_encoding();
-                    }
+                    && dialog.is_encoding()
+                {
+                    dialog.stop_encoding();
+                }
                 self.show_encode_dialog = false;
             }
             // Priority 3: Settings dialog (preferences window)
@@ -864,13 +944,7 @@ impl Default for PlayaApp {
             if !input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
                 let current = self.player.current_frame();
                 if let Some(comp_uuid) = &self.player.active_comp.clone() {
-                    if let Some(comp) = self
-                        .player
-                        .project
-                        .media
-                        .get_mut(comp_uuid)
-                        
-                    {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
                         let play_start = (current as i32 - comp.start() as i32).max(0);
                         comp.set_comp_play_start(play_start);
                     }
@@ -881,13 +955,7 @@ impl Default for PlayaApp {
             if !input.modifiers.ctrl && input.key_pressed(egui::Key::N) {
                 let current = self.player.current_frame();
                 if let Some(comp_uuid) = &self.player.active_comp.clone() {
-                    if let Some(comp) = self
-                        .player
-                        .project
-                        .media
-                        .get_mut(comp_uuid)
-                        
-                    {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
                         let play_end = (comp.end() as i32 - current as i32).max(0);
                         comp.set_comp_play_end(play_end);
                     }
@@ -897,13 +965,7 @@ impl Default for PlayaApp {
             // Reset comp work area to full (Ctrl+B)
             if input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
                 if let Some(comp_uuid) = &self.player.active_comp.clone() {
-                    if let Some(comp) = self
-                        .player
-                        .project
-                        .media
-                        .get_mut(comp_uuid)
-                        
-                    {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
                         comp.set_comp_play_start(0);
                         comp.set_comp_play_end(0);
                     }
@@ -944,172 +1006,174 @@ impl Default for PlayaApp {
         } // End of !ctx.wants_keyboard_input()
     }
 
-      fn reset_settings(&mut self, ctx: &egui::Context) {
-          info!("Resetting settings to default");
-          self.settings = AppSettings::default();
-          self.player.reset_settings();
-          self.viewport_state = ViewportState::new();
-          self.shader_manager.reset_settings();
+    fn reset_settings(&mut self, ctx: &egui::Context) {
+        info!("Resetting settings to default");
+        self.settings = AppSettings::default();
+        self.player.reset_settings();
+        self.viewport_state = ViewportState::new();
+        self.shader_manager.reset_settings();
 
         // Reset window size
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1280.0, 720.0)));
 
         // Re-apply image-dependent viewport settings if an image is loaded
-          if let Some(frame) = &self.frame {
-              let (width, height) = frame.resolution();
-              self.viewport_state
-                  .set_image_size(egui::vec2(width as f32, height as f32));
-              self.viewport_state.set_mode_fit();
-          }
-      }
+        if let Some(frame) = &self.frame {
+            let (width, height) = frame.resolution();
+            self.viewport_state
+                .set_image_size(egui::vec2(width as f32, height as f32));
+            self.viewport_state.set_mode_fit();
+        }
+    }
 
-      fn render_project_tab(&mut self, ui: &mut egui::Ui) {
-          if !self.show_playlist {
-              ui.centered_and_justified(|ui| {
-                  ui.label("Project panel hidden (enable playlist to show)");
-              });
-              return;
-          }
+    fn render_project_tab(&mut self, ui: &mut egui::Ui) {
+        if !self.show_playlist {
+            ui.centered_and_justified(|ui| {
+                ui.label("Project panel hidden (enable playlist to show)");
+            });
+            return;
+        }
 
-          let project_actions = widgets::project::render(ui, &mut self.player);
+        let project_actions = widgets::project::render(ui, &mut self.player);
 
-          // Load media files
-          if let Some(path) = project_actions.load_sequence {
-              let _ = self.load_sequences(vec![path]);
-          }
+        // Load media files
+        if let Some(path) = project_actions.load_sequence {
+            let _ = self.load_sequences(vec![path]);
+        }
 
-          // Save/Load project
-          if let Some(path) = project_actions.save_project {
-              self.save_project(path);
-          }
-          if let Some(path) = project_actions.load_project {
-              self.load_project(path);
-          }
+        // Save/Load project
+        if let Some(path) = project_actions.save_project {
+            self.save_project(path);
+        }
+        if let Some(path) = project_actions.load_project {
+            self.load_project(path);
+        }
 
+        // Switch active composition (double-click)
+        if let Some(comp_uuid) = project_actions.set_active_comp {
+            self.player.set_active_comp(comp_uuid.clone());
 
-          // Switch active composition (double-click)
-          if let Some(comp_uuid) = project_actions.set_active_comp {
-              self.player.set_active_comp(comp_uuid.clone());
+            // Trigger frame loading around new current_frame
+            self.enqueue_frame_loads_around_playhead(10);
+        }
 
-              // Trigger frame loading around new current_frame
-              self.enqueue_frame_loads_around_playhead(10);
-          }
+        // Create new composition
+        if project_actions.new_comp {
+            use crate::entities::Comp;
+            let fps = 30.0;
+            let end = (fps * 5.0) as i32; // 5 seconds
+            let mut comp = Comp::new("New Comp", 0, end, fps);
+            let uuid = comp.uuid.clone();
 
-          // Create new composition
-          if project_actions.new_comp {
-              use crate::entities::Comp;
-              let fps = 30.0;
-              let end = (fps * 5.0) as i32; // 5 seconds
-              let mut comp = Comp::new("New Comp", 0, end, fps);
-              let uuid = comp.uuid.clone();
+            // Set event sender for the new comp
+            comp.set_event_sender(self.comp_event_sender.clone());
 
-              // Set event sender for the new comp
-              comp.set_event_sender(self.comp_event_sender.clone());
+            self.player.project.media.insert(uuid.clone(), comp);
+            self.player.project.comps_order.push(uuid.clone());
 
-              self.player.project.media.insert(uuid.clone(), comp);
-              self.player.project.comps_order.push(uuid.clone());
+            // Activate the new comp
+            self.player.set_active_comp(uuid.clone());
 
-              // Activate the new comp
-              self.player.set_active_comp(uuid.clone());
+            info!("Created new comp: {}", uuid);
+        }
 
-              info!("Created new comp: {}", uuid);
-          }
+        // Remove composition
+        if let Some(comp_uuid) = project_actions.remove_comp {
+            self.player.project.media.remove(&comp_uuid);
+            self.player
+                .project
+                .comps_order
+                .retain(|uuid| uuid != &comp_uuid);
 
-          // Remove composition
-          if let Some(comp_uuid) = project_actions.remove_comp {
-              self.player.project.media.remove(&comp_uuid);
-              self.player.project.comps_order.retain(|uuid| uuid != &comp_uuid);
+            // If removed comp was active, switch to first available or None
+            if self.player.active_comp.as_ref() == Some(&comp_uuid) {
+                let first_comp = self.player.project.comps_order.first().cloned();
+                if let Some(new_active) = first_comp {
+                    self.player.set_active_comp(new_active);
+                } else {
+                    self.player.active_comp = None;
+                }
+            }
 
-              // If removed comp was active, switch to first available or None
-              if self.player.active_comp.as_ref() == Some(&comp_uuid) {
-                  let first_comp = self.player.project.comps_order.first().cloned();
-                  if let Some(new_active) = first_comp {
-                      self.player.set_active_comp(new_active);
-                  } else {
-                      self.player.active_comp = None;
-                  }
-              }
+            info!("Removed comp {}", comp_uuid);
+        }
 
-              info!("Removed comp {}", comp_uuid);
-          }
+        // Clear all compositions
+        if project_actions.clear_all_comps {
+            // Remove all media (clips and comps are unified now)
+            self.player.project.media.clear();
+            self.player.project.comps_order.clear();
+            self.player.active_comp = None;
+            info!("All media cleared");
+        }
+    }
 
-          // Clear all compositions
-          if project_actions.clear_all_comps {
-              // Remove all media (clips and comps are unified now)
-              self.player.project.media.clear();
-              self.player.project.comps_order.clear();
-              self.player.active_comp = None;
-              info!("All media cleared");
-          }
-      }
+    fn render_timeline_tab(&mut self, ui: &mut egui::Ui) {
+        // Sync timeline toggles from settings
+        self.timeline_state.snap_enabled = self.settings.timeline_snap_enabled;
+        self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
+        self.timeline_state.show_frame_numbers = self.settings.show_frame_numbers;
 
-      fn render_timeline_tab(&mut self, ui: &mut egui::Ui) {
-          // Sync timeline toggles from settings
-          self.timeline_state.snap_enabled = self.settings.timeline_snap_enabled;
-          self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
-          self.timeline_state.show_frame_numbers = self.settings.show_frame_numbers;
+        // Render timeline panel with transport controls
+        let shader_changed = ui::render_timeline_panel(
+            ui,
+            &mut self.player,
+            &mut self.shader_manager,
+            &mut self.timeline_state,
+        );
+        if shader_changed {
+            let mut renderer = self.viewport_renderer.lock().unwrap();
+            renderer.update_shader(&self.shader_manager);
+            log::info!("Shader changed to: {}", self.shader_manager.current_shader);
+        }
+    }
 
-          // Render timeline panel with transport controls
-          let shader_changed = ui::render_timeline_panel(
-              ui,
-              &mut self.player,
-              &mut self.shader_manager,
-              &mut self.timeline_state,
-          );
-          if shader_changed {
-              let mut renderer = self.viewport_renderer.lock().unwrap();
-              renderer.update_shader(&self.shader_manager);
-              log::info!("Shader changed to: {}", self.shader_manager.current_shader);
-          }
-      }
+    fn render_viewport_tab(&mut self, ui: &mut egui::Ui) {
+        // Determine if the texture needs to be re-uploaded by checking if the frame has changed
+        let texture_needs_upload = self.displayed_frame != Some(self.player.current_frame());
 
-      fn render_viewport_tab(&mut self, ui: &mut egui::Ui) {
-          // Determine if the texture needs to be re-uploaded by checking if the frame has changed
-          let texture_needs_upload = self.displayed_frame != Some(self.player.current_frame());
+        // If the frame has changed, update our cached frame
+        if texture_needs_upload {
+            self.frame = self.player.get_current_frame();
+            self.displayed_frame = Some(self.player.current_frame());
+        }
 
-          // If the frame has changed, update our cached frame
-          if texture_needs_upload {
-              self.frame = self.player.get_current_frame();
-              self.displayed_frame = Some(self.player.current_frame());
-          }
+        let (viewport_actions, render_time) = widgets::viewport::render(
+            ui,
+            self.frame.as_ref(),
+            self.error_msg.as_ref(),
+            &mut self.player,
+            &mut self.viewport_state,
+            &self.viewport_renderer,
+            &mut self.shader_manager,
+            self.show_help,
+            self.is_fullscreen,
+            texture_needs_upload,
+        );
+        self.last_render_time_ms = render_time;
+        if let Some(path) = viewport_actions.load_sequence {
+            let _ = self.load_sequences(vec![path]);
+        }
 
-          let (viewport_actions, render_time) = widgets::viewport::render(
-              ui,
-              self.frame.as_ref(),
-              self.error_msg.as_ref(),
-              &mut self.player,
-              &mut self.viewport_state,
-              &self.viewport_renderer,
-              &mut self.shader_manager,
-              self.show_help,
-              self.is_fullscreen,
-              texture_needs_upload,
-          );
-          self.last_render_time_ms = render_time;
-          if let Some(path) = viewport_actions.load_sequence {
-              let _ = self.load_sequences(vec![path]);
-          }
+        // Persist timeline options back to settings
+        self.settings.show_frame_numbers = self.timeline_state.show_frame_numbers;
+        self.settings.timeline_snap_enabled = self.timeline_state.snap_enabled;
+        self.settings.timeline_lock_work_area = self.timeline_state.lock_work_area;
+    }
 
-          // Persist timeline options back to settings
-          self.settings.show_frame_numbers = self.timeline_state.show_frame_numbers;
-          self.settings.timeline_snap_enabled = self.timeline_state.snap_enabled;
-          self.settings.timeline_lock_work_area = self.timeline_state.lock_work_area;
-      }
-
-      fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
-          ui.heading("Attributes");
-          if let Some(active) = self.player.active_comp.clone() {
-              if let Some(comp) = self.player.project.media.get_mut(&active) {
-                  ui.label(format!("Comp: {}", comp.name()));
-                  crate::widgets::ae::render(ui, &mut comp.attrs);
-              } else {
-                  ui.label("No active comp");
-              }
-          } else {
-              ui.label("No active comp");
-          }
-      }
-  }
+    fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Attributes");
+        if let Some(active) = self.player.active_comp.clone() {
+            if let Some(comp) = self.player.project.media.get_mut(&active) {
+                ui.label(format!("Comp: {}", comp.name()));
+                crate::widgets::ae::render(ui, &mut comp.attrs);
+            } else {
+                ui.label("No active comp");
+            }
+        } else {
+            ui.label("No active comp");
+        }
+    }
+}
 
 struct DockTabs<'a> {
     app: &'a mut PlayaApp,
@@ -1208,7 +1272,8 @@ impl eframe::App for PlayaApp {
                 self.render_viewport_tab(ui);
             } else {
                 let dock_style = egui_dock::Style::from_egui(ctx.style().as_ref());
-                let mut dock_state = std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
+                let mut dock_state =
+                    std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
                 {
                     let mut tabs = DockTabs { app: self };
                     DockArea::new(&mut dock_state)
@@ -1330,13 +1395,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         env_logger::Builder::new()
             .filter_level(log_level)
-            .filter_module("egui", log::LevelFilter::Info)  // Suppress egui DEBUG spam
-            .filter_module("egui_taffy", log::LevelFilter::Warn)  // Suppress taffy spam
+            .filter_module("egui", log::LevelFilter::Info) // Suppress egui DEBUG spam
+            .filter_module("egui_taffy", log::LevelFilter::Warn) // Suppress taffy spam
             .format_timestamp_millis()
             .target(env_logger::Target::Pipe(Box::new(file)))
             .init();
 
-        info!("Logging to file: {} (level: {:?})", log_path.display(), log_level);
+        info!(
+            "Logging to file: {} (level: {:?})",
+            log_path.display(),
+            log_level
+        );
     } else {
         // Console logging with specified verbosity level (respects RUST_LOG if set)
         let default_level = match args.verbosity {
@@ -1347,8 +1416,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
-            .filter_module("egui", log::LevelFilter::Info)  // Suppress egui DEBUG spam
-            .filter_module("egui_taffy", log::LevelFilter::Warn)  // Suppress taffy spam
+            .filter_module("egui", log::LevelFilter::Info) // Suppress egui DEBUG spam
+            .filter_module("egui_taffy", log::LevelFilter::Warn) // Suppress taffy spam
             .format_timestamp_millis()
             .init();
     }
@@ -1408,14 +1477,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         native_options,
         Box::new(move |cc| {
             // Load persisted app state if available, otherwise create default
-              let mut app: PlayaApp = cc
-                  .storage
-                  .and_then(|storage| storage.get_string(eframe::APP_KEY))
-                  .and_then(|json| serde_json::from_str(&json).ok())
-                  .unwrap_or_else(|| {
-                      info!("No persisted state found, creating default app");
-                      PlayaApp::default()
-                  });
+            let mut app: PlayaApp = cc
+                .storage
+                .and_then(|storage| storage.get_string(eframe::APP_KEY))
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_else(|| {
+                    info!("No persisted state found, creating default app");
+                    PlayaApp::default()
+                });
 
             // Recreate Player with CLI- or Settings-configured cache memory/worker settings
             // and rewire status bar + path sender
@@ -1431,20 +1500,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             });
 
-              // Recreate Player runtime from persisted project
-              let mut player = Player::new();
-              player.project = app.project.clone();
+            // Recreate Player runtime from persisted project
+            let mut player = Player::new();
+            player.project = app.project.clone();
 
-              // Rebuild Arc references and set event sender for all comps
-              player.project.rebuild_runtime(Some(app.comp_event_sender.clone()));
+            // Rebuild Arc references and set event sender for all comps
+            player
+                .project
+                .rebuild_runtime(Some(app.comp_event_sender.clone()));
 
-              // Ensure default comp exists and set as active
-              let default_comp_uuid = player.project.ensure_default_comp();
-              if player.active_comp.is_none() {
-                  player.active_comp = Some(default_comp_uuid);
-              }
+            // Ensure default comp exists and set as active
+            let default_comp_uuid = player.project.ensure_default_comp();
+            if player.active_comp.is_none() {
+                player.active_comp = Some(default_comp_uuid);
+            }
 
-              app.player = player;
+            app.player = player;
             app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;
             app.applied_workers = _workers;
@@ -1453,7 +1524,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Attempt to load shaders from the shaders directory
             if app
                 .shader_manager
-                .load_shader_directory(&std::path::PathBuf::from("shaders")).is_err()
+                .load_shader_directory(&std::path::PathBuf::from("shaders"))
+                .is_err()
             {
                 log::info!("Shaders folder does not exist, skipping external shader loading");
             }
@@ -1472,74 +1544,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.show_help
             );
 
-              // CLI arguments have priority
-              let has_cli_input =
-                  args.file_path.is_some() || !args.files.is_empty() || args.playlist.is_some();
+            // CLI arguments have priority
+            let has_cli_input =
+                args.file_path.is_some() || !args.files.is_empty() || args.playlist.is_some();
 
-              if has_cli_input {
-                  info!("CLI arguments provided, loading sequences");
+            if has_cli_input {
+                info!("CLI arguments provided, loading sequences");
 
-                  // Collect all file paths in order: positional arg, -f flags, -p playlist
-                  let mut all_files = Vec::new();
+                // Collect all file paths in order: positional arg, -f flags, -p playlist
+                let mut all_files = Vec::new();
 
-                  if let Some(ref path) = args.file_path {
-                      all_files.push(path.clone());
-                  }
+                if let Some(ref path) = args.file_path {
+                    all_files.push(path.clone());
+                }
 
-                  all_files.extend(args.files.iter().cloned());
+                all_files.extend(args.files.iter().cloned());
 
-                  // Load files
-                  if !all_files.is_empty() {
-                      let _ = app.load_sequences(all_files);
-                  }
+                // Load files
+                if !all_files.is_empty() {
+                    let _ = app.load_sequences(all_files);
+                }
 
-                  // Load playlist as Project
-                  if let Some(ref playlist_path) = args.playlist {
-                      info!("Loading playlist: {}", playlist_path.display());
-                      match crate::entities::Project::from_json(playlist_path) {
-                          Ok(mut project) => {
-                              // Rebuild runtime with event sender for all comps
-                              project.rebuild_runtime(Some(app.comp_event_sender.clone()));
-                              app.player.project = project;
-                              info!("Playlist loaded via Project");
-                          }
-                          Err(e) => {
-                              warn!(
-                                  "Failed to load playlist {}: {}",
-                                  playlist_path.display(),
-                                  e
-                              );
-                          }
-                      }
-                  }
+                // Load playlist as Project
+                if let Some(ref playlist_path) = args.playlist {
+                    info!("Loading playlist: {}", playlist_path.display());
+                    match crate::entities::Project::from_json(playlist_path) {
+                        Ok(mut project) => {
+                            // Rebuild runtime with event sender for all comps
+                            project.rebuild_runtime(Some(app.comp_event_sender.clone()));
+                            app.player.project = project;
+                            info!("Playlist loaded via Project");
+                        }
+                        Err(e) => {
+                            warn!("Failed to load playlist {}: {}", playlist_path.display(), e);
+                        }
+                    }
+                }
 
-                  // Apply CLI options
-                  if let Some(frame) = args.start_frame {
-                      app.player.set_frame(frame);
-                  }
+                // Apply CLI options
+                if let Some(frame) = args.start_frame {
+                    app.player.set_frame(frame);
+                }
 
-                  if args.autoplay {
-                      app.player.is_playing = true;
-                  }
+                if args.autoplay {
+                    app.player.is_playing = true;
+                }
 
-                  app.player.loop_enabled = args.loop_playback != 0;
+                app.player.loop_enabled = args.loop_playback != 0;
 
-                  // Set play range
-                  let (range_start, range_end) = if let Some(ref range) = args.range {
-                      (Some(range[0]), Some(range[1]))
-                  } else {
-                      (args.range_start, args.range_end)
-                  };
+                // Set play range
+                let (range_start, range_end) = if let Some(ref range) = args.range {
+                    (Some(range[0]), Some(range[1]))
+                } else {
+                    (args.range_start, args.range_end)
+                };
 
-                  if let (Some(start), Some(end)) = (range_start, range_end) {
-                      app.player.set_play_range(start, end);
-                  }
+                if let (Some(start), Some(end)) = (range_start, range_end) {
+                    app.player.set_play_range(start, end);
+                }
 
-                  // Set fullscreen
-                  if args.fullscreen {
-                      app.set_cinema_mode(&cc.egui_ctx, true);
-                  }
-              }
+                // Set fullscreen
+                if args.fullscreen {
+                    app.set_cinema_mode(&cc.egui_ctx, true);
+                }
+            }
 
             Ok(Box::new(app))
         }),
@@ -1548,4 +1616,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Application exiting");
     Ok(())
 }
-

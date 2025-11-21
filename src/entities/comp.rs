@@ -8,13 +8,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 use eframe::egui;
+use serde::{Deserialize, Serialize};
 
-use super::{Attrs, AttrValue};
+use super::frame::{CropAlign, Frame, PixelDepth};
+use super::{AttrValue, Attrs};
 use crate::events::{CompEvent, CompEventSender};
-use super::frame::Frame;
 
 /// Comp operating mode: Layer composition or File sequence loading
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -124,7 +125,7 @@ impl Comp {
         attrs.set("end", AttrValue::Int(end));
         attrs.set("fps", AttrValue::Float(fps));
         attrs.set("play_start", AttrValue::Int(0)); // Full range by default
-        attrs.set("play_end", AttrValue::Int(0));   // Full range by default
+        attrs.set("play_end", AttrValue::Int(0)); // Full range by default
 
         // Transform defaults
         attrs.set("visible", AttrValue::Bool(true));
@@ -150,12 +151,7 @@ impl Comp {
     }
 
     /// Create new composition in File mode for loading image sequences
-    pub fn new_file_comp(
-        pattern: impl Into<String>,
-        start: i32,
-        end: i32,
-        fps: f32,
-    ) -> Self {
+    pub fn new_file_comp(pattern: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
         let mut comp = Self::new("File Comp", start, end, fps);
         comp.mode = CompMode::File;
         comp.file_mask = Some(pattern.into());
@@ -226,11 +222,7 @@ impl Comp {
     pub fn frame_count(&self) -> i32 {
         let start = self.start();
         let end = self.end();
-        if end >= start {
-            end - start + 1
-        } else {
-            0
-        }
+        if end >= start { end - start + 1 } else { 0 }
     }
 
     /// Number of frames in play range (work area)
@@ -302,7 +294,11 @@ impl Comp {
         }
 
         // Hash transform attributes
-        let transparency_bits = self.attrs.get_float("transparency").unwrap_or(1.0).to_bits();
+        let transparency_bits = self
+            .attrs
+            .get_float("transparency")
+            .unwrap_or(1.0)
+            .to_bits();
         transparency_bits.hash(&mut hasher);
 
         if let Some(layer_mode) = self.attrs.get_str("layer_mode") {
@@ -339,10 +335,59 @@ impl Comp {
 
     /// Get composed frame at given global frame index.
     ///
-    /// Recursively resolves layer sources from Project.media and composes them.
-    /// Uses hash-based cache that invalidates when layers configuration changes.
-    /// Only frames within play_area (work area) are composed - frames outside return None.
+    /// File mode:
+    /// - Interprets frame_idx as 0-based within the clip (independent of on-disk numbering).
+    /// - Returns a sized green placeholder outside the work area without touching the loader.
+    ///
+    /// Layer mode:
+    /// - Resolves children recursively and blends them.
     pub fn get_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
+        match self.mode {
+            CompMode::File => self.get_file_frame(frame_idx),
+            CompMode::Layer => self.get_layer_frame(frame_idx, project),
+        }
+    }
+
+    fn get_file_frame(&self, frame_idx: i32) -> Option<Frame> {
+        let duration = self.frame_count();
+        if duration <= 0 {
+            return None;
+        }
+
+        // Work area in local (0-based) clip space
+        let work_start = self.play_start().max(0);
+        let work_end = (duration - 1 - self.play_end().max(0)).max(work_start);
+
+        // Outside work area -> placeholder, no load
+        if frame_idx < work_start || frame_idx > work_end {
+            return Some(self.placeholder_frame());
+        }
+
+        // Map local frame_idx to absolute sequence number (preserve original numbering)
+        let seq_start = self.file_start.unwrap_or(self.start());
+        let seq_end = self.file_end.unwrap_or(self.end());
+        let seq_frame = seq_start.saturating_add(frame_idx);
+        if seq_frame < seq_start || seq_frame > seq_end {
+            return Some(self.placeholder_frame());
+        }
+
+        // Cache key uses sequence frame number to avoid collisions when start shifts
+        let cache_key = (self.compute_comp_hash(), seq_frame.max(0) as usize);
+        if let Some(frame) = self.cache.borrow().get(&cache_key) {
+            return Some(frame.clone());
+        }
+
+        let frame_path = self.resolve_frame_path(seq_frame).unwrap_or_default();
+        if frame_path.as_os_str().is_empty() {
+            return Some(self.placeholder_frame());
+        }
+
+        let frame = self.frame_from_path(frame_path);
+        self.cache.borrow_mut().insert(cache_key, frame.clone());
+        Some(frame)
+    }
+
+    fn get_layer_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         // Check if frame is within play area (work area)
         let (play_start, play_end) = self.play_range();
         if frame_idx < play_start || frame_idx > play_end {
@@ -351,7 +396,7 @@ impl Comp {
 
         // Compute composition hash for cache key
         let comp_hash = self.compute_comp_hash();
-        let cache_key = (comp_hash, frame_idx.max(0) as usize);  // Cache key uses positive values
+        let cache_key = (comp_hash, frame_idx.max(0) as usize); // Cache key uses positive values
 
         // Check cache
         if let Some(frame) = self.cache.borrow().get(&cache_key) {
@@ -364,6 +409,38 @@ impl Comp {
         // Cache result with hash-based key
         self.cache.borrow_mut().insert(cache_key, composed.clone());
         Some(composed)
+    }
+
+    fn resolve_frame_path(&self, frame_number: i32) -> Option<PathBuf> {
+        let mask = self.file_mask.as_ref()?;
+        if mask.contains('*') {
+            let padding = self.attrs.get_u32("padding").unwrap_or(4) as usize;
+            let mut parts = mask.splitn(2, '*');
+            let prefix = parts.next().unwrap_or_default();
+            let suffix = parts.next().unwrap_or_default();
+            let path = format!("{}{:0padding$}{}", prefix, frame_number, suffix);
+            Some(PathBuf::from(path))
+        } else {
+            Some(PathBuf::from(mask))
+        }
+    }
+
+    fn frame_dimensions(&self) -> (usize, usize) {
+        let w = self.attrs.get_u32("width").unwrap_or(64) as usize;
+        let h = self.attrs.get_u32("height").unwrap_or(64) as usize;
+        (w.max(1), h.max(1))
+    }
+
+    fn placeholder_frame(&self) -> Frame {
+        let (w, h) = self.frame_dimensions();
+        Frame::new(w, h, PixelDepth::U8)
+    }
+
+    fn frame_from_path(&self, path: PathBuf) -> Frame {
+        let (w, h) = self.frame_dimensions();
+        let frame = Frame::new_unloaded(path);
+        frame.crop(w, h, CropAlign::LeftTop);
+        frame
     }
 
     /// Compose frame at given global frame index.
@@ -455,7 +532,7 @@ impl Comp {
 
         // Create child attributes
         let mut attrs = Attrs::new();
-        attrs.set("uuid", AttrValue::Str(source_uuid));  // Reference to source comp
+        attrs.set("uuid", AttrValue::Str(source_uuid)); // Reference to source comp
         attrs.set("name", AttrValue::Str("Child".to_string()));
         attrs.set("start", AttrValue::Int(start_frame));
         attrs.set("end", AttrValue::Int(end_frame));
@@ -466,20 +543,11 @@ impl Comp {
         attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
         attrs.set("speed", AttrValue::Float(1.0));
 
-        // Extend comp duration if needed so the layer is visible on timeline
-        let comp_end = self.attrs.get_i32("end").unwrap_or(0);
-        if end_frame > comp_end {
-            self.attrs.set("end", AttrValue::Int(end_frame));
-        }
-        let comp_start = self.attrs.get_i32("start").unwrap_or(0);
-        if start_frame < comp_start {
-            self.attrs.set("start", AttrValue::Int(start_frame));
-        }
-
         // Add to children using instance UUID
         self.children.push(instance_uuid.clone());
         self.children_attrs.insert(instance_uuid, attrs);
 
+        self.rebound();
         // Clear cache and emit event
         self.clear_cache();
         self.event_sender.emit(CompEvent::LayersChanged {
@@ -511,16 +579,7 @@ impl Comp {
         attrs.set("start", AttrValue::Int(new_start));
         attrs.set("end", AttrValue::Int(new_end));
 
-        // Extend parent comp boundaries if needed
-        let comp_start = self.attrs.get_i32("start").unwrap_or(0);
-        let comp_end = self.attrs.get_i32("end").unwrap_or(0);
-
-        if new_start < comp_start {
-            self.attrs.set("start", AttrValue::Int(new_start));
-        }
-        if new_end > comp_end {
-            self.attrs.set("end", AttrValue::Int(new_end));
-        }
+        self.rebound();
 
         // Clear cache and emit event
         self.clear_cache();
@@ -532,7 +591,11 @@ impl Comp {
     }
 
     /// Set child play start (adjust play_start attribute - visible start offset from child start).
-    pub fn set_child_play_start(&mut self, child_idx: usize, new_play_start: i32) -> anyhow::Result<()> {
+    pub fn set_child_play_start(
+        &mut self,
+        child_idx: usize,
+        new_play_start: i32,
+    ) -> anyhow::Result<()> {
         let child_uuid = self
             .children
             .get(child_idx)
@@ -556,7 +619,11 @@ impl Comp {
     }
 
     /// Set child play end (adjust play_end attribute - visible end offset from child end).
-    pub fn set_child_play_end(&mut self, child_idx: usize, new_play_end: i32) -> anyhow::Result<()> {
+    pub fn set_child_play_end(
+        &mut self,
+        child_idx: usize,
+        new_play_end: i32,
+    ) -> anyhow::Result<()> {
         let child_uuid = self
             .children
             .get(child_idx)
@@ -616,8 +683,8 @@ impl Comp {
                 let visible_end = end - play_end;
 
                 if visible_start < visible_end {
-                    edges.push((visible_start, true));   // Start edge
-                    edges.push((visible_end, false));    // End edge
+                    edges.push((visible_start, true)); // Start edge
+                    edges.push((visible_end, false)); // End edge
                 }
             }
         }
@@ -643,10 +710,41 @@ impl Comp {
     /// Remove child comp from this composition
     pub fn remove_child(&mut self, child_uuid: &str) {
         self.children.retain(|uuid| uuid != child_uuid);
+        self.rebound();
         self.invalidate_cache();
         self.event_sender.emit(CompEvent::LayersChanged {
             comp_uuid: self.uuid.clone(),
         });
+    }
+
+    /// Recalculate comp start/end based on children (negative starts allowed).
+    pub fn rebound(&mut self) {
+        if self.children.is_empty() {
+            // Default span when no children: 0..100 for a visible timeline
+            self.attrs.set("start", AttrValue::Int(0));
+            self.attrs.set("end", AttrValue::Int(100));
+            return;
+        }
+
+        let mut min_start = i32::MAX;
+        let mut max_end = i32::MIN;
+
+        for child_uuid in &self.children {
+            if let Some(attrs) = self.children_attrs.get(child_uuid) {
+                let s = attrs.get_i32("start").unwrap_or(0);
+                let e = attrs.get_i32("end").unwrap_or(0);
+                min_start = min_start.min(s);
+                max_end = max_end.max(e);
+            }
+        }
+
+        if min_start == i32::MAX || max_end == i32::MIN {
+            self.attrs.set("start", AttrValue::Int(0));
+            self.attrs.set("end", AttrValue::Int(0));
+        } else {
+            self.attrs.set("start", AttrValue::Int(min_start));
+            self.attrs.set("end", AttrValue::Int(max_end));
+        }
     }
 
     /// Set parent composition UUID
@@ -710,7 +808,12 @@ impl crate::entities::TimelineUI for Comp {
         painter.rect_filled(bar_rect, 2.0, bar_color);
 
         // Draw border
-        painter.rect_stroke(bar_rect, 2.0, egui::Stroke::new(1.0, egui::Color32::WHITE), egui::epaint::StrokeKind::Middle);
+        painter.rect_stroke(
+            bar_rect,
+            2.0,
+            egui::Stroke::new(1.0, egui::Color32::WHITE),
+            egui::epaint::StrokeKind::Middle,
+        );
 
         // Highlight current frame if within range
         let start = self.start();
@@ -735,16 +838,19 @@ impl crate::entities::TimelineUI for Comp {
             egui::Color32::WHITE,
         );
 
-        ui.interact(bar_rect, ui.id().with(&self.uuid), egui::Sense::click_and_drag())
+        ui.interact(
+            bar_rect,
+            ui.id().with(&self.uuid),
+            egui::Sense::click_and_drag(),
+        )
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::Clip;
     use super::super::Project;
+    use super::*;
 
     /// Helper: create dummy frame
     fn dummy_frame(_value: u8) -> Frame {
@@ -761,7 +867,10 @@ mod tests {
         let frames: Vec<Frame> = (0..10).map(|i| dummy_frame(i * 10)).collect();
         let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
         let clip_uuid = clip.uuid.clone();
-        project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
+        project.media.insert(
+            clip_uuid.clone(),
+            todo!("Convert Clip to Comp with File mode"),
+        );
         project.comps_order.push(clip_uuid.clone());
 
         // Create Comp B with clip as child
@@ -797,7 +906,10 @@ mod tests {
         let frames: Vec<Frame> = (0..5).map(|i| dummy_frame(i * 20)).collect();
         let clip = Clip::from_frames(frames, "test_clip".to_string(), 2, 2);
         let clip_uuid = clip.uuid.clone();
-        project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
+        project.media.insert(
+            clip_uuid.clone(),
+            todo!("Convert Clip to Comp with File mode"),
+        );
 
         // Create Comp with clip as child
         let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
@@ -814,7 +926,11 @@ mod tests {
         // Get same frame - should hit cache
         let _frame2 = comp.get_frame(2, &project).unwrap();
         // Frames should be clones (cache hit)
-        assert_eq!(comp.cache.borrow().len(), 1, "Cache size should stay the same");
+        assert_eq!(
+            comp.cache.borrow().len(),
+            1,
+            "Cache size should stay the same"
+        );
 
         // Modify layer (change opacity) - should invalidate cache
         {
@@ -827,7 +943,11 @@ mod tests {
         // Get frame again - cache should add new entry with different hash
         let comp = project.media.get(&comp_uuid).unwrap();
         let _frame3 = comp.get_frame(2, &project).unwrap();
-        assert_eq!(comp.cache.borrow().len(), 2, "Cache should have both old and new entries (different hashes)");
+        assert_eq!(
+            comp.cache.borrow().len(),
+            2,
+            "Cache should have both old and new entries (different hashes)"
+        );
         // Success - cache uses hash-based keys, old entry with old hash remains, new entry with new hash added
     }
 
@@ -865,9 +985,14 @@ mod tests {
         assert_eq!(hash1, hash2, "Identical layers should produce same hash");
 
         // Different opacity should produce different hash
-        comp2.layers[0].attrs.set("opacity", crate::attrs::AttrValue::Float(0.7));
+        comp2.layers[0]
+            .attrs
+            .set("opacity", crate::attrs::AttrValue::Float(0.7));
         let hash3 = comp2.compute_comp_hash();
-        assert_ne!(hash1, hash3, "Different opacity should produce different hash");
+        assert_ne!(
+            hash1, hash3,
+            "Different opacity should produce different hash"
+        );
     }
 
     /// Test multi-layer blending with compositor
@@ -880,7 +1005,10 @@ mod tests {
             let frames: Vec<Frame> = (0..5).map(|_| dummy_frame(i * 30)).collect();
             let clip = Clip::from_frames(frames, format!("clip_{}", i), 2, 2);
             let clip_uuid = clip.uuid.clone();
-            project.media.insert(clip_uuid.clone(), todo!("Convert Clip to Comp with File mode"));
+            project.media.insert(
+                clip_uuid.clone(),
+                todo!("Convert Clip to Comp with File mode"),
+            );
             project.comps_order.push(clip_uuid.clone());
         }
 
@@ -930,6 +1058,10 @@ mod tests {
         assert!(frame.is_some(), "Multi-layer composition should succeed");
 
         // Verify cache contains the blended result
-        assert_eq!(comp.cache.borrow().len(), 1, "Cache should contain blended frame");
+        assert_eq!(
+            comp.cache.borrow().len(),
+            1,
+            "Cache should contain blended frame"
+        );
     }
 }
