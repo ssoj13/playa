@@ -244,9 +244,15 @@ impl Default for PlayaApp {
                 continue;
             };
 
+            // Get source UUID from child attrs (child_uuid is now instance UUID)
+            let Some(source_uuid) = attrs.get_str("uuid") else {
+                debug!("Child {} missing uuid attribute", child_idx);
+                continue;
+            };
+
             // Resolve source from Project.media by UUID
-            let Some(source) = self.player.project.media.get(child_uuid) else {
-                debug!("Child {} references missing source {}", child_idx, child_uuid);
+            let Some(source) = self.player.project.media.get(source_uuid) else {
+                debug!("Child {} references missing source {}", child_idx, source_uuid);
                 continue;
             };
 
@@ -1257,6 +1263,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         env_logger::Builder::new()
             .filter_level(log_level)
+            .filter_module("egui", log::LevelFilter::Info)  // Suppress egui DEBUG spam
+            .filter_module("egui_taffy", log::LevelFilter::Warn)  // Suppress taffy spam
             .format_timestamp_millis()
             .target(env_logger::Target::Pipe(Box::new(file)))
             .init();
@@ -1272,6 +1280,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
+            .filter_module("egui", log::LevelFilter::Info)  // Suppress egui DEBUG spam
+            .filter_module("egui_taffy", log::LevelFilter::Warn)  // Suppress taffy spam
             .format_timestamp_millis()
             .init();
     }

@@ -105,8 +105,8 @@ pub enum TimelineAction {
     JumpToPrevEdge,                                     // Jump to previous layer edge ([)
     JumpToNextEdge,                                     // Jump to next layer edge (])
     AddLayer { source_uuid: String, start_frame: usize }, // Drop item on timeline
-    MoveLayer { layer_idx: usize, new_start: usize },   // Move layer horizontally
-    ReorderLayer { from_idx: usize, to_idx: usize },    // Reorder layer vertically
+    ReorderLayer { from_idx: usize, to_idx: usize },    // Reorder layer vertically (DnD in left column)
+    MoveAndReorderLayer { layer_idx: usize, new_start: usize, new_idx: usize }, // Move layer both horizontally and vertically
     SetLayerPlayStart { layer_idx: usize, new_play_start: i32 }, // Adjust layer play start
     SetLayerPlayEnd { layer_idx: usize, new_play_end: i32 },   // Adjust layer play end
     SetCompPlayStart { frame: usize },                  // Set comp work area start (B key)

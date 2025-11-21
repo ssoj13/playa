@@ -149,15 +149,6 @@ pub fn render_timeline_panel(
                             }
                         }
                     }
-                    TimelineAction::MoveLayer { layer_idx, new_start } => {
-                        if let Some(comp_uuid) = &player.active_comp.clone() {
-                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                                if let Err(e) = comp.move_child(layer_idx, new_start) {
-                                    eprintln!("Failed to move child: {}", e);
-                                }
-                            }
-                        }
-                    }
                     TimelineAction::ReorderLayer { from_idx, to_idx } => {
                         if let Some(comp_uuid) = &player.active_comp.clone() {
                             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
@@ -165,6 +156,31 @@ pub fn render_timeline_panel(
                                     let child_uuid = comp.children.remove(from_idx);
                                     comp.children.insert(to_idx, child_uuid);
                                     comp.clear_cache();
+                                }
+                            }
+                        }
+                    }
+                    TimelineAction::MoveAndReorderLayer { layer_idx, new_start, new_idx } => {
+                        eprintln!("[DEBUG] MoveAndReorderLayer: layer_idx={}, new_start={}, new_idx={}", layer_idx, new_start, new_idx);
+                        if let Some(comp_uuid) = &player.active_comp.clone() {
+                            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
+                                eprintln!("[DEBUG] Active comp has {} children", comp.children.len());
+
+                                // Step 1: Reorder if needed
+                                if layer_idx != new_idx && layer_idx < comp.children.len() && new_idx < comp.children.len() {
+                                    eprintln!("[DEBUG] Reordering from {} to {}", layer_idx, new_idx);
+                                    let child_uuid = comp.children.remove(layer_idx);
+                                    comp.children.insert(new_idx, child_uuid);
+                                }
+
+                                // Step 2: Move horizontally (use new_idx if reordered)
+                                let final_idx = if layer_idx != new_idx { new_idx } else { layer_idx };
+                                eprintln!("[DEBUG] Moving child at index {} to start={}", final_idx, new_start);
+
+                                if let Err(e) = comp.move_child(final_idx, new_start) {
+                                    eprintln!("Failed to move child: {}", e);
+                                } else {
+                                    eprintln!("[DEBUG] Move successful!");
                                 }
                             }
                         }

@@ -9,7 +9,7 @@ use crate::entities::Comp;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 use super::{TimelineAction, TimelineConfig, TimelineState, GlobalDragState};
-use super::timeline_helpers::{LayerTool, detect_layer_tool, frame_to_screen_x, screen_x_to_frame, draw_frame_ruler, hash_color};
+use super::timeline_helpers::{LayerTool, frame_to_screen_x, screen_x_to_frame, draw_frame_ruler, hash_color};
 
 /// Render After Effects-style timeline
 pub fn render(
@@ -374,32 +374,56 @@ pub fn render(
                             let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
                             let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
 
-                            // Calculate visible (play) range for interaction
+                            // Calculate full clip range and visible (play) range
+                            let full_start = child_start;
+                            let full_end = child_end;
                             let visible_start = child_start + play_start as usize;
                             let visible_end = child_end.saturating_sub(play_end as usize);
 
                             let child_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
 
-                            // Use visible range for interaction rect (user should interact with visible edges)
-                            let bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
-                            let bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x, config, state);
-                            let bar_rect = Rect::from_min_max(
-                                Pos2::new(bar_x_start, child_y + 4.0),
-                                Pos2::new(bar_x_end, child_y + config.layer_height - 4.0),
+                            // Create rects for full range and visible range
+                            let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
+                            let full_bar_x_end = frame_to_screen_x((full_end + 1) as f32, timeline_rect.min.x, config, state);
+                            let full_bar_rect = Rect::from_min_max(
+                                Pos2::new(full_bar_x_start, child_y + 4.0),
+                                Pos2::new(full_bar_x_end, child_y + config.layer_height - 4.0),
                             );
 
-                            // Check interaction with this bar using unified tool detection
+                            let visible_bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
+                            let visible_bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x, config, state);
+                            let visible_bar_rect = Rect::from_min_max(
+                                Pos2::new(visible_bar_x_start, child_y + 4.0),
+                                Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
+                            );
+
+                            // Manual tool detection: trim edges on full bar, move on visible bar
                             let edge_threshold = 8.0;
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                                if state.drag_state.is_none() {
-                                    if let Some(tool) = detect_layer_tool(hover_pos, bar_rect, edge_threshold) {
+                                if state.drag_state.is_none() && full_bar_rect.contains(hover_pos) {
+                                    let dist_to_left = (hover_pos.x - full_bar_rect.min.x).abs();
+                                    let dist_to_right = (hover_pos.x - full_bar_rect.max.x).abs();
+
+                                    let tool = if dist_to_left < edge_threshold {
+                                        Some(LayerTool::AdjustPlayStart)
+                                    } else if dist_to_right < edge_threshold {
+                                        Some(LayerTool::AdjustPlayEnd)
+                                    } else if visible_bar_rect.contains(hover_pos) {
+                                        Some(LayerTool::Move)
+                                    } else {
+                                        None
+                                    };
+
+                                    if let Some(tool) = tool {
                                         // Set cursor based on detected tool
                                         ui.ctx().set_cursor_icon(tool.cursor());
 
                                         // On mouse press, create appropriate drag state
                                         if ui.ctx().input(|i| i.pointer.primary_pressed()) {
+                                            log::debug!("[TIMELINE] Creating drag state: {:?} for layer {}", tool, idx);
                                             if let Some(child_attrs) = attrs {
                                                 state.drag_state = Some(tool.to_drag_state(idx, child_attrs, hover_pos));
+                                                log::debug!("[TIMELINE] Drag state created successfully");
                                             }
                                         }
                                     }
@@ -407,14 +431,14 @@ pub fn render(
                             }
                         }
 
-                        // Process active drag operations (only if pointer is still down)
-                        if let Some(drag) = &state.drag_state.clone() {
-                            let pointer_down = ui.ctx().input(|i| i.pointer.primary_down());
+                        // Helper: find display index for a physical layer index
+                        let physical_to_display = |physical_idx: usize| -> Option<usize> {
+                            child_order.iter().position(|&idx| idx == physical_idx)
+                        };
 
-                            // Clear drag state if pointer released (safety fallback)
-                            if !pointer_down {
-                                state.drag_state = None;
-                            } else if let Some(current_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                        // Process active drag operations
+                        if let Some(drag) = &state.drag_state.clone() {
+                            if let Some(current_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 match drag {
                                     GlobalDragState::MovingLayer { layer_idx, initial_start, drag_start_x, drag_start_y, .. } => {
                                         let delta_x = current_pos.x - drag_start_x;
@@ -423,47 +447,51 @@ pub fn render(
                                         let new_start = (*initial_start as i32 + delta_frames).max(0) as usize;
 
                                         // Determine target child index from vertical position
+                                        // Calculate from display position, then convert to physical
+                                        let current_display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
                                         let delta_children = (delta_y / config.layer_height).round() as i32;
-                                        let target_child = (*layer_idx as i32 + delta_children).max(0).min(comp.children.len() as i32 - 1) as usize;
+                                        let target_display_idx = (current_display_idx as i32 + delta_children).max(0).min(comp.children.len() as i32 - 1) as usize;
+                                        let target_child = child_order.get(target_display_idx).copied().unwrap_or(*layer_idx);
 
                                         // Visual feedback: draw ghost bar at new position
-                                        if *layer_idx < comp.children.len() {
-                                            let child_uuid = &comp.children[*layer_idx];
-                                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                let ghost_child_y = timeline_rect.min.y + (target_child as f32 * config.layer_height);
-                                                let duration = (attrs.get_u32("end").unwrap_or(0) as i32
-                                                              - attrs.get_u32("start").unwrap_or(0) as i32).max(0) as usize;
+                                        // Use display index for Y positioning (already calculated above)
+                                        let child_uuid = &comp.children[*layer_idx];
+                                        if let Some(attrs) = comp.children_attrs.get(child_uuid) {
+                                            let ghost_child_y = timeline_rect.min.y + (target_display_idx as f32 * config.layer_height);
+                                            let duration = (attrs.get_u32("end").unwrap_or(0) as i32
+                                                          - attrs.get_u32("start").unwrap_or(0) as i32).max(0) as usize;
 
-                                                let ghost_x_start = frame_to_screen_x(new_start as f32, timeline_rect.min.x, config, state);
-                                                let ghost_x_end = frame_to_screen_x((new_start + duration) as f32, timeline_rect.min.x, config, state);
-                                                let ghost_rect = Rect::from_min_max(
-                                                    Pos2::new(ghost_x_start, ghost_child_y + 4.0),
-                                                    Pos2::new(ghost_x_end, ghost_child_y + config.layer_height - 4.0),
-                                                );
-                                                painter.rect_stroke(
-                                                    ghost_rect,
-                                                    4.0,
-                                                    egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 128)),
-                                                    egui::epaint::StrokeKind::Middle,
-                                                );
-                                            }
+                                            let ghost_x_start = frame_to_screen_x(new_start as f32, timeline_rect.min.x, config, state);
+                                            let ghost_x_end = frame_to_screen_x((new_start + duration) as f32, timeline_rect.min.x, config, state);
+                                            let ghost_rect = Rect::from_min_max(
+                                                Pos2::new(ghost_x_start, ghost_child_y + 4.0),
+                                                Pos2::new(ghost_x_end, ghost_child_y + config.layer_height - 4.0),
+                                            );
+                                            painter.rect_stroke(
+                                                ghost_rect,
+                                                4.0,
+                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 128)),
+                                                egui::epaint::StrokeKind::Middle,
+                                            );
                                         }
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
 
-                                        // On release, commit the move (horizontal and/or vertical)
+                                        // On release, commit both horizontal and vertical movements
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            // If layer changed vertically, reorder first
-                                            if target_child != *layer_idx {
-                                                action = TimelineAction::ReorderLayer {
-                                                    from_idx: *layer_idx,
-                                                    to_idx: target_child,
-                                                };
-                                            } else {
-                                                action = TimelineAction::MoveLayer {
+                                            let has_horizontal_move = new_start != *initial_start;
+                                            let has_vertical_move = target_child != *layer_idx;
+
+                                            log::debug!("[TIMELINE] Layer drag released: h_move={}, v_move={}, layer_idx={}, new_start={}, new_idx={}",
+                                                has_horizontal_move, has_vertical_move, layer_idx, new_start, target_child);
+
+                                            if has_horizontal_move || has_vertical_move {
+                                                action = TimelineAction::MoveAndReorderLayer {
                                                     layer_idx: *layer_idx,
                                                     new_start,
+                                                    new_idx: target_child,
                                                 };
+                                                log::debug!("[TIMELINE] Emitting MoveAndReorderLayer action");
                                             }
                                             state.drag_state = None;
                                         }
@@ -477,7 +505,9 @@ pub fn render(
                                         if *layer_idx < comp.children.len() {
                                             let child_uuid = &comp.children[*layer_idx];
                                             if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
+                                                // Use display index for Y positioning
+                                                let display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
+                                                let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
                                                 let layer_start = attrs.get_u32("start").unwrap_or(0) as usize;
                                                 let layer_end = attrs.get_u32("end").unwrap_or(0) as usize;
 
@@ -519,7 +549,9 @@ pub fn render(
                                         if *layer_idx < comp.children.len() {
                                             let child_uuid = &comp.children[*layer_idx];
                                             if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                let layer_y = timeline_rect.min.y + (*layer_idx as f32 * config.layer_height);
+                                                // Use display index for Y positioning
+                                                let display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
+                                                let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
                                                 let layer_start = attrs.get_u32("start").unwrap_or(0) as usize;
                                                 let layer_end = attrs.get_u32("end").unwrap_or(0) as usize;
 

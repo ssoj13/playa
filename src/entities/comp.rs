@@ -397,8 +397,13 @@ impl Comp {
                 continue;
             }
 
+            // Get source UUID from child attrs (child_uuid is now instance UUID)
+            let Some(source_uuid) = attrs.get_str("uuid") else {
+                continue;
+            };
+
             // Resolve source from Project.media
-            if let Some(source) = project.media.get(child_uuid) {
+            if let Some(source) = project.media.get(source_uuid) {
                 // Visibility toggle
                 if attrs.get_bool("visible").unwrap_or(true) == false {
                     continue;
@@ -444,8 +449,12 @@ impl Comp {
     ) -> anyhow::Result<()> {
         let end_frame = start_frame + duration - 1;
 
+        // Generate unique instance UUID for this child
+        let instance_uuid = uuid::Uuid::new_v4().to_string();
+
         // Create child attributes
         let mut attrs = Attrs::new();
+        attrs.set("uuid", AttrValue::Str(source_uuid));  // Reference to source comp
         attrs.set("name", AttrValue::Str("Child".to_string()));
         attrs.set("start", AttrValue::UInt(start_frame as u32));
         attrs.set("end", AttrValue::UInt(end_frame as u32));
@@ -466,9 +475,9 @@ impl Comp {
             self.attrs.set("start", AttrValue::UInt(start_frame as u32));
         }
 
-        // Add to children (top)
-        self.children.push(source_uuid.clone());
-        self.children_attrs.insert(source_uuid, attrs);
+        // Add to children using instance UUID
+        self.children.push(instance_uuid.clone());
+        self.children_attrs.insert(instance_uuid, attrs);
 
         // Clear cache and emit event
         self.clear_cache();
