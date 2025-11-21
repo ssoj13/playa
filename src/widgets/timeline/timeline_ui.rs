@@ -234,46 +234,25 @@ pub fn render_canvas(
     // Options + time ruler row (fixed ruler; pan is state-driven, not ScrollArea)
     let mut ruler_rect: Option<Rect> = None;
     let mut timeline_rect_global: Option<Rect> = None;
-    let ruler_height = 20.0;
-    ui.horizontal(|ui| {
-        ui.allocate_exact_size(
-            Vec2::new(config.name_column_width, ruler_height),
-            Sense::hover(),
-        );
 
-        ui.allocate_ui(Vec2::new(ruler_width, ruler_height), |ui| {
-            ui.set_height(ruler_height);
-            ui.set_width(ruler_width);
-            let ruler_rect_local = if cfg_for_ruler.show_frame_numbers {
-                let (frame_opt, rect) =
-                    draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
-                if let Some(frame) = frame_opt {
-                    dispatch(AppEvent::SetFrame(frame));
-                }
-                rect
-            } else {
-                let (rect, _) =
-                    ui.allocate_exact_size(Vec2::new(ruler_width, ruler_height), Sense::hover());
-                rect
-            };
-            ruler_rect = Some(ruler_rect_local);
+    // Draw ruler (includes name column spacer via draw_frame_ruler)
+    let (frame_opt, rect) = draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
+    ruler_rect = Some(rect);
+    if let Some(frame) = frame_opt {
+        dispatch(AppEvent::SetFrame(frame));
+    }
 
-            // Middle-drag pan on ruler
-            if let Some(pos) = ui.ctx().pointer_hover_pos() {
-                if ui.rect_contains_pointer(ruler_rect_local) {
-                    if ui
-                        .ctx()
-                        .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
-                    {
-                        state.drag_state = Some(GlobalDragState::TimelinePan {
-                            drag_start_pos: pos,
-                            initial_pan_offset: state.pan_offset,
-                        });
-                    }
-                }
+    // Middle-drag pan on ruler
+    if let Some(pos) = ui.ctx().pointer_hover_pos() {
+        if ui.rect_contains_pointer(rect) {
+            if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
+                state.drag_state = Some(GlobalDragState::TimelinePan {
+                    drag_start_pos: pos,
+                    initial_pan_offset: state.pan_offset,
+                });
             }
-        });
-    });
+        }
+    }
 
     if let Some(statuses) = &status_strip {
         egui::ScrollArea::horizontal()

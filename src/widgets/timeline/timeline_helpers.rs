@@ -111,6 +111,11 @@ pub(super) fn draw_frame_ruler(
 
     let (frame, rect) = ui
         .horizontal(|ui| {
+            ui.allocate_exact_size(
+                Vec2::new(config.name_column_width, ruler_height),
+                Sense::hover(),
+            );
+
             let (rect, ruler_response) = ui.allocate_exact_size(
                 Vec2::new(timeline_width, ruler_height),
                 Sense::click_and_drag(),
