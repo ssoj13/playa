@@ -325,41 +325,45 @@ pub fn render_canvas(
         // Create temporary child order (layers displayed in original order from comp.children)
         let child_order: Vec<usize> = (0..comp.children.len()).collect();
 
-        // Timeline bars (pan synced to state.pan_offset)
-        ui.allocate_ui(Vec2::new(timeline_width, total_height), |ui| {
-            ui.set_width(timeline_width);
-            ui.set_height(total_height);
+        // Timeline bars (ScrollArea needed for egui_dnd layout, but no scrollbars shown)
+        egui::ScrollArea::horizontal()
+            .id_salt("timeline_canvas_scroll")
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.set_width(timeline_width);
+                ui.set_height(total_height);
 
-            // Allocate rect for timeline without hover highlight
-            let timeline_rect = Rect::from_min_size(
-                ui.cursor().min,
-                Vec2::new(timeline_width, total_height),
-            );
+                // Allocate rect for timeline without hover highlight
+                let timeline_rect = Rect::from_min_size(
+                    ui.cursor().min,
+                    Vec2::new(timeline_width, total_height),
+                );
 
-            // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
-            let timeline_response = ui.interact(
-                timeline_rect,
-                ui.id().with("timeline_interaction"),
-                Sense::click_and_drag(),
-            );
-            timeline_rect_global = Some(timeline_rect);
+                // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
+                let timeline_response = ui.interact(
+                    timeline_rect,
+                    ui.id().with("timeline_interaction"),
+                    Sense::click_and_drag(),
+                );
+                timeline_rect_global = Some(timeline_rect);
 
-            // Middle-drag pan on canvas
-            if let Some(pos) = timeline_response.hover_pos() {
-                if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-                    state.drag_state = Some(GlobalDragState::TimelinePan {
-                        drag_start_pos: pos,
-                        initial_pan_offset: state.pan_offset,
-                    });
+                // Middle-drag pan on canvas
+                if let Some(pos) = timeline_response.hover_pos() {
+                    if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
+                        state.drag_state = Some(GlobalDragState::TimelinePan {
+                            drag_start_pos: pos,
+                            initial_pan_offset: state.pan_offset,
+                        });
+                    }
                 }
-            }
 
-            // Scroll wheel horizontal pan
-            let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
-            if scroll_delta.x.abs() > 0.0 {
-                let delta_frames = scroll_delta.x / (config.pixels_per_frame * state.zoom);
-                dispatch(AppEvent::TimelinePanChanged(state.pan_offset - delta_frames));
-            }
+                // Scroll wheel horizontal pan
+                let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+                if scroll_delta.x.abs() > 0.0 {
+                    let delta_frames = scroll_delta.x / (config.pixels_per_frame * state.zoom);
+                    dispatch(AppEvent::TimelinePanChanged(state.pan_offset - delta_frames));
+                }
 
             if ui.is_rect_visible(timeline_rect) {
                 let painter = ui.painter();
@@ -790,7 +794,7 @@ pub fn render_canvas(
                               }
                         }
                     }
-                });
+            }); // Close ScrollArea::show
     });
 
     // Draw playhead once across ruler + bars

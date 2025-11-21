@@ -61,7 +61,12 @@ pub fn render_timeline_panel(
 ) -> bool {
     let old_shader = shader_manager.current_shader.clone();
 
+    // Block vertical scroll - timeline panel should not scroll vertically
+    let available_height = ui.available_height();
     ui.vertical(|ui| {
+        ui.set_min_height(available_height);
+        ui.set_max_height(available_height);
+
         // Timeline section (split: outline + canvas)
         if let Some(comp_uuid) = &player.active_comp.clone() {
             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
