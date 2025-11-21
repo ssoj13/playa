@@ -64,7 +64,8 @@ pub(super) fn detect_layer_tool(
     bar_rect: Rect,
     edge_threshold: f32,
 ) -> Option<LayerTool> {
-    if !bar_rect.contains(hover_pos) {
+    // Allow grabbing slightly outside the bar to extend trims
+    if !bar_rect.expand(edge_threshold).contains(hover_pos) {
         return None;
     }
 
@@ -75,8 +76,10 @@ pub(super) fn detect_layer_tool(
         Some(LayerTool::AdjustPlayStart)
     } else if dist_to_right < edge_threshold {
         Some(LayerTool::AdjustPlayEnd)
-    } else {
+    } else if bar_rect.contains(hover_pos) {
         Some(LayerTool::Move)
+    } else {
+        None
     }
 }
 

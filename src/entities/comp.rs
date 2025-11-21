@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
-use super::frame::{CropAlign, Frame, PixelDepth};
+use super::frame::{CropAlign, Frame, FrameStatus, PixelDepth};
 use super::{AttrValue, Attrs};
 use crate::events::{CompEvent, CompEventSender};
 
@@ -233,6 +233,40 @@ impl Comp {
         } else {
             0
         }
+    }
+
+    /// Return cached frame statuses for File comps, aligned to local frame indices.
+    ///
+    /// Uses per-comp cache entries to build a strip of statuses:
+    /// - Default is `Header` (expected file, not yet loaded).
+    /// - Cached frames override with their current status.
+    /// Skips Layer comps and empty comps.
+    pub fn file_frame_statuses(&self) -> Option<Vec<FrameStatus>> {
+        if self.mode != CompMode::File {
+            return None;
+        }
+
+        let duration = self.frame_count();
+        if duration <= 0 {
+            return None;
+        }
+
+        let seq_start = self.file_start.unwrap_or(self.start());
+        let mut statuses = vec![FrameStatus::Header; duration as usize];
+
+        for ((_, seq_frame), frame) in self.cache.borrow().iter() {
+            let seq_frame_i32 = *seq_frame as i32;
+            let local_idx = seq_frame_i32 - seq_start;
+            if local_idx < 0 || local_idx >= duration {
+                continue;
+            }
+
+            if let Some(slot) = statuses.get_mut(local_idx as usize) {
+                *slot = frame.status();
+            }
+        }
+
+        Some(statuses)
     }
 
     /// Set selected layer index.

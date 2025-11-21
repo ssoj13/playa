@@ -6,11 +6,11 @@
 //! - Visual indication of current_frame (playhead)
 
 use super::timeline_helpers::{
-    LayerTool, draw_drop_preview, draw_frame_ruler, frame_to_screen_x, hash_color,
-    screen_x_to_frame,
+    LayerTool, detect_layer_tool, draw_drop_preview, draw_frame_ruler, frame_to_screen_x,
+    hash_color, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineAction, TimelineConfig, TimelineState};
-use crate::entities::Comp;
+use crate::entities::{Comp, frame::FrameStatus};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 
@@ -30,6 +30,13 @@ pub fn render(
         .max(ui.available_width() - config.name_column_width);
     // Ensure non-zero height so DnD/drop zone works even for empty comps
     let total_height = (comp.children.len().max(1) as f32) * config.layer_height;
+
+    let mut cfg_for_ruler = config.clone();
+    cfg_for_ruler.show_frame_numbers = state.show_frame_numbers;
+    let ruler_width = (total_frames as f32 * cfg_for_ruler.pixels_per_frame * state.zoom)
+        .max(ui.available_width());
+    let status_strip = comp.file_frame_statuses();
+    let status_bar_height = status_strip.as_ref().map(|_| 6.0).unwrap_or(0.0);
 
     // Toolbar with transport controls and zoom
     ui.horizontal(|ui| {
@@ -107,10 +114,6 @@ pub fn render(
         opt_ui.checkbox(&mut state.snap_enabled, "Snap");
         opt_ui.checkbox(&mut state.lock_work_area, "Lock");
 
-        let mut cfg_for_ruler = config.clone();
-        cfg_for_ruler.show_frame_numbers = state.show_frame_numbers;
-        let ruler_width = (total_frames as f32 * cfg_for_ruler.pixels_per_frame * state.zoom)
-            .max(ui.available_width());
         egui::ScrollArea::horizontal()
             .id_salt("timeline_h_scroll")
             .auto_shrink([false, false])
@@ -131,6 +134,20 @@ pub fn render(
                 }
             });
     });
+
+    if let Some(statuses) = &status_strip {
+        egui::ScrollArea::horizontal()
+            .id_salt("timeline_h_scroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_height(status_bar_height);
+                ui.set_width(ruler_width);
+
+                let (rect, _) = ui
+                    .allocate_exact_size(Vec2::new(ruler_width, status_bar_height), Sense::hover());
+                draw_status_strip(ui, rect, statuses);
+            });
+    }
 
     ui.add_space(4.0);
 
@@ -404,33 +421,35 @@ pub fn render(
                                 Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
                             );
 
-                            // Manual tool detection: trim edges on full bar, move on visible bar
+                            // Manual tool detection: use current visible bar bounds for handles/move
                             let edge_threshold = 8.0;
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                                if state.drag_state.is_none() && full_bar_rect.contains(hover_pos) {
-                                    let dist_to_left = (hover_pos.x - full_bar_rect.min.x).abs();
-                                    let dist_to_right = (hover_pos.x - full_bar_rect.max.x).abs();
-
-                                    let tool = if dist_to_left < edge_threshold {
-                                        Some(LayerTool::AdjustPlayStart)
-                                    } else if dist_to_right < edge_threshold {
-                                        Some(LayerTool::AdjustPlayEnd)
-                                    } else if visible_bar_rect.contains(hover_pos) {
-                                        Some(LayerTool::Move)
+                                if state.drag_state.is_none() {
+                                    let handle_rect = if visible_end > visible_start {
+                                        visible_bar_rect
                                     } else {
-                                        None
+                                        full_bar_rect
                                     };
 
-                                    if let Some(tool) = tool {
-                                        // Set cursor based on detected tool
-                                        ui.ctx().set_cursor_icon(tool.cursor());
+                                    if handle_rect.contains(hover_pos) {
+                                        if let Some(tool) =
+                                            detect_layer_tool(hover_pos, handle_rect, edge_threshold)
+                                        {
+                                            ui.ctx().set_cursor_icon(tool.cursor());
 
-                                        // On mouse press, create appropriate drag state
-                                        if ui.ctx().input(|i| i.pointer.primary_pressed()) {
-                                            log::debug!("[TIMELINE] Creating drag state: {:?} for layer {}", tool, idx);
-                                            if let Some(child_attrs) = attrs {
-                                                state.drag_state = Some(tool.to_drag_state(idx, child_attrs, hover_pos));
-                                                log::debug!("[TIMELINE] Drag state created successfully");
+                                            // On mouse press, create appropriate drag state
+                                            if ui.ctx().input(|i| i.pointer.primary_pressed()) {
+                                                log::debug!(
+                                                    "[TIMELINE] Creating drag state: {:?} for layer {}",
+                                                    tool, idx
+                                                );
+                                                if let Some(child_attrs) = attrs {
+                                                    state.drag_state =
+                                                        Some(tool.to_drag_state(idx, child_attrs, hover_pos));
+                                                    log::debug!(
+                                                        "[TIMELINE] Drag state created successfully"
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -728,4 +747,37 @@ pub fn render(
     }
 
     action
+}
+
+fn draw_status_strip(ui: &Ui, rect: Rect, statuses: &[FrameStatus]) {
+    if statuses.is_empty() {
+        return;
+    }
+
+    let painter = ui.painter();
+    let block_width = rect.width() / statuses.len() as f32;
+    let mut run_start = 0usize;
+    let mut current = statuses[0];
+
+    let draw_run =
+        |painter: &egui::Painter, start_idx: usize, end_idx: usize, status: FrameStatus| {
+            if end_idx <= start_idx {
+                return;
+            }
+            let x_start = rect.min.x + (start_idx as f32 * block_width);
+            let x_end = rect.min.x + (end_idx as f32 * block_width);
+            let run_rect =
+                Rect::from_min_max(Pos2::new(x_start, rect.min.y), Pos2::new(x_end, rect.max.y));
+            painter.rect_filled(run_rect, 0.0, status.color());
+        };
+
+    for (idx, status) in statuses.iter().enumerate().skip(1) {
+        if *status != current {
+            draw_run(painter, run_start, idx, current);
+            run_start = idx;
+            current = *status;
+        }
+    }
+
+    draw_run(painter, run_start, statuses.len(), current);
 }
