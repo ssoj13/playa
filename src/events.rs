@@ -144,6 +144,8 @@ pub enum AppEvent {
     TimelineFrameNumbersChanged(bool),
     /// Timeline work area lock toggled
     TimelineLockWorkAreaChanged(bool),
+    /// Fit all clips in timeline to view (canvas_width in pixels)
+    TimelineFitAll(f32),
     /// Zoom viewport by factor
     ZoomViewport(f32),
     /// Reset viewport zoom to fit

@@ -52,26 +52,39 @@ pub fn render_outline(
 
         // Zoom controls emit actions; actual zoom applies in canvas via events
         ui.label("Zoom:");
-        let mut zoom_tmp = state.zoom;
-        let zoom_response = ui.add(egui::Slider::new(&mut zoom_tmp, 0.1..=4.0).fixed_decimals(2));
+        let zoom_response = ui.add(egui::Slider::new(&mut state.zoom, 0.1..=4.0).fixed_decimals(2));
         if zoom_response.changed() {
-            dispatch(AppEvent::TimelineZoomChanged(zoom_tmp));
+            dispatch(AppEvent::TimelineZoomChanged(state.zoom));
         }
-        if ui.button("R").on_hover_text("Reset Zoom to 1.0").clicked() {
+        if ui
+            .button("Reset")
+            .on_hover_text("Reset Zoom to 1.0")
+            .clicked()
+        {
+            state.zoom = 1.0;
             dispatch(AppEvent::TimelineZoomChanged(1.0));
         }
+        if ui
+            .button("Fit")
+            .on_hover_text("Fit all clips to view")
+            .clicked()
+        {
+            dispatch(AppEvent::TimelineFitAll);
+        }
 
-        let mut show_frames = state.show_frame_numbers;
-        if ui.checkbox(&mut show_frames, "Frames").changed() {
-            dispatch(AppEvent::TimelineFrameNumbersChanged(show_frames));
+        if ui
+            .checkbox(&mut state.show_frame_numbers, "Frames")
+            .changed()
+        {
+            dispatch(AppEvent::TimelineFrameNumbersChanged(
+                state.show_frame_numbers,
+            ));
         }
-        let mut snap_enabled = state.snap_enabled;
-        if ui.checkbox(&mut snap_enabled, "Snap").changed() {
-            dispatch(AppEvent::TimelineSnapChanged(snap_enabled));
+        if ui.checkbox(&mut state.snap_enabled, "Snap").changed() {
+            dispatch(AppEvent::TimelineSnapChanged(state.snap_enabled));
         }
-        let mut lock_work_area = state.lock_work_area;
-        if ui.checkbox(&mut lock_work_area, "Lock").changed() {
-            dispatch(AppEvent::TimelineLockWorkAreaChanged(lock_work_area));
+        if ui.checkbox(&mut state.lock_work_area, "Lock").changed() {
+            dispatch(AppEvent::TimelineLockWorkAreaChanged(state.lock_work_area));
         }
     });
 
@@ -92,10 +105,11 @@ pub fn render_outline(
                         Vec2::new(config.name_column_width, config.layer_height),
                         Sense::click(),
                     );
-                    let mut row_ui = ui.child_ui(
-                        row_rect,
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        None,
+                    let mut row_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(row_rect)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center))
+                            .id_salt(egui::Id::new("outline_row").with(idx)),
                     );
                     row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
                     row_ui.set_min_height(config.layer_height);

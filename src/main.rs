@@ -147,15 +147,16 @@ impl PlayaApp {
             vec![DockTab::Timeline],
         );
 
-        let [_viewport, _project] =
+        let [_viewport, project] =
             dock_state
                 .main_surface_mut()
                 .split_right(viewport, 0.75, vec![DockTab::Project]);
 
-        // Add attributes tab as an extra tab in the focused leaf
-        dock_state
-            .main_surface_mut()
-            .push_to_focused_leaf(DockTab::Attributes);
+        // Add attributes panel below project (vertical split)
+        let [_project, _attributes] =
+            dock_state
+                .main_surface_mut()
+                .split_below(project, 0.6, vec![DockTab::Attributes]);
 
         dock_state
     }
@@ -695,6 +696,27 @@ impl PlayaApp {
             }
             AppEvent::TimelineLockWorkAreaChanged(locked) => {
                 self.timeline_state.lock_work_area = locked;
+            }
+            AppEvent::TimelineFitAll => {
+                // Fit all clips in timeline to view
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.media.get(comp_uuid) {
+                        let start = comp.start();
+                        let end = comp.end();
+                        let duration = (end - start).max(1);
+
+                        // Target: fit duration into ~800 pixels canvas width
+                        // pixels_per_frame = canvas_width / duration
+                        // zoom = pixels_per_frame / default_pixels_per_frame (2.0)
+                        let target_canvas_width = 800.0;
+                        let pixels_per_frame = target_canvas_width / duration as f32;
+                        let default_pixels_per_frame = 2.0;
+                        let zoom = (pixels_per_frame / default_pixels_per_frame).clamp(0.1, 4.0);
+
+                        self.timeline_state.zoom = zoom;
+                        self.timeline_state.pan_offset = start as f32;
+                    }
+                }
             }
             AppEvent::ZoomViewport(factor) => {
                 self.viewport_state.zoom *= factor;
