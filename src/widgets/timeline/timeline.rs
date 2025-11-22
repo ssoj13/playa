@@ -99,3 +99,55 @@ pub enum TimelineViewMode {
     CanvasOnly,
     OutlineOnly,
 }
+
+/// Precomputed layer geometry - shared between draw and interaction passes.
+pub(super) struct LayerGeom {
+    pub visible_start: i32,
+    pub visible_end: i32,
+    pub full_bar_rect: eframe::egui::Rect,
+    pub visible_bar_rect: Option<eframe::egui::Rect>,
+}
+
+impl LayerGeom {
+    /// Calculate layer geometry. play_start/play_end are ABSOLUTE source frames.
+    pub fn calc(
+        child_start: i32,
+        child_end: i32,
+        play_start: i32,
+        play_end: i32,
+        child_y: f32,
+        timeline_rect: eframe::egui::Rect,
+        config: &TimelineConfig,
+        state: &TimelineState,
+    ) -> Self {
+        use eframe::egui::{Pos2, Rect};
+        
+        let visible_start = child_start + play_start;
+        let visible_end = child_start + play_end;
+
+        let frame_to_screen_x = |frame: f32, timeline_min_x: f32| -> f32 {
+            let frame_offset = frame - state.pan_offset;
+            timeline_min_x + (frame_offset * config.pixels_per_frame * state.zoom)
+        };
+
+        let full_bar_x_start = frame_to_screen_x(child_start as f32, timeline_rect.min.x);
+        let full_bar_x_end = frame_to_screen_x((child_end + 1) as f32, timeline_rect.min.x);
+        let full_bar_rect = Rect::from_min_max(
+            Pos2::new(full_bar_x_start, child_y + 4.0),
+            Pos2::new(full_bar_x_end, child_y + config.layer_height - 4.0),
+        );
+
+        let visible_bar_rect = if visible_start <= visible_end {
+            let visible_bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x);
+            let visible_bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x);
+            Some(Rect::from_min_max(
+                Pos2::new(visible_bar_x_start, child_y + 4.0),
+                Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
+            ))
+        } else {
+            None
+        };
+
+        Self { visible_start, visible_end, full_bar_rect, visible_bar_rect }
+    }
+}

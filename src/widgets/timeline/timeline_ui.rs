@@ -418,19 +418,10 @@ pub fn render_canvas(
                             let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
                             let is_visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
 
-                            // Calculate full clip range and visible (play) range
-                            // play_start/play_end are ABSOLUTE source frames, not offsets
-                            let full_start = child_start;
-                            let full_end = child_end;
-                            let visible_start = child_start + play_start;
-                            let visible_end = child_start + play_end;
-
-                            // Draw full child bar (grayed out, semi-transparent)
-                            let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
-                            let full_bar_x_end = frame_to_screen_x((full_end + 1) as f32, timeline_rect.min.x, config, state);
-                            let full_bar_rect = Rect::from_min_max(
-                                Pos2::new(full_bar_x_start, child_y + 4.0),
-                                Pos2::new(full_bar_x_end, child_y + config.layer_height - 4.0),
+                            // Calculate layer geometry (deduplicated)
+                            let geom = super::timeline::LayerGeom::calc(
+                                child_start, child_end, play_start, play_end,
+                                child_y, timeline_rect, config, state
                             );
 
                             // Child bar color (use hash of child_uuid for stable color)
@@ -447,16 +438,10 @@ pub fn render_canvas(
                                 Color32::from_rgba_unmultiplied(80, 80, 80, 100)
                             };
 
-                            painter.rect_filled(full_bar_rect, 4.0, gray_color);
+                            painter.rect_filled(geom.full_bar_rect, 4.0, gray_color);
 
                             // Draw visible (trimmed) area with full color on top
-                            if visible_start < visible_end {
-                                let visible_bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
-                                let visible_bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x, config, state);
-                                let visible_bar_rect = Rect::from_min_max(
-                                    Pos2::new(visible_bar_x_start, child_y + 4.0),
-                                    Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
-                                );
+                            if let Some(visible_bar_rect) = geom.visible_bar_rect {
                                 painter.rect_filled(visible_bar_rect, 4.0, base_color);
                             }
 
@@ -468,7 +453,7 @@ pub fn render_canvas(
                               };
                               let stroke_width = if is_selected { 2.0 } else { 1.0 };
                               painter.rect_stroke(
-                                  full_bar_rect,
+                                  geom.full_bar_rect,
                                   4.0,
                                   egui::Stroke::new(stroke_width, stroke_color),
                                   egui::epaint::StrokeKind::Middle,
@@ -488,41 +473,21 @@ pub fn render_canvas(
                             let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
                             let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
 
-                            // Calculate full clip range and visible (play) range
-                            // play_start/play_end are ABSOLUTE source frames, not offsets
-                            let full_start = child_start;
-                            let full_end = child_end;
-                            let visible_start = child_start + play_start;
-                            let visible_end = child_start + play_end;
-
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);
                             let child_y = row_to_y(row, config, timeline_rect);
 
-                            // Create rects for full range and visible range
-                            let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
-                            let full_bar_x_end = frame_to_screen_x((full_end + 1) as f32, timeline_rect.min.x, config, state);
-                            let full_bar_rect = Rect::from_min_max(
-                                Pos2::new(full_bar_x_start, child_y + 4.0),
-                                Pos2::new(full_bar_x_end, child_y + config.layer_height - 4.0),
-                            );
-
-                            let visible_bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x, config, state);
-                            let visible_bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x, config, state);
-                            let visible_bar_rect = Rect::from_min_max(
-                                Pos2::new(visible_bar_x_start, child_y + 4.0),
-                                Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
+                            // Calculate layer geometry (deduplicated)
+                            let geom = super::timeline::LayerGeom::calc(
+                                child_start, child_end, play_start, play_end,
+                                child_y, timeline_rect, config, state
                             );
 
                             // Manual tool detection: use current visible bar bounds for handles/move
                             let edge_threshold = 8.0;
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 if state.drag_state.is_none() {
-                                    let handle_rect = if visible_end > visible_start {
-                                        visible_bar_rect
-                                    } else {
-                                        full_bar_rect
-                                    };
+                                    let handle_rect = geom.visible_bar_rect.unwrap_or(geom.full_bar_rect);
 
                                     if handle_rect.contains(hover_pos) {
                                         if let Some(tool) =
@@ -672,7 +637,8 @@ pub fn render_canvas(
                                     GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x } => {
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
-                                        let new_play_end = (*initial_play_end - delta_frames).max(0); // Note: inverted for end
+                                        // play_end is ABSOLUTE source frame, so drag right = increase
+                                        let new_play_end = (*initial_play_end + delta_frames).max(0);
 
                                         // Visual feedback: draw ghost play range preview
                                         if *layer_idx < comp.children.len() {
@@ -681,12 +647,13 @@ pub fn render_canvas(
                                                 // Use display index for Y positioning
                                                 let display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
                                                 let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
-                                                let layer_start = attrs.get_u32("start").unwrap_or(0) as usize;
-                                                let layer_end = attrs.get_u32("end").unwrap_or(0) as usize;
+                                                let layer_start = attrs.get_i32("start").unwrap_or(0);
+                                                let play_start = attrs.get_i32("play_start").unwrap_or(0);
 
-                                                // New visual end accounting for play_end
-                                                let visual_end = layer_end.saturating_sub(new_play_end as usize);
-                                                let ghost_x_start = frame_to_screen_x(layer_start as f32, timeline_rect.min.x, config, state);
+                                                // visual_end = child_start + play_end (absolute frame)
+                                                let visual_start = layer_start + play_start;
+                                                let visual_end = layer_start + new_play_end;
+                                                let ghost_x_start = frame_to_screen_x(visual_start as f32, timeline_rect.min.x, config, state);
                                                 let ghost_x_end = frame_to_screen_x(visual_end as f32, timeline_rect.min.x, config, state);
 
                                                 let ghost_rect = Rect::from_min_max(
