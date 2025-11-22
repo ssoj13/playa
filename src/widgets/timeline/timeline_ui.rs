@@ -793,14 +793,12 @@ pub fn render_canvas(
                                         }
                                     }
 
-                                    // Determine Y position: use mouse directly, or find free row if overlap
-                                    let row_y = if has_overlap {
-                                        // Find nearest free row and convert to Y
-                                        let row = find_free_row_for_new_layer(comp, drop_frame, dur, &child_order);
-                                        row_to_y(row, config, timeline_rect)
+                                    // Always use mouse position for preview Y (shows insertion point)
+                                    let row_y = if hover_pos.y >= timeline_rect.min.y {
+                                        row_to_y(mouse_row, config, timeline_rect)
                                     } else {
-                                        // Use mouse Y position directly (follows cursor exactly)
-                                        hover_pos.y - (config.layer_height / 2.0)
+                                        // Above timeline -> show at top
+                                        timeline_rect.min.y
                                     };
 
                                     draw_drop_preview(
