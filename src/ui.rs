@@ -125,7 +125,6 @@ pub fn render_timeline_panel(
                         egui::SidePanel::left("timeline_outline")
                             .resizable(true)
                             .min_width(100.0)
-                            .max_width(400.0)
                             .show_inside(ui, |ui| {
                                 ui.set_height(splitter_height);
                                 render_outline(
