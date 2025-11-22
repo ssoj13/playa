@@ -150,10 +150,6 @@ pub fn render(
 
         // Draw viewport overlays (scrubber, guides, etc.)
         viewport_state.draw(ui, panel_rect);
-    } else {
-        ui.centered_and_justified(|ui| {
-            ui.label("No frame loaded. Drag'n'drop a file or use the playlist.");
-        });
     }
 
     if show_help {

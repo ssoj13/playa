@@ -419,10 +419,11 @@ pub fn render_canvas(
                             let is_visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
 
                             // Calculate full clip range and visible (play) range
+                            // play_start/play_end are ABSOLUTE source frames, not offsets
                             let full_start = child_start;
                             let full_end = child_end;
                             let visible_start = child_start + play_start;
-                            let visible_end = child_end - play_end;
+                            let visible_end = child_start + play_end;
 
                             // Draw full child bar (grayed out, semi-transparent)
                             let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
@@ -488,10 +489,11 @@ pub fn render_canvas(
                             let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
 
                             // Calculate full clip range and visible (play) range
+                            // play_start/play_end are ABSOLUTE source frames, not offsets
                             let full_start = child_start;
                             let full_end = child_end;
                             let visible_start = child_start + play_start;
-                            let visible_end = child_end - play_end;
+                            let visible_end = child_start + play_end;
 
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);

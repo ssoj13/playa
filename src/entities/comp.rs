@@ -501,35 +501,28 @@ impl Comp {
             // Get child attributes
             let attrs = self.children_attrs.get(child_uuid)?;
 
-            // Get child range from attrs (supports negative values)
+            // Get child start position on timeline
             let child_start = attrs.get_i32("start").unwrap_or(0);
-            let child_end = attrs.get_i32("end").unwrap_or(0);
 
-            // Get play_start/play_end offsets from timeline boundaries
+            // Get play range - ABSOLUTE source frames (not offsets!)
+            // play_start=20, play_end=80 means: play source frames 20..80
             let play_start = attrs.get_i32("play_start").unwrap_or(0);
-            let play_end = attrs.get_i32("play_end").unwrap_or(0);
-
-            // Calculate actual playback range on timeline with trim offsets
-            // play_start > 0 = trim left (delay), < 0 = extend left
-            // play_end > 0 = trim right (early stop), < 0 = extend right
-            let playback_start = child_start + play_start;
-            let playback_end = child_end - play_end;
+            let play_end = attrs.get_i32("play_end").unwrap_or(i32::MAX);
 
             let frame_idx_i32 = frame_idx as i32;
 
-            // Check if frame is within trimmed playback range
-            if frame_idx_i32 < playback_start || frame_idx_i32 > playback_end {
-                debug!("  child {} TRIMMED OUT: frame {} not in playback range [{}, {}] (play_start={}, play_end={})",
-                    child_uuid, frame_idx_i32, playback_start, playback_end, play_start, play_end);
+            // Convert comp timeline frame to local source frame
+            let local_frame = frame_idx_i32 - child_start;
+
+            // Check if local frame is within play range (trim check)
+            if local_frame < play_start || local_frame > play_end {
+                debug!("  child {} TRIMMED OUT: local_frame {} not in play range [{}, {}]",
+                    child_uuid, local_frame, play_start, play_end);
                 continue;
             }
 
-            debug!("  child {} ACTIVE at frame {}, playback range=[{}, {}] (child=[{}, {}], offsets=[{}, {}])",
-                child_uuid, frame_idx_i32, playback_start, playback_end,
-                child_start, child_end, play_start, play_end);
-
-            // Convert comp frame to local source frame
-            let local_frame = frame_idx_i32 - child_start;
+            debug!("  child {} ACTIVE: comp_frame={}, child_start={}, local_frame={}, play_range=[{}, {}]",
+                child_uuid, frame_idx_i32, child_start, local_frame, play_start, play_end);
 
             // Get source UUID from child attrs (child_uuid is now instance UUID)
             let Some(source_uuid) = attrs.get_str("uuid") else {
@@ -595,7 +588,7 @@ impl Comp {
         attrs.set("start", AttrValue::Int(start_frame));
         attrs.set("end", AttrValue::Int(end_frame));
         attrs.set("play_start", AttrValue::Int(0));
-        attrs.set("play_end", AttrValue::Int(0));
+        attrs.set("play_end", AttrValue::Int(duration - 1)); // Default: play to end of source
         attrs.set("opacity", AttrValue::Float(1.0));
         attrs.set("visible", AttrValue::Bool(true));
         attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
