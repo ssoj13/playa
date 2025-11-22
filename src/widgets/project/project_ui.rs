@@ -13,7 +13,7 @@ fn create_image_dialog(title: &str) -> rfd::FileDialog {
 }
 
 /// Render project window (dock tab): Unified list of Clips & Compositions
-pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
+pub fn render(ui: &mut egui::Ui, player: &mut Player, selected_uuid: Option<&String>) -> ProjectActions {
     let mut actions = ProjectActions::new();
 
     let id = ui.id().with("project_taffy");
@@ -158,12 +158,22 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                                     );
 
                                     if ui.is_rect_visible(text_rect) {
+                                        // Highlight selected item
+                                        let is_selected = selected_uuid.map_or(false, |s| s == comp_uuid);
+                                        if is_selected {
+                                            ui.painter().rect_filled(
+                                                text_rect.expand(2.0),
+                                                2.0,
+                                                ui.visuals().selection.bg_fill,
+                                            );
+                                        }
                                         ui.painter().galley(text_rect.min, text_galley, ui.visuals().text_color());
                                     }
 
-                                    // Click to activate
+                                    // Click to activate and select
                                     if response.clicked() {
                                         actions.set_active_comp = Some(comp_uuid.clone());
+                                        actions.selected_uuid = Some(comp_uuid.clone());
                                     }
 
                                     // Drag handling

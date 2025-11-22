@@ -39,6 +39,7 @@ pub struct TimelineState {
     pub view_mode: TimelineViewMode,
     #[serde(skip)]
     pub last_canvas_width: f32, // Last known canvas width for Fit calculation
+    pub outline_width: f32, // Width of outline panel in Split mode (persistent)
 }
 
 impl Default for TimelineState {
@@ -53,6 +54,7 @@ impl Default for TimelineState {
             last_comp_uuid: None,
             view_mode: TimelineViewMode::Split,
             last_canvas_width: 800.0, // Default estimate
+            outline_width: 400.0, // Default outline panel width
         }
     }
 }

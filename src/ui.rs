@@ -122,9 +122,10 @@ pub fn render_timeline_panel(
                         render_toolbar(ui, timeline_state, |evt| event_bus.send(evt));
                         ui.add_space(4.0);
 
-                        egui::SidePanel::left("timeline_outline")
+                        let outline_response = egui::SidePanel::left("timeline_outline")
                             .resizable(true)
                             .min_width(100.0)
+                            .default_width(timeline_state.outline_width)
                             .show_inside(ui, |ui| {
                                 ui.set_height(splitter_height);
                                 render_outline(
@@ -137,6 +138,9 @@ pub fn render_timeline_panel(
                                     |evt| event_bus.send(evt),
                                 );
                             });
+
+                        // Update persistent outline width
+                        timeline_state.outline_width = outline_response.response.rect.width();
 
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);

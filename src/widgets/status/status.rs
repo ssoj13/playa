@@ -89,6 +89,21 @@ impl StatusBar {
                 };
                 ui.monospace(format!("FPS:{:.2}", fps));
 
+                // Comp/Clip range info: <start | play_start <current_frame> play_end | end>
+                if let Some(comp_uuid) = &player.active_comp {
+                    if let Some(comp) = player.project.media.get(comp_uuid) {
+                        ui.separator();
+                        let start = comp.start();
+                        let end = comp.end();
+                        let (play_start, play_end) = comp.play_range();
+                        let current = comp.current_frame;
+                        ui.monospace(format!(
+                            "<{} | {} <{}> {} | {}>",
+                            start, play_start, current, play_end, end
+                        ));
+                    }
+                }
+
                 // Status message (if any)
                 if !self.current_message.is_empty() {
                     ui.separator();

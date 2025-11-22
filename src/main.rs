@@ -50,10 +50,11 @@ struct PlayaApp {
     #[serde(skip)]
     viewport_renderer: std::sync::Arc<std::sync::Mutex<ViewportRenderer>>,
     viewport_state: ViewportState,
-    #[serde(skip)]
     timeline_state: crate::widgets::timeline::TimelineState,
     #[serde(skip)]
     shader_manager: Shaders,
+    /// Selected media item UUID in Project panel (persistent)
+    selected_media_uuid: Option<String>,
     #[serde(skip)]
     last_render_time_ms: f32,
     settings: AppSettings,
@@ -116,6 +117,7 @@ impl Default for PlayaApp {
             viewport_state: ViewportState::new(),
             timeline_state: crate::widgets::timeline::TimelineState::default(),
             shader_manager: Shaders::new(),
+            selected_media_uuid: None,
             last_render_time_ms: 0.0,
             settings: AppSettings::default(),
             project: Project::new(),
@@ -1178,7 +1180,12 @@ impl PlayaApp {
             return;
         }
 
-        let project_actions = widgets::project::render(ui, &mut self.player);
+        let project_actions = widgets::project::render(ui, &mut self.player, self.selected_media_uuid.as_ref());
+
+        // Update selection state
+        if let Some(uuid) = project_actions.selected_uuid {
+            self.selected_media_uuid = Some(uuid);
+        }
 
         // Load media files
         if let Some(path) = project_actions.load_sequence {

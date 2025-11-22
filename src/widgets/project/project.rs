@@ -10,6 +10,7 @@ pub struct ProjectActions {
     pub new_comp: bool,
     pub remove_comp: Option<String>, // comp/clip UUID to remove (unified)
     pub clear_all_comps: bool,       // clear all media
+    pub selected_uuid: Option<String>, // UUID that was clicked (for selection state)
 }
 
 impl ProjectActions {
