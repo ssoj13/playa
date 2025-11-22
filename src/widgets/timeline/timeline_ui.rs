@@ -756,13 +756,13 @@ pub fn render_canvas(
                         });
 
                         if let Some(GlobalDragState::ProjectItem { source_uuid, duration, .. }) = global_drag {
-                            // Use mouse Y position, but adjust if overlapping with existing layer
+                            // Use mouse Y position directly, adjust only for time overlap
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
                                     let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
                                     let dur = duration.unwrap_or(10).max(1);
 
-                                    // Start with mouse Y position (can be negative if above timeline)
+                                    // Calculate mouse row (raw for visual position, clamped for overlap check)
                                     let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y) / config.layer_height).floor() as i32;
                                     let mouse_row = mouse_row_raw.max(0) as usize;
 
@@ -770,34 +770,39 @@ pub fn render_canvas(
                                     let drop_end = drop_frame + dur;
                                     let mut has_overlap = false;
 
-                                    for &child_idx in child_order.iter() {
-                                        if let Some(child_uuid) = comp.children.get(child_idx) {
-                                            let attrs = comp.children_attrs.get(child_uuid);
-                                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
-                                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
+                                    // Only check overlap if mouse is within timeline bounds
+                                    if hover_pos.y >= timeline_rect.min.y {
+                                        for &child_idx in child_order.iter() {
+                                            if let Some(child_uuid) = comp.children.get(child_idx) {
+                                                let attrs = comp.children_attrs.get(child_uuid);
+                                                let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
+                                                let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
 
-                                            // Get precomputed row for this layer
-                                            let child_row = layer_rows.get(&child_idx).copied().unwrap_or(0);
+                                                // Get precomputed row for this layer
+                                                let child_row = layer_rows.get(&child_idx).copied().unwrap_or(0);
 
-                                            // Check if this layer is on the same visual row as mouse
-                                            if child_row == mouse_row {
-                                                // Check time overlap
-                                                if drop_frame <= child_end && drop_end >= child_start {
-                                                    has_overlap = true;
-                                                    break;
+                                                // Check if this layer is on the same visual row as mouse
+                                                if child_row == mouse_row {
+                                                    // Check time overlap
+                                                    if drop_frame <= child_end && drop_end >= child_start {
+                                                        has_overlap = true;
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
                                     }
 
-                                    // If overlapping, find nearest free row
-                                    let row = if has_overlap {
-                                        find_free_row_for_new_layer(comp, drop_frame, dur, &child_order)
+                                    // Determine Y position: use mouse directly, or find free row if overlap
+                                    let row_y = if has_overlap {
+                                        // Find nearest free row and convert to Y
+                                        let row = find_free_row_for_new_layer(comp, drop_frame, dur, &child_order);
+                                        row_to_y(row, config, timeline_rect)
                                     } else {
-                                        mouse_row
+                                        // Use mouse Y position directly (follows cursor exactly)
+                                        hover_pos.y - (config.layer_height / 2.0)
                                     };
 
-                                    let row_y = row_to_y(row, config, timeline_rect);
                                     draw_drop_preview(
                                         &ui.painter(),
                                         drop_frame,
