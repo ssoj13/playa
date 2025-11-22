@@ -637,8 +637,9 @@ impl PlayaApp {
             }
 
             // ===== Selection =====
-            AppEvent::SelectMedia(_uuid) => {
-                // TODO: implement select media
+            AppEvent::SelectMedia(uuid) => {
+                // Select and activate media item (comp/clip)
+                self.select_item(uuid);
             }
             AppEvent::SelectLayer(_index) => {
                 if let Some(comp_uuid) = &self.player.active_comp {
@@ -1172,6 +1173,14 @@ impl PlayaApp {
         }
     }
 
+    /// Select and activate media item (comp/clip) by UUID
+    fn select_item(&mut self, uuid: String) {
+        self.selected_media_uuid = Some(uuid.clone());
+        self.player.set_active_comp(uuid.clone());
+        // Trigger frame loading around new current_frame
+        self.enqueue_frame_loads_around_playhead(10);
+    }
+
     fn render_project_tab(&mut self, ui: &mut egui::Ui) {
         if !self.show_playlist {
             ui.centered_and_justified(|ui| {
@@ -1182,9 +1191,9 @@ impl PlayaApp {
 
         let project_actions = widgets::project::render(ui, &mut self.player, self.selected_media_uuid.as_ref());
 
-        // Update selection state
+        // Handle selection from click via EventBus
         if let Some(uuid) = project_actions.selected_uuid {
-            self.selected_media_uuid = Some(uuid);
+            self.event_bus.send(events::AppEvent::SelectMedia(uuid));
         }
 
         // Load media files
@@ -1198,14 +1207,6 @@ impl PlayaApp {
         }
         if let Some(path) = project_actions.load_project {
             self.load_project(path);
-        }
-
-        // Switch active composition (double-click)
-        if let Some(comp_uuid) = project_actions.set_active_comp {
-            self.player.set_active_comp(comp_uuid.clone());
-
-            // Trigger frame loading around new current_frame
-            self.enqueue_frame_loads_around_playhead(10);
         }
 
         // Create new composition
@@ -1694,6 +1695,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.settings.current_shader,
                 app.show_help
             );
+
+            // Restore selected media item (activate if exists)
+            if let Some(selected_uuid) = app.selected_media_uuid.clone() {
+                if app.player.project.media.contains_key(&selected_uuid) {
+                    app.select_item(selected_uuid.clone());
+                    info!("Restored selected media: {}", selected_uuid);
+                }
+            }
 
             // CLI arguments have priority
             let has_cli_input =
