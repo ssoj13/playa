@@ -92,14 +92,21 @@ impl CpuCompositor {
 
     /// Blend frames bottom-to-top with opacity.
     pub(crate) fn blend(&self, frames: Vec<(Frame, f32)>) -> Option<Frame> {
+        use log::debug;
+        debug!("CpuCompositor::blend() called with {} frames", frames.len());
+
         if frames.is_empty() {
+            debug!("  -> empty frames, returning None");
             return None;
         }
 
         // Single frame - return clone
         if frames.len() == 1 {
+            debug!("  -> single frame, returning clone");
             return Some(frames[0].0.clone());
         }
+
+        debug!("  -> blending {} frames", frames.len());
 
         // Multiple frames - blend bottom-to-top
         let (first_frame, _) = &frames[0];

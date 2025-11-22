@@ -489,10 +489,15 @@ impl Comp {
     /// - Recursively gets frames (supports nested Comps)
     /// - Blends multiple children with CPU compositor (GPU compositor planned)
     fn compose(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
+        use log::debug;
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
 
+        debug!("compose() called: frame_idx={}, children.len()={}", frame_idx, self.children.len());
+
         // Collect frames from all active children
-        for child_uuid in &self.children {
+        // IMPORTANT: Reverse iteration - last child (bottom layer) becomes base,
+        // first child (top layer) composited last
+        for child_uuid in self.children.iter().rev() {
             // Get child attributes
             let attrs = self.children_attrs.get(child_uuid)?;
 
@@ -503,8 +508,12 @@ impl Comp {
             // Check if child is active at this frame
             let frame_idx_i32 = frame_idx as i32;
             if frame_idx_i32 < child_start || frame_idx_i32 > child_end {
+                debug!("  child {} SKIPPED: frame {} not in range [{}, {}]",
+                    child_uuid, frame_idx_i32, child_start, child_end);
                 continue; // Child not active
             }
+            debug!("  child {} ACTIVE at frame {}, range=[{}, {}]",
+                child_uuid, frame_idx_i32, child_start, child_end);
 
             // Convert comp frame to local source frame
             let play_start = attrs.get_i32("play_start").unwrap_or(0);
@@ -533,6 +542,7 @@ impl Comp {
         }
 
         // Blend all children with project compositor (CPU or GPU)
+        debug!("compose() collected {} frames, calling compositor.blend()", source_frames.len());
         project.compositor.blend(source_frames)
     }
 

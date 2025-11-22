@@ -480,6 +480,8 @@ impl PlayaApp {
                 }
                 events::CompEvent::LayersChanged { comp_uuid } => {
                     debug!("Comp {} layers changed", comp_uuid);
+                    // Force viewport texture re-upload since composition changed
+                    self.displayed_frame = None;
                     // Future: invalidate timeline cache, rebuild layer UI
                 }
                 events::CompEvent::TimelineChanged { comp_uuid } => {
