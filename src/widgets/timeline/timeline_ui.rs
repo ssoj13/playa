@@ -216,7 +216,7 @@ pub fn render_canvas(
     state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
     mut dispatch: impl FnMut(AppEvent),
-) {
+) -> super::timeline::TimelineActions {
     // Save canvas width for Fit button calculation
     state.last_canvas_width = ui.available_width();
 
@@ -253,6 +253,7 @@ pub fn render_canvas(
     let mut ruler_rect: Option<Rect> = None;
     let mut timeline_rect_global: Option<Rect> = None;
     let ruler_height = 20.0;
+    let mut timeline_hovered = false; // Track hover state for input routing
 
     // Draw ruler with proper layout sync
     ui.horizontal(|ui| {
@@ -367,6 +368,7 @@ pub fn render_canvas(
                     Sense::click_and_drag(),
                 );
                 timeline_rect_global = Some(timeline_rect);
+                timeline_hovered = timeline_response.hovered();
 
                 // Middle-drag pan on canvas
                 if let Some(pos) = timeline_response.hover_pos() {
@@ -862,6 +864,11 @@ pub fn render_canvas(
             Color32::from_rgb(255, 220, 100),
             (0.0, Color32::TRANSPARENT),
         ));
+    }
+
+    // Return actions with hover state
+    super::timeline::TimelineActions {
+        hovered: timeline_hovered,
     }
 }
 

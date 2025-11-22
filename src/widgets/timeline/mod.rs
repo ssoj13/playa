@@ -8,5 +8,5 @@ mod timeline;
 mod timeline_helpers;
 mod timeline_ui;
 
-pub use timeline::{GlobalDragState, TimelineConfig, TimelineState, TimelineViewMode};
+pub use timeline::{GlobalDragState, TimelineActions, TimelineConfig, TimelineState, TimelineViewMode};
 pub use timeline_ui::{render_canvas, render_outline, render_toolbar};

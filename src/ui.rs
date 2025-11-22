@@ -58,8 +58,9 @@ pub fn render_timeline_panel(
     shader_manager: &mut Shaders,
     timeline_state: &mut TimelineState,
     event_bus: &EventBus,
-) -> bool {
+) -> (bool, crate::widgets::timeline::TimelineActions) {
     let old_shader = shader_manager.current_shader.clone();
+    let mut timeline_actions = crate::widgets::timeline::TimelineActions::default();
 
     // Block vertical scroll - timeline panel should not scroll vertically
     let available_height = ui.available_height();
@@ -144,7 +145,7 @@ pub fn render_timeline_panel(
 
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
-                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
+                            timeline_actions = render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
                                 event_bus.send(evt)
                             });
                         });
@@ -152,7 +153,7 @@ pub fn render_timeline_panel(
                     crate::widgets::timeline::TimelineViewMode::CanvasOnly => {
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
-                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
+                            timeline_actions = render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
                                 event_bus.send(evt)
                             });
                         });
@@ -174,5 +175,5 @@ pub fn render_timeline_panel(
         }
     });
 
-    old_shader != shader_manager.current_shader
+    (old_shader != shader_manager.current_shader, timeline_actions)
 }

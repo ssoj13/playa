@@ -1,8 +1,7 @@
 //! Hotkey system - keyboard shortcuts management
-//!
-//! TODO: To be implemented in Phase 3
 
 use crate::events::{AppEvent, HotkeyWindow};
+use eframe::egui;
 use std::collections::HashMap;
 
 /// Hotkey handler for managing keyboard shortcuts
@@ -63,5 +62,50 @@ impl HotkeyHandler {
     /// Remove hotkey binding
     pub fn remove_binding(&mut self, window: HotkeyWindow, key: &str) {
         self.bindings.remove(&(window, key.to_string()));
+    }
+
+    /// Setup default hotkey bindings
+    pub fn setup_default_bindings(&mut self) {
+        use AppEvent::*;
+        use HotkeyWindow::*;
+
+        // Global hotkeys (работают везде)
+        self.add_binding(Global, "F1".to_string(), ToggleHelp);
+        self.add_binding(Global, "F2".to_string(), TogglePlaylist);
+        self.add_binding(Global, "Space".to_string(), TogglePlayPause);
+        self.add_binding(Global, "K".to_string(), Stop);
+        self.add_binding(Global, ".".to_string(), Stop);
+
+        // Timeline-specific hotkeys
+        self.add_binding(Timeline, "Delete".to_string(), RemoveSelectedLayer);
+
+        // TODO: добавить остальные hotkeys по мере необходимости
+    }
+
+    /// Handle keyboard input from egui with current focused window
+    pub fn handle_input(&self, input: &egui::InputState) -> Option<AppEvent> {
+        // Check all pressed keys
+        for key in &input.keys_down {
+            let key_str = format!("{:?}", key);
+
+            // Check with modifiers
+            if let Some(event) = self.handle_key_with_modifiers(
+                &key_str,
+                input.modifiers.ctrl,
+                input.modifiers.shift,
+                input.modifiers.alt,
+            ) {
+                return Some(event);
+            }
+
+            // Check without modifiers
+            if !input.modifiers.any() {
+                if let Some(event) = self.handle_key(&key_str) {
+                    return Some(event);
+                }
+            }
+        }
+
+        None
     }
 }

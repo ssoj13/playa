@@ -7,6 +7,12 @@
 use eframe::egui::Pos2;
 use serde::{Deserialize, Serialize};
 
+/// Timeline actions result - returned from render functions
+#[derive(Default)]
+pub struct TimelineActions {
+    pub hovered: bool,
+}
+
 /// Configuration for timeline widget
 #[derive(Clone, Debug)]
 pub struct TimelineConfig {

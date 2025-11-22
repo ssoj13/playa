@@ -14,6 +14,7 @@ use crate::player::Player;
 #[derive(Default)]
 pub struct ViewportActions {
     pub load_sequence: Option<PathBuf>,
+    pub hovered: bool,
 }
 
 /// Create configured file dialog for image/video selection
@@ -38,6 +39,7 @@ pub fn render(
 ) -> (ViewportActions, f32) {
     let mut actions = ViewportActions {
         load_sequence: None,
+        hovered: false,
     };
     let mut render_time_ms = 0.0;
 
@@ -178,6 +180,9 @@ pub fn render(
                     });
             });
         });
+
+    // Track hover state for input routing
+    actions.hovered = response.hovered();
 
     (actions, render_time_ms)
 }

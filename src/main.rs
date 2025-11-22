@@ -92,6 +92,19 @@ struct PlayaApp {
     event_bus: events::EventBus,
     #[serde(skip, default = "PlayaApp::default_dock_state")]
     dock_state: DockState<DockTab>,
+    /// Hotkey handler for context-aware keyboard shortcuts
+    #[serde(skip)]
+    hotkey_handler: crate::dialogs::prefs::hotkeys::HotkeyHandler,
+    /// Currently focused window for input routing
+    #[serde(skip)]
+    focused_window: events::HotkeyWindow,
+    /// Hover states for input routing
+    #[serde(skip)]
+    viewport_hovered: bool,
+    #[serde(skip)]
+    timeline_hovered: bool,
+    #[serde(skip)]
+    project_hovered: bool,
 }
 
 impl Default for PlayaApp {
@@ -135,6 +148,15 @@ impl Default for PlayaApp {
             comp_event_sender,
             event_bus: events::EventBus::new(),
             dock_state: PlayaApp::default_dock_state(),
+            hotkey_handler: {
+                let mut handler = crate::dialogs::prefs::hotkeys::HotkeyHandler::new();
+                handler.setup_default_bindings();
+                handler
+            },
+            focused_window: events::HotkeyWindow::Global,
+            viewport_hovered: false,
+            timeline_hovered: false,
+            project_hovered: false,
         }
     }
 }
@@ -911,8 +933,48 @@ impl PlayaApp {
         }
     }
 
+    /// Determine which window has focus based on hover state and context
+    fn determine_focused_window(&self, ctx: &egui::Context) -> events::HotkeyWindow {
+        use events::HotkeyWindow;
+
+        // Priority 1: Modal dialogs (settings, encode) - always capture input
+        if self.show_settings || self.show_encode_dialog {
+            return HotkeyWindow::Global;
+        }
+
+        // Priority 2: Keyboard focus (text fields) - don't process hotkeys
+        if ctx.wants_keyboard_input() {
+            return HotkeyWindow::Global; // Return Global but will be filtered later
+        }
+
+        // Priority 3: Hover detection - which widget is under the cursor
+        if self.timeline_hovered {
+            return HotkeyWindow::Timeline;
+        }
+        if self.viewport_hovered {
+            return HotkeyWindow::Viewport;
+        }
+        if self.project_hovered {
+            return HotkeyWindow::Project;
+        }
+
+        // Priority 4: Fallback to Global
+        HotkeyWindow::Global
+    }
+
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
         let input = ctx.input(|i| i.clone());
+
+        // Determine focused window and update hotkey handler
+        let focused_window = self.determine_focused_window(ctx);
+        self.focused_window = focused_window.clone();
+        self.hotkey_handler.set_focused_window(focused_window);
+
+        // Try hotkey handler first (for context-aware hotkeys)
+        if let Some(event) = self.hotkey_handler.handle_input(&input) {
+            self.event_bus.send(event);
+            return; // Hotkey handled, don't process manual checks
+        }
 
         // F1: Toggle help
         if input.key_pressed(egui::Key::F1) {
@@ -1194,6 +1256,9 @@ impl PlayaApp {
 
         let project_actions = widgets::project::render(ui, &mut self.player, self.selected_media_uuid.as_ref());
 
+        // Store hover state for input routing
+        self.project_hovered = project_actions.hovered;
+
         // Handle selection from click via EventBus
         if let Some(uuid) = project_actions.selected_uuid {
             self.event_bus.send(events::AppEvent::SelectMedia(uuid));
@@ -1269,13 +1334,17 @@ impl PlayaApp {
         self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
 
         // Render timeline panel with transport controls
-        let shader_changed = ui::render_timeline_panel(
+        let (shader_changed, timeline_actions) = ui::render_timeline_panel(
             ui,
             &mut self.player,
             &mut self.shader_manager,
             &mut self.timeline_state,
             &self.event_bus,
         );
+
+        // Store hover state for input routing
+        self.timeline_hovered = timeline_actions.hovered;
+
         if shader_changed {
             let mut renderer = self.viewport_renderer.lock().unwrap();
             renderer.update_shader(&self.shader_manager);
@@ -1306,6 +1375,10 @@ impl PlayaApp {
             texture_needs_upload,
         );
         self.last_render_time_ms = render_time;
+
+        // Store hover state for input routing
+        self.viewport_hovered = viewport_actions.hovered;
+
         if let Some(path) = viewport_actions.load_sequence {
             let _ = self.load_sequences(vec![path]);
         }
