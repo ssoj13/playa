@@ -88,7 +88,7 @@ pub fn render(
             viewport_state.set_image_size(image_size);
         }
 
-        handle_viewport_input(&ctx, ui, panel_rect, viewport_state);
+        handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
         if let Some(frame_idx) =
             viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames())
@@ -192,7 +192,13 @@ fn handle_viewport_input(
     _ui: &egui::Ui,
     rect: egui::Rect,
     viewport_state: &mut ViewportState,
+    is_hovered: bool,
 ) {
+    // Honor existing hover/focus routing; ignore input when cursor is outside viewport
+    if !is_hovered {
+        return;
+    }
+
     let scroll_delta = ctx.input(|i| i.raw_scroll_delta);
     if scroll_delta.y.abs() > 0.1 {
         let cursor_pos = ctx.input(|i| i.pointer.hover_pos());

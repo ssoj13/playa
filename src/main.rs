@@ -12,7 +12,7 @@ mod workers;
 use clap::Parser;
 use cli::Args;
 use dialogs::encode::EncodeDialog;
-use dialogs::prefs::{AppSettings, render_settings_window};
+use dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
 use eframe::{egui, glow};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use entities::Frame;
@@ -94,7 +94,7 @@ struct PlayaApp {
     dock_state: DockState<DockTab>,
     /// Hotkey handler for context-aware keyboard shortcuts
     #[serde(skip)]
-    hotkey_handler: crate::dialogs::prefs::hotkeys::HotkeyHandler,
+    hotkey_handler: HotkeyHandler,
     /// Currently focused window for input routing
     #[serde(skip)]
     focused_window: events::HotkeyWindow,
@@ -149,7 +149,7 @@ impl Default for PlayaApp {
             event_bus: events::EventBus::new(),
             dock_state: PlayaApp::default_dock_state(),
             hotkey_handler: {
-                let mut handler = crate::dialogs::prefs::hotkeys::HotkeyHandler::new();
+                let mut handler = HotkeyHandler::new();
                 handler.setup_default_bindings();
                 handler
             },
@@ -932,15 +932,6 @@ impl PlayaApp {
                 // TODO: implement drag cancel
             }
 
-            // ===== Hotkeys =====
-            AppEvent::HotkeyPressed { key, window } => {
-                log::debug!("Hotkey pressed: {} in {:?}", key, window);
-                // TODO: implement hotkey handling per window
-            }
-            AppEvent::HotkeyReleased { key, window } => {
-                log::debug!("Hotkey released: {} in {:?}", key, window);
-                // TODO: implement hotkey handling per window
-            }
         }
     }
 
@@ -1481,8 +1472,6 @@ impl eframe::App for PlayaApp {
             opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
 
-        self.handle_keyboard_input(ctx);
-
         // cache_mem_percent is deprecated (old frame cache); kept only for config compatibility
         self.player.update();
 
@@ -1537,6 +1526,9 @@ impl eframe::App for PlayaApp {
                 self.dock_state = dock_state;
             }
         });
+
+        // Process keyboard input after hover states were updated by panel rendering
+        self.handle_keyboard_input(ctx);
 
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {

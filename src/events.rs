@@ -178,12 +178,6 @@ pub enum AppEvent {
     /// Decrease base FPS
     DecreaseFPS,
 
-    // ===== Keyboard Shortcuts =====
-    /// Generic hotkey pressed event with window context
-    /// Format: "hotkey.<key>:pressed" with window prefix
-    HotkeyPressed { key: String, window: HotkeyWindow },
-    /// Generic hotkey released event
-    HotkeyReleased { key: String, window: HotkeyWindow },
 }
 
 /// Window context for hotkeys
