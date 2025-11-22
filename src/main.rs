@@ -979,12 +979,19 @@ impl PlayaApp {
         // Determine focused window and update hotkey handler
         let focused_window = self.determine_focused_window(ctx);
         self.focused_window = focused_window.clone();
-        self.hotkey_handler.set_focused_window(focused_window);
+        self.hotkey_handler.set_focused_window(focused_window.clone());
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
+            log::debug!("Hotkey event: {:?}, focused_window: {:?}", event, focused_window);
             self.event_bus.send(event);
             return; // Hotkey handled, don't process manual checks
+        }
+
+        // Debug: log when F or A is pressed but no event
+        if input.key_pressed(egui::Key::F) || input.key_pressed(egui::Key::A) {
+            log::debug!("F/A pressed but no event. focused_window: {:?}, viewport_hovered: {}, timeline_hovered: {}",
+                focused_window, self.viewport_hovered, self.timeline_hovered);
         }
 
         // F1: Toggle help

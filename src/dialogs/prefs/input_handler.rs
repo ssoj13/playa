@@ -20,10 +20,21 @@ impl HotkeyHandler {
     }
 
     /// Handle key press
+    /// Priority: focused_window first, then Global as fallback
     pub fn handle_key(&self, key: &str) -> Option<AppEvent> {
-        self.bindings
-            .get(&(self.focused_window.clone(), key.to_string()))
-            .cloned()
+        // Try current focused window first (panel-specific hotkeys have priority)
+        if let Some(event) = self.bindings.get(&(self.focused_window.clone(), key.to_string())) {
+            return Some(event.clone());
+        }
+
+        // Fallback: try Global bindings (only if not found in focused window)
+        if self.focused_window != HotkeyWindow::Global {
+            if let Some(event) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
+                return Some(event.clone());
+            }
+        }
+
+        None
     }
 
     /// Handle key with modifiers
