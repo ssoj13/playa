@@ -12,7 +12,6 @@ use serde::{Deserialize, Serialize};
 pub struct TimelineConfig {
     pub layer_height: f32,
     pub name_column_width: f32,
-    pub show_frame_numbers: bool,
     pub pixels_per_frame: f32, // Zoom level
 }
 
@@ -21,7 +20,6 @@ impl Default for TimelineConfig {
         Self {
             layer_height: 32.0,
             name_column_width: 150.0,
-            show_frame_numbers: true,
             pixels_per_frame: 2.0, // 2 pixels per frame by default
         }
     }
@@ -37,7 +35,6 @@ pub struct TimelineState {
     pub drag_state: Option<GlobalDragState>, // Active drag operation (centralized for all drag types)
     pub snap_enabled: bool,
     pub lock_work_area: bool,
-    pub show_frame_numbers: bool,
     pub last_comp_uuid: Option<String>, // Track last active comp to recenter on change
     pub view_mode: TimelineViewMode,
     #[serde(skip)]
@@ -53,7 +50,6 @@ impl Default for TimelineState {
             drag_state: None,
             snap_enabled: true,
             lock_work_area: false,
-            show_frame_numbers: true,
             last_comp_uuid: None,
             view_mode: TimelineViewMode::Split,
             last_canvas_width: 800.0, // Default estimate

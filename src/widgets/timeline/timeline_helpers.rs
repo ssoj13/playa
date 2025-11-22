@@ -105,98 +105,90 @@ pub(super) fn draw_frame_ruler(
     config: &TimelineConfig,
     state: &TimelineState,
     timeline_width: f32,
+    total_frames: i32,
 ) -> (Option<i32>, Rect) {
-    let total_frames = comp.frame_count();
     let ruler_height = 20.0;
 
-    let (frame, rect) = ui
-        .horizontal(|ui| {
-            ui.allocate_exact_size(
-                Vec2::new(config.name_column_width, ruler_height),
-                Sense::hover(),
+    let (rect, ruler_response) = ui.allocate_exact_size(
+        Vec2::new(timeline_width, ruler_height),
+        Sense::click_and_drag(),
+    );
+
+    let mut frame_clicked = None;
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        painter.rect_filled(rect, 0.0, Color32::from_gray(25));
+
+        let playhead_x =
+            frame_to_screen_x(comp.current_frame as f32, rect.min.x, config, state);
+        if playhead_x >= rect.min.x && playhead_x <= rect.max.x {
+            painter.line_segment(
+                [
+                    Pos2::new(playhead_x, rect.min.y),
+                    Pos2::new(playhead_x, rect.max.y),
+                ],
+                (2.0, Color32::from_rgb(255, 220, 100)),
             );
+        }
 
-            let (rect, ruler_response) = ui.allocate_exact_size(
-                Vec2::new(timeline_width, ruler_height),
-                Sense::click_and_drag(),
-            );
+        let effective_ppf = config.pixels_per_frame * state.zoom;
+        let frame_step = if effective_ppf > 10.0 {
+            1
+        } else if effective_ppf > 2.0 {
+            5
+        } else if effective_ppf > 0.5 {
+            10
+        } else {
+            50
+        };
 
-            if ui.is_rect_visible(rect) {
-                let painter = ui.painter();
-                painter.rect_filled(rect, 0.0, Color32::from_gray(25));
+        let label_step = if effective_ppf > 50.0 {
+            10
+        } else if effective_ppf > 20.0 {
+            5
+        } else {
+            (frame_step * 2).max(frame_step)
+        };
 
-                let playhead_x =
-                    frame_to_screen_x(comp.current_frame as f32, rect.min.x, config, state);
-                if playhead_x >= rect.min.x && playhead_x <= rect.max.x {
-                    painter.line_segment(
-                        [
-                            Pos2::new(playhead_x, rect.min.y),
-                            Pos2::new(playhead_x, rect.max.y),
-                        ],
-                        (2.0, Color32::from_rgb(255, 220, 100)),
-                    );
-                }
+        // Use rect.width() for visible range, not timeline_width
+        let visible_start = state.pan_offset.max(0.0) as usize;
+        let visible_end = (state.pan_offset + (rect.width() / effective_ppf))
+            .min(total_frames as f32) as usize;
+        let start_frame = (visible_start / frame_step.max(1)) * frame_step.max(1);
 
-                let effective_ppf = config.pixels_per_frame * state.zoom;
-                let frame_step = if effective_ppf > 10.0 {
-                    1
-                } else if effective_ppf > 2.0 {
-                    5
-                } else if effective_ppf > 0.5 {
-                    10
-                } else {
-                    50
-                };
-
-                let label_step = if effective_ppf > 50.0 {
-                    10
-                } else if effective_ppf > 20.0 {
-                    5
-                } else {
-                    (frame_step * 2).max(frame_step)
-                };
-
-                let visible_start = state.pan_offset.max(0.0) as usize;
-                let visible_end = (state.pan_offset + (timeline_width / effective_ppf))
-                    .min(total_frames as f32) as usize;
-                let start_frame = (visible_start / frame_step.max(1)) * frame_step.max(1);
-
-                for frame in (start_frame..=visible_end).step_by(frame_step.max(1)) {
-                    let x = frame_to_screen_x(frame as f32, rect.min.x, config, state);
-                    if x < rect.min.x || x > rect.max.x {
-                        continue;
-                    }
-
-                    painter.line_segment(
-                        [Pos2::new(x, rect.max.y - 5.0), Pos2::new(x, rect.max.y)],
-                        (1.0, Color32::from_gray(100)),
-                    );
-
-                    if frame % label_step == 0 {
-                        painter.text(
-                            Pos2::new(x, rect.min.y + 2.0),
-                            egui::Align2::CENTER_TOP,
-                            format!("{}", frame),
-                            egui::FontId::monospace(9.0),
-                            Color32::from_gray(150),
-                        );
-                    }
-                }
-
-                if ruler_response.clicked() || ruler_response.dragged() {
-                    if let Some(pos) = ruler_response.interact_pointer_pos() {
-                        let frame =
-                            screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
-                        return (Some(frame.min(total_frames.saturating_sub(1))), rect);
-                    }
-                }
+        for frame in (start_frame..=visible_end).step_by(frame_step.max(1)) {
+            let x = frame_to_screen_x(frame as f32, rect.min.x, config, state);
+            if x < rect.min.x || x > rect.max.x {
+                continue;
             }
 
-            (None, rect)
-        })
-        .inner;
+            painter.line_segment(
+                [Pos2::new(x, rect.max.y - 5.0), Pos2::new(x, rect.max.y)],
+                (1.0, Color32::from_gray(100)),
+            );
 
-    (frame, rect)
+            if frame % label_step == 0 {
+                painter.text(
+                    Pos2::new(x, rect.min.y + 2.0),
+                    egui::Align2::CENTER_TOP,
+                    format!("{}", frame),
+                    egui::FontId::monospace(9.0),
+                    Color32::from_gray(150),
+                );
+            }
+        }
+
+        if ruler_response.clicked() || ruler_response.dragged() {
+            if let Some(pos) = ruler_response.interact_pointer_pos() {
+                let frame =
+                    screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
+                frame_clicked = Some(frame.min(total_frames.saturating_sub(1)));
+            }
+        }
+    }
+
+    (frame_clicked, rect)
 }
 
 pub(super) fn draw_playhead(

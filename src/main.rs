@@ -691,9 +691,6 @@ impl PlayaApp {
             AppEvent::TimelineSnapChanged(enabled) => {
                 self.timeline_state.snap_enabled = enabled;
             }
-            AppEvent::TimelineFrameNumbersChanged(enabled) => {
-                self.timeline_state.show_frame_numbers = enabled;
-            }
             AppEvent::TimelineLockWorkAreaChanged(locked) => {
                 self.timeline_state.lock_work_area = locked;
             }
@@ -1259,7 +1256,6 @@ impl PlayaApp {
         // Sync timeline toggles from settings
         self.timeline_state.snap_enabled = self.settings.timeline_snap_enabled;
         self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
-        self.timeline_state.show_frame_numbers = self.settings.show_frame_numbers;
 
         // Render timeline panel with transport controls
         let shader_changed = ui::render_timeline_panel(
@@ -1304,7 +1300,6 @@ impl PlayaApp {
         }
 
         // Persist timeline options back to settings
-        self.settings.show_frame_numbers = self.timeline_state.show_frame_numbers;
         self.settings.timeline_snap_enabled = self.timeline_state.snap_enabled;
         self.settings.timeline_lock_work_area = self.timeline_state.lock_work_area;
     }

@@ -72,14 +72,6 @@ pub fn render_outline(
             dispatch(AppEvent::TimelineFitAll(state.last_canvas_width));
         }
 
-        if ui
-            .checkbox(&mut state.show_frame_numbers, "Frames")
-            .changed()
-        {
-            dispatch(AppEvent::TimelineFrameNumbersChanged(
-                state.show_frame_numbers,
-            ));
-        }
         if ui.checkbox(&mut state.snap_enabled, "Snap").changed() {
             dispatch(AppEvent::TimelineSnapChanged(state.snap_enabled));
         }
@@ -210,49 +202,77 @@ pub fn render_canvas(
     comp: &mut Comp,
     config: &TimelineConfig,
     state: &mut TimelineState,
+    view_mode: super::TimelineViewMode,
     mut dispatch: impl FnMut(AppEvent),
 ) {
     // Save canvas width for Fit button calculation
     state.last_canvas_width = ui.available_width();
 
     let comp_id = comp_uuid.to_string();
-    // Calculate dimensions (use full frame count for timeline width, not just play_range)
-    let total_frames = comp.frame_count().max(100); // Minimum 100 frames for empty comps
+    // Calculate dimensions - timeline should show from 0 to end (not start to end)
+    // This allows negative starts and ensures ruler shows full range
+    let comp_start = comp.start();
+    let comp_end = comp.end();
+    let total_frames = (comp_end + 1).max(100); // From frame 0 to end (inclusive), minimum 100
+
+    log::debug!("Comp '{}': start={}, end={}, total_frames={}",
+        comp.name(), comp_start, comp_end, total_frames);
 
     let timeline_width = (total_frames as f32 * config.pixels_per_frame * state.zoom)
         .max(ui.available_width() - config.name_column_width);
     // Ensure non-zero height so DnD/drop zone works even for empty comps
     let total_height = (comp.children.len().max(1) as f32) * config.layer_height;
 
-    let mut cfg_for_ruler = config.clone();
-    cfg_for_ruler.show_frame_numbers = state.show_frame_numbers;
-    let ruler_width = (total_frames as f32 * cfg_for_ruler.pixels_per_frame * state.zoom)
+    let ruler_width = (total_frames as f32 * config.pixels_per_frame * state.zoom)
         .max(ui.available_width());
+
+    log::debug!("ruler_width={}, timeline_width={}, available_width={}",
+        ruler_width, timeline_width, ui.available_width());
     let status_strip = comp.file_frame_statuses();
     let status_bar_height = status_strip.as_ref().map(|_| 6.0).unwrap_or(0.0);
 
-    // Options + time ruler row (fixed ruler; pan is state-driven, not ScrollArea)
+    // Options + time ruler row (always visible)
     let mut ruler_rect: Option<Rect> = None;
     let mut timeline_rect_global: Option<Rect> = None;
+    let ruler_height = 20.0;
 
-    // Draw ruler (includes name column spacer via draw_frame_ruler)
-    let (frame_opt, rect) = draw_frame_ruler(ui, comp, &cfg_for_ruler, state, ruler_width);
-    ruler_rect = Some(rect);
-    if let Some(frame) = frame_opt {
-        dispatch(AppEvent::SetFrame(frame));
-    }
-
-    // Middle-drag pan on ruler
-    if let Some(pos) = ui.ctx().pointer_hover_pos() {
-        if ui.rect_contains_pointer(rect) {
-            if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-                state.drag_state = Some(GlobalDragState::TimelinePan {
-                    drag_start_pos: pos,
-                    initial_pan_offset: state.pan_offset,
-                });
-            }
+    // Draw ruler with proper layout sync
+    ui.horizontal(|ui| {
+        // Add left spacer only in non-Split modes (outline column alignment)
+        if !matches!(view_mode, super::TimelineViewMode::Split) {
+            ui.allocate_exact_size(
+                Vec2::new(config.name_column_width, ruler_height),
+                Sense::hover(),
+            );
         }
-    }
+
+        egui::ScrollArea::horizontal()
+            .id_salt("timeline_h_scroll")
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                ui.set_height(ruler_height);
+                ui.set_width(ruler_width);
+
+                let (frame_opt, rect) = draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
+                ruler_rect = Some(rect);
+                if let Some(frame) = frame_opt {
+                    dispatch(AppEvent::SetFrame(frame));
+                }
+
+                // Middle-drag pan on ruler
+                if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                    if ui.rect_contains_pointer(rect) {
+                        if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
+                            state.drag_state = Some(GlobalDragState::TimelinePan {
+                                drag_start_pos: pos,
+                                initial_pan_offset: state.pan_offset,
+                            });
+                        }
+                    }
+                }
+            });
+    });
 
     if let Some(statuses) = &status_strip {
         egui::ScrollArea::horizontal()
@@ -304,9 +324,9 @@ pub fn render_canvas(
         // Create temporary child order (layers displayed in original order from comp.children)
         let child_order: Vec<usize> = (0..comp.children.len()).collect();
 
-        // Timeline bars (ScrollArea needed for egui_dnd layout, but no scrollbars shown)
+        // Timeline bars (ScrollArea needed for egui_dnd layout, synced with ruler scroll)
         egui::ScrollArea::horizontal()
-            .id_salt("timeline_canvas_scroll")
+            .id_salt("timeline_h_scroll")
             .auto_shrink([false, false])
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {

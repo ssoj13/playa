@@ -140,8 +140,6 @@ pub enum AppEvent {
     TimelinePanChanged(f32),
     /// Timeline snap toggle
     TimelineSnapChanged(bool),
-    /// Timeline frame numbers visibility changed
-    TimelineFrameNumbersChanged(bool),
     /// Timeline work area lock toggled
     TimelineLockWorkAreaChanged(bool),
     /// Fit all clips in timeline to view (canvas_width in pixels)

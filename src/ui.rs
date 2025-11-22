@@ -70,17 +70,16 @@ pub fn render_timeline_panel(
         // Timeline section (split: outline + canvas)
         if let Some(comp_uuid) = &player.active_comp.clone() {
             if let Some(comp) = player.project.media.get_mut(comp_uuid) {
-                let mut config = TimelineConfig::default();
-                config.show_frame_numbers = timeline_state.show_frame_numbers;
+                let config = TimelineConfig::default();
 
-                // Recenter pan when switching comps so start is visible (supports negative starts)
+                // Reset pan to frame 0 when switching comps (ruler shows absolute frame numbers)
                 if timeline_state
                     .last_comp_uuid
                     .as_ref()
                     .map(|u| u != comp_uuid)
                     .unwrap_or(true)
                 {
-                    timeline_state.pan_offset = comp.start() as f32;
+                    timeline_state.pan_offset = 0.0;
                     timeline_state.last_comp_uuid = Some(comp_uuid.clone());
                 }
 
@@ -137,7 +136,7 @@ pub fn render_timeline_panel(
 
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
-                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, |evt| {
+                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
                                 event_bus.send(evt)
                             });
                         });
@@ -145,7 +144,7 @@ pub fn render_timeline_panel(
                     crate::widgets::timeline::TimelineViewMode::CanvasOnly => {
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
-                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, |evt| {
+                            render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
                                 event_bus.send(evt)
                             });
                         });
