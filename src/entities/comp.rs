@@ -505,22 +505,31 @@ impl Comp {
             let child_start = attrs.get_i32("start").unwrap_or(0);
             let child_end = attrs.get_i32("end").unwrap_or(0);
 
-            // Check if child is active at this frame
-            let frame_idx_i32 = frame_idx as i32;
-            if frame_idx_i32 < child_start || frame_idx_i32 > child_end {
-                debug!("  child {} SKIPPED: frame {} not in range [{}, {}]",
-                    child_uuid, frame_idx_i32, child_start, child_end);
-                continue; // Child not active
-            }
-            debug!("  child {} ACTIVE at frame {}, range=[{}, {}]",
-                child_uuid, frame_idx_i32, child_start, child_end);
-
-            // Convert comp frame to local source frame
+            // Get play_start/play_end offsets from timeline boundaries
             let play_start = attrs.get_i32("play_start").unwrap_or(0);
-            let local_frame = (frame_idx_i32 - child_start) + play_start;
-            if local_frame < 0 {
+            let play_end = attrs.get_i32("play_end").unwrap_or(0);
+
+            // Calculate actual playback range on timeline with trim offsets
+            // play_start > 0 = trim left (delay), < 0 = extend left
+            // play_end > 0 = trim right (early stop), < 0 = extend right
+            let playback_start = child_start + play_start;
+            let playback_end = child_end - play_end;
+
+            let frame_idx_i32 = frame_idx as i32;
+
+            // Check if frame is within trimmed playback range
+            if frame_idx_i32 < playback_start || frame_idx_i32 > playback_end {
+                debug!("  child {} TRIMMED OUT: frame {} not in playback range [{}, {}] (play_start={}, play_end={})",
+                    child_uuid, frame_idx_i32, playback_start, playback_end, play_start, play_end);
                 continue;
             }
+
+            debug!("  child {} ACTIVE at frame {}, playback range=[{}, {}] (child=[{}, {}], offsets=[{}, {}])",
+                child_uuid, frame_idx_i32, playback_start, playback_end,
+                child_start, child_end, play_start, play_end);
+
+            // Convert comp frame to local source frame
+            let local_frame = frame_idx_i32 - child_start;
 
             // Get source UUID from child attrs (child_uuid is now instance UUID)
             let Some(source_uuid) = attrs.get_str("uuid") else {
