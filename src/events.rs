@@ -155,6 +155,8 @@ pub enum AppEvent {
     ResetViewport,
     /// Fit viewport to frame
     FitViewport,
+    /// Set viewport to 100% zoom
+    Viewport100,
 
     // ===== Play Range Control =====
     /// Set play range start at current frame

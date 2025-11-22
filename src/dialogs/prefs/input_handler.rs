@@ -81,29 +81,36 @@ impl HotkeyHandler {
         self.add_binding(Timeline, "F".to_string(), TimelineFit);
         self.add_binding(Timeline, "A".to_string(), TimelineResetZoom);
 
+        // Viewport-specific hotkeys
+        self.add_binding(Viewport, "F".to_string(), FitViewport);
+        self.add_binding(Viewport, "A".to_string(), Viewport100);
+        self.add_binding(Viewport, "H".to_string(), Viewport100);
+
         // TODO: добавить остальные hotkeys по мере необходимости
     }
 
     /// Handle keyboard input from egui with current focused window
     pub fn handle_input(&self, input: &egui::InputState) -> Option<AppEvent> {
-        // Check all pressed keys
-        for key in &input.keys_down {
-            let key_str = format!("{:?}", key);
+        // Check all events (key_pressed, not keys_down to avoid repeats)
+        for event in &input.events {
+            if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
+                let key_str = format!("{:?}", key);
 
-            // Check with modifiers
-            if let Some(event) = self.handle_key_with_modifiers(
-                &key_str,
-                input.modifiers.ctrl,
-                input.modifiers.shift,
-                input.modifiers.alt,
-            ) {
-                return Some(event);
-            }
-
-            // Check without modifiers
-            if !input.modifiers.any() {
-                if let Some(event) = self.handle_key(&key_str) {
+                // Check with modifiers
+                if let Some(event) = self.handle_key_with_modifiers(
+                    &key_str,
+                    modifiers.ctrl,
+                    modifiers.shift,
+                    modifiers.alt,
+                ) {
                     return Some(event);
+                }
+
+                // Check without modifiers
+                if !modifiers.any() {
+                    if let Some(event) = self.handle_key(&key_str) {
+                        return Some(event);
+                    }
                 }
             }
         }

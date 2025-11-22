@@ -755,7 +755,10 @@ impl PlayaApp {
                 self.viewport_state.reset();
             }
             AppEvent::FitViewport => {
-                self.viewport_state.reset(); // Fit is same as reset for now
+                self.viewport_state.set_mode_fit();
+            }
+            AppEvent::Viewport100 => {
+                self.viewport_state.set_mode_100();
             }
 
             // ===== Play Range Control =====
@@ -1215,15 +1218,7 @@ impl PlayaApp {
                 self.set_cinema_mode(ctx, enable);
             }
 
-            // Viewport controls
-            if input.key_pressed(egui::Key::F) {
-                self.viewport_state.set_mode_fit();
-            }
-
-            // 100% zoom (A, H only - 1/Home now used for jump to start)
-            if input.key_pressed(egui::Key::A) || input.key_pressed(egui::Key::H) {
-                self.viewport_state.set_mode_100();
-            }
+            // Viewport controls F/A/H moved to hotkey system (context-aware)
         } // End of !ctx.wants_keyboard_input()
     }
 
