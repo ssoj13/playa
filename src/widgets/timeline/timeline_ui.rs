@@ -26,6 +26,7 @@ pub fn render_outline(
     comp: &mut Comp,
     config: &TimelineConfig,
     state: &mut TimelineState,
+    view_mode: super::TimelineViewMode,
     mut dispatch: impl FnMut(AppEvent),
 ) {
     let comp_id = comp_uuid.to_string();
@@ -93,8 +94,14 @@ pub fn render_outline(
                     let child_uuid = &comp.children[idx];
                     let attrs = comp.children_attrs.get(child_uuid);
 
+                    // In Split mode, use full available width (outline is in separate panel)
+                    let row_width = if matches!(view_mode, super::TimelineViewMode::Split) {
+                        ui.available_width()
+                    } else {
+                        config.name_column_width
+                    };
                     let (row_rect, response) = ui.allocate_exact_size(
-                        Vec2::new(config.name_column_width, config.layer_height),
+                        Vec2::new(row_width, config.layer_height),
                         Sense::click(),
                     );
                     let mut row_ui = ui.new_child(
@@ -218,8 +225,14 @@ pub fn render_canvas(
     log::debug!("Comp '{}': start={}, end={}, total_frames={}",
         comp.name(), comp_start, comp_end, total_frames);
 
+    // In Split mode, use full width (outline is in separate panel)
+    let available_for_timeline = if matches!(view_mode, super::TimelineViewMode::Split) {
+        ui.available_width()
+    } else {
+        ui.available_width() - config.name_column_width
+    };
     let timeline_width = (total_frames as f32 * config.pixels_per_frame * state.zoom)
-        .max(ui.available_width() - config.name_column_width);
+        .max(available_for_timeline);
     // Ensure non-zero height so DnD/drop zone works even for empty comps
     let total_height = (comp.children.len().max(1) as f32) * config.layer_height;
 
