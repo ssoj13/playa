@@ -78,6 +78,8 @@ impl HotkeyHandler {
 
         // Timeline-specific hotkeys
         self.add_binding(Timeline, "Delete".to_string(), RemoveSelectedLayer);
+        self.add_binding(Timeline, "F".to_string(), TimelineFit);
+        self.add_binding(Timeline, "A".to_string(), TimelineResetZoom);
 
         // TODO: добавить остальные hotkeys по мере необходимости
     }

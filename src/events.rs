@@ -145,6 +145,10 @@ pub enum AppEvent {
     TimelineLockWorkAreaChanged(bool),
     /// Fit all clips in timeline to view (canvas_width in pixels)
     TimelineFitAll(f32),
+    /// Fit timeline using last known canvas width
+    TimelineFit,
+    /// Reset timeline zoom to 1.0
+    TimelineResetZoom,
     /// Zoom viewport by factor
     ZoomViewport(f32),
     /// Reset viewport zoom to fit

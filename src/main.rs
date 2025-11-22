@@ -723,11 +723,34 @@ impl PlayaApp {
             }
             AppEvent::TimelineFitAll(canvas_width) => {
                 // Fit all clips in timeline to view using actual canvas width
+                // IMPORTANT: Use play_range (visible area) instead of start/end
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.media.get(comp_uuid) {
-                        let start = comp.start();
-                        let end = comp.end();
-                        let duration = (end - start).max(1);
+                        // Calculate min/max of all layers' play ranges
+                        let mut min_frame = i32::MAX;
+                        let mut max_frame = i32::MIN;
+
+                        for child_uuid in &comp.children {
+                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
+                                let child_start = attrs.get_i32("start").unwrap_or(0);
+                                let play_start = attrs.get_i32("play_start").unwrap_or(0);
+                                let play_end = attrs.get_i32("play_end").unwrap_or(0);
+
+                                let visible_start = child_start + play_start;
+                                let visible_end = child_start + play_end;
+
+                                min_frame = min_frame.min(visible_start);
+                                max_frame = max_frame.max(visible_end);
+                            }
+                        }
+
+                        // If no layers, fallback to comp bounds
+                        if min_frame == i32::MAX || max_frame == i32::MIN {
+                            min_frame = comp.start();
+                            max_frame = comp.end();
+                        }
+
+                        let duration = (max_frame - min_frame).max(1);
 
                         // pixels_per_frame = canvas_width / duration
                         // zoom = pixels_per_frame / default_pixels_per_frame (2.0)
@@ -736,9 +759,18 @@ impl PlayaApp {
                         let zoom = (pixels_per_frame / default_pixels_per_frame).clamp(0.1, 4.0);
 
                         self.timeline_state.zoom = zoom;
-                        self.timeline_state.pan_offset = start as f32;
+                        self.timeline_state.pan_offset = min_frame as f32;
                     }
                 }
+            }
+            AppEvent::TimelineFit => {
+                // Fit timeline using last known canvas width
+                let canvas_width = self.timeline_state.last_canvas_width;
+                self.handle_event(AppEvent::TimelineFitAll(canvas_width));
+            }
+            AppEvent::TimelineResetZoom => {
+                // Reset timeline zoom to 1.0 (default)
+                self.timeline_state.zoom = 1.0;
             }
             AppEvent::ZoomViewport(factor) => {
                 self.viewport_state.zoom *= factor;
