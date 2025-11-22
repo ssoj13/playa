@@ -72,6 +72,7 @@ pub enum AppEvent {
         comp_uuid: String,
         source_uuid: String,
         start_frame: i32,
+        target_row: Option<usize>, // Optional target visual row for insertion
     },
     /// Remove layer from composition
     RemoveLayer { comp_uuid: String, layer_idx: usize },

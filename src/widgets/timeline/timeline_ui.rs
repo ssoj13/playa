@@ -814,10 +814,18 @@ pub fn render_canvas(
                                     );
 
                                     if ui.ctx().input(|i| i.pointer.any_released()) {
+                                        // Always use mouse position for target row (insert between layers)
+                                        let target_row = if hover_pos.y >= timeline_rect.min.y {
+                                            Some(mouse_row)
+                                        } else {
+                                            Some(0) // Above timeline -> insert at top
+                                        };
+
                                         dispatch(AppEvent::AddLayer {
                                             comp_uuid: comp_id.clone(),
                                             source_uuid: source_uuid.clone(),
                                             start_frame: drop_frame,
+                                            target_row,
                                         });
                                         ui.ctx().data_mut(|data| {
                                             data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));

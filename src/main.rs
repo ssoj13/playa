@@ -783,6 +783,7 @@ impl PlayaApp {
                 comp_uuid,
                 source_uuid,
                 start_frame,
+                target_row,
             } => {
                 // Get duration before mutable borrow
                 let duration = self
@@ -794,7 +795,7 @@ impl PlayaApp {
                     .unwrap_or(1);
 
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    if let Err(e) = comp.add_child_with_duration(source_uuid, start_frame, duration)
+                    if let Err(e) = comp.add_child_with_duration(source_uuid, start_frame, duration, target_row)
                     {
                         log::error!("Failed to add layer: {}", e);
                     }

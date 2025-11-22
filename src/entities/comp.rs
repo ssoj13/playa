@@ -553,15 +553,16 @@ impl Comp {
             .ok_or_else(|| anyhow::anyhow!("Source {} not found", source_uuid))?;
 
         let duration = source.frame_count();
-        self.add_child_with_duration(source_uuid, start_frame, duration)
+        self.add_child_with_duration(source_uuid, start_frame, duration, None)
     }
 
-    /// Add child with explicit duration (avoids borrow checker issues)
+    /// Add child with explicit duration and optional target row
     pub fn add_child_with_duration(
         &mut self,
         source_uuid: String,
         start_frame: i32,
         duration: i32,
+        target_row: Option<usize>,
     ) -> anyhow::Result<()> {
         let end_frame = start_frame + duration - 1;
 
@@ -581,8 +582,13 @@ impl Comp {
         attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
         attrs.set("speed", AttrValue::Float(1.0));
 
-        // Add to children using instance UUID
-        self.children.push(instance_uuid.clone());
+        // Add to children at appropriate position for target row
+        if let Some(target_row) = target_row {
+            let insert_pos = self.find_insert_position_for_row(target_row);
+            self.children.insert(insert_pos, instance_uuid.clone());
+        } else {
+            self.children.push(instance_uuid.clone());
+        }
         self.children_attrs.insert(instance_uuid, attrs);
 
         self.rebound();
@@ -593,6 +599,62 @@ impl Comp {
         });
 
         Ok(())
+    }
+
+    /// Find insertion position in children array to achieve target visual row
+    fn find_insert_position_for_row(&self, target_row: usize) -> usize {
+        use std::collections::HashMap;
+
+        // Compute current layout for all existing children
+        let mut layer_rows: HashMap<usize, usize> = HashMap::new();
+        let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new();
+
+        for (idx, child_uuid) in self.children.iter().enumerate() {
+            let attrs = self.children_attrs.get(child_uuid);
+            let start = attrs
+                .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                .unwrap_or(0);
+            let end = attrs
+                .and_then(|a| Some(a.get_i32("end").unwrap_or(0)))
+                .unwrap_or(0);
+
+            // Find first free row for this layer
+            let mut row = 0;
+            loop {
+                let mut row_free = true;
+                if let Some(ranges) = occupied_rows.get(&row) {
+                    for (occupied_start, occupied_end) in ranges {
+                        if start <= *occupied_end && end >= *occupied_start {
+                            row_free = false;
+                            break;
+                        }
+                    }
+                }
+
+                if row_free {
+                    occupied_rows
+                        .entry(row)
+                        .or_insert_with(Vec::new)
+                        .push((start, end));
+                    layer_rows.insert(idx, row);
+                    break;
+                }
+
+                row += 1;
+            }
+        }
+
+        // Find insertion position: before first layer with row >= target_row
+        for (idx, _child_uuid) in self.children.iter().enumerate() {
+            if let Some(&row) = layer_rows.get(&idx) {
+                if row >= target_row {
+                    return idx;
+                }
+            }
+        }
+
+        // If no layer found with row >= target_row, insert at end
+        self.children.len()
     }
 
     /// Move a child to a new start position, preserving duration.
