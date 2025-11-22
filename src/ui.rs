@@ -6,7 +6,7 @@ use eframe::egui;
 
 use crate::events::EventBus;
 use crate::player::Player;
-use crate::widgets::timeline::{TimelineConfig, TimelineState, render_canvas, render_outline};
+use crate::widgets::timeline::{TimelineConfig, TimelineState, render_canvas, render_outline, render_toolbar};
 use crate::widgets::viewport::shaders::Shaders;
 
 /// Help text displayed in overlay
@@ -118,6 +118,10 @@ pub fn render_timeline_panel(
 
                 match timeline_state.view_mode {
                     crate::widgets::timeline::TimelineViewMode::Split => {
+                        // Toolbar above Split panels
+                        render_toolbar(ui, timeline_state, |evt| event_bus.send(evt));
+                        ui.add_space(4.0);
+
                         egui::SidePanel::left("timeline_outline")
                             .resizable(true)
                             .min_width(100.0)

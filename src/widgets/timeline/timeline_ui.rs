@@ -19,18 +19,12 @@ use crate::events::AppEvent;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 
-/// Render left outline: toolbar + layer list (no zoom/pan/scroll on X)
-pub fn render_outline(
+/// Render timeline toolbar (transport controls, zoom, snap)
+pub fn render_toolbar(
     ui: &mut Ui,
-    comp_uuid: &str,
-    comp: &mut Comp,
-    config: &TimelineConfig,
     state: &mut TimelineState,
-    view_mode: super::TimelineViewMode,
     mut dispatch: impl FnMut(AppEvent),
 ) {
-    let comp_id = comp_uuid.to_string();
-    // Toolbar with transport controls and zoom controls (zoom propagates via events)
     ui.horizontal(|ui| {
         if ui.button("↞").on_hover_text("To Start").clicked() {
             dispatch(AppEvent::JumpToStart);
@@ -80,8 +74,19 @@ pub fn render_outline(
             dispatch(AppEvent::TimelineLockWorkAreaChanged(state.lock_work_area));
         }
     });
+}
 
-    ui.add_space(4.0);
+/// Render left outline: layer list only (no toolbar)
+pub fn render_outline(
+    ui: &mut Ui,
+    comp_uuid: &str,
+    comp: &mut Comp,
+    config: &TimelineConfig,
+    _state: &mut TimelineState,
+    view_mode: super::TimelineViewMode,
+    mut dispatch: impl FnMut(AppEvent),
+) {
+    let comp_id = comp_uuid.to_string();
 
     // Render layer list with DnD (no horizontal scroll)
     let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
