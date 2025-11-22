@@ -1395,8 +1395,24 @@ impl PlayaApp {
         ui.heading("Attributes");
         if let Some(active) = self.player.active_comp.clone() {
             if let Some(comp) = self.player.project.media.get_mut(&active) {
-                ui.label(format!("Comp: {}", comp.name()));
-                crate::widgets::ae::render(ui, &mut comp.attrs);
+                // Show attributes of selected layer if any, otherwise show comp attributes
+                if let Some(layer_idx) = comp.selected_layer {
+                    // Get layer instance UUID
+                    if let Some(instance_uuid) = comp.children.get(layer_idx) {
+                        if let Some(attrs) = comp.children_attrs.get_mut(instance_uuid) {
+                            ui.label(format!("Layer {} Attributes:", layer_idx));
+                            crate::widgets::ae::render(ui, attrs);
+                        } else {
+                            ui.label("(layer has no attributes)");
+                        }
+                    } else {
+                        ui.label("(invalid layer index)");
+                    }
+                } else {
+                    // No layer selected - show comp attributes
+                    ui.label(format!("Comp: {}", comp.name()));
+                    crate::widgets::ae::render(ui, &mut comp.attrs);
+                }
             } else {
                 ui.label("No active comp");
             }
