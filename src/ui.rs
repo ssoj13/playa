@@ -85,11 +85,10 @@ pub fn render_timeline_panel(
                 }
 
                 // Recalculate bounds on activation; realign play_range only if it matched full range
-                let old_start = comp.start();
-                let old_end = comp.end();
-                let old_play = comp.play_range();
+                let old_full = comp.play_range(false);
+                let old_work = comp.play_range(true);
                 comp.rebound();
-                if old_play == (old_start, old_end) {
+                if old_work == old_full {
                     comp.set_comp_play_start(0);
                     comp.set_comp_play_end(0);
                 }

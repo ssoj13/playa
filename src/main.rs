@@ -722,34 +722,10 @@ impl PlayaApp {
                 self.timeline_state.lock_work_area = locked;
             }
             AppEvent::TimelineFitAll(canvas_width) => {
-                // Fit all clips in timeline to view using actual canvas width
-                // IMPORTANT: Use play_range (visible area) instead of start/end
+                // Fit comp play_range to timeline view
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.media.get(comp_uuid) {
-                        // Calculate min/max of all layers' play ranges
-                        let mut min_frame = i32::MAX;
-                        let mut max_frame = i32::MIN;
-
-                        for child_uuid in &comp.children {
-                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                let child_start = attrs.get_i32("start").unwrap_or(0);
-                                let play_start = attrs.get_i32("play_start").unwrap_or(0);
-                                let play_end = attrs.get_i32("play_end").unwrap_or(0);
-
-                                let visible_start = child_start + play_start;
-                                let visible_end = child_start + play_end;
-
-                                min_frame = min_frame.min(visible_start);
-                                max_frame = max_frame.max(visible_end);
-                            }
-                        }
-
-                        // If no layers, fallback to comp bounds
-                        if min_frame == i32::MAX || max_frame == i32::MIN {
-                            min_frame = comp.start();
-                            max_frame = comp.end();
-                        }
-
+                        let (min_frame, max_frame) = comp.play_range(true);
                         let duration = (max_frame - min_frame).max(1);
 
                         // pixels_per_frame = canvas_width / duration

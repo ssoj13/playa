@@ -570,7 +570,7 @@ pub fn encode_sequence_from_comp(
     );
 
     // Get play range from Comp
-    let play_range = comp.play_range();
+    let play_range = comp.play_range(true);
     let total_frames = play_range.1.saturating_sub(play_range.0) + 1;
 
     info!(

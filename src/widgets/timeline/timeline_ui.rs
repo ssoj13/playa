@@ -695,7 +695,7 @@ pub fn render_canvas(
                         }
 
                         // Draw work area overlay (darken regions outside play_range)
-                        let (play_start, play_end) = comp.play_range();
+                        let (play_start, play_end) = comp.play_range(true);
                         let comp_start = comp.start();
                         let comp_end = comp.end();
 

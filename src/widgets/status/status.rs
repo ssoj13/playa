@@ -95,7 +95,7 @@ impl StatusBar {
                         ui.separator();
                         let start = comp.start();
                         let end = comp.end();
-                        let (play_start, play_end) = comp.play_range();
+                        let (play_start, play_end) = comp.play_range(true);
                         let current = comp.current_frame;
                         ui.monospace(format!(
                             "<{} | {} <{}> {} | {}>",

@@ -214,12 +214,17 @@ impl Comp {
         self.attrs.set("play_end", AttrValue::Int(play_end));
     }
 
-    /// Inclusive play range (work area) used for rendering/encoding
-    /// Returns the visible portion considering play_start/play_end offsets
-    pub fn play_range(&self) -> (i32, i32) {
-        let visible_start = self.start() + self.play_start().max(0);
-        let visible_end = self.end() - self.play_end().max(0);
-        (visible_start, visible_end)
+    /// Inclusive play range
+    /// - `use_work_area = true`: Returns work area (start + play_start, end - play_end)
+    /// - `use_work_area = false`: Returns full range (start, end)
+    pub fn play_range(&self, use_work_area: bool) -> (i32, i32) {
+        if use_work_area {
+            let visible_start = self.start() + self.play_start().max(0);
+            let visible_end = self.end() - self.play_end().max(0);
+            (visible_start, visible_end)
+        } else {
+            (self.start(), self.end())
+        }
     }
 
     /// Number of frames in full composition (not limited by play_area)
@@ -231,7 +236,7 @@ impl Comp {
 
     /// Number of frames in play range (work area)
     pub fn play_frame_count(&self) -> i32 {
-        let (visible_start, visible_end) = self.play_range();
+        let (visible_start, visible_end) = self.play_range(true);
         if visible_end >= visible_start {
             visible_end - visible_start + 1
         } else {
@@ -427,7 +432,7 @@ impl Comp {
 
     fn get_layer_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         // Check if frame is within play area (work area)
-        let (play_start, play_end) = self.play_range();
+        let (play_start, play_end) = self.play_range(true);
         if frame_idx < play_start || frame_idx > play_end {
             return None; // Frame outside work area - don't compose
         }

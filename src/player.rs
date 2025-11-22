@@ -95,7 +95,7 @@ impl Player {
     /// Get current play range of active comp (start, end), or (0, 0) if none.
     pub fn play_range(&self) -> (i32, i32) {
         if let Some(comp) = self.active_comp() {
-            comp.play_range()
+            comp.play_range(true)
         } else {
             (0, 0)
         }
@@ -127,7 +127,7 @@ impl Player {
             comp.set_comp_play_end(play_end);
 
             // Ensure current_frame lies inside new play range
-            let (visible_start, visible_end) = comp.play_range();
+            let (visible_start, visible_end) = comp.play_range(true);
             let current = comp.current_frame;
             if current < visible_start || current > visible_end {
                 comp.set_current_frame(visible_start);
@@ -140,7 +140,7 @@ impl Player {
         if let Some(comp) = self.active_comp_mut() {
             comp.set_comp_play_start(0);
             comp.set_comp_play_end(0);
-            let start = comp.start();
+            let (start, _) = comp.play_range(false);
             comp.set_current_frame(start);
         }
     }
