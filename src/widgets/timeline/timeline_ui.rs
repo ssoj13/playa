@@ -47,7 +47,10 @@ pub fn render_toolbar(
 
         // Zoom controls emit actions; actual zoom applies in canvas via events
         ui.label("Zoom:");
-        let zoom_response = ui.add(egui::Slider::new(&mut state.zoom, 0.1..=4.0).fixed_decimals(2));
+        let zoom_response = ui.add_sized(
+            egui::Vec2::new(200.0, 20.0), // 2x longer slider
+            egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2)
+        );
         if zoom_response.changed() {
             dispatch(AppEvent::TimelineZoomChanged(state.zoom));
         }

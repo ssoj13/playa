@@ -215,10 +215,14 @@ impl Comp {
     }
 
     /// Inclusive play range - calculates bounds from all children
-    /// - `use_work_area = true`: Returns trimmed bounds (child_start + play_start, child_start + play_end)
-    /// - `use_work_area = false`: Returns full bounds (child_start, child_start + end)
+    /// For Layer mode comps:
+    ///   - `use_work_area = true`: Returns trimmed bounds (considering child.play_start/play_end)
+    ///   - `use_work_area = false`: Returns full bounds (child.start..child.end, ignoring trim)
+    /// For File mode comps:
+    ///   - `use_work_area = true`: Returns work area (start + play_start, end - play_end)
+    ///   - `use_work_area = false`: Returns full range (start, end)
     pub fn play_range(&self, use_work_area: bool) -> (i32, i32) {
-        // If comp has children, calculate bounds from them
+        // If comp has children (Layer mode), calculate bounds from them
         if !self.children.is_empty() {
             let mut min_frame = i32::MAX;
             let mut max_frame = i32::MIN;
@@ -226,26 +230,23 @@ impl Comp {
             for child_uuid in &self.children {
                 if let Some(attrs) = self.children_attrs.get(child_uuid) {
                     let child_start = attrs.get_i32("start").unwrap_or(0);
+                    let child_end = attrs.get_i32("end").unwrap_or(0);
 
                     if use_work_area {
-                        // Use trimmed bounds: child_start + play_start/play_end
-                        let play_start = attrs.get_i32("play_start").unwrap_or(0);
-                        let play_end = attrs.get_i32("play_end").unwrap_or(0);
+                        // Consider trim: child.play_start/play_end define visible portion
+                        let child_play_start = attrs.get_i32("play_start").unwrap_or(0);
+                        let child_play_end = attrs.get_i32("play_end").unwrap_or(child_end - child_start);
 
-                        let visible_start = child_start + play_start;
-                        let visible_end = child_start + play_end;
+                        // Visible range on timeline: start + play_start offsets
+                        let visible_start = child_start + child_play_start;
+                        let visible_end = child_start + child_play_end;
 
                         min_frame = min_frame.min(visible_start);
                         max_frame = max_frame.max(visible_end);
                     } else {
-                        // Use full bounds: child_start to child_start + end
-                        let end = attrs.get_i32("end").unwrap_or(0);
-
-                        let full_start = child_start;
-                        let full_end = child_start + end;
-
-                        min_frame = min_frame.min(full_start);
-                        max_frame = max_frame.max(full_end);
+                        // Full bounds: ignore trim, use child.start..child.end
+                        min_frame = min_frame.min(child_start);
+                        max_frame = max_frame.max(child_end);
                     }
                 }
             }
@@ -256,7 +257,7 @@ impl Comp {
             }
         }
 
-        // Fallback: no children or invalid bounds, use comp's own range
+        // Fallback: File mode comp or no children - use comp's own range
         if use_work_area {
             let visible_start = self.start() + self.play_start().max(0);
             let visible_end = self.end() - self.play_end().max(0);

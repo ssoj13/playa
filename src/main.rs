@@ -710,7 +710,7 @@ impl PlayaApp {
                 self.settings.show_frame_numbers = !self.settings.show_frame_numbers;
             }
             AppEvent::TimelineZoomChanged(zoom) => {
-                self.timeline_state.zoom = zoom.clamp(0.1, 4.0);
+                self.timeline_state.zoom = zoom.clamp(0.1, 20.0);
             }
             AppEvent::TimelinePanChanged(pan) => {
                 self.timeline_state.pan_offset = pan;
@@ -726,13 +726,13 @@ impl PlayaApp {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.media.get(comp_uuid) {
                         let (min_frame, max_frame) = comp.play_range(true);
-                        let duration = (max_frame - min_frame).max(1);
+                        let duration = (max_frame - min_frame + 1).max(1); // +1 for inclusive range
 
                         // pixels_per_frame = canvas_width / duration
                         // zoom = pixels_per_frame / default_pixels_per_frame (2.0)
                         let pixels_per_frame = canvas_width / duration as f32;
                         let default_pixels_per_frame = 2.0;
-                        let zoom = (pixels_per_frame / default_pixels_per_frame).clamp(0.1, 4.0);
+                        let zoom = (pixels_per_frame / default_pixels_per_frame).clamp(0.1, 20.0); // Allow higher zoom
 
                         self.timeline_state.zoom = zoom;
                         self.timeline_state.pan_offset = min_frame as f32;
