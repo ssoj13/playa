@@ -221,6 +221,119 @@ pub(super) fn draw_playhead(
     ));
 }
 
+/// Compute visual rows for ALL layers using greedy layout algorithm
+/// Returns mapping of child_idx -> row
+pub(super) fn compute_all_layer_rows(
+    comp: &Comp,
+    child_order: &[usize],
+) -> std::collections::HashMap<usize, usize> {
+    use std::collections::HashMap;
+
+    let mut layer_rows: HashMap<usize, usize> = HashMap::new();
+    let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new(); // row -> [(start, end), ...]
+
+    // Process layers in order (by child_idx)
+    for &child_idx in child_order.iter() {
+        if let Some(child_uuid) = comp.children.get(child_idx) {
+            let attrs = comp.children_attrs.get(child_uuid);
+            let start = attrs
+                .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                .unwrap_or(0);
+            let end = attrs
+                .and_then(|a| Some(a.get_i32("end").unwrap_or(0)))
+                .unwrap_or(0);
+
+            // Find first free row for this layer
+            let mut row = 0;
+            loop {
+                let mut row_free = true;
+                if let Some(ranges) = occupied_rows.get(&row) {
+                    for (occupied_start, occupied_end) in ranges {
+                        if start <= *occupied_end && end >= *occupied_start {
+                            row_free = false;
+                            break;
+                        }
+                    }
+                }
+
+                if row_free {
+                    // Mark this row as occupied by this layer's time range
+                    occupied_rows
+                        .entry(row)
+                        .or_insert_with(Vec::new)
+                        .push((start, end));
+                    layer_rows.insert(child_idx, row);
+                    break;
+                }
+
+                row += 1;
+            }
+        }
+    }
+
+    layer_rows
+}
+
+/// Find free row for a NEW layer (not in child_order yet)
+/// Used for drop preview and actual placement
+pub(super) fn find_free_row_for_new_layer(
+    comp: &Comp,
+    layer_start: i32,
+    layer_duration: i32,
+    child_order: &[usize],
+) -> usize {
+    let layer_end = layer_start + layer_duration;
+
+    // Get layout for all existing layers
+    let layer_rows = compute_all_layer_rows(comp, child_order);
+
+    // Build occupied_rows map
+    let mut occupied_rows: std::collections::HashMap<usize, Vec<(i32, i32)>> =
+        std::collections::HashMap::new();
+    for &child_idx in child_order.iter() {
+        if let Some(&row) = layer_rows.get(&child_idx) {
+            if let Some(child_uuid) = comp.children.get(child_idx) {
+                let attrs = comp.children_attrs.get(child_uuid);
+                let start = attrs
+                    .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                    .unwrap_or(0);
+                let end = attrs
+                    .and_then(|a| Some(a.get_i32("end").unwrap_or(0)))
+                    .unwrap_or(0);
+                occupied_rows
+                    .entry(row)
+                    .or_insert_with(Vec::new)
+                    .push((start, end));
+            }
+        }
+    }
+
+    // Find first free row for new layer
+    let mut row = 0;
+    loop {
+        let mut row_free = true;
+        if let Some(ranges) = occupied_rows.get(&row) {
+            for (occupied_start, occupied_end) in ranges {
+                if layer_start <= *occupied_end && layer_end >= *occupied_start {
+                    row_free = false;
+                    break;
+                }
+            }
+        }
+
+        if row_free {
+            return row;
+        }
+
+        row += 1;
+    }
+}
+
+/// Convert row index to Y coordinate in timeline
+pub(super) fn row_to_y(row: usize, config: &TimelineConfig, timeline_rect: Rect) -> f32 {
+    timeline_rect.min.y + (row as f32 * config.layer_height)
+}
+
 /// Draw drop preview (ghost) using the standard layer move style.
 pub(super) fn draw_drop_preview(
     painter: &egui::Painter,

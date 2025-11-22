@@ -10,8 +10,8 @@
 //! egui input → dispatch(AppEvent) → EventBus → Project/Comp mutations.
 
 use super::timeline_helpers::{
-    detect_layer_tool, draw_drop_preview, draw_frame_ruler, frame_to_screen_x, hash_color,
-    screen_x_to_frame,
+    compute_all_layer_rows, detect_layer_tool, draw_drop_preview, draw_frame_ruler,
+    find_free_row_for_new_layer, frame_to_screen_x, hash_color, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
@@ -342,6 +342,9 @@ pub fn render_canvas(
         // Create temporary child order (layers displayed in original order from comp.children)
         let child_order: Vec<usize> = (0..comp.children.len()).collect();
 
+        // Compute layout for all layers once (single source of truth)
+        let layer_rows = compute_all_layer_rows(comp, &child_order);
+
         // Timeline bars (ScrollArea needed for egui_dnd layout, synced with ruler scroll)
         egui::ScrollArea::horizontal()
             .id_salt("timeline_h_scroll")
@@ -385,11 +388,20 @@ pub fn render_canvas(
             if ui.is_rect_visible(timeline_rect) {
                 let painter = ui.painter();
 
-                        // Draw child bars in same order as child names (using child_order from DnD)
-                        for (display_idx, &original_idx) in child_order.iter().enumerate() {
+                        // Draw child bars using precomputed layout
+                        for (_display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;
                             let child_uuid = &comp.children[idx];
-                            let child_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
+
+                            // Get child start/end from attrs (now supports negative values)
+                            let attrs = comp.children_attrs.get(child_uuid);
+                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
+                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
+
+                            // Get precomputed row from layout
+                            let row = layer_rows.get(&idx).copied().unwrap_or(0);
+                            let child_y = row_to_y(row, config, timeline_rect);
+
                             let child_rect = Rect::from_min_size(
                                 Pos2::new(timeline_rect.min.x, child_y),
                                 Vec2::new(timeline_width, config.layer_height),
@@ -402,11 +414,6 @@ pub fn render_canvas(
                               Color32::from_gray(35)
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
-
-                            // Get child start/end from attrs (now supports negative values)
-                            let attrs = comp.children_attrs.get(child_uuid);
-                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
-                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
                             let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
                             let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
                             let is_visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
@@ -469,7 +476,7 @@ pub fn render_canvas(
 
                         // Handle child bar interactions using proper response system
                         // We need to do this in a second pass after drawing to ensure responses are on top
-                        for (display_idx, &original_idx) in child_order.iter().enumerate() {
+                        for (_display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;
                             let child_uuid = &comp.children[idx];
 
@@ -486,7 +493,9 @@ pub fn render_canvas(
                             let visible_start = child_start + play_start;
                             let visible_end = child_end - play_end;
 
-                            let child_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
+                            // Get precomputed row from layout
+                            let row = layer_rows.get(&idx).copied().unwrap_or(0);
+                            let child_y = row_to_y(row, config, timeline_rect);
 
                             // Create rects for full range and visible range
                             let full_bar_x_start = frame_to_screen_x(full_start as f32, timeline_rect.min.x, config, state);
@@ -747,15 +756,48 @@ pub fn render_canvas(
                         });
 
                         if let Some(GlobalDragState::ProjectItem { source_uuid, duration, .. }) = global_drag {
-                            // Reuse layer move preview style: thin outline in target row/column
+                            // Use mouse Y position, but adjust if overlapping with existing layer
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
                                     let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
-                                    let row = ((hover_pos.y - timeline_rect.min.y) / config.layer_height)
-                                        .floor()
-                                        .clamp(0.0, child_order.len().max(1) as f32 - 1.0) as usize;
-                                    let row_y = timeline_rect.min.y + (row as f32 * config.layer_height);
                                     let dur = duration.unwrap_or(10).max(1);
+
+                                    // Start with mouse Y position (can be negative if above timeline)
+                                    let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y) / config.layer_height).floor() as i32;
+                                    let mouse_row = mouse_row_raw.max(0) as usize;
+
+                                    // Check if this visual row has time overlap with any existing layer
+                                    let drop_end = drop_frame + dur;
+                                    let mut has_overlap = false;
+
+                                    for &child_idx in child_order.iter() {
+                                        if let Some(child_uuid) = comp.children.get(child_idx) {
+                                            let attrs = comp.children_attrs.get(child_uuid);
+                                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
+                                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
+
+                                            // Get precomputed row for this layer
+                                            let child_row = layer_rows.get(&child_idx).copied().unwrap_or(0);
+
+                                            // Check if this layer is on the same visual row as mouse
+                                            if child_row == mouse_row {
+                                                // Check time overlap
+                                                if drop_frame <= child_end && drop_end >= child_start {
+                                                    has_overlap = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // If overlapping, find nearest free row
+                                    let row = if has_overlap {
+                                        find_free_row_for_new_layer(comp, drop_frame, dur, &child_order)
+                                    } else {
+                                        mouse_row
+                                    };
+
+                                    let row_y = row_to_y(row, config, timeline_rect);
                                     draw_drop_preview(
                                         &ui.painter(),
                                         drop_frame,
@@ -785,8 +827,11 @@ pub fn render_canvas(
                                       // If click is within any layer row, select that layer;
                                       // otherwise treat it as a frame scrub on empty space.
                                       let mut clicked_layer: Option<usize> = None;
-                                      for (display_idx, &original_idx) in child_order.iter().enumerate() {
-                                          let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
+                                      for (_display_idx, &original_idx) in child_order.iter().enumerate() {
+                                          // Get precomputed row from layout
+                                          let row = layer_rows.get(&original_idx).copied().unwrap_or(0);
+                                          let layer_y = row_to_y(row, config, timeline_rect);
+
                                           let row_rect = Rect::from_min_max(
                                               Pos2::new(timeline_rect.min.x, layer_y),
                                               Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
