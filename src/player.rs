@@ -174,6 +174,7 @@ impl Player {
 
         // Switch to new comp
         self.active_comp = Some(comp_uuid.clone());
+        self.project.active = Some(comp_uuid.clone());
 
         // Emit CurrentFrameChanged event from new comp (triggers frame loading)
         if let Some(comp) = self.project.media.get_mut(&comp_uuid) {
@@ -181,6 +182,10 @@ impl Player {
             comp.set_current_frame(frame);
             log::info!("Activated comp {} at frame {}", comp_uuid, frame);
         }
+
+        // Keep selection in sync: ensure active is included and ordered
+        self.project.selection.retain(|u| u != &comp_uuid);
+        self.project.selection.push(comp_uuid);
     }
 
     /// Helper: set active clip by UUID (for playlist navigation).

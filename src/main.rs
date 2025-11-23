@@ -545,6 +545,13 @@ impl PlayaApp {
                 // Rebuild runtime with event sender for all comps
                 project.rebuild_runtime(Some(self.comp_event_sender.clone()));
                 self.player.project = project;
+                // Restore active comp from project (also sync selection)
+                if let Some(active) = self.player.project.active.clone() {
+                    self.player.set_active_comp(active);
+                } else {
+                    self.player.active_comp = None;
+                }
+                self.selected_media_uuid = self.player.project.selection.last().cloned();
                 self.error_msg = None;
             }
             Err(e) => {
@@ -669,8 +676,15 @@ impl PlayaApp {
 
             // ===== Selection =====
             AppEvent::SelectMedia(uuid) => {
-                // Select and activate media item (comp/clip)
-                self.select_item(uuid);
+                // Update selection only (no activation)
+                self.player.project.selection.clear();
+                self.player.project.selection.push(uuid.clone());
+                self.player.project.selection_anchor = self
+                    .player
+                    .project
+                    .comps_order
+                    .iter()
+                    .position(|u| u == &uuid);
             }
             AppEvent::SelectLayer(_index) => {
                 if let Some(comp_uuid) = &self.player.active_comp {
@@ -1328,16 +1342,10 @@ impl PlayaApp {
             return;
         }
 
-        let project_actions =
-            widgets::project::render(ui, &mut self.player, self.selected_media_uuid.as_ref());
+        let project_actions = widgets::project::render(ui, &mut self.player);
 
         // Store hover state for input routing
         self.project_hovered = project_actions.hovered;
-
-        // Handle selection from click via EventBus
-        if let Some(uuid) = project_actions.selected_uuid {
-            self.event_bus.send(events::AppEvent::SelectMedia(uuid));
-        }
 
         // Load media files
         if let Some(path) = project_actions.load_sequence {
@@ -1881,13 +1889,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 app.show_help
             );
 
-            // Restore selected media item (activate if exists)
-            if let Some(selected_uuid) = app.selected_media_uuid.clone() {
-                if app.player.project.media.contains_key(&selected_uuid) {
-                    app.select_item(selected_uuid.clone());
-                    info!("Restored selected media: {}", selected_uuid);
-                }
-            }
+            // Restore selection/active handled via project fields already
 
             // CLI arguments have priority
             let has_cli_input =

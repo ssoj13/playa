@@ -24,6 +24,19 @@ pub struct Project {
     /// Order for all media (clips + comps) in UI (UUIDs)
     pub comps_order: Vec<String>,
 
+    /// Current selection (ordered UUIDs)
+    #[serde(default)]
+    pub selection: Vec<String>,
+
+    /// Currently active item (UUID)
+    #[serde(default)]
+    pub active: Option<String>,
+
+    /// Runtime-only selection anchor for shift-click range
+    #[serde(skip)]
+    #[serde(default)]
+    pub selection_anchor: Option<usize>,
+
     /// Frame compositor (runtime-only, not serialized)
     /// Used by Comp.compose() for multi-layer blending
     #[serde(skip)]
@@ -37,6 +50,9 @@ impl Project {
             attrs: Attrs::new(),
             media: HashMap::new(),
             comps_order: Vec::new(),
+            selection: Vec::new(),
+            active: None,
+            selection_anchor: None,
             compositor: CompositorType::default(), // CPU compositor by default
         }
     }

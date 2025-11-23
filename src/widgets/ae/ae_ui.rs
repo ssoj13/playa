@@ -1,7 +1,7 @@
 //! Attribute Editor widget - UI rendering
 
 use crate::entities::{AttrValue, Attrs};
-use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui, Vec2};
+use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui};
 use egui_extras::{Column, TableBuilder};
 
 /// Persistent UI state for the Attributes panel.
