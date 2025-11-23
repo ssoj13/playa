@@ -647,7 +647,11 @@ impl PlayaApp {
             AppEvent::AddComp { name, fps } => {
                 let start = 0;
                 let end = 100;
-                let comp = crate::entities::comp::Comp::new(name, start, end, fps);
+                let mut comp = crate::entities::comp::Comp::new(&name, start, end, fps);
+                comp.set_name(name);
+                comp.set_start(start);
+                comp.set_end(end);
+                comp.set_fps(fps);
                 self.player.project.add_comp(comp);
             }
             AppEvent::RemoveMedia(_uuid) => {
@@ -808,9 +812,21 @@ impl PlayaApp {
             // ===== FPS Control =====
             AppEvent::IncreaseFPS => {
                 self.settings.fps_base = (self.settings.fps_base + 1.0).min(120.0);
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
+                        let new_fps = (comp.fps() + 1.0).min(120.0);
+                        comp.set_fps(new_fps);
+                    }
+                }
             }
             AppEvent::DecreaseFPS => {
                 self.settings.fps_base = (self.settings.fps_base - 1.0).max(1.0);
+                if let Some(comp_uuid) = &self.player.active_comp {
+                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
+                        let new_fps = (comp.fps() - 1.0).max(1.0);
+                        comp.set_fps(new_fps);
+                    }
+                }
             }
 
             // ===== Layer Operations =====
@@ -820,39 +836,79 @@ impl PlayaApp {
                 start_frame,
                 target_row,
             } => {
-                // Get duration before mutable borrow
-                let (duration, source_dim) = self
-                    .player
-                    .project
-                    .media
-                    .get(&source_uuid)
-                    .map(|s| (s.frame_count(), s.dim()))
-                    .unwrap_or((1, (64, 64)));
+                let mut comp_opt = {
+                    let media = &mut self.player.project.media;
+                    media.remove(&comp_uuid)
+                };
 
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    if let Err(e) = comp.add_child_with_duration(
-                        source_uuid,
-                        start_frame,
-                        duration,
-                        target_row,
-                        source_dim,
-                    )
-                    {
+                if let Some(mut comp) = comp_opt.take() {
+                    let add_result = if let Some(target_row) = target_row {
+                        let (duration, source_dim) = self
+                            .player
+                            .project
+                            .media
+                            .get(&source_uuid)
+                            .map(|s| (s.frame_count(), s.dim()))
+                            .unwrap_or((1, (64, 64)));
+                        comp.add_child_with_duration(
+                            source_uuid.clone(),
+                            start_frame,
+                            duration,
+                            Some(target_row),
+                            source_dim,
+                        )
+                    } else {
+                        comp.add_child(source_uuid.clone(), start_frame, &self.player.project)
+                    };
+
+                    if let Err(e) = add_result {
                         log::error!("Failed to add layer: {}", e);
+                    } else if let Some(child_comp) = self.player.project.media.get_mut(&source_uuid)
+                    {
+                        if child_comp.get_parent() != Some(&comp_uuid) {
+                            child_comp.set_parent(Some(comp_uuid.clone()));
+                        }
                     }
+
+                    // Put comp back
+                    self.player.project.media.insert(comp_uuid.clone(), comp);
                 }
             }
             AppEvent::RemoveLayer {
                 comp_uuid,
                 layer_idx,
             } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                let mut comp_opt = {
+                    let media = &mut self.player.project.media;
+                    media.remove(&comp_uuid)
+                };
+
+                if let Some(mut comp) = comp_opt.take() {
                     // Get child UUID by index
-                    if let Some(child_uuid) = comp.children.get(layer_idx).cloned() {
-                        comp.remove_child(&child_uuid);
+                    if let Some(child_uuid) = comp.get_children().get(layer_idx).cloned() {
+                        if let Some(attrs) = comp.children_attrs.get(&child_uuid) {
+                            if let Some(source_uuid) = attrs.get_str("uuid") {
+                                if let Some(child_comp) =
+                                    self.player.project.media.get_mut(source_uuid)
+                                {
+                                    if child_comp.get_parent() == Some(&comp_uuid) {
+                                        child_comp.set_parent(None);
+                                    }
+                                }
+                            }
+                        }
+
+                        if comp.has_child(&child_uuid) {
+                            comp.remove_child(&child_uuid);
+                        } else {
+                            log::error!("Child {} not found in comp {}", child_uuid, comp_uuid);
+                        }
                     } else {
                         log::error!("Layer index {} out of bounds", layer_idx);
                     }
+
+                    // Put comp back
+                    self.player.project.media.insert(comp_uuid.clone(), comp);
                 }
             }
             AppEvent::MoveLayer {
@@ -872,12 +928,15 @@ impl PlayaApp {
                 to_idx,
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let children = comp.get_children();
                     if from_idx != to_idx
-                        && from_idx < comp.children.len()
-                        && to_idx < comp.children.len()
+                        && from_idx < children.len()
+                        && to_idx < children.len()
                     {
-                        let child_uuid = comp.children.remove(from_idx);
-                        comp.children.insert(to_idx, child_uuid);
+                        let mut reordered = comp.children.clone();
+                        let child_uuid = reordered.remove(from_idx);
+                        reordered.insert(to_idx, child_uuid);
+                        comp.children = reordered;
                         comp.clear_cache();
                     }
                 }
@@ -889,15 +948,15 @@ impl PlayaApp {
                 new_idx,
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    if layer_idx != new_idx
-                        && layer_idx < comp.children.len()
-                        && new_idx < comp.children.len()
-                    {
-                        let child_uuid = comp.children.remove(layer_idx);
-                        comp.children.insert(new_idx, child_uuid);
+                    let children_len = comp.get_children().len();
+                    if layer_idx != new_idx && layer_idx < children_len && new_idx < children_len {
+                        let mut reordered = comp.children.clone();
+                        let child_uuid = reordered.remove(layer_idx);
+                        reordered.insert(new_idx, child_uuid);
+                        comp.children = reordered;
                     }
 
-                    let final_idx = new_idx.min(comp.children.len().saturating_sub(1));
+                    let final_idx = new_idx.min(comp.get_children().len().saturating_sub(1));
                     let new_start_i32 = new_start as i32;
                     let _ = comp.move_child(final_idx, new_start_i32);
                 }
