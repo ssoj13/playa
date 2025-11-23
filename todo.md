@@ -1,0 +1,15 @@
+- start.cmd build emitted warnings; resolve per item:
+  - src/widgets/timeline/timeline_ui.rs: unused import `find_free_row_for_new_layer`; unused var `has_overlap` (assigned but unread). Use helpers/logic or drop/underscore.
+  - src/dialogs/prefs/input_handler.rs: HotkeyHandler::remove_binding unused. Either wire up, mark with #[allow(dead_code)], or remove.
+  - src/entities/mod.rs: traits ProjectUI/TimelineUI/AttributeEditorUI/NodeUI unused. Decide whether to integrate or prune/allow.
+  - src/entities/attrs.rs: unused methods get/remove/iter_mut/contains/len. Use in attr access, remove, or allow.
+  - src/entities/comp.rs: unused setters and hierarchy helpers (set_name/start/end/fps, add_child, set_parent/get_parent/get_children/has_child). Use in comp editing or prune/allow.
+  - src/entities/compositor.rs: CompositorType::blend and CpuCompositor::blend unused. Hook into compositor pipeline or remove/allow.
+  - src/entities/project.rs: set_compositor/get_comp/remove_media unused. Use for project management or prune/allow.
+  - src/events.rs: many AppEvent variants, HotkeyWindow::AttributeEditor, CompEvent::TimelineChanged, EventBus::sender/drain unused. Either add handlers/usages or drop/allow.
+  - src/player.rs: reset_play_range and toggle_play_pause unused. Call from UI or remove/allow.
+  - src/widgets/project/project.rs: PlaylistActions alias unused. Use or remove.
+  - src/widgets/timeline/timeline.rs: LayerGeom.visible_start/end unused. Use or remove.
+  - src/widgets/timeline/timeline_helpers.rs: draw_playhead and find_free_row_for_new_layer unused. Call in timeline rendering/placement or drop/allow.
+  - src/widgets/viewport/renderer.rs: shader_error unused. Surface shader errors in UI/logging or remove/allow.
+  - Note: `cargo fix --bin "playa" -p playa` can auto-drop some unused imports, but manual decisions needed for API surface vs pruning.
