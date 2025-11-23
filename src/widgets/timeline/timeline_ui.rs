@@ -94,9 +94,15 @@ pub fn render_outline(
     // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
     let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
     let dnd_response = egui::ScrollArea::vertical()
+        .id_salt("timeline_layers_scroll") // share scroll with canvas
         .max_height(ui.available_height())
         .show(ui, |ui| {
             ui.vertical(|ui| {
+                // Match the top padding of the timeline canvas (ruler + optional status bar + spacing)
+                // Ruler: 20.0, Status strip: 6.0 if present, spacer: 4.0
+                let status_bar_height = comp.file_frame_statuses().as_ref().map(|_| 6.0).unwrap_or(0.0);
+                ui.add_space(20.0 + status_bar_height + 4.0);
+
                 dnd(ui, "timeline_child_names_outline").show_vec(
                     &mut child_order,
                     |ui, child_idx, handle, _state| {
