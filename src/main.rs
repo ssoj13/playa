@@ -549,7 +549,9 @@ impl PlayaApp {
                 if let Some(active) = self.player.project.active.clone() {
                     self.player.set_active_comp(active);
                 } else {
-                    self.player.active_comp = None;
+                    // Ensure default if none
+                    let uuid = self.player.project.ensure_default_comp();
+                    self.player.set_active_comp(uuid);
                 }
                 self.selected_media_uuid = self.player.project.selection.last().cloned();
                 self.error_msg = None;
@@ -676,7 +678,7 @@ impl PlayaApp {
 
             // ===== Selection =====
             AppEvent::SelectMedia(uuid) => {
-                // Update selection only (no activation)
+                // legacy single selection
                 self.player.project.selection.clear();
                 self.player.project.selection.push(uuid.clone());
                 self.player.project.selection_anchor = self
@@ -685,6 +687,23 @@ impl PlayaApp {
                     .comps_order
                     .iter()
                     .position(|u| u == &uuid);
+            }
+            AppEvent::ProjectSelectionChanged(list) => {
+                self.player.project.selection = list;
+                // anchor = last selected if exists
+                self.player.project.selection_anchor = self
+                    .player
+                    .project
+                    .selection
+                    .last()
+                    .and_then(|u| self.player.project.comps_order.iter().position(|x| x == u));
+            }
+            AppEvent::ProjectActiveChanged(uuid) => {
+                // set active via unified path
+                self.player.set_active_comp(uuid.clone());
+                // ensure selection contains active at end
+                self.player.project.selection.retain(|u| u != &uuid);
+                self.player.project.selection.push(uuid);
             }
             AppEvent::SelectLayer(_index) => {
                 if let Some(comp_uuid) = &self.player.active_comp {
@@ -1329,9 +1348,8 @@ impl PlayaApp {
     /// Select and activate media item (comp/clip) by UUID
     fn select_item(&mut self, uuid: String) {
         self.selected_media_uuid = Some(uuid.clone());
-        self.player.set_active_comp(uuid.clone());
-        // Trigger frame loading around new current_frame
-        self.enqueue_frame_loads_around_playhead(10);
+        self.event_bus
+            .send(events::AppEvent::ProjectActiveChanged(uuid));
     }
 
     fn render_project_tab(&mut self, ui: &mut egui::Ui) {
@@ -1358,6 +1376,11 @@ impl PlayaApp {
         }
         if let Some(path) = project_actions.load_project {
             self.load_project(path);
+        }
+
+        // Dispatch queued events from Project UI
+        for evt in project_actions.events {
+            self.event_bus.send(evt);
         }
 
         // Create new composition
@@ -1854,10 +1877,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .project
                 .rebuild_runtime(Some(app.comp_event_sender.clone()));
 
-            // Ensure default comp exists and set as active
-            let default_comp_uuid = player.project.ensure_default_comp();
-            if player.active_comp.is_none() {
-                player.active_comp = Some(default_comp_uuid);
+            // Restore active from project or ensure default
+            let active_uuid = player.project.active.clone().or_else(|| {
+                let uuid = player.project.ensure_default_comp();
+                Some(uuid)
+            });
+            if let Some(active) = active_uuid.clone() {
+                player.active_comp = Some(active.clone());
+                player.project.active = Some(active);
             }
 
             app.player = player;

@@ -2,6 +2,7 @@ use eframe::egui;
 use egui_taffy::{TuiBuilderLogic, tui};
 use taffy::style::Style;
 
+use crate::events::AppEvent;
 use crate::player::Player;
 use crate::widgets::project::project::ProjectActions;
 
@@ -256,11 +257,17 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                             // Selection logic (click) and activation (double click)
                             let modifiers = ui.input(|i| i.modifiers);
                             if response.clicked() {
-                                update_selection(player, comp_uuid.clone(), modifiers);
+                                let list = update_selection(player, comp_uuid.clone(), modifiers);
+                                actions.events.push(AppEvent::ProjectSelectionChanged(list));
                             }
                             if response.double_clicked() {
-                                update_selection(player, comp_uuid.clone(), modifiers);
-                                actions.set_active_comp = Some(comp_uuid.clone());
+                                let list = update_selection(player, comp_uuid.clone(), modifiers);
+                                actions
+                                    .events
+                                    .push(AppEvent::ProjectSelectionChanged(list.clone()));
+                                actions
+                                    .events
+                                    .push(AppEvent::ProjectActiveChanged(comp_uuid.clone()));
                             }
 
                             // Drag handling
