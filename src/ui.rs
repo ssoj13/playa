@@ -93,8 +93,17 @@ pub fn render_timeline_panel(
                     comp.set_comp_play_end(0);
                 }
 
-                let splitter_height = ui.available_height();
+                // CRITICAL ORDER: Toolbar and view selector MUST be rendered BEFORE calculating
+                // splitter_height. If we calculate height first, then render toolbar (which takes
+                // ~45px), the panels will receive incorrect height and egui will add unwanted
+                // vertical scrollbar. By rendering fixed-height elements first, available_height()
+                // returns the correct remaining space for panels.
 
+                // Toolbar first (before view selector) - takes ~30px
+                render_toolbar(ui, timeline_state, |evt| event_bus.send(evt));
+                ui.add_space(4.0);
+
+                // View selector (Split/Canvas/Outline buttons) - takes ~20px
                 ui.horizontal(|ui| {
                     ui.label("View:");
                     for (label, mode) in [
@@ -116,18 +125,21 @@ pub fn render_timeline_panel(
                 });
                 ui.add_space(4.0);
 
+                // Now calculate remaining height for panels (after toolbar ~30px + view selector ~20px)
+                let splitter_height = ui.available_height();
+
                 match timeline_state.view_mode {
                     crate::widgets::timeline::TimelineViewMode::Split => {
-                        // Toolbar above Split panels
-                        render_toolbar(ui, timeline_state, |evt| event_bus.send(evt));
-                        ui.add_space(4.0);
-
                         let outline_response = egui::SidePanel::left("timeline_outline")
                             .resizable(true)
                             .min_width(100.0)
                             .default_width(timeline_state.outline_width)
                             .show_inside(ui, |ui| {
+                                // Lock panel to exact height to prevent vertical scrollbar.
+                                // set_height() alone is not enough - egui can still add scrollbar
+                                // if content exceeds height. set_max_height() enforces hard limit.
                                 ui.set_height(splitter_height);
+                                ui.set_max_height(splitter_height);
                                 render_outline(
                                     ui,
                                     comp_uuid,
@@ -143,7 +155,9 @@ pub fn render_timeline_panel(
                         timeline_state.outline_width = outline_response.response.rect.width();
 
                         egui::CentralPanel::default().show_inside(ui, |ui| {
+                            // Same as outline: lock to exact height to prevent unwanted vertical scroll
                             ui.set_height(splitter_height);
+                            ui.set_max_height(splitter_height);
                             timeline_actions = render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
                                 event_bus.send(evt)
                             });
