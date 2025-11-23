@@ -23,14 +23,6 @@ impl CompositorType {
             // CompositorType::Gpu(gpu) => gpu.blend(frames),
         }
     }
-
-    /// Blend frames into a canvas with explicit dimensions.
-    pub fn blend_with_dim(&self, frames: Vec<(Frame, f32)>, dim: (usize, usize)) -> Option<Frame> {
-        match self {
-            CompositorType::Cpu(cpu) => cpu.blend_with_dim(frames, dim),
-            // CompositorType::Gpu(gpu) => gpu.blend(frames),
-        }
-    }
 }
 
 impl Default for CompositorType {
@@ -72,10 +64,8 @@ impl CpuCompositor {
             let inv_alpha = 1.0 - top_alpha;
 
             result[i] = f16::from_f32(bottom[i].to_f32() * inv_alpha + top[i].to_f32() * top_alpha);
-            result[i + 1] =
-                f16::from_f32(bottom[i + 1].to_f32() * inv_alpha + top[i + 1].to_f32() * top_alpha);
-            result[i + 2] =
-                f16::from_f32(bottom[i + 2].to_f32() * inv_alpha + top[i + 2].to_f32() * top_alpha);
+            result[i + 1] = f16::from_f32(bottom[i + 1].to_f32() * inv_alpha + top[i + 1].to_f32() * top_alpha);
+            result[i + 2] = f16::from_f32(bottom[i + 2].to_f32() * inv_alpha + top[i + 2].to_f32() * top_alpha);
             result[i + 3] = f16::from_f32(bottom[i + 3].to_f32() * inv_alpha + top_alpha);
         }
     }
@@ -90,89 +80,58 @@ impl CpuCompositor {
             let inv_alpha = 1.0 - top_alpha;
 
             result[i] = (bottom[i] as f32 * inv_alpha + top[i] as f32 * top_alpha) as u8;
-            result[i + 1] =
-                (bottom[i + 1] as f32 * inv_alpha + top[i + 1] as f32 * top_alpha) as u8;
-            result[i + 2] =
-                (bottom[i + 2] as f32 * inv_alpha + top[i + 2] as f32 * top_alpha) as u8;
+            result[i + 1] = (bottom[i + 1] as f32 * inv_alpha + top[i + 1] as f32 * top_alpha) as u8;
+            result[i + 2] = (bottom[i + 2] as f32 * inv_alpha + top[i + 2] as f32 * top_alpha) as u8;
             result[i + 3] = (bottom[i + 3] as f32 * inv_alpha + top_alpha * 255.0) as u8;
         }
     }
 
     /// Blend frames bottom-to-top with opacity.
     pub(crate) fn blend(&self, frames: Vec<(Frame, f32)>) -> Option<Frame> {
-        // Default to using first frame size
-        if let Some((first, _)) = frames.get(0) {
-            let dim = (first.width(), first.height());
-            return self.blend_with_dim(frames, dim);
-        }
-        None
-    }
-
-    /// Blend frames onto a fixed-size canvas (width, height).
-    pub(crate) fn blend_with_dim(&self, frames: Vec<(Frame, f32)>, dim: (usize, usize)) -> Option<Frame> {
-        use log::debug;
-        debug!(
-            "CpuCompositor::blend_with_dim() called with {} frames into {}x{}",
-            frames.len(),
-            dim.0,
-            dim.1
-        );
-
         if frames.is_empty() {
-            debug!("  -> empty frames, returning None");
             return None;
         }
 
-        let (width, height) = dim;
-        // Start with first frame cropped to canvas
-        let mut iter = frames.iter();
-        let (base_frame, _) = iter.next().unwrap(); // safe: frames non-empty
-        let mut result = base_frame.clone();
-        result.crop(width, height, crate::entities::frame::CropAlign::LeftTop);
+        // Single frame - return clone
+        if frames.len() == 1 {
+            return Some(frames[0].0.clone());
+        }
+
+        // Multiple frames - blend bottom-to-top
+        let (first_frame, _) = &frames[0];
+        let width = first_frame.width();
+        let height = first_frame.height();
+
+        // Start with first frame as base
+        let mut result = first_frame.clone();
 
         // Blend each subsequent layer on top
-        for (layer_frame, opacity) in iter {
-            let result_buffer = result.buffer();
-            let layer_buffer = layer_frame.buffer();
-
-            let lw = layer_frame.width();
-            let lh = layer_frame.height();
-            let overlap_w = width.min(lw);
-            let overlap_h = height.min(lh);
-            if overlap_w == 0 || overlap_h == 0 {
+        for (layer_frame, opacity) in frames.iter().skip(1) {
+            // Verify dimensions match
+            if layer_frame.width() != width || layer_frame.height() != height {
+                log::warn!("Frame dimension mismatch during compositing, skipping layer");
                 continue;
             }
 
-            macro_rules! blend_rows {
-                ($blend_fn:ident, $curr:expr, $layer:expr, $out:expr) => {{
-                    let base_stride = width * 4;
-                    let layer_stride = lw * 4;
-                    for y in 0..overlap_h {
-                        let b_off = y * base_stride;
-                        let l_off = y * layer_stride;
-                        let base_slice = &$curr[b_off..b_off + overlap_w * 4];
-                        let layer_slice = &$layer[l_off..l_off + overlap_w * 4];
-                        let out_slice = &mut $out[b_off..b_off + overlap_w * 4];
-                        Self::$blend_fn(base_slice, layer_slice, *opacity, out_slice);
-                    }
-                }};
-            }
+            let result_buffer = result.buffer();
+            let layer_buffer = layer_frame.buffer();
 
             // Blend based on pixel format
             match (&*result_buffer, &*layer_buffer) {
                 (PixelBuffer::F32(curr), PixelBuffer::F32(layer)) => {
                     let mut blended = curr.clone();
-                    blend_rows!(blend_f32, curr, layer, blended);
+                    Self::blend_f32(curr, layer, *opacity, &mut blended);
+                    // Create new frame with blended data
                     result = Frame::from_f32_buffer(blended, width, height);
                 }
                 (PixelBuffer::F16(curr), PixelBuffer::F16(layer)) => {
                     let mut blended = curr.clone();
-                    blend_rows!(blend_f16, curr, layer, blended);
+                    Self::blend_f16(curr, layer, *opacity, &mut blended);
                     result = Frame::from_f16_buffer(blended, width, height);
                 }
                 (PixelBuffer::U8(curr), PixelBuffer::U8(layer)) => {
                     let mut blended = curr.clone();
-                    blend_rows!(blend_u8, curr, layer, blended);
+                    Self::blend_u8(curr, layer, *opacity, &mut blended);
                     result = Frame::from_u8_buffer(blended, width, height);
                 }
                 _ => {

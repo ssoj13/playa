@@ -12,14 +12,19 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
+use glob::glob;
+use log::info;
 use serde::{Deserialize, Serialize};
 
-use super::frame::{CropAlign, Frame, FrameStatus, PixelDepth};
+use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelDepth};
+use super::loader::Loader;
 use super::{AttrValue, Attrs};
+use crate::entities::loader_video;
 use crate::events::{CompEvent, CompEventSender};
+use crate::utils::media;
 
 /// Comp operating mode: Layer composition or File sequence loading
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -496,6 +501,11 @@ impl Comp {
 
     fn resolve_frame_path(&self, frame_number: i32) -> Option<PathBuf> {
         let mask = self.file_mask.as_ref()?;
+        if media::is_video(Path::new(mask)) {
+            // Video files use @frame suffix to target specific frame
+            return Some(PathBuf::from(format!("{}@{}", mask, frame_number)));
+        }
+
         if mask.contains('*') {
             let padding = self.attrs.get_u32("padding").unwrap_or(4) as usize;
             let mut parts = mask.splitn(2, '*');
@@ -508,19 +518,45 @@ impl Comp {
         }
     }
 
-    fn frame_dimensions(&self) -> (usize, usize) {
+    /// Resolution of this comp (used for placeholders/compositing).
+    /// For layer comps, set from the first added child.
+    pub fn dim(&self) -> (usize, usize) {
         let w = self.attrs.get_u32("width").unwrap_or(64) as usize;
         let h = self.attrs.get_u32("height").unwrap_or(64) as usize;
         (w.max(1), h.max(1))
     }
 
+    /// Determine dimensions from the earliest (smallest start) child.
+    /// Falls back to current comp dim if no children.
+    pub fn first_child_dim(&self) -> (usize, usize) {
+        let mut best: Option<(i32, usize, usize)> = None;
+        for child_uuid in &self.children {
+            if let Some(attrs) = self.children_attrs.get(child_uuid) {
+                let start = attrs.get_i32("start").unwrap_or(0);
+                let w = attrs.get_u32("width").unwrap_or(0) as usize;
+                let h = attrs.get_u32("height").unwrap_or(0) as usize;
+                match best {
+                    None => best = Some((start, w, h)),
+                    Some((best_start, _, _)) if start < best_start => best = Some((start, w, h)),
+                    _ => {}
+                }
+            }
+        }
+
+        if let Some((_, w, h)) = best {
+            (w.max(1), h.max(1))
+        } else {
+            self.dim()
+        }
+    }
+
     fn placeholder_frame(&self) -> Frame {
-        let (w, h) = self.frame_dimensions();
+        let (w, h) = self.dim();
         Frame::new(w, h, PixelDepth::U8)
     }
 
     fn frame_from_path(&self, path: PathBuf) -> Frame {
-        let (w, h) = self.frame_dimensions();
+        let (w, h) = self.dim();
         let frame = Frame::new_unloaded(path);
         frame.crop(w, h, CropAlign::LeftTop);
         frame
@@ -589,8 +625,14 @@ impl Comp {
         }
 
         // Blend all children with project compositor (CPU or GPU)
-        debug!("compose() collected {} frames, calling compositor.blend()", source_frames.len());
-        project.compositor.blend(source_frames)
+        let dim = self.dim();
+        debug!(
+            "compose() collected {} frames, calling compositor.blend_with_dim({}, {})",
+            source_frames.len(),
+            dim.0,
+            dim.1
+        );
+        project.compositor.blend_with_dim(source_frames, dim)
     }
 
     /// Add a new child to the composition at specified start frame.
@@ -609,8 +651,16 @@ impl Comp {
             .get(&source_uuid)
             .ok_or_else(|| anyhow::anyhow!("Source {} not found", source_uuid))?;
 
+        // First child defines comp resolution
+        if self.children.is_empty() {
+            let (w, h) = source.dim();
+            self.attrs.set("width", AttrValue::UInt(w as u32));
+            self.attrs.set("height", AttrValue::UInt(h as u32));
+        }
+
         let duration = source.frame_count();
-        self.add_child_with_duration(source_uuid, start_frame, duration, None)
+        let dim = source.dim();
+        self.add_child_with_duration(source_uuid, start_frame, duration, None, dim)
     }
 
     /// Add child with explicit duration and optional target row
@@ -620,6 +670,7 @@ impl Comp {
         start_frame: i32,
         duration: i32,
         target_row: Option<usize>,
+        source_dim: (usize, usize),
     ) -> anyhow::Result<()> {
         let end_frame = start_frame + duration - 1;
 
@@ -638,6 +689,8 @@ impl Comp {
         attrs.set("visible", AttrValue::Bool(true));
         attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
         attrs.set("speed", AttrValue::Float(1.0));
+        attrs.set("width", AttrValue::UInt(source_dim.0 as u32));
+        attrs.set("height", AttrValue::UInt(source_dim.1 as u32));
 
         // Add to children at appropriate position for target row
         if let Some(target_row) = target_row {
@@ -649,6 +702,7 @@ impl Comp {
         self.children_attrs.insert(instance_uuid, attrs);
 
         self.rebound();
+        self.update_dim_from_children();
         // Clear cache and emit event
         self.clear_cache();
         self.event_sender.emit(CompEvent::LayersChanged {
@@ -737,6 +791,7 @@ impl Comp {
         attrs.set("end", AttrValue::Int(new_end));
 
         self.rebound();
+        self.update_dim_from_children();
 
         // Clear cache and emit event
         self.clear_cache();
@@ -868,6 +923,7 @@ impl Comp {
     pub fn remove_child(&mut self, child_uuid: &str) {
         self.children.retain(|uuid| uuid != child_uuid);
         self.rebound();
+        self.update_dim_from_children();
         self.invalidate_cache();
         self.event_sender.emit(CompEvent::LayersChanged {
             comp_uuid: self.uuid.clone(),
@@ -902,6 +958,17 @@ impl Comp {
             self.attrs.set("start", AttrValue::Int(min_start));
             self.attrs.set("end", AttrValue::Int(max_end));
         }
+    }
+
+    /// Ensure comp resolution matches the earliest (by start) child.
+    fn update_dim_from_children(&mut self) {
+        if self.children.is_empty() {
+            return;
+        }
+
+        let (w, h) = self.first_child_dim();
+        self.attrs.set("width", AttrValue::UInt(w as u32));
+        self.attrs.set("height", AttrValue::UInt(h as u32));
     }
 
     /// Set parent composition UUID
@@ -1001,6 +1068,236 @@ impl crate::entities::TimelineUI for Comp {
             egui::Sense::click_and_drag(),
         )
     }
+}
+
+impl Comp {
+    /// Detect image/video sequences from paths and create File-mode comps.
+    pub fn detect_from_paths(paths: Vec<PathBuf>) -> Result<Vec<Comp>, FrameError> {
+        let mut comps = Vec::new();
+
+        for path in paths {
+            // Video file: create comp from video metadata
+            if media::is_video(&path) {
+                comps.push(create_video_comp(&path)?);
+                continue;
+            }
+
+            // Try to detect if this is part of an image sequence
+            if let Some((prefix, _number, ext, padding)) = split_sequence_path(&path)? {
+                let pattern = format!("{}*.{}", prefix, ext);
+                match detect_sequence_from_pattern(&pattern, padding) {
+                    Ok(comp) => comps.push(comp),
+                    Err(e) => {
+                        info!("Failed to detect sequence for {}: {}", path.display(), e);
+                        if let Ok(comp) = create_single_file_comp(&path) {
+                            comps.push(comp);
+                        }
+                    }
+                }
+            } else if let Ok(comp) = create_single_file_comp(&path) {
+                // Single file, not a sequence
+                comps.push(comp);
+            }
+        }
+
+        // Deduplicate comps by pattern/mask
+        let mut unique: HashMap<String, Comp> = HashMap::new();
+        for comp in comps {
+            if let Some(mask) = &comp.file_mask {
+                unique.entry(mask.clone()).or_insert(comp);
+            }
+        }
+
+        Ok(unique.into_values().collect())
+    }
+}
+
+/// Detect sequence from glob pattern.
+fn detect_sequence_from_pattern(pattern: &str, padding: usize) -> Result<Comp, FrameError> {
+    let paths = glob_paths(pattern)?;
+    if paths.is_empty() {
+        return Err(FrameError::Image(format!(
+            "No files matched pattern: {}",
+            pattern
+        )));
+    }
+
+    // Group by (prefix, ext), storing (number, path, padding)
+    let mut groups: HashMap<(String, String), Vec<(usize, PathBuf, usize)>> = HashMap::new();
+
+    for path in paths {
+        if let Some((prefix, number, ext, pad)) = split_sequence_path(&path)? {
+            let key = (prefix, ext);
+            groups.entry(key).or_default().push((number, path, pad));
+        }
+    }
+
+    // Select largest group as main sequence
+    let (key, frames_data) = groups
+        .into_iter()
+        .max_by_key(|(_, v)| v.len())
+        .ok_or_else(|| FrameError::Image("No valid sequence files found".into()))?;
+
+    let (prefix, ext) = key;
+    let (min_frame, max_frame) = frames_data
+        .iter()
+        .fold((usize::MAX, 0usize), |(min_f, max_f), (num, _, _)| {
+            (min_f.min(*num), max_f.max(*num))
+        });
+
+    // Get frame dimensions from first frame
+    let first_path = &frames_data[0].1;
+    let attrs = Loader::header(first_path)?;
+    let width = attrs.get_u32("width").unwrap_or(0) as usize;
+    let height = attrs.get_u32("height").unwrap_or(0) as usize;
+
+    // Create Comp with File mode
+    let file_mask = format!("{}*.{}", prefix, ext);
+    let mut comp = Comp::new_file_comp(file_mask.clone(), min_frame as i32, max_frame as i32, 24.0);
+
+    // Store dimensions and padding
+    comp.attrs.set("width", AttrValue::UInt(width as u32));
+    comp.attrs.set("height", AttrValue::UInt(height as u32));
+    comp.attrs.set("padding", AttrValue::UInt(padding as u32));
+
+    // Set name from first file
+    if let Some(filename) = first_path.file_stem().and_then(|s| s.to_str()) {
+        comp.attrs.set("name", AttrValue::Str(filename.to_string()));
+    }
+
+    info!(
+        "Created sequence comp: {} ({} frames, {}x{})",
+        file_mask,
+        frames_data.len(),
+        width,
+        height
+    );
+
+    Ok(comp)
+}
+
+/// Create Comp from single image file.
+fn create_single_file_comp(path: &Path) -> Result<Comp, FrameError> {
+    if media::is_video(path) {
+        return create_video_comp(path);
+    }
+
+    let attrs = Loader::header(path)?;
+    let width = attrs.get_u32("width").unwrap_or(0) as usize;
+    let height = attrs.get_u32("height").unwrap_or(0) as usize;
+
+    let file_mask = path.to_string_lossy().to_string();
+    let mut comp = Comp::new_file_comp(file_mask.clone(), 0, 0, 24.0);
+
+    comp.attrs.set("width", AttrValue::UInt(width as u32));
+    comp.attrs.set("height", AttrValue::UInt(height as u32));
+
+    if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
+        comp.attrs.set("name", AttrValue::Str(filename.to_string()));
+    }
+
+    info!(
+        "Created single file comp: {} ({}x{})",
+        file_mask, width, height
+    );
+
+    Ok(comp)
+}
+
+/// Create Comp from video file using FFmpeg metadata.
+fn create_video_comp(path: &Path) -> Result<Comp, FrameError> {
+    let meta = loader_video::VideoMetadata::from_file(path)?;
+    let last_frame = meta.frame_count.saturating_sub(1) as i32;
+    let mut comp =
+        Comp::new_file_comp(path.to_string_lossy().to_string(), 0, last_frame, meta.fps as f32);
+
+    comp.file_start = Some(0);
+    comp.file_end = Some(last_frame);
+    comp.attrs.set("width", AttrValue::UInt(meta.width));
+    comp.attrs.set("height", AttrValue::UInt(meta.height));
+    comp.attrs.set("padding", AttrValue::UInt(0));
+    comp.attrs.set("frames", AttrValue::UInt(meta.frame_count as u32));
+    comp.attrs.set("fps", AttrValue::Float(meta.fps as f32));
+    comp.attrs
+        .set("format", AttrValue::Str(format!("Video ({})", path.display())));
+
+    if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
+        comp.attrs.set("name", AttrValue::Str(filename.to_string()));
+    }
+
+    info!(
+        "Created video comp: {} ({} frames, {}x{})",
+        path.display(),
+        meta.frame_count,
+        meta.width,
+        meta.height
+    );
+
+    Ok(comp)
+}
+
+/// Expand a glob pattern into a list of paths.
+fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
+    let mut paths = Vec::new();
+    for entry in glob(pattern)
+        .map_err(|e| FrameError::Image(format!("Glob error for pattern {}: {}", pattern, e)))?
+    {
+        match entry {
+            Ok(path) => paths.push(path),
+            Err(e) => return Err(FrameError::Image(format!("Glob entry error: {}", e))),
+        }
+    }
+    Ok(paths)
+}
+
+/// Split a sequence filename into (prefix, number, ext, padding).
+///
+/// Example: "/path/seq.0001.exr" -> ("/path/seq.", 1, "exr", 4)
+fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usize)>, FrameError> {
+    let ext = match path.extension().and_then(|s| s.to_str()) {
+        Some(e) => e.to_string(),
+        None => return Ok(None),
+    };
+
+    let stem = match path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // Find trailing digits in stem
+    let mut digit_start = stem.len();
+    for (i, ch) in stem.char_indices().rev() {
+        if ch.is_ascii_digit() {
+            digit_start = i;
+        } else {
+            break;
+        }
+    }
+
+    if digit_start == stem.len() {
+        // No trailing digits -> not a sequence frame
+        return Ok(None);
+    }
+
+    let number_str = &stem[digit_start..];
+    let number = number_str.parse::<usize>().map_err(|e| {
+        FrameError::Image(format!("Invalid frame number '{}': {}", number_str, e))
+    })?;
+    let prefix_local = &stem[..digit_start]; // e.g. "seq." or "seq_"
+    let padding = number_str.len(); // Actual padding from filename
+
+    // Build full prefix including parent directory
+    let mut prefix = String::new();
+    if let Some(parent) = path.parent() {
+        let parent_str = parent.to_string_lossy();
+        prefix.push_str(parent_str.as_ref());
+        if !parent_str.ends_with(std::path::MAIN_SEPARATOR) {
+            prefix.push(std::path::MAIN_SEPARATOR);
+        }
+    }
+    prefix.push_str(prefix_local);
+
+    Ok(Some((prefix, number, ext, padding)))
 }
 
 #[cfg(test)]
