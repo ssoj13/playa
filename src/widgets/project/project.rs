@@ -19,6 +19,3 @@ impl ProjectActions {
         Self::default()
     }
 }
-
-// Deprecated - use ProjectActions
-pub type PlaylistActions = ProjectActions;

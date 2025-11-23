@@ -688,22 +688,28 @@ impl PlayaApp {
                     .iter()
                     .position(|u| u == &uuid);
             }
-            AppEvent::ProjectSelectionChanged(list) => {
-                self.player.project.selection = list;
-                // anchor = last selected if exists
-                self.player.project.selection_anchor = self
-                    .player
-                    .project
-                    .selection
-                    .last()
-                    .and_then(|u| self.player.project.comps_order.iter().position(|x| x == u));
+            AppEvent::ProjectSelectionChanged { selection, anchor } => {
+                self.player.project.selection = selection;
+                self.player.project.selection_anchor =
+                    anchor.or_else(|| {
+                        self.player.project.selection.last().and_then(|u| {
+                            self.player.project.comps_order.iter().position(|x| x == u)
+                        })
+                    });
             }
             AppEvent::ProjectActiveChanged(uuid) => {
                 // set active via unified path
                 self.player.set_active_comp(uuid.clone());
                 // ensure selection contains active at end
                 self.player.project.selection.retain(|u| u != &uuid);
-                self.player.project.selection.push(uuid);
+                self.player.project.selection.push(uuid.clone());
+                // update anchor to active
+                self.player.project.selection_anchor = self
+                    .player
+                    .project
+                    .comps_order
+                    .iter()
+                    .position(|u| u == &uuid);
             }
             AppEvent::SelectLayer(_index) => {
                 if let Some(comp_uuid) = &self.player.active_comp {

@@ -1,6 +1,4 @@
 use eframe::egui;
-use egui_taffy::{TuiBuilderLogic, tui};
-use taffy::style::Style;
 
 use crate::events::AppEvent;
 use crate::player::Player;
@@ -17,7 +15,7 @@ fn create_image_dialog(title: &str) -> rfd::FileDialog {
 pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
     let mut actions = ProjectActions::new();
 
-    // Track panel rect for hover detection
+    // Full-rect hover tracking
     let panel_rect = ui.available_rect_before_wrap();
     let panel_response = ui.interact(
         panel_rect,
@@ -25,277 +23,273 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
         egui::Sense::hover(),
     );
 
-    let id = ui.id().with("project_taffy");
-    tui(ui, id)
-        .reserve_available_space()
-        .style(Style {
-            flex_direction: taffy::FlexDirection::Column,
-            ..Default::default()
-        })
-        .show(|tui| {
-            tui.ui(|ui: &mut egui::Ui| {
-                // Action buttons single row
-                ui.horizontal(|ui: &mut egui::Ui| {
-                    if ui.button("Save").clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Playa Project", &["json"])
-                            .set_title("Save Project")
-                            .save_file()
-                    {
-                        actions.save_project = Some(path);
-                    }
-                    if ui.button("Load").clicked()
-                        && let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Playa Project", &["json"])
-                            .set_title("Load Project")
-                            .pick_file()
-                    {
-                        actions.load_project = Some(path);
-                    }
-                    if ui.button("Add Clip").clicked()
-                        && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
-                        && !paths.is_empty()
-                    {
-                        actions.load_sequence = Some(paths[0].clone());
-                    }
-                    if ui.button("Add Comp").clicked() {
-                        actions.new_comp = true;
-                    }
-                    if ui.button("Clear All").clicked() {
-                        actions.clear_all_comps = true;
-                    }
+    // Action buttons single row
+    ui.horizontal(|ui| {
+        if ui.button("Save").clicked()
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("Playa Project", &["json"])
+                .set_title("Save Project")
+                .save_file()
+        {
+            actions.save_project = Some(path);
+        }
+        if ui.button("Load").clicked()
+            && let Some(path) = rfd::FileDialog::new()
+                .add_filter("Playa Project", &["json"])
+                .set_title("Load Project")
+                .pick_file()
+        {
+            actions.load_project = Some(path);
+        }
+        if ui.button("Add Clip").clicked()
+            && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
+            && !paths.is_empty()
+        {
+            actions.load_sequence = Some(paths[0].clone());
+        }
+        if ui.button("Add Comp").clicked() {
+            actions.new_comp = true;
+        }
+        if ui.button("Clear All").clicked() {
+            actions.clear_all_comps = true;
+        }
+    });
+
+    ui.separator();
+
+    // Media list fills remaining space
+    let scroll_height = ui.available_height();
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            ui.set_min_height(scroll_height);
+
+            // Collect all comps to render (unified order)
+            let all_comps: Vec<String> = player.project.comps_order.clone();
+
+            if all_comps.is_empty() {
+                ui.add_space(20.0);
+                ui.vertical_centered(|ui| {
+                    ui.colored_label(ui.visuals().weak_text_color(), "No media loaded");
+                    ui.colored_label(
+                        ui.visuals().weak_text_color(),
+                        "Click 'Add Clip' to load files",
+                    );
                 });
+                return;
+            }
 
-                ui.separator();
-            });
+            for comp_uuid in &all_comps {
+                let comp = match player.project.media.get(comp_uuid) {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let clicked_idx = match player
+                    .project
+                    .comps_order
+                    .iter()
+                    .position(|u| u == comp_uuid)
+                {
+                    Some(i) => i,
+                    None => continue,
+                };
 
-            // === MEDIA LIST (Unified Clips & Comps) ===
-            tui.ui(|ui: &mut egui::Ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        // Collect all comps to render (unified order)
-                        let all_comps: Vec<String> = player.project.comps_order.clone();
+                let is_active = player.project.active.as_ref() == Some(comp_uuid);
+                let is_selected = player.project.selection.iter().any(|u| u == comp_uuid);
+                let bg_color = if is_selected {
+                    ui.style().visuals.selection.bg_fill
+                } else {
+                    ui.style().visuals.faint_bg_color
+                };
 
-                        if all_comps.is_empty() {
-                            // Empty state message
-                            ui.add_space(20.0);
-                            ui.vertical_centered(|ui| {
-                                ui.colored_label(ui.visuals().weak_text_color(), "No media loaded");
-                                ui.colored_label(
-                                    ui.visuals().weak_text_color(),
-                                    "Click 'Add Clip' to load files",
-                                );
-                            });
-                            return;
+                let mode = comp.mode.clone();
+                let fps = comp.fps() as u32;
+                let frame_count = comp.frame_count();
+                let display_text = match mode {
+                    crate::entities::comp::CompMode::File => {
+                        if let Some(mask) = &comp.file_mask {
+                            let filename = std::path::Path::new(mask)
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(mask);
+                            format!("{} • {}", comp.name(), filename)
+                        } else {
+                            comp.name().to_string()
                         }
+                    }
+                    crate::entities::comp::CompMode::Layer => {
+                        format!("{} (Layer)", comp.name())
+                    }
+                };
 
-                        // Render all comps
-                        for comp_uuid in &all_comps {
-                            let comp = match player.project.media.get(comp_uuid) {
-                                Some(c) => c,
-                                None => continue,
-                            };
+                let available_width = ui.available_width();
+                let row_height = ui.spacing().interact_size.y * 1.2;
 
-                            let is_active = player.project.active.as_ref() == Some(comp_uuid);
-                            let is_selected =
-                                player.project.selection.iter().any(|u| u == comp_uuid);
-                            let bg_color = if is_selected {
-                                ui.style().visuals.selection.bg_fill
-                            } else {
-                                ui.style().visuals.faint_bg_color
-                            };
+                let (row_rect, response) = ui.allocate_exact_size(
+                    egui::vec2(available_width, row_height),
+                    egui::Sense::click_and_drag(),
+                );
 
-                            let mode = comp.mode.clone();
-                            let fps = comp.fps() as u32;
-                            let frame_count = comp.frame_count();
-                            let display_text = match mode {
-                                crate::entities::comp::CompMode::File => {
-                                    if let Some(mask) = &comp.file_mask {
-                                        let filename = std::path::Path::new(mask)
-                                            .file_name()
-                                            .and_then(|s| s.to_str())
-                                            .unwrap_or(mask);
-                                        format!("{} • {}", comp.name(), filename)
-                                    } else {
-                                        comp.name().to_string()
-                                    }
-                                }
-                                crate::entities::comp::CompMode::Layer => {
-                                    format!("{} (Layer)", comp.name())
-                                }
-                            };
+                // Background and stroke
+                ui.painter().rect_filled(row_rect, 2.0, bg_color);
+                ui.painter().rect_stroke(
+                    row_rect,
+                    2.0,
+                    egui::Stroke::new(1.0, ui.style().visuals.window_stroke.color),
+                    egui::StrokeKind::Inside,
+                );
 
-                            let available_width = ui.available_width();
-                            let row_height = ui.spacing().interact_size.y * 1.2;
+                // Active stripe
+                if is_active {
+                    let stripe_rect =
+                        egui::Rect::from_min_size(row_rect.min, egui::vec2(4.0, row_height));
+                    ui.painter()
+                        .rect_filled(stripe_rect, 0.0, egui::Color32::from_rgb(0, 200, 0));
+                }
 
-                            let (row_rect, response) = ui.allocate_exact_size(
-                                egui::vec2(available_width, row_height),
-                                egui::Sense::click_and_drag(),
-                            );
+                let mut cursor_x = row_rect.min.x + 8.0;
+                let center_y = row_rect.center().y;
 
-                            // Background and stroke
-                            ui.painter().rect_filled(row_rect, 2.0, bg_color);
-                            ui.painter().rect_stroke(
-                                row_rect,
-                                2.0,
-                                egui::Stroke::new(1.0, ui.style().visuals.window_stroke.color),
-                                egui::StrokeKind::Inside,
-                            );
+                // Icon
+                let (icon, icon_color) = match mode {
+                    crate::entities::comp::CompMode::File => {
+                        ("[F]", egui::Color32::from_rgb(100, 150, 255))
+                    }
+                    crate::entities::comp::CompMode::Layer => {
+                        ("[C]", egui::Color32::from_rgb(255, 150, 100))
+                    }
+                };
+                let icon_galley = ui.painter().layout_no_wrap(
+                    icon.to_string(),
+                    egui::FontId::proportional(12.0),
+                    icon_color,
+                );
+                let icon_pos = egui::pos2(cursor_x, center_y - icon_galley.size().y * 0.5);
+                ui.painter().galley(icon_pos, icon_galley, icon_color);
+                cursor_x += 22.0;
 
-                            // Active stripe
-                            if is_active {
-                                let stripe_rect = egui::Rect::from_min_size(
-                                    row_rect.min,
-                                    egui::vec2(4.0, row_height),
-                                );
-                                ui.painter().rect_filled(
-                                    stripe_rect,
-                                    0.0,
-                                    egui::Color32::from_rgb(0, 200, 0),
-                                );
-                            }
+                // Right text (frame/fps) and delete button positions
+                let right_text = format!("{}f  {}fps", frame_count, fps);
+                let right_galley = ui.painter().layout_no_wrap(
+                    right_text,
+                    egui::FontId::proportional(12.0),
+                    ui.visuals().weak_text_color(),
+                );
+                let delete_size = egui::vec2(16.0, 16.0);
+                let delete_pos = egui::pos2(
+                    row_rect.max.x - delete_size.x - 6.0,
+                    center_y - delete_size.y * 0.5,
+                );
+                let right_pos = egui::pos2(
+                    delete_pos.x - 8.0 - right_galley.size().x,
+                    center_y - right_galley.size().y * 0.5,
+                );
 
-                            let mut cursor_x = row_rect.min.x + 8.0;
-                            let center_y = row_rect.center().y;
+                // Text area width (clip)
+                let text_max_width = (right_pos.x - 8.0) - cursor_x;
+                if text_max_width > 0.0 {
+                    let text_galley = ui.painter().layout_no_wrap(
+                        display_text,
+                        egui::FontId::proportional(12.0),
+                        ui.visuals().text_color(),
+                    );
+                    let text_pos = egui::pos2(cursor_x, center_y - text_galley.size().y * 0.5);
+                    let clip_rect =
+                        egui::Rect::from_min_size(text_pos, egui::vec2(text_max_width, row_height));
+                    ui.painter().with_clip_rect(clip_rect).galley(
+                        text_pos,
+                        text_galley,
+                        ui.visuals().text_color(),
+                    );
+                }
 
-                            // Icon
-                            let (icon, icon_color) = match mode {
-                                crate::entities::comp::CompMode::File => {
-                                    ("[F]", egui::Color32::from_rgb(100, 150, 255))
-                                }
-                                crate::entities::comp::CompMode::Layer => {
-                                    ("[C]", egui::Color32::from_rgb(255, 150, 100))
-                                }
-                            };
-                            let icon_galley = ui.painter().layout_no_wrap(
-                                icon.to_string(),
-                                egui::FontId::proportional(12.0),
-                                icon_color,
-                            );
-                            let icon_pos =
-                                egui::pos2(cursor_x, center_y - icon_galley.size().y * 0.5);
-                            ui.painter().galley(icon_pos, icon_galley, icon_color);
-                            cursor_x += 22.0;
+                // Right info
+                ui.painter()
+                    .galley(right_pos, right_galley, ui.visuals().weak_text_color());
 
-                            // Right text (frame/fps) and delete button positions
-                            let right_text = format!("{}f  {}fps", frame_count, fps);
-                            let right_galley = ui.painter().layout_no_wrap(
-                                right_text,
-                                egui::FontId::proportional(12.0),
-                                ui.visuals().weak_text_color(),
-                            );
-                            let delete_size = egui::vec2(16.0, 16.0);
-                            let delete_pos = egui::pos2(
-                                row_rect.max.x - delete_size.x - 6.0,
-                                center_y - delete_size.y * 0.5,
-                            );
-                            let right_pos = egui::pos2(
-                                delete_pos.x - 8.0 - right_galley.size().x,
-                                center_y - right_galley.size().y * 0.5,
-                            );
+                // Delete button
+                let delete_rect = egui::Rect::from_min_size(delete_pos, delete_size);
+                let delete_resp = ui.interact(
+                    delete_rect,
+                    ui.id().with(format!("del_{comp_uuid}")),
+                    egui::Sense::click(),
+                );
+                if ui.is_rect_visible(delete_rect) {
+                    ui.painter()
+                        .rect_filled(delete_rect, 2.0, ui.visuals().extreme_bg_color);
+                    ui.painter().rect_stroke(
+                        delete_rect,
+                        2.0,
+                        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+                        egui::StrokeKind::Inside,
+                    );
+                    ui.painter().text(
+                        delete_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "X",
+                        egui::FontId::proportional(10.0),
+                        ui.visuals().weak_text_color(),
+                    );
+                }
+                if delete_resp.clicked() {
+                    actions.remove_comp = Some(comp_uuid.clone());
+                }
 
-                            // Text area width (clip)
-                            let text_max_width = (right_pos.x - 8.0) - cursor_x;
-                            if text_max_width > 0.0 {
-                                let text_galley = ui.painter().layout_no_wrap(
-                                    display_text,
-                                    egui::FontId::proportional(12.0),
-                                    ui.visuals().text_color(),
-                                );
-                                let text_pos =
-                                    egui::pos2(cursor_x, center_y - text_galley.size().y * 0.5);
-                                let clip_rect = egui::Rect::from_min_size(
-                                    text_pos,
-                                    egui::vec2(text_max_width, row_height),
-                                );
-                                ui.painter().with_clip_rect(clip_rect).galley(
-                                    text_pos,
-                                    text_galley,
-                                    ui.visuals().text_color(),
-                                );
-                            }
-
-                            // Right info
-                            ui.painter().galley(
-                                right_pos,
-                                right_galley,
-                                ui.visuals().weak_text_color(),
-                            );
-
-                            // Delete button
-                            let delete_rect = egui::Rect::from_min_size(delete_pos, delete_size);
-                            let delete_resp = ui.interact(
-                                delete_rect,
-                                ui.id().with(format!("del_{comp_uuid}")),
-                                egui::Sense::click(),
-                            );
-                            if ui.is_rect_visible(delete_rect) {
-                                ui.painter().rect_filled(
-                                    delete_rect,
-                                    2.0,
-                                    ui.visuals().extreme_bg_color,
-                                );
-                                ui.painter().rect_stroke(
-                                    delete_rect,
-                                    2.0,
-                                    egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
-                                    egui::StrokeKind::Inside,
-                                );
-                                ui.painter().text(
-                                    delete_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "X",
-                                    egui::FontId::proportional(10.0),
-                                    ui.visuals().weak_text_color(),
-                                );
-                            }
-                            if delete_resp.clicked() {
-                                actions.remove_comp = Some(comp_uuid.clone());
-                            }
-
-                            // Selection logic (click) and activation (double click)
-                            let modifiers = ui.input(|i| i.modifiers);
-                            if response.clicked() {
-                                let list = update_selection(player, comp_uuid.clone(), modifiers);
-                                actions.events.push(AppEvent::ProjectSelectionChanged(list));
-                            }
-                            if response.double_clicked() {
-                                let list = update_selection(player, comp_uuid.clone(), modifiers);
-                                actions
-                                    .events
-                                    .push(AppEvent::ProjectSelectionChanged(list.clone()));
-                                actions
-                                    .events
-                                    .push(AppEvent::ProjectActiveChanged(comp_uuid.clone()));
-                            }
-
-                            // Drag handling
-                            if response.drag_started() {
-                                if let Some(_pos) = response.interact_pointer_pos() {
-                                    ui.ctx().data_mut(|data| {
-                                        data.insert_temp(
-                                            egui::Id::new("global_drag_state"),
-                                            crate::widgets::timeline::GlobalDragState::ProjectItem {
-                                                source_uuid: comp_uuid.clone(),
-                                                duration: Some(frame_count),
-                                            },
-                                        );
-                                    });
-                                }
-                            }
-
-                            // Cursor feedback
-                            if response.dragged() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                            } else if response.hovered() {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                            }
-
-                            ui.add_space(1.0);
-                        }
+                // Selection logic (click) and activation (double click) via events
+                let modifiers = ui.input(|i| i.modifiers);
+                if response.clicked() {
+                    let (sel, anchor) = compute_selection(
+                        &player.project.comps_order,
+                        &player.project.selection,
+                        player.project.selection_anchor,
+                        clicked_idx,
+                        modifiers,
+                    );
+                    actions.events.push(AppEvent::ProjectSelectionChanged {
+                        selection: sel,
+                        anchor,
                     });
-            });
+                }
+                if response.double_clicked() {
+                    let (sel, anchor) = compute_selection(
+                        &player.project.comps_order,
+                        &player.project.selection,
+                        player.project.selection_anchor,
+                        clicked_idx,
+                        modifiers,
+                    );
+                    actions.events.push(AppEvent::ProjectSelectionChanged {
+                        selection: sel,
+                        anchor,
+                    });
+                    actions
+                        .events
+                        .push(AppEvent::ProjectActiveChanged(comp_uuid.clone()));
+                }
+
+                // Drag handling
+                if response.drag_started() {
+                    if let Some(_pos) = response.interact_pointer_pos() {
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(
+                                egui::Id::new("global_drag_state"),
+                                crate::widgets::timeline::GlobalDragState::ProjectItem {
+                                    source_uuid: comp_uuid.clone(),
+                                    duration: Some(frame_count),
+                                },
+                            );
+                        });
+                    }
+                }
+
+                if response.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                } else if response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                }
+
+                ui.add_space(1.0);
+            }
         });
 
     // Set hover state for input routing
@@ -304,16 +298,18 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
     actions
 }
 
-fn update_selection(player: &mut Player, uuid: String, modifiers: egui::Modifiers) {
-    let order = &player.project.comps_order;
-    let idx = order.iter().position(|u| u == &uuid);
-    let Some(clicked_idx) = idx else { return };
-
-    let selection = &mut player.project.selection;
-    let anchor = &mut player.project.selection_anchor;
+fn compute_selection(
+    order: &[String],
+    current_selection: &[String],
+    anchor: Option<usize>,
+    clicked_idx: usize,
+    modifiers: egui::Modifiers,
+) -> (Vec<String>, Option<usize>) {
+    let mut selection: Vec<String> = current_selection.to_vec();
+    let mut new_anchor = anchor;
 
     if modifiers.shift {
-        let anchor_idx = anchor
+        let anchor_idx = new_anchor
             .or_else(|| {
                 selection
                     .last()
@@ -330,17 +326,19 @@ fn update_selection(player: &mut Player, uuid: String, modifiers: egui::Modifier
                 selection.push(u.clone());
             }
         }
-        *anchor = Some(clicked_idx);
+        new_anchor = Some(clicked_idx);
     } else if modifiers.command || modifiers.ctrl {
-        if let Some(pos) = selection.iter().position(|u| u == &uuid) {
+        if let Some(pos) = selection.iter().position(|u| u == &order[clicked_idx]) {
             selection.remove(pos);
         } else {
-            selection.push(uuid.clone());
+            selection.push(order[clicked_idx].clone());
         }
-        *anchor = Some(clicked_idx);
+        new_anchor = Some(clicked_idx);
     } else {
         selection.clear();
-        selection.push(uuid.clone());
-        *anchor = Some(clicked_idx);
+        selection.push(order[clicked_idx].clone());
+        new_anchor = Some(clicked_idx);
     }
+
+    (selection, new_anchor)
 }

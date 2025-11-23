@@ -113,8 +113,11 @@ pub enum AppEvent {
     // ===== Selection =====
     /// Select media item by UUID
     SelectMedia(String),
-    /// Set project selection (ordered UUIDs)
-    ProjectSelectionChanged(Vec<String>),
+    /// Set project selection (ordered UUIDs) with optional anchor index (runtime)
+    ProjectSelectionChanged {
+        selection: Vec<String>,
+        anchor: Option<usize>,
+    },
     /// Set active project item (UUID)
     ProjectActiveChanged(String),
     /// Select layer in timeline
