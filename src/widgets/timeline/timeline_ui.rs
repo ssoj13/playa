@@ -326,19 +326,23 @@ pub fn render_canvas(
         });
     }
 
-    // Two-column layout without vertical scroll (timeline panel height is fixed)
-    ui.push_id("timeline_layers", |ui| {
-        // Create temporary child order (layers displayed in original order from comp.children)
-        let child_order: Vec<usize> = (0..comp.children.len()).collect();
+    // Layers area with vertical scroll (but horizontal pan via state.pan_offset)
+    // ScrollArea is needed here because layers can extend beyond visible area vertically
+    egui::ScrollArea::vertical()
+        .id_salt("timeline_layers_scroll")
+        .show(ui, |ui| {
+        ui.push_id("timeline_layers", |ui| {
+            // Create temporary child order (layers displayed in original order from comp.children)
+            let child_order: Vec<usize> = (0..comp.children.len()).collect();
 
-        // Compute layout for all layers once (single source of truth)
-        let layer_rows = compute_all_layer_rows(comp, &child_order);
+            // Compute layout for all layers once (single source of truth)
+            let layer_rows = compute_all_layer_rows(comp, &child_order);
 
-        // Timeline bars (no ScrollArea; pan via state.pan_offset)
-        let timeline_rect = Rect::from_min_size(
-            ui.cursor().min,
-            Vec2::new(timeline_width, total_height),
-        );
+            // Timeline bars - horizontal pan via state.pan_offset, vertical scroll via ScrollArea
+            let timeline_rect = Rect::from_min_size(
+                ui.cursor().min,
+                Vec2::new(timeline_width, total_height),
+            );
 
         // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
         let timeline_response = ui.interact(
@@ -368,8 +372,8 @@ pub fn render_canvas(
             dispatch(AppEvent::TimelinePanChanged(state.pan_offset - delta_frames));
         }
 
-        if ui.is_rect_visible(timeline_rect) {
-            let painter = ui.painter();
+        // Draw layers (egui automatically clips to visible area inside ScrollArea)
+        let painter = ui.painter();
 
                         // Draw child bars using precomputed layout
                         for (_display_idx, &original_idx) in child_order.iter().enumerate() {
@@ -848,7 +852,7 @@ pub fn render_canvas(
                     }
                 }
             }
-        }
+        });
     });
 
     // Draw playhead once across ruler + bars
