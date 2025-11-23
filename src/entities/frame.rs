@@ -423,7 +423,8 @@ impl Frame {
         data.status = FrameStatus::Header;
         data.attrs = attrs;
 
-        debug!("Loaded header: {}x{}", width, height);
+        let attr_count = data.attrs.len();
+        debug!("Loaded header: {}x{} ({} attrs)", width, height, attr_count);
         Ok(0)
     }
 

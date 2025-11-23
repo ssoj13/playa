@@ -371,7 +371,7 @@ impl Comp {
                         attrs.get_bool("visible").unwrap_or(true).hash(&mut hasher);
                         let opacity_bits = attrs.get_float("opacity").unwrap_or(1.0).to_bits();
                         opacity_bits.hash(&mut hasher);
-                        if let Some(blend) = attrs.get_str("blend_mode") {
+                        if let Some(AttrValue::Str(blend)) = attrs.get("blend_mode") {
                             blend.hash(&mut hasher);
                         }
                         let speed_bits = attrs.get_float("speed").unwrap_or(1.0).to_bits();
@@ -819,7 +819,14 @@ impl Comp {
             .get_mut(&child_uuid)
             .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
 
-        attrs.set("play_start", AttrValue::Int(new_play_start));
+        if new_play_start == 0 {
+            // Remove to keep defaults compact
+            attrs.remove("play_start");
+        } else if let Some(AttrValue::Int(current)) = attrs.get_mut("play_start") {
+            *current = new_play_start;
+        } else {
+            attrs.set("play_start", AttrValue::Int(new_play_start));
+        }
 
         // Clear cache and emit event
         self.clear_cache();
@@ -847,7 +854,13 @@ impl Comp {
             .get_mut(&child_uuid)
             .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
 
-        attrs.set("play_end", AttrValue::Int(new_play_end));
+        if new_play_end == 0 {
+            attrs.remove("play_end");
+        } else if let Some(AttrValue::Int(current)) = attrs.get_mut("play_end") {
+            *current = new_play_end;
+        } else {
+            attrs.set("play_end", AttrValue::Int(new_play_end));
+        }
 
         // Clear cache and emit event
         self.clear_cache();
@@ -922,6 +935,7 @@ impl Comp {
     /// Remove child comp from this composition
     pub fn remove_child(&mut self, child_uuid: &str) {
         self.children.retain(|uuid| uuid != child_uuid);
+        self.children_attrs.remove(child_uuid);
         self.rebound();
         self.update_dim_from_children();
         self.invalidate_cache();
@@ -944,10 +958,14 @@ impl Comp {
 
         for child_uuid in &self.children {
             if let Some(attrs) = self.children_attrs.get(child_uuid) {
+                let has_start = attrs.contains("start");
+                let has_end = attrs.contains("end");
                 let s = attrs.get_i32("start").unwrap_or(0);
                 let e = attrs.get_i32("end").unwrap_or(0);
-                min_start = min_start.min(s);
-                max_end = max_end.max(e);
+                if has_start || has_end {
+                    min_start = min_start.min(s);
+                    max_end = max_end.max(e);
+                }
             }
         }
 

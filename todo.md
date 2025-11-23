@@ -2,7 +2,7 @@
   - src/widgets/timeline/timeline_ui.rs: unused import `find_free_row_for_new_layer`; unused var `has_overlap` (assigned but unread). Use helpers/logic or drop/underscore.
   - src/dialogs/prefs/input_handler.rs: HotkeyHandler::remove_binding unused. Either wire up, mark with #[allow(dead_code)], or remove.
   - src/entities/mod.rs: traits ProjectUI/TimelineUI/AttributeEditorUI/NodeUI unused. Decide whether to integrate or prune/allow.
-  - src/entities/attrs.rs: unused methods get/remove/iter_mut/contains/len. Use in attr access, remove, or allow.
+  - src/entities/attrs.rs: unused methods get/remove/iter_mut/contains/len. (Now wired: AE UI uses iter_mut/len/is_empty/iter; child play range uses get_mut/remove; hash uses get). Remaining: adjust if more API exposure needed.
   - src/entities/comp.rs: unused setters and hierarchy helpers (set_name/start/end/fps, add_child, set_parent/get_parent/get_children/has_child). Use in comp editing or prune/allow.
   - src/entities/compositor.rs: CompositorType::blend and CpuCompositor::blend unused. Hook into compositor pipeline or remove/allow.
   - src/entities/project.rs: set_compositor/get_comp/remove_media unused. Use for project management or prune/allow.
