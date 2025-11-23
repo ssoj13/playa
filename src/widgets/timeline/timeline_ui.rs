@@ -91,113 +91,117 @@ pub fn render_outline(
 ) {
     let comp_id = comp_uuid.to_string();
 
-    // Render layer list with DnD (no horizontal scroll)
+    // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
     let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
-    let dnd_response = ui
-        .vertical(|ui| {
-            dnd(ui, "timeline_child_names_outline").show_vec(
-                &mut child_order,
-                |ui, child_idx, handle, _state| {
-                    let idx = *child_idx;
-                    let child_uuid = &comp.children[idx];
-                    let attrs = comp.children_attrs.get(child_uuid);
+    let dnd_response = egui::ScrollArea::vertical()
+        .max_height(ui.available_height())
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                dnd(ui, "timeline_child_names_outline").show_vec(
+                    &mut child_order,
+                    |ui, child_idx, handle, _state| {
+                        let idx = *child_idx;
+                        let child_uuid = &comp.children[idx];
+                        let attrs = comp.children_attrs.get(child_uuid);
 
-                    // In Split mode, use full available width (outline is in separate panel)
-                    let row_width = if matches!(view_mode, super::TimelineViewMode::Split) {
-                        ui.available_width()
-                    } else {
-                        config.name_column_width
-                    };
-                    let (row_rect, response) = ui.allocate_exact_size(
-                        Vec2::new(row_width, config.layer_height),
-                        Sense::click(),
-                    );
-                    let mut row_ui = ui.new_child(
-                        egui::UiBuilder::new()
-                            .max_rect(row_rect)
-                            .layout(egui::Layout::left_to_right(egui::Align::Center))
-                            .id_salt(egui::Id::new("outline_row").with(idx)),
-                    );
-                    row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                    row_ui.set_min_height(config.layer_height);
+                        // In Split mode, use full available width (outline is in separate panel)
+                        let row_width = if matches!(view_mode, super::TimelineViewMode::Split) {
+                            ui.available_width()
+                        } else {
+                            config.name_column_width
+                        };
+                        let (row_rect, response) = ui.allocate_exact_size(
+                            Vec2::new(row_width, config.layer_height),
+                            Sense::click(),
+                        );
+                        let mut row_ui = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(row_rect)
+                                .layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .id_salt(egui::Id::new("outline_row").with(idx)),
+                        );
+                        row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                        row_ui.set_min_height(config.layer_height);
 
-                    handle.ui(&mut row_ui, |ui| {
-                        ui.label("≡");
-                    });
-
-                    let mut visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
-                    let mut opacity = attrs.and_then(|a| a.get_float("opacity")).unwrap_or(1.0);
-                    let prev_blend = attrs
-                        .and_then(|a| a.get_str("blend_mode"))
-                        .unwrap_or("normal")
-                        .to_string();
-                    let mut blend = prev_blend.clone();
-                    let mut speed = attrs.and_then(|a| a.get_float("speed")).unwrap_or(1.0);
-                    let mut dirty = false;
-
-                    if row_ui.checkbox(&mut visible, "").changed() {
-                        dirty = true;
-                    }
-
-                    let child_name = comp
-                        .children_attrs
-                        .get(child_uuid)
-                        .and_then(|attrs| attrs.get_str("name"))
-                        .unwrap_or(child_uuid.as_str());
-                    row_ui.label(child_name);
-
-                    if row_ui
-                        .add(
-                            egui::Slider::new(&mut opacity, 0.0..=1.0)
-                                .show_value(false)
-                                .smallest_positive(0.01)
-                                .text(""),
-                        )
-                        .changed()
-                    {
-                        dirty = true;
-                    }
-
-                    egui::ComboBox::from_id_salt(format!("blend_outline_{}", child_uuid))
-                        .width(80.0)
-                        .selected_text(blend.clone())
-                        .show_ui(&mut row_ui, |ui| {
-                            for mode in
-                                ["normal", "screen", "add", "subtract", "multiply", "divide"]
-                            {
-                                ui.selectable_value(&mut blend, mode.to_string(), mode);
-                            }
+                        handle.ui(&mut row_ui, |ui| {
+                            ui.label("≡");
                         });
-                    if blend != prev_blend {
-                        dirty = true;
-                    }
 
-                    if row_ui
-                        .add(
-                            egui::DragValue::new(&mut speed)
-                                .speed(0.1)
-                                .range(0.01..=8.0),
-                        )
-                        .changed()
-                    {
-                        dirty = true;
-                    }
+                        let mut visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
+                        let mut opacity = attrs.and_then(|a| a.get_float("opacity")).unwrap_or(1.0);
+                        let prev_blend = attrs
+                            .and_then(|a| a.get_str("blend_mode"))
+                            .unwrap_or("normal")
+                            .to_string();
+                        let mut blend = prev_blend.clone();
+                        let mut speed = attrs.and_then(|a| a.get_float("speed")).unwrap_or(1.0);
+                        let mut dirty = false;
 
-                    if dirty {
-                        if let Some(attrs_mut) = comp.children_attrs.get_mut(child_uuid) {
-                            attrs_mut.set("visible", crate::entities::AttrValue::Bool(visible));
-                            attrs_mut.set("opacity", crate::entities::AttrValue::Float(opacity));
-                            attrs_mut.set("blend_mode", crate::entities::AttrValue::Str(blend));
-                            attrs_mut.set("speed", crate::entities::AttrValue::Float(speed));
-                            comp.clear_cache();
+                        if row_ui.checkbox(&mut visible, "").changed() {
+                            dirty = true;
                         }
-                    }
 
-                    if response.clicked() {
-                        dispatch(AppEvent::SelectLayer(idx));
-                    }
-                },
-            )
+                        let child_name = comp
+                            .children_attrs
+                            .get(child_uuid)
+                            .and_then(|attrs| attrs.get_str("name"))
+                            .unwrap_or(child_uuid.as_str());
+                        row_ui.label(child_name);
+
+                        if row_ui
+                            .add(
+                                egui::Slider::new(&mut opacity, 0.0..=1.0)
+                                    .show_value(false)
+                                    .smallest_positive(0.01)
+                                    .text(""),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+
+                        egui::ComboBox::from_id_salt(format!("blend_outline_{}", child_uuid))
+                            .width(80.0)
+                            .selected_text(blend.clone())
+                            .show_ui(&mut row_ui, |ui| {
+                                for mode in
+                                    ["normal", "screen", "add", "subtract", "multiply", "divide"]
+                                {
+                                    ui.selectable_value(&mut blend, mode.to_string(), mode);
+                                }
+                            });
+                        if blend != prev_blend {
+                            dirty = true;
+                        }
+
+                        if row_ui
+                            .add(
+                                egui::DragValue::new(&mut speed)
+                                    .speed(0.1)
+                                    .range(0.01..=8.0),
+                            )
+                            .changed()
+                        {
+                            dirty = true;
+                        }
+
+                        if dirty {
+                            if let Some(attrs_mut) = comp.children_attrs.get_mut(child_uuid) {
+                                attrs_mut.set("visible", crate::entities::AttrValue::Bool(visible));
+                                attrs_mut.set("opacity", crate::entities::AttrValue::Float(opacity));
+                                attrs_mut.set("blend_mode", crate::entities::AttrValue::Str(blend));
+                                attrs_mut.set("speed", crate::entities::AttrValue::Float(speed));
+                                comp.clear_cache();
+                            }
+                        }
+
+                        if response.clicked() {
+                            dispatch(AppEvent::SelectLayer(idx));
+                        }
+                    },
+                )
+            })
+            .inner
         })
         .inner;
 
@@ -330,6 +334,8 @@ pub fn render_canvas(
     // ScrollArea is needed here because layers can extend beyond visible area vertically
     egui::ScrollArea::vertical()
         .id_salt("timeline_layers_scroll")
+        // Constrain ScrollArea to visible space so the parent panel doesn't grow
+        .max_height(ui.available_height())
         .show(ui, |ui| {
         ui.push_id("timeline_layers", |ui| {
             // Create temporary child order (layers displayed in original order from comp.children)
@@ -338,18 +344,16 @@ pub fn render_canvas(
             // Compute layout for all layers once (single source of truth)
             let layer_rows = compute_all_layer_rows(comp, &child_order);
 
-            // Timeline bars - horizontal pan via state.pan_offset, vertical scroll via ScrollArea
-            let timeline_rect = Rect::from_min_size(
-                ui.cursor().min,
+            // Timeline bars - horizontal pan via state.pan_offset, vertical scroll via ScrollArea.
+            // Use allocate_painter so ScrollArea knows the full vertical extent (all rows) and
+            // applies clipping/scrolling correctly even when many layers are added.
+            let (timeline_response, painter) = ui.allocate_painter(
                 Vec2::new(timeline_width, total_height),
+                Sense::click_and_drag(),
             );
+            let timeline_rect = timeline_response.rect;
 
         // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
-        let timeline_response = ui.interact(
-            timeline_rect,
-            ui.id().with("timeline_interaction"),
-            Sense::click_and_drag(),
-        );
         timeline_rect_global = Some(timeline_rect);
         timeline_hovered = timeline_response.hovered();
 
@@ -373,8 +377,6 @@ pub fn render_canvas(
         }
 
         // Draw layers (egui automatically clips to visible area inside ScrollArea)
-        let painter = ui.painter();
-
                         // Draw child bars using precomputed layout
                         for (_display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;

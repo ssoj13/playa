@@ -166,6 +166,7 @@ pub fn render_timeline_panel(
                     crate::widgets::timeline::TimelineViewMode::CanvasOnly => {
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
+                            ui.set_max_height(splitter_height);
                             timeline_actions = render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
                                 event_bus.send(evt)
                             });
@@ -174,6 +175,7 @@ pub fn render_timeline_panel(
                     crate::widgets::timeline::TimelineViewMode::OutlineOnly => {
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
+                            ui.set_max_height(splitter_height);
                             render_outline(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
                                 event_bus.send(evt)
                             });

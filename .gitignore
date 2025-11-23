@@ -6,6 +6,7 @@
 *.mov
 *.json
 *.svg
+cdx.cmd
 temp_log.txt
 
 # IDE
