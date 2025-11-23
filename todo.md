@@ -42,7 +42,6 @@
 
 
 # TODO2:
-  - start.cmd build emitted warnings; resolve per item:
   - src/widgets/timeline/timeline_ui.rs: unused import `find_free_row_for_new_layer`; unused var `has_overlap` (assigned but unread). Use helpers/logic or drop/underscore.
   - src/dialogs/prefs/input_handler.rs: HotkeyHandler::remove_binding unused. Either wire up, mark with #[allow(dead_code)], or remove.
   - src/entities/mod.rs: traits ProjectUI/TimelineUI/AttributeEditorUI/NodeUI unused. Decide whether to integrate or prune/allow.
@@ -59,5 +58,6 @@
   - Note: `cargo fix --bin "playa" -p playa` can auto-drop some unused imports, but manual decisions needed for API surface vs pruning.
 
 
+We're USING JUST START.CMD TO BUILD AND TEST!
 Use MCP to work with files and github if needed and for everything else.
 Use sub-agents and work in parallel.
