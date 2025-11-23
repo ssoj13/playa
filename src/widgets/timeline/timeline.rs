@@ -25,7 +25,7 @@ impl Default for TimelineConfig {
     fn default() -> Self {
         Self {
             layer_height: 32.0,
-            name_column_width: 150.0,
+            name_column_width: 400.0,
             pixels_per_frame: 2.0, // 2 pixels per frame by default
         }
     }

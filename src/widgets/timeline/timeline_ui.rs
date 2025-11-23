@@ -11,7 +11,7 @@
 
 use super::timeline_helpers::{
     compute_all_layer_rows, detect_layer_tool, draw_drop_preview, draw_frame_ruler,
-    find_free_row_for_new_layer, frame_to_screen_x, hash_color, row_to_y, screen_x_to_frame,
+    frame_to_screen_x, hash_color, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
@@ -268,46 +268,31 @@ pub fn render_canvas(
             );
         }
 
-        egui::ScrollArea::horizontal()
-            .id_salt("timeline_h_scroll")
-            .auto_shrink([false, false])
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            .show(ui, |ui| {
-                ui.set_height(ruler_height);
-                ui.set_width(ruler_width);
+    // Ruler (no ScrollArea; pan/zoom handled via state.pan_offset/state.zoom)
+    let (frame_opt, rect) =
+        draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
+    ruler_rect = Some(rect);
+    if let Some(frame) = frame_opt {
+        dispatch(AppEvent::SetFrame(frame));
+    }
 
-                let (frame_opt, rect) = draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
-                ruler_rect = Some(rect);
-                if let Some(frame) = frame_opt {
-                    dispatch(AppEvent::SetFrame(frame));
-                }
-
-                // Middle-drag pan on ruler
-                if let Some(pos) = ui.ctx().pointer_hover_pos() {
-                    if ui.rect_contains_pointer(rect) {
-                        if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-                            state.drag_state = Some(GlobalDragState::TimelinePan {
-                                drag_start_pos: pos,
-                                initial_pan_offset: state.pan_offset,
-                            });
-                        }
-                    }
-                }
-            });
+    // Middle-drag pan on ruler - initialize only, processing is in main loop
+    if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
+        if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) && state.drag_state.is_none() {
+            if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                state.drag_state = Some(GlobalDragState::TimelinePan {
+                    drag_start_pos: pos,
+                    initial_pan_offset: state.pan_offset,
+                });
+            }
+        }
+    }
     });
 
     if let Some(statuses) = &status_strip {
-        egui::ScrollArea::horizontal()
-            .id_salt("timeline_h_scroll")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_height(status_bar_height);
-                ui.set_width(ruler_width);
-
-                let (rect, _) = ui
-                    .allocate_exact_size(Vec2::new(ruler_width, status_bar_height), Sense::hover());
-                draw_status_strip(ui, rect, statuses);
-            });
+        let (rect, _) =
+            ui.allocate_exact_size(Vec2::new(ruler_width, status_bar_height), Sense::hover());
+        draw_status_strip(ui, rect, statuses);
     }
 
     ui.add_space(4.0);
@@ -349,49 +334,42 @@ pub fn render_canvas(
         // Compute layout for all layers once (single source of truth)
         let layer_rows = compute_all_layer_rows(comp, &child_order);
 
-        // Timeline bars (ScrollArea needed for egui_dnd layout, synced with ruler scroll)
-        egui::ScrollArea::horizontal()
-            .id_salt("timeline_h_scroll")
-            .auto_shrink([false, false])
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            .show(ui, |ui| {
-                ui.set_width(timeline_width);
-                ui.set_height(total_height);
+        // Timeline bars (no ScrollArea; pan via state.pan_offset)
+        let timeline_rect = Rect::from_min_size(
+            ui.cursor().min,
+            Vec2::new(timeline_width, total_height),
+        );
 
-                // Allocate rect for timeline without hover highlight
-                let timeline_rect = Rect::from_min_size(
-                    ui.cursor().min,
-                    Vec2::new(timeline_width, total_height),
-                );
+        // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
+        let timeline_response = ui.interact(
+            timeline_rect,
+            ui.id().with("timeline_interaction"),
+            Sense::click_and_drag(),
+        );
+        timeline_rect_global = Some(timeline_rect);
+        timeline_hovered = timeline_response.hovered();
 
-                // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
-                let timeline_response = ui.interact(
-                    timeline_rect,
-                    ui.id().with("timeline_interaction"),
-                    Sense::click_and_drag(),
-                );
-                timeline_rect_global = Some(timeline_rect);
-                timeline_hovered = timeline_response.hovered();
-
-                // Middle-drag pan on canvas
-                if let Some(pos) = timeline_response.hover_pos() {
-                    if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-                        state.drag_state = Some(GlobalDragState::TimelinePan {
-                            drag_start_pos: pos,
-                            initial_pan_offset: state.pan_offset,
-                        });
-                    }
+        // Middle-drag pan on canvas - initialize only if not already dragging
+        if timeline_response.hovered() && state.drag_state.is_none() {
+            if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
+                if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                    state.drag_state = Some(GlobalDragState::TimelinePan {
+                        drag_start_pos: pos,
+                        initial_pan_offset: state.pan_offset,
+                    });
                 }
+            }
+        }
 
-                // Scroll wheel horizontal pan
-                let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
-                if scroll_delta.x.abs() > 0.0 {
-                    let delta_frames = scroll_delta.x / (config.pixels_per_frame * state.zoom);
-                    dispatch(AppEvent::TimelinePanChanged(state.pan_offset - delta_frames));
-                }
+        // Scroll wheel horizontal pan
+        let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
+        if scroll_delta.x.abs() > 0.0 {
+            let delta_frames = scroll_delta.x / (config.pixels_per_frame * state.zoom);
+            dispatch(AppEvent::TimelinePanChanged(state.pan_offset - delta_frames));
+        }
 
-            if ui.is_rect_visible(timeline_rect) {
-                let painter = ui.painter();
+        if ui.is_rect_visible(timeline_rect) {
+            let painter = ui.painter();
 
                         // Draw child bars using precomputed layout
                         for (_display_idx, &original_idx) in child_order.iter().enumerate() {
@@ -532,7 +510,11 @@ pub fn render_canvas(
                                     GlobalDragState::TimelinePan { drag_start_pos, initial_pan_offset } => {
                                         let delta_x = current_pos.x - drag_start_pos.x;
                                         let delta_frames = delta_x / (config.pixels_per_frame * state.zoom);
-                                        dispatch(AppEvent::TimelinePanChanged(initial_pan_offset - delta_frames));
+                                        let new_pan = initial_pan_offset - delta_frames;
+
+                                        // Update state directly to avoid frame delay
+                                        state.pan_offset = new_pan;
+                                        dispatch(AppEvent::TimelinePanChanged(new_pan));
 
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
                                             state.drag_state = None;
@@ -554,8 +536,12 @@ pub fn render_canvas(
                                         // Visual feedback: draw ghost bar at new position using the same helper as project drops
                                         let child_uuid = &comp.children[*layer_idx];
                                         if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                            let ghost_child_y = timeline_rect.min.y
-                                                + (target_display_idx as f32 * config.layer_height);
+                                            let target_row = layer_rows
+                                                .get(&target_child)
+                                                .copied()
+                                                .unwrap_or(target_display_idx);
+                                            let ghost_child_y =
+                                                row_to_y(target_row, config, timeline_rect);
                                             let duration = (attrs.get_i32("end").unwrap_or(0)
                                                 - attrs.get_i32("start").unwrap_or(0)
                                                 + 1)
@@ -603,9 +589,14 @@ pub fn render_canvas(
                                         if *layer_idx < comp.children.len() {
                                             let child_uuid = &comp.children[*layer_idx];
                                             if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                // Use display index for Y positioning
-                                                let display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
-                                                let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
+                                                // Use actual row for Y positioning
+                                                let target_row = layer_rows
+                                                    .get(layer_idx)
+                                                    .copied()
+                                                    .unwrap_or_else(|| {
+                                                        physical_to_display(*layer_idx).unwrap_or(*layer_idx)
+                                                    });
+                                                let layer_y = row_to_y(target_row, config, timeline_rect);
                                                 let layer_start = attrs.get_u32("start").unwrap_or(0) as usize;
                                                 let layer_end = attrs.get_u32("end").unwrap_or(0) as usize;
 
@@ -649,9 +640,14 @@ pub fn render_canvas(
                                         if *layer_idx < comp.children.len() {
                                             let child_uuid = &comp.children[*layer_idx];
                                             if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                // Use display index for Y positioning
-                                                let display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
-                                                let layer_y = timeline_rect.min.y + (display_idx as f32 * config.layer_height);
+                                                // Use actual row for Y positioning
+                                                let target_row = layer_rows
+                                                    .get(layer_idx)
+                                                    .copied()
+                                                    .unwrap_or_else(|| {
+                                                        physical_to_display(*layer_idx).unwrap_or(*layer_idx)
+                                                    });
+                                                let layer_y = row_to_y(target_row, config, timeline_rect);
                                                 let layer_start = attrs.get_i32("start").unwrap_or(0);
                                                 let play_start = attrs.get_i32("play_start").unwrap_or(0);
 
@@ -686,7 +682,7 @@ pub fn render_canvas(
                                             state.drag_state = None;
                                         }
                                     }
-                                    // Other drag states are handled elsewhere (ProjectItem, TimelineScrub, TimelinePan)
+                                    // Other drag states are handled elsewhere (ProjectItem, TimelineScrub)
                                     _ => {}
                                 }
                             }
@@ -805,43 +801,54 @@ pub fn render_canvas(
                                     }
                                 }
                             }
-                        } else if state.drag_state.is_none() && global_drag.is_none() {
-                          // Handle click/drag interaction only if no active drag state
-                              if timeline_response.clicked() || timeline_response.dragged() {
-                                  if let Some(pos) = timeline_response.interact_pointer_pos() {
-                                      // If click is within any layer row, select that layer;
-                                      // otherwise treat it as a frame scrub on empty space.
-                                      let mut clicked_layer: Option<usize> = None;
-                                      for (_display_idx, &original_idx) in child_order.iter().enumerate() {
-                                          // Get precomputed row from layout
-                                          let row = layer_rows.get(&original_idx).copied().unwrap_or(0);
-                                          let layer_y = row_to_y(row, config, timeline_rect);
+            } else if state.drag_state.is_none() && global_drag.is_none() {
+                // Handle click/drag interaction only if no active drag state
+                if (timeline_response.clicked() || timeline_response.dragged())
+                    && !ui
+                        .ctx()
+                        .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
+                {
+                    if let Some(pos) = timeline_response.interact_pointer_pos() {
+                        // If click is within any layer row, select that layer;
+                        // otherwise treat it as a frame scrub on empty space.
+                        let mut clicked_layer: Option<usize> = None;
+                        for (_display_idx, &original_idx) in child_order.iter().enumerate() {
+                            // Get precomputed row from layout
+                            let row = layer_rows.get(&original_idx).copied().unwrap_or(0);
+                            let layer_y = row_to_y(row, config, timeline_rect);
 
-                                          let row_rect = Rect::from_min_max(
-                                              Pos2::new(timeline_rect.min.x, layer_y),
-                                              Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
-                                          );
-                                          if row_rect.contains(pos) {
-                                              clicked_layer = Some(original_idx);
-                                              break;
-                                          }
-                                      }
-
-                                      if let Some(idx) = clicked_layer {
-                                          dispatch(AppEvent::SelectLayer(idx));
-                                      } else {
-                                          // Click on empty space: clear selection and scrub timeline
-                                          let frame = screen_x_to_frame(pos.x, timeline_rect.min.x, config, state).round() as i32;
-                                          dispatch(AppEvent::SetFrame(frame.min(total_frames.saturating_sub(1))));
-                                      }
-                                  } else {
-                                      // Click without position: clear selection
-                                      dispatch(AppEvent::DeselectLayer);
-                                  }
-                              }
+                            let row_rect = Rect::from_min_max(
+                                Pos2::new(timeline_rect.min.x, layer_y),
+                                Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
+                            );
+                            if row_rect.contains(pos) {
+                                clicked_layer = Some(original_idx);
+                                break;
+                            }
                         }
+
+                        if let Some(idx) = clicked_layer {
+                            dispatch(AppEvent::SelectLayer(idx));
+                        } else {
+                            // Click on empty space: clear selection and scrub timeline
+                            let frame = screen_x_to_frame(
+                                pos.x,
+                                timeline_rect.min.x,
+                                config,
+                                state,
+                            )
+                            .round() as i32;
+                            dispatch(AppEvent::SetFrame(
+                                frame.min(total_frames.saturating_sub(1)),
+                            ));
+                        }
+                    } else {
+                        // Click without position: clear selection
+                        dispatch(AppEvent::DeselectLayer);
                     }
-            }); // Close ScrollArea::show
+                }
+            }
+        }
     });
 
     // Draw playhead once across ruler + bars

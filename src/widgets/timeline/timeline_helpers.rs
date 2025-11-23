@@ -179,7 +179,11 @@ pub(super) fn draw_frame_ruler(
             }
         }
 
-        if ruler_response.clicked() || ruler_response.dragged() {
+        let is_middle_down =
+            ui.ctx()
+                .input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+
+        if !is_middle_down && (ruler_response.clicked() || ruler_response.dragged()) {
             if let Some(pos) = ruler_response.interact_pointer_pos() {
                 let frame =
                     screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
