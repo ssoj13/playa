@@ -21,11 +21,12 @@ use log::{debug, error, info, warn};
 use player::Player;
 use std::path::PathBuf;
 use std::sync::Arc;
+use widgets::ae::AttributesState;
 use widgets::status::StatusBar;
 use widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
 use workers::Workers;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum DockTab {
     Viewport,
     Timeline,
@@ -90,7 +91,7 @@ struct PlayaApp {
     /// Global event bus for application-wide events
     #[serde(skip)]
     event_bus: events::EventBus,
-    #[serde(skip, default = "PlayaApp::default_dock_state")]
+    #[serde(default = "PlayaApp::default_dock_state")]
     dock_state: DockState<DockTab>,
     /// Hotkey handler for context-aware keyboard shortcuts
     #[serde(skip)]
@@ -105,6 +106,7 @@ struct PlayaApp {
     timeline_hovered: bool,
     #[serde(skip)]
     project_hovered: bool,
+    attributes_state: AttributesState,
 }
 
 impl Default for PlayaApp {
@@ -157,6 +159,7 @@ impl Default for PlayaApp {
             viewport_hovered: false,
             timeline_hovered: false,
             project_hovered: false,
+            attributes_state: AttributesState::default(),
         }
     }
 }
@@ -929,10 +932,7 @@ impl PlayaApp {
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let children = comp.get_children();
-                    if from_idx != to_idx
-                        && from_idx < children.len()
-                        && to_idx < children.len()
-                    {
+                    if from_idx != to_idx && from_idx < children.len() && to_idx < children.len() {
                         let mut reordered = comp.children.clone();
                         let child_uuid = reordered.remove(from_idx);
                         reordered.insert(to_idx, child_uuid);
@@ -996,7 +996,6 @@ impl PlayaApp {
             AppEvent::DragCancel => {
                 // TODO: implement drag cancel
             }
-
         }
     }
 
@@ -1035,19 +1034,28 @@ impl PlayaApp {
         // Determine focused window and update hotkey handler
         let focused_window = self.determine_focused_window(ctx);
         self.focused_window = focused_window.clone();
-        self.hotkey_handler.set_focused_window(focused_window.clone());
+        self.hotkey_handler
+            .set_focused_window(focused_window.clone());
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
-            log::debug!("Hotkey event: {:?}, focused_window: {:?}", event, focused_window);
+            log::debug!(
+                "Hotkey event: {:?}, focused_window: {:?}",
+                event,
+                focused_window
+            );
             self.event_bus.send(event);
             return; // Hotkey handled, don't process manual checks
         }
 
         // Debug: log when F or A is pressed but no event
         if input.key_pressed(egui::Key::F) || input.key_pressed(egui::Key::A) {
-            log::debug!("F/A pressed but no event. focused_window: {:?}, viewport_hovered: {}, timeline_hovered: {}",
-                focused_window, self.viewport_hovered, self.timeline_hovered);
+            log::debug!(
+                "F/A pressed but no event. focused_window: {:?}, viewport_hovered: {}, timeline_hovered: {}",
+                focused_window,
+                self.viewport_hovered,
+                self.timeline_hovered
+            );
         }
 
         // F1: Toggle help
@@ -1320,7 +1328,8 @@ impl PlayaApp {
             return;
         }
 
-        let project_actions = widgets::project::render(ui, &mut self.player, self.selected_media_uuid.as_ref());
+        let project_actions =
+            widgets::project::render(ui, &mut self.player, self.selected_media_uuid.as_ref());
 
         // Store hover state for input routing
         self.project_hovered = project_actions.hovered;
@@ -1455,7 +1464,6 @@ impl PlayaApp {
     }
 
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Attributes");
         if let Some(active) = self.player.active_comp.clone() {
             if let Some(comp) = self.player.project.media.get_mut(&active) {
                 // Show attributes of selected layer if any, otherwise show comp attributes
@@ -1463,8 +1471,16 @@ impl PlayaApp {
                     // Get layer instance UUID
                     if let Some(instance_uuid) = comp.children.get(layer_idx) {
                         if let Some(attrs) = comp.children_attrs.get_mut(instance_uuid) {
-                            ui.label(format!("Layer {} Attributes:", layer_idx));
-                            crate::widgets::ae::render(ui, attrs);
+                            let display_name = attrs
+                                .get_str("name")
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| format!("Layer {}", layer_idx));
+                            crate::widgets::ae::render(
+                                ui,
+                                attrs,
+                                &mut self.attributes_state,
+                                &display_name,
+                            );
                         } else {
                             ui.label("(layer has no attributes)");
                         }
@@ -1473,8 +1489,13 @@ impl PlayaApp {
                     }
                 } else {
                     // No layer selected - show comp attributes
-                    ui.label(format!("Comp: {}", comp.name()));
-                    crate::widgets::ae::render(ui, &mut comp.attrs);
+                    let comp_name = comp.name().to_string();
+                    crate::widgets::ae::render(
+                        ui,
+                        &mut comp.attrs,
+                        &mut self.attributes_state,
+                        &comp_name,
+                    );
                 }
             } else {
                 ui.label("No active comp");

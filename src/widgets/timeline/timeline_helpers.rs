@@ -120,8 +120,7 @@ pub(super) fn draw_frame_ruler(
         let painter = ui.painter();
         painter.rect_filled(rect, 0.0, Color32::from_gray(25));
 
-        let playhead_x =
-            frame_to_screen_x(comp.current_frame as f32, rect.min.x, config, state);
+        let playhead_x = frame_to_screen_x(comp.current_frame as f32, rect.min.x, config, state);
         if playhead_x >= rect.min.x && playhead_x <= rect.max.x {
             painter.line_segment(
                 [
@@ -153,8 +152,8 @@ pub(super) fn draw_frame_ruler(
 
         // Use rect.width() for visible range, not timeline_width
         let visible_start = state.pan_offset.max(0.0) as usize;
-        let visible_end = (state.pan_offset + (rect.width() / effective_ppf))
-            .min(total_frames as f32) as usize;
+        let visible_end =
+            (state.pan_offset + (rect.width() / effective_ppf)).min(total_frames as f32) as usize;
         let start_frame = (visible_start / frame_step.max(1)) * frame_step.max(1);
 
         for frame in (start_frame..=visible_end).step_by(frame_step.max(1)) {
@@ -179,14 +178,13 @@ pub(super) fn draw_frame_ruler(
             }
         }
 
-        let is_middle_down =
-            ui.ctx()
-                .input(|i| i.pointer.button_down(egui::PointerButton::Middle));
+        let is_middle_down = ui
+            .ctx()
+            .input(|i| i.pointer.button_down(egui::PointerButton::Middle));
 
         if !is_middle_down && (ruler_response.clicked() || ruler_response.dragged()) {
             if let Some(pos) = ruler_response.interact_pointer_pos() {
-                let frame =
-                    screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
+                let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
                 frame_clicked = Some(frame.min(total_frames.saturating_sub(1)));
             }
         }

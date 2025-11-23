@@ -109,7 +109,11 @@ impl CpuCompositor {
     }
 
     /// Blend frames onto a fixed-size canvas (width, height).
-    pub(crate) fn blend_with_dim(&self, frames: Vec<(Frame, f32)>, dim: (usize, usize)) -> Option<Frame> {
+    pub(crate) fn blend_with_dim(
+        &self,
+        frames: Vec<(Frame, f32)>,
+        dim: (usize, usize),
+    ) -> Option<Frame> {
         use log::debug;
         debug!(
             "CpuCompositor::blend_with_dim() called with {} frames into {}x{}",

@@ -549,7 +549,13 @@ impl EncodeDialog {
             info!("Encoder thread started");
 
             info!("Calling encode_comp()...");
-            encode_comp(&comp_clone, &project_clone, &settings_clone, tx, cancel_flag_clone)
+            encode_comp(
+                &comp_clone,
+                &project_clone,
+                &settings_clone,
+                tx,
+                cancel_flag_clone,
+            )
         });
 
         self.encode_thread = Some(handle);

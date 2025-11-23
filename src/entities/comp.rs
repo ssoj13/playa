@@ -240,7 +240,8 @@ impl Comp {
                     if use_work_area {
                         // Consider trim: child.play_start/play_end define visible portion
                         let child_play_start = attrs.get_i32("play_start").unwrap_or(0);
-                        let child_play_end = attrs.get_i32("play_end").unwrap_or(child_end - child_start);
+                        let child_play_end =
+                            attrs.get_i32("play_end").unwrap_or(child_end - child_start);
 
                         // Visible range on timeline: start + play_start offsets
                         let visible_start = child_start + child_play_start;
@@ -573,7 +574,11 @@ impl Comp {
         use log::debug;
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
 
-        debug!("compose() called: frame_idx={}, children.len()={}", frame_idx, self.children.len());
+        debug!(
+            "compose() called: frame_idx={}, children.len()={}",
+            frame_idx,
+            self.children.len()
+        );
 
         // Collect frames from all active children
         // IMPORTANT: Reverse iteration - last child (bottom layer) becomes base,
@@ -597,13 +602,17 @@ impl Comp {
 
             // Check if local frame is within play range (trim check)
             if local_frame < play_start || local_frame > play_end {
-                debug!("  child {} TRIMMED OUT: local_frame {} not in play range [{}, {}]",
-                    child_uuid, local_frame, play_start, play_end);
+                debug!(
+                    "  child {} TRIMMED OUT: local_frame {} not in play range [{}, {}]",
+                    child_uuid, local_frame, play_start, play_end
+                );
                 continue;
             }
 
-            debug!("  child {} ACTIVE: comp_frame={}, child_start={}, local_frame={}, play_range=[{}, {}]",
-                child_uuid, frame_idx_i32, child_start, local_frame, play_start, play_end);
+            debug!(
+                "  child {} ACTIVE: comp_frame={}, child_start={}, local_frame={}, play_range=[{}, {}]",
+                child_uuid, frame_idx_i32, child_start, local_frame, play_start, play_end
+            );
 
             // Get source UUID from child attrs (child_uuid is now instance UUID)
             let Some(source_uuid) = attrs.get_str("uuid") else {
@@ -1226,18 +1235,25 @@ fn create_single_file_comp(path: &Path) -> Result<Comp, FrameError> {
 fn create_video_comp(path: &Path) -> Result<Comp, FrameError> {
     let meta = loader_video::VideoMetadata::from_file(path)?;
     let last_frame = meta.frame_count.saturating_sub(1) as i32;
-    let mut comp =
-        Comp::new_file_comp(path.to_string_lossy().to_string(), 0, last_frame, meta.fps as f32);
+    let mut comp = Comp::new_file_comp(
+        path.to_string_lossy().to_string(),
+        0,
+        last_frame,
+        meta.fps as f32,
+    );
 
     comp.file_start = Some(0);
     comp.file_end = Some(last_frame);
     comp.attrs.set("width", AttrValue::UInt(meta.width));
     comp.attrs.set("height", AttrValue::UInt(meta.height));
     comp.attrs.set("padding", AttrValue::UInt(0));
-    comp.attrs.set("frames", AttrValue::UInt(meta.frame_count as u32));
-    comp.attrs.set("fps", AttrValue::Float(meta.fps as f32));
     comp.attrs
-        .set("format", AttrValue::Str(format!("Video ({})", path.display())));
+        .set("frames", AttrValue::UInt(meta.frame_count as u32));
+    comp.attrs.set("fps", AttrValue::Float(meta.fps as f32));
+    comp.attrs.set(
+        "format",
+        AttrValue::Str(format!("Video ({})", path.display())),
+    );
 
     if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
         comp.attrs.set("name", AttrValue::Str(filename.to_string()));
@@ -1298,9 +1314,9 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usi
     }
 
     let number_str = &stem[digit_start..];
-    let number = number_str.parse::<usize>().map_err(|e| {
-        FrameError::Image(format!("Invalid frame number '{}': {}", number_str, e))
-    })?;
+    let number = number_str
+        .parse::<usize>()
+        .map_err(|e| FrameError::Image(format!("Invalid frame number '{}': {}", number_str, e)))?;
     let prefix_local = &stem[..digit_start]; // e.g. "seq." or "seq_"
     let padding = number_str.len(); // Actual padding from filename
 

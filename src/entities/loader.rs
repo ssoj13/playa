@@ -10,8 +10,8 @@ use log::debug;
 use std::path::Path;
 
 use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
-use crate::entities::{AttrValue, Attrs};
 use crate::entities::loader_video;
+use crate::entities::{AttrValue, Attrs};
 use crate::utils::media;
 use std::path::PathBuf;
 
@@ -65,7 +65,10 @@ impl Loader {
         let mut meta_attrs = Attrs::new();
         meta_attrs.set("width", AttrValue::UInt(meta.width));
         meta_attrs.set("height", AttrValue::UInt(meta.height));
-        meta_attrs.set("format", AttrValue::Str(format!("Video ({})", actual_path.display())));
+        meta_attrs.set(
+            "format",
+            AttrValue::Str(format!("Video ({})", actual_path.display())),
+        );
         meta_attrs.set("channels", AttrValue::UInt(3));
         meta_attrs.set("frames", AttrValue::UInt(meta.frame_count as u32));
         meta_attrs.set("fps", AttrValue::Float(meta.fps as f32));

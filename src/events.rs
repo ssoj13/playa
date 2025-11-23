@@ -177,7 +177,6 @@ pub enum AppEvent {
     IncreaseFPS,
     /// Decrease base FPS
     DecreaseFPS,
-
 }
 
 /// Window context for hotkeys

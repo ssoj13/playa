@@ -60,7 +60,7 @@ impl Default for TimelineState {
             last_comp_uuid: None,
             view_mode: TimelineViewMode::Split,
             last_canvas_width: 800.0, // Default estimate
-            outline_width: 400.0, // Default outline panel width
+            outline_width: 400.0,     // Default outline panel width
         }
     }
 }
@@ -127,7 +127,7 @@ impl LayerGeom {
         state: &TimelineState,
     ) -> Self {
         use eframe::egui::{Pos2, Rect};
-        
+
         let visible_start = child_start + play_start;
         let visible_end = child_start + play_end;
 
@@ -145,7 +145,8 @@ impl LayerGeom {
 
         let visible_bar_rect = if visible_start <= visible_end {
             let visible_bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x);
-            let visible_bar_x_end = frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x);
+            let visible_bar_x_end =
+                frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x);
             Some(Rect::from_min_max(
                 Pos2::new(visible_bar_x_start, child_y + 4.0),
                 Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
@@ -154,6 +155,11 @@ impl LayerGeom {
             None
         };
 
-        Self { visible_start, visible_end, full_bar_rect, visible_bar_rect }
+        Self {
+            visible_start,
+            visible_end,
+            full_bar_rect,
+            visible_bar_rect,
+        }
     }
 }

@@ -13,12 +13,20 @@ fn create_image_dialog(title: &str) -> rfd::FileDialog {
 }
 
 /// Render project window (dock tab): Unified list of Clips & Compositions
-pub fn render(ui: &mut egui::Ui, player: &mut Player, selected_uuid: Option<&String>) -> ProjectActions {
+pub fn render(
+    ui: &mut egui::Ui,
+    player: &mut Player,
+    selected_uuid: Option<&String>,
+) -> ProjectActions {
     let mut actions = ProjectActions::new();
 
     // Track panel rect for hover detection
     let panel_rect = ui.available_rect_before_wrap();
-    let panel_response = ui.interact(panel_rect, ui.id().with("project_panel"), egui::Sense::hover());
+    let panel_response = ui.interact(
+        panel_rect,
+        ui.id().with("project_panel"),
+        egui::Sense::hover(),
+    );
 
     let id = ui.id().with("project_taffy");
     tui(ui, id)

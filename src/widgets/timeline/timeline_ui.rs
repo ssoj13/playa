@@ -20,11 +20,7 @@ use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 
 /// Render timeline toolbar (transport controls, zoom, snap)
-pub fn render_toolbar(
-    ui: &mut Ui,
-    state: &mut TimelineState,
-    mut dispatch: impl FnMut(AppEvent),
-) {
+pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl FnMut(AppEvent)) {
     ui.horizontal(|ui| {
         if ui.button("↞").on_hover_text("To Start").clicked() {
             dispatch(AppEvent::JumpToStart);
@@ -49,7 +45,7 @@ pub fn render_toolbar(
         ui.label("Zoom:");
         let zoom_response = ui.add_sized(
             egui::Vec2::new(200.0, 20.0), // 2x longer slider
-            egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2)
+            egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2),
         );
         if zoom_response.changed() {
             dispatch(AppEvent::TimelineZoomChanged(state.zoom));
@@ -100,7 +96,11 @@ pub fn render_outline(
             ui.vertical(|ui| {
                 // Match the top padding of the timeline canvas (ruler + optional status bar + spacing)
                 // Ruler: 20.0, Status strip: 6.0 if present, spacer: 4.0
-                let status_bar_height = comp.file_frame_statuses().as_ref().map(|_| 6.0).unwrap_or(0.0);
+                let status_bar_height = comp
+                    .file_frame_statuses()
+                    .as_ref()
+                    .map(|_| 6.0)
+                    .unwrap_or(0.0);
                 ui.add_space(20.0 + status_bar_height + 4.0);
 
                 dnd(ui, "timeline_child_names_outline").show_vec(
@@ -194,7 +194,8 @@ pub fn render_outline(
                         if dirty {
                             if let Some(attrs_mut) = comp.children_attrs.get_mut(child_uuid) {
                                 attrs_mut.set("visible", crate::entities::AttrValue::Bool(visible));
-                                attrs_mut.set("opacity", crate::entities::AttrValue::Float(opacity));
+                                attrs_mut
+                                    .set("opacity", crate::entities::AttrValue::Float(opacity));
                                 attrs_mut.set("blend_mode", crate::entities::AttrValue::Str(blend));
                                 attrs_mut.set("speed", crate::entities::AttrValue::Float(speed));
                                 comp.clear_cache();
@@ -240,8 +241,13 @@ pub fn render_canvas(
     let comp_end = comp.end();
     let total_frames = (comp_end + 1).max(100); // From frame 0 to end (inclusive), minimum 100
 
-    log::debug!("Comp '{}': start={}, end={}, total_frames={}",
-        comp.name(), comp_start, comp_end, total_frames);
+    log::debug!(
+        "Comp '{}': start={}, end={}, total_frames={}",
+        comp.name(),
+        comp_start,
+        comp_end,
+        total_frames
+    );
 
     // In Split mode, use full width (outline is in separate panel)
     let available_for_timeline = if matches!(view_mode, super::TimelineViewMode::Split) {
@@ -249,16 +255,20 @@ pub fn render_canvas(
     } else {
         ui.available_width() - config.name_column_width
     };
-    let timeline_width = (total_frames as f32 * config.pixels_per_frame * state.zoom)
-        .max(available_for_timeline);
+    let timeline_width =
+        (total_frames as f32 * config.pixels_per_frame * state.zoom).max(available_for_timeline);
     // Ensure non-zero height so DnD/drop zone works even for empty comps
     let total_height = (comp.children.len().max(1) as f32) * config.layer_height;
 
-    let ruler_width = (total_frames as f32 * config.pixels_per_frame * state.zoom)
-        .max(ui.available_width());
+    let ruler_width =
+        (total_frames as f32 * config.pixels_per_frame * state.zoom).max(ui.available_width());
 
-    log::debug!("ruler_width={}, timeline_width={}, available_width={}",
-        ruler_width, timeline_width, ui.available_width());
+    log::debug!(
+        "ruler_width={}, timeline_width={}, available_width={}",
+        ruler_width,
+        timeline_width,
+        ui.available_width()
+    );
     let status_strip = comp.file_frame_statuses();
     let status_bar_height = status_strip.as_ref().map(|_| 6.0).unwrap_or(0.0);
 
@@ -278,25 +288,29 @@ pub fn render_canvas(
             );
         }
 
-    // Ruler (no ScrollArea; pan/zoom handled via state.pan_offset/state.zoom)
-    let (frame_opt, rect) =
-        draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
-    ruler_rect = Some(rect);
-    if let Some(frame) = frame_opt {
-        dispatch(AppEvent::SetFrame(frame));
-    }
+        // Ruler (no ScrollArea; pan/zoom handled via state.pan_offset/state.zoom)
+        let (frame_opt, rect) =
+            draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
+        ruler_rect = Some(rect);
+        if let Some(frame) = frame_opt {
+            dispatch(AppEvent::SetFrame(frame));
+        }
 
-    // Middle-drag pan on ruler - initialize only, processing is in main loop
-    if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
-        if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) && state.drag_state.is_none() {
-            if let Some(pos) = ui.ctx().pointer_hover_pos() {
-                state.drag_state = Some(GlobalDragState::TimelinePan {
-                    drag_start_pos: pos,
-                    initial_pan_offset: state.pan_offset,
-                });
+        // Middle-drag pan on ruler - initialize only, processing is in main loop
+        if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
+            if ui
+                .ctx()
+                .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
+                && state.drag_state.is_none()
+            {
+                if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                    state.drag_state = Some(GlobalDragState::TimelinePan {
+                        drag_start_pos: pos,
+                        initial_pan_offset: state.pan_offset,
+                    });
+                }
             }
         }
-    }
     });
 
     if let Some(statuses) = &status_strip {

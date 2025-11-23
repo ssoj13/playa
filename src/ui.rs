@@ -6,7 +6,9 @@ use eframe::egui;
 
 use crate::events::EventBus;
 use crate::player::Player;
-use crate::widgets::timeline::{TimelineConfig, TimelineState, render_canvas, render_outline, render_toolbar};
+use crate::widgets::timeline::{
+    TimelineConfig, TimelineState, render_canvas, render_outline, render_toolbar,
+};
 use crate::widgets::viewport::shaders::Shaders;
 
 /// Help text displayed in overlay
@@ -158,27 +160,45 @@ pub fn render_timeline_panel(
                             // Same as outline: lock to exact height to prevent unwanted vertical scroll
                             ui.set_height(splitter_height);
                             ui.set_max_height(splitter_height);
-                            timeline_actions = render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
-                                event_bus.send(evt)
-                            });
+                            timeline_actions = render_canvas(
+                                ui,
+                                comp_uuid,
+                                comp,
+                                &config,
+                                timeline_state,
+                                timeline_state.view_mode,
+                                |evt| event_bus.send(evt),
+                            );
                         });
                     }
                     crate::widgets::timeline::TimelineViewMode::CanvasOnly => {
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
                             ui.set_max_height(splitter_height);
-                            timeline_actions = render_canvas(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
-                                event_bus.send(evt)
-                            });
+                            timeline_actions = render_canvas(
+                                ui,
+                                comp_uuid,
+                                comp,
+                                &config,
+                                timeline_state,
+                                timeline_state.view_mode,
+                                |evt| event_bus.send(evt),
+                            );
                         });
                     }
                     crate::widgets::timeline::TimelineViewMode::OutlineOnly => {
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
                             ui.set_max_height(splitter_height);
-                            render_outline(ui, comp_uuid, comp, &config, timeline_state, timeline_state.view_mode, |evt| {
-                                event_bus.send(evt)
-                            });
+                            render_outline(
+                                ui,
+                                comp_uuid,
+                                comp,
+                                &config,
+                                timeline_state,
+                                timeline_state.view_mode,
+                                |evt| event_bus.send(evt),
+                            );
                         });
                     }
                 }
@@ -190,5 +210,8 @@ pub fn render_timeline_panel(
         }
     });
 
-    (old_shader != shader_manager.current_shader, timeline_actions)
+    (
+        old_shader != shader_manager.current_shader,
+        timeline_actions,
+    )
 }

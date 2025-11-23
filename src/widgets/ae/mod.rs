@@ -4,4 +4,4 @@
 
 mod ae_ui;
 
-pub use ae_ui::render;
+pub use ae_ui::{AttributesState, render};

@@ -1,13 +1,28 @@
 //! Attribute Editor widget - UI rendering
 
 use crate::entities::{AttrValue, Attrs};
-use eframe::egui::{self, Ui};
+use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui, Vec2};
+use egui_extras::{Column, TableBuilder};
+
+/// Persistent UI state for the Attributes panel.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct AttributesState {
+    pub name_column_width: f32,
+}
+
+impl Default for AttributesState {
+    fn default() -> Self {
+        Self {
+            name_column_width: 180.0,
+        }
+    }
+}
 
 /// Render generic attributes editor
 ///
 /// Displays all attributes with appropriate UI widgets for editing.
 /// Supports: Str, Int, UInt, Float, Vec3, Vec4, Mat3, Mat4
-pub fn render(ui: &mut Ui, attrs: &mut Attrs) {
+pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) {
     if attrs.is_empty() {
         ui.label("(no attributes)");
         return;
@@ -16,65 +31,150 @@ pub fn render(ui: &mut Ui, attrs: &mut Attrs) {
     let attr_count = attrs.iter().count();
     let attr_len = attrs.len();
     debug_assert_eq!(attr_count, attr_len);
-    ui.label(format!("Attributes: {}", attr_len));
+    ui.label(format!("{display_name}: {attr_len} attrs"));
 
-    for (key, value) in attrs.iter_mut() {
-        ui.horizontal(|ui| {
-            // Attribute name (read-only label)
-            ui.label(format!("{}:", key));
+    let row_height = ui
+        .text_style_height(&TextStyle::Body)
+        .max(ui.spacing().interact_size.y);
 
-            // Attribute value editor (type-specific widget)
-            match value {
-                AttrValue::Bool(v) => {
-                    ui.checkbox(v, "");
-                }
-                AttrValue::Str(s) => {
-                    ui.text_edit_singleline(s);
-                }
-                AttrValue::Int(v) => {
-                    ui.add(egui::DragValue::new(v).speed(1.0));
-                }
-                AttrValue::UInt(v) => {
-                    let mut temp = *v as i32;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut temp)
-                                .speed(1.0)
-                                .range(0..=i32::MAX),
-                        )
-                        .changed()
-                    {
-                        *v = temp.max(0) as u32;
-                    }
-                }
-                AttrValue::Float(v) => {
-                    ui.add(egui::DragValue::new(v).speed(0.1));
-                }
-                AttrValue::Vec3(arr) => {
-                    ui.label("X:");
-                    ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1));
-                    ui.label("Y:");
-                    ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1));
-                    ui.label("Z:");
-                    ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1));
-                }
-                AttrValue::Vec4(arr) => {
-                    ui.label("X:");
-                    ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1));
-                    ui.label("Y:");
-                    ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1));
-                    ui.label("Z:");
-                    ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1));
-                    ui.label("W:");
-                    ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1));
-                }
-                AttrValue::Mat3(_) => {
-                    ui.label("(3x3 matrix - not editable)");
-                }
-                AttrValue::Mat4(_) => {
-                    ui.label("(4x4 matrix - not editable)");
-                }
+    // Clamp width bounds
+    let available_width = ui.available_width();
+    let min_label = 100.0;
+    let max_label = (available_width - 120.0).max(min_label);
+    state.name_column_width = state.name_column_width.clamp(min_label, max_label);
+
+    // Track top to draw splitter across table height later
+    let table_top = ui.cursor().min;
+
+    // Sort attributes by name for stable order
+    let mut keys: Vec<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
+    keys.sort();
+
+    TableBuilder::new(ui)
+        .id_salt("attrs_table")
+        .striped(true)
+        .column(
+            Column::initial(state.name_column_width)
+                .range(min_label..=max_label)
+                .resizable(false),
+        )
+        .column(Column::remainder())
+        .header(row_height, |mut header| {
+            header.col(|ui| {
+                ui.strong("Attribute");
+            });
+            header.col(|ui| {
+                ui.strong("Value");
+            });
+        })
+        .body(|mut body| {
+            for key in keys {
+                let Some(value) = attrs.get_mut(&key) else {
+                    continue;
+                };
+                body.row(row_height, |mut row| {
+                    row.col(|ui| {
+                        ui.label(format!("{}:", key));
+                    });
+                    row.col(|ui| {
+                        render_value_editor(ui, &key, value);
+                    });
+                });
             }
         });
+
+    // Interactive splitter spanning header + body
+    let table_bottom = ui.cursor().min;
+    let x = table_top.x + state.name_column_width;
+    let splitter_rect = Rect::from_min_max(
+        Pos2::new(x - 4.0, table_top.y),
+        Pos2::new(x + 4.0, table_bottom.y),
+    );
+    let splitter_id = ui.make_persistent_id("attrs_splitter_drag");
+    let response = ui.interact(splitter_rect, splitter_id, Sense::click_and_drag());
+    if response.dragged() {
+        state.name_column_width =
+            (state.name_column_width + response.drag_delta().x).clamp(min_label, max_label);
+    }
+    let stroke = if response.hovered() || response.dragged() {
+        Stroke::new(2.0, ui.visuals().strong_text_color())
+    } else {
+        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color)
+    };
+    ui.painter().line_segment(
+        [Pos2::new(x, table_top.y), Pos2::new(x, table_bottom.y)],
+        stroke,
+    );
+}
+
+fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue) {
+    match (key, value) {
+        // Known enum-like string attributes rendered as dropdowns
+        ("blend_mode" | "layer_mode", AttrValue::Str(current)) => {
+            let mut selected = current.clone();
+            ComboBox::from_id_salt(format!("attr_enum_{}", key))
+                .selected_text(&selected)
+                .show_ui(ui, |ui| {
+                    for mode in ["normal", "screen", "add", "subtract", "multiply", "divide"] {
+                        ui.selectable_value(&mut selected, mode.to_string(), mode);
+                    }
+                });
+            *current = selected;
+        }
+
+        // Fallbacks
+        (_, AttrValue::Bool(v)) => {
+            ui.checkbox(v, "");
+        }
+        (_, AttrValue::Str(s)) => {
+            ui.text_edit_singleline(s);
+        }
+        (_, AttrValue::Int(v)) => {
+            ui.add(egui::DragValue::new(v).speed(1.0));
+        }
+        (_, AttrValue::UInt(v)) => {
+            let mut temp = *v as i32;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut temp)
+                        .speed(1.0)
+                        .range(0..=i32::MAX),
+                )
+                .changed()
+            {
+                *v = temp.max(0) as u32;
+            }
+        }
+        (_, AttrValue::Float(v)) => {
+            ui.add(egui::DragValue::new(v).speed(0.1));
+        }
+        (_, AttrValue::Vec3(arr)) => {
+            ui.horizontal(|ui| {
+                ui.label("X:");
+                ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1));
+                ui.label("Y:");
+                ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1));
+                ui.label("Z:");
+                ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1));
+            });
+        }
+        (_, AttrValue::Vec4(arr)) => {
+            ui.horizontal(|ui| {
+                ui.label("X:");
+                ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1));
+                ui.label("Y:");
+                ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1));
+                ui.label("Z:");
+                ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1));
+                ui.label("W:");
+                ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1));
+            });
+        }
+        (_, AttrValue::Mat3(_)) => {
+            ui.label("(3x3 matrix - not editable)");
+        }
+        (_, AttrValue::Mat4(_)) => {
+            ui.label("(4x4 matrix - not editable)");
+        }
     }
 }

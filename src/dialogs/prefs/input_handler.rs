@@ -23,7 +23,10 @@ impl HotkeyHandler {
     /// Priority: focused_window first, then Global as fallback
     pub fn handle_key(&self, key: &str) -> Option<AppEvent> {
         // Try current focused window first (panel-specific hotkeys have priority)
-        if let Some(event) = self.bindings.get(&(self.focused_window.clone(), key.to_string())) {
+        if let Some(event) = self
+            .bindings
+            .get(&(self.focused_window.clone(), key.to_string()))
+        {
             return Some(event.clone());
         }
 
@@ -104,7 +107,13 @@ impl HotkeyHandler {
     pub fn handle_input(&self, input: &egui::InputState) -> Option<AppEvent> {
         // Check all events (key_pressed, not keys_down to avoid repeats)
         for event in &input.events {
-            if let egui::Event::Key { key, pressed: true, modifiers, .. } = event {
+            if let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+            {
                 let key_str = format!("{:?}", key);
 
                 // Check with modifiers
