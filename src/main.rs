@@ -1545,7 +1545,12 @@ impl eframe::App for PlayaApp {
         if self.show_encode_dialog
             && let Some(ref mut dialog) = self.encode_dialog
         {
-            let should_stay_open = dialog.render(ctx);
+            let active_comp = self
+                .player
+                .active_comp
+                .as_ref()
+                .and_then(|uuid| self.player.project.media.get(uuid));
+            let should_stay_open = dialog.render(ctx, &self.player.project, active_comp);
 
             // Save dialog state (on every render - cheap clone)
             self.settings.encode_dialog = dialog.save_to_settings();

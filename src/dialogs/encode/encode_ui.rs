@@ -15,6 +15,7 @@ use crate::dialogs::encode::{
     CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
     ProResProfile, VideoCodec,
 };
+use crate::entities::{Comp, Project};
 use crate::widgets::status::progress_bar::ProgressBar;
 
 /// Encoding dialog state
@@ -295,7 +296,12 @@ impl EncodeDialog {
     /// Render the encode dialog
     ///
     /// Returns: true if dialog should remain open, false if closed
-    pub fn render(&mut self, ctx: &egui::Context) -> bool {
+    pub fn render(
+        &mut self,
+        ctx: &egui::Context,
+        project: &Project,
+        active_comp: Option<&Comp>,
+    ) -> bool {
         let mut should_close = false;
 
         // Poll progress updates
@@ -465,12 +471,12 @@ impl EncodeDialog {
                 ui.separator();
 
                 // === Readiness check ===
-                let ready_to_encode = true;
+                let ready_to_encode = active_comp.is_some();
 
                 if !ready_to_encode {
                     ui.colored_label(
                         egui::Color32::from_rgb(200, 150, 0),
-                        "Frames are still loading...",
+                        "No active comp to encode",
                     );
                 }
 
@@ -495,11 +501,12 @@ impl EncodeDialog {
                         ui.add_enabled_ui(ready_to_encode, |ui| {
                             let mut button = ui.button("Encode");
                             if !ready_to_encode {
-                                button =
-                                    button.on_disabled_hover_text("Wait for all frames to load");
+                                button = button.on_disabled_hover_text("No active comp");
                             }
                             if button.clicked() {
-                                self.start_encoding();
+                                if let Some(comp) = active_comp {
+                                    self.start_encoding(comp, project);
+                                }
                             }
                         });
                     }
@@ -511,7 +518,7 @@ impl EncodeDialog {
     }
 
     /// Start encoding process
-    fn start_encoding(&mut self) {
+    fn start_encoding(&mut self, comp: &Comp, project: &Project) {
         let settings = self.build_encoder_settings();
         info!("========== STARTING ENCODING ==========");
         info!(
@@ -531,6 +538,8 @@ impl EncodeDialog {
         // Clone data for thread
         let settings_clone = self.build_encoder_settings();
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
+        let comp_clone = comp.clone();
+        let project_clone = project.clone();
 
         // Spawn encoder thread (Comp-based)
         use crate::dialogs::encode::encode_comp;
@@ -539,13 +548,8 @@ impl EncodeDialog {
         let handle = thread::spawn(move || {
             info!("Encoder thread started");
 
-            // TODO: Get real comp and project from UI state
-            // For now we build minimal empty comp and project
-            let comp = crate::entities::comp::Comp::new("Comp", 0, 0, settings_clone.fps);
-            let project = crate::entities::project::Project::new();
-
             info!("Calling encode_comp()...");
-            encode_comp(&comp, &project, &settings_clone, tx, cancel_flag_clone)
+            encode_comp(&comp_clone, &project_clone, &settings_clone, tx, cancel_flag_clone)
         });
 
         self.encode_thread = Some(handle);
