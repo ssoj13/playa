@@ -16,35 +16,44 @@ pub fn help_text() -> &'static str {
     "Drag'n'drop a file here or double-click to open\n\n\
     Hotkeys:\n\
     F1 - Toggle this help\n\
-    F2 - Toggle playlist\n\
-    F3 - Preferences\n\
-    F7 - Video Encoding\n\
+    F2 - Toggle Project panel\n\
+    F3 - Toggle Attributes panel\n\
+    F4 - Toggle Encoder dialog\n\
+    F5 - Toggle Preferences\n\
     ESC - Exit Fullscreen / Quit\n\n\
     Z - Toggle Fullscreen\n\
     Ctrl+R - Reset Settings\n\
     Backspace - Toggle Frame Numbers\n\n\
-    ' / ` - Toggle Loop\n\
+    ` - Toggle Loop\n\
     B - Set Play Range Start\n\
     N - Set Play Range End\n\
     Ctrl+B - Reset Play Range\n\n\
     Playback:\n\
-    Space - Play/Pause Toggle\n\
-    K / . - Stop\n\
-    J / , - Jog Backward\n\
-    L / / - Jog Forward\n\n\
+    Space / ↑ - Play/Pause Toggle\n\
+    K / . / ↓ - Stop\n\
+    J / , - Jog Backward (accelerates)\n\
+    L / / - Jog Forward (accelerates)\n\n\
     Frame Navigation:\n\
-    Arrow Left/Right - Step 1 frame\n\
+    ← → - Step 1 frame\n\
     PgUp/PgDn - Step 1 frame\n\
     Shift+Arrows/PgUp/PgDn - Step 25 frames\n\
     Ctrl+Arrows/PgUp/PgDn - Jump to Start/End\n\
     1 / Home - Jump to Start\n\
     2 / End - Jump to End\n\
-    [ - Previous Clip\n\
-    ] - Next Clip\n\n\
-    FPS Control:\n\
+    ; - Jump to Previous Layer Edge\n\
+    ' - Jump to Next Layer Edge\n\n\
+    Timeline (Layer Operations):\n\
+    [ - Align Layer Start to Cursor\n\
+    ] - Align Layer End to Cursor\n\
+    Alt+[ - Trim Layer Start to Cursor\n\
+    Alt+] - Trim Layer End to Cursor\n\
+    Delete - Remove Selected Layer\n\
+    F - Fit Timeline\n\
+    A - Reset Timeline Zoom\n\n\
+    FPS Control (Presets):\n\
     - - Decrease Base FPS\n\
     = / + - Increase Base FPS\n\n\
-    View:\n\
+    Viewport:\n\
     A / H - 100% Zoom\n\
     F - Fit to View\n\n\
     Mouse:\n\
