@@ -20,13 +20,18 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use half::f16;
 use eframe::egui;
 use glob::glob;
-use log::info;
+use log::{debug, info};
+use lru::LruCache;
 use serde::{Deserialize, Serialize};
+
+use crate::cache_man::CacheManager;
 
 use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::loader::Loader;
@@ -130,14 +135,29 @@ pub struct Comp {
     event_sender: CompEventSender,
 
     /// Per-comp frame cache: (comp_hash, frame_idx) -> composed Frame (runtime-only)
-    /// Uses RefCell for interior mutability to allow caching with &self
+    /// Uses LRU with memory-aware eviction (tracked by CacheManager)
     /// Hash invalidates cache when composition changes
     #[serde(skip)]
-    #[serde(default)]
-    cache: RefCell<HashMap<(u64, usize), Frame>>,
+    #[serde(default = "Comp::default_cache")]
+    cache: RefCell<LruCache<(u64, usize), Frame>>,
+
+    /// Global cache manager (memory tracking + epoch)
+    #[serde(skip)]
+    cache_manager: Option<Arc<CacheManager>>,
+}
+
+impl Default for Comp {
+    fn default() -> Self {
+        Self::new("Untitled", 0, 100, 24.0)
+    }
 }
 
 impl Comp {
+    /// Default cache for serde deserialization
+    fn default_cache() -> RefCell<LruCache<(u64, usize), Frame>> {
+        RefCell::new(LruCache::new(NonZeroUsize::new(10000).unwrap()))
+    }
+
     /// Create new composition in Layer mode (default)
     pub fn new(name: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
         let mut attrs = Attrs::new();
@@ -168,7 +188,8 @@ impl Comp {
             layer_selection: Vec::new(),
             layer_selection_anchor: None,
             event_sender: CompEventSender::dummy(),
-            cache: RefCell::new(HashMap::new()),
+            cache: RefCell::new(LruCache::new(NonZeroUsize::new(10000).unwrap())),
+            cache_manager: None,
         }
     }
 
@@ -469,9 +490,51 @@ impl Comp {
         Some(statuses)
     }
 
-    /// Clear per-comp frame cache.
+    /// Set global cache manager (called once after creation)
+    pub fn set_cache_manager(&mut self, manager: Arc<CacheManager>) {
+        self.cache_manager = Some(manager);
+    }
+
+    /// Clear per-comp frame cache with memory tracking
     pub fn clear_cache(&self) {
+        // Free memory for all cached frames
+        if let Some(ref manager) = self.cache_manager {
+            for (_, frame) in self.cache.borrow().iter() {
+                let size = frame.mem();
+                manager.free_memory(size);
+            }
+        }
         self.cache.borrow_mut().clear();
+    }
+
+    /// Insert frame into cache with LRU eviction and memory tracking
+    fn cache_insert(&self, key: (u64, usize), frame: Frame) {
+        let frame_size = frame.mem();
+
+        // Perform LRU eviction if memory limit exceeded
+        if let Some(ref manager) = self.cache_manager {
+            while manager.check_memory_limit() {
+                let mut cache = self.cache.borrow_mut();
+                if let Some((_, evicted)) = cache.pop_lru() {
+                    let evicted_size = evicted.mem();
+                    manager.free_memory(evicted_size);
+                    debug!(
+                        "LRU evicted frame: freed {} MB (usage: {} MB / {} MB)",
+                        evicted_size / 1024 / 1024,
+                        manager.mem().0 / 1024 / 1024,
+                        manager.mem().1 / 1024 / 1024
+                    );
+                } else {
+                    break; // Cache empty, can't evict more
+                }
+            }
+
+            // Track new frame memory
+            manager.add_memory(frame_size);
+        }
+
+        // Insert into LRU cache
+        self.cache.borrow_mut().push(key, frame);
     }
 
     /// Compute hash of composition configuration for cache invalidation.
@@ -605,7 +668,9 @@ impl Comp {
 
         // Cache key uses sequence frame number to avoid collisions when start shifts
         let cache_key = (self.compute_comp_hash(), seq_frame.max(0) as usize);
-        if let Some(frame) = self.cache.borrow().get(&cache_key) {
+
+        // Check cache (LRU::get is mutating, updates access order)
+        if let Some(frame) = self.cache.borrow_mut().get(&cache_key) {
             return Some(frame.clone());
         }
 
@@ -615,7 +680,10 @@ impl Comp {
         }
 
         let frame = self.frame_from_path(frame_path);
-        self.cache.borrow_mut().insert(cache_key, frame.clone());
+
+        // Insert with memory-aware eviction
+        self.cache_insert(cache_key, frame.clone());
+
         Some(frame)
     }
 
@@ -630,16 +698,17 @@ impl Comp {
         let comp_hash = self.compute_comp_hash();
         let cache_key = (comp_hash, frame_idx.max(0) as usize); // Cache key uses positive values
 
-        // Check cache
-        if let Some(frame) = self.cache.borrow().get(&cache_key) {
+        // Check cache (LRU::get is mutating)
+        if let Some(frame) = self.cache.borrow_mut().get(&cache_key) {
             return Some(frame.clone());
         }
 
         // Compose frame recursively
         let composed = self.compose(frame_idx, project)?;
 
-        // Cache result with hash-based key
-        self.cache.borrow_mut().insert(cache_key, composed.clone());
+        // Insert with memory-aware eviction
+        self.cache_insert(cache_key, composed.clone());
+
         Some(composed)
     }
 

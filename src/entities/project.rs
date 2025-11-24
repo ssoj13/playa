@@ -8,10 +8,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use super::{Attrs, Comp, CompositorType};
+use crate::cache_man::CacheManager;
 
 /// Top-level project / scene.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -165,6 +167,13 @@ impl Project {
         let uuid = comp.uuid.clone();
         self.media.insert(uuid.clone(), comp);
         self.comps_order.push(uuid);
+    }
+
+    /// Set CacheManager for all comps (call after deserialization or creation)
+    pub fn set_cache_manager_all(&mut self, manager: Arc<CacheManager>) {
+        for comp in self.media.values_mut() {
+            comp.set_cache_manager(Arc::clone(&manager));
+        }
     }
 
     /// Remove media (clip or comp) by UUID.

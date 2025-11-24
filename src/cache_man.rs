@@ -23,6 +23,7 @@ pub enum PreloadStrategy {
 ///
 /// Tracks memory usage across all Comp caches and provides epoch mechanism
 /// for cancelling stale preload requests.
+#[derive(Debug)]
 pub struct CacheManager {
     /// Atomically tracked memory usage (bytes)
     memory_usage: Arc<AtomicUsize>,

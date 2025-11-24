@@ -150,7 +150,11 @@ impl Default for PlayaApp {
             selected_media_uuid: None,
             last_render_time_ms: 0.0,
             settings: AppSettings::default(),
-            project: Project::new(),
+            project: {
+                let mut proj = Project::new();
+                proj.set_cache_manager_all(Arc::clone(&cache_manager));
+                proj
+            },
             show_help: true,
             show_playlist: true,
             show_settings: false,
