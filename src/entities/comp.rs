@@ -902,7 +902,7 @@ impl Comp {
             dim.0,
             dim.1
         );
-        project.compositor.blend_with_dim(source_frames, dim)
+        project.compositor.borrow_mut().blend_with_dim(source_frames, dim)
     }
 
     /// Add a new child to the composition at specified start frame.

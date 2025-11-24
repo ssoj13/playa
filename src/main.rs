@@ -79,6 +79,8 @@ struct PlayaApp {
     #[serde(skip)]
     fullscreen_dirty: bool,
     #[serde(skip)]
+    reset_settings_pending: bool,
+    #[serde(skip)]
     applied_mem_fraction: f64,
     #[serde(skip)]
     applied_workers: Option<usize>,
@@ -149,6 +151,7 @@ impl Default for PlayaApp {
             encode_dialog: None,
             is_fullscreen: false,
             fullscreen_dirty: false,
+            reset_settings_pending: false,
             applied_mem_fraction: 0.75,
             applied_workers: None,
             path_config: config::PathConfig::from_env_and_cli(None),
@@ -1163,10 +1166,7 @@ impl PlayaApp {
 
             // ===== Settings =====
             AppEvent::ResetSettings => {
-                self.reset_settings(ctx);
-                if self.is_fullscreen {
-                    self.set_cinema_mode(ctx, false);
-                }
+                self.reset_settings_pending = true;
             }
         }
     }
@@ -1269,15 +1269,7 @@ impl PlayaApp {
             }
         }
 
-        // Ctrl+R: reset settings and force exit cinema/fullscreen (not routed via EventBus)
-        if input.modifiers.ctrl && input.key_pressed(egui::Key::R) {
-            self.reset_settings(ctx);
-            if self.is_fullscreen {
-                self.set_cinema_mode(ctx, false);
-            }
-        }
-
-        // Viewport controls and playback are routed via EventBus (HotkeyHandler)
+        // All other hotkeys (playback, viewport, etc.) are routed via EventBus (HotkeyHandler)
     }
 
     fn reset_settings(&mut self, ctx: &egui::Context) {
@@ -1395,6 +1387,34 @@ impl PlayaApp {
         self.selected_media_uuid = Some(uuid.clone());
         self.event_bus
             .send(events::AppEvent::ProjectActiveChanged(uuid));
+    }
+
+    /// Update compositor backend based on settings
+    fn update_compositor_backend(&mut self, gl: &std::sync::Arc<glow::Context>) {
+        use entities::compositor::{CompositorType, CpuCompositor};
+        use entities::gpu_compositor::GpuCompositor;
+
+        let desired_backend = match self.settings.compositor_backend {
+            dialogs::prefs::CompositorBackend::Cpu => CompositorType::Cpu(CpuCompositor),
+            dialogs::prefs::CompositorBackend::Gpu => {
+                CompositorType::Gpu(GpuCompositor::new(gl.clone()))
+            }
+        };
+
+        // Check if compositor type changed
+        let current_is_cpu = matches!(
+            *self.player.project.compositor.borrow(),
+            CompositorType::Cpu(_)
+        );
+        let desired_is_cpu = matches!(desired_backend, CompositorType::Cpu(_));
+
+        if current_is_cpu != desired_is_cpu {
+            info!(
+                "Switching compositor to: {:?}",
+                self.settings.compositor_backend
+            );
+            self.player.project.set_compositor(desired_backend);
+        }
     }
 
     fn render_project_tab(&mut self, ui: &mut egui::Ui) {
@@ -1768,7 +1788,12 @@ impl<'a> TabViewer for DockTabs<'a> {
 }
 
 impl eframe::App for PlayaApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Get GL context and update compositor backend
+        if let Some(gl) = frame.gl() {
+            self.update_compositor_backend(gl);
+        }
+
         // Process all events from the event bus
         while let Some(event) = self.event_bus.try_recv() {
             self.handle_event(event);
@@ -1792,6 +1817,15 @@ impl eframe::App for PlayaApp {
         if self.fullscreen_dirty {
             self.set_cinema_mode(ctx, self.is_fullscreen);
             self.fullscreen_dirty = false;
+        }
+
+        // Apply pending settings reset requested via events
+        if self.reset_settings_pending {
+            self.reset_settings(ctx);
+            if self.is_fullscreen {
+                self.set_cinema_mode(ctx, false);
+            }
+            self.reset_settings_pending = false;
         }
 
         // Enable multipass for better taffy layout recalculation responsiveness

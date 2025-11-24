@@ -3,9 +3,14 @@
 //! Private module used by Comp for multi-layer blending.
 //! Provides modular compositing backend:
 //! - CPU compositor (default, works everywhere)
-//! - GPU compositor (future, requires OpenGL/WGPU context)
+//! - GPU compositor (requires OpenGL context, 10-50x faster)
 
 use crate::entities::frame::{Frame, PixelBuffer};
+
+// === GPU Compositor Toggle ===
+// To enable GPU compositor: uncomment the line below
+// To disable GPU compositor: comment the line below
+use super::gpu_compositor::GpuCompositor;
 
 /// Supported blend modes for layer compositing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,27 +29,28 @@ pub enum BlendMode {
 pub enum CompositorType {
     /// CPU compositor - works everywhere, slower
     Cpu(CpuCompositor),
-    // Gpu(GpuCompositor),  // Future: GPU compositor
+    /// GPU compositor - requires OpenGL context, 10-50x faster
+    Gpu(GpuCompositor),
 }
 
 impl CompositorType {
     /// Blend frames using the selected compositor backend.
-    pub fn blend(&self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
+    pub fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
         match self {
             CompositorType::Cpu(cpu) => cpu.blend(frames),
-            // CompositorType::Gpu(gpu) => gpu.blend(frames),
+            CompositorType::Gpu(gpu) => gpu.blend(frames),
         }
     }
 
     /// Blend frames into a canvas with explicit dimensions.
     pub fn blend_with_dim(
-        &self,
+        &mut self,
         frames: Vec<(Frame, f32, BlendMode)>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         match self {
             CompositorType::Cpu(cpu) => cpu.blend_with_dim(frames, dim),
-            // CompositorType::Gpu(gpu) => gpu.blend(frames),
+            CompositorType::Gpu(gpu) => gpu.blend_with_dim(frames, dim),
         }
     }
 }

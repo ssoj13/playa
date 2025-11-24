@@ -7,6 +7,7 @@
 pub mod attrs;
 pub mod comp;
 pub mod compositor;
+pub mod gpu_compositor; // GPU compositor module
 pub mod frame;
 pub mod loader;
 pub mod loader_video;

@@ -4,6 +4,7 @@
 //! Project is the unit of serialization: scenes are saved and loaded via
 //! `Project::to_json` / `Project::from_json`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -39,12 +40,18 @@ pub struct Project {
 
     /// Frame compositor (runtime-only, not serialized)
     /// Used by Comp.compose() for multi-layer blending
+    /// Uses RefCell for interior mutability (GPU compositor needs mutable access)
     #[serde(skip)]
-    #[serde(default)]
-    pub compositor: CompositorType,
+    #[serde(default = "Project::default_compositor")]
+    pub compositor: RefCell<CompositorType>,
 }
 
 impl Project {
+    /// Default compositor constructor for serde
+    fn default_compositor() -> RefCell<CompositorType> {
+        RefCell::new(CompositorType::default())
+    }
+
     pub fn new() -> Self {
         Self {
             attrs: Attrs::new(),
@@ -53,7 +60,7 @@ impl Project {
             selection: Vec::new(),
             active: None,
             selection_anchor: None,
-            compositor: CompositorType::default(), // CPU compositor by default
+            compositor: RefCell::new(CompositorType::default()), // CPU compositor by default
         }
     }
 
@@ -121,7 +128,7 @@ impl Project {
     /// - Sets event sender for all comps.
     pub fn rebuild_runtime(&mut self, event_sender: Option<crate::events::CompEventSender>) {
         // Reinitialize compositor (not serialized)
-        self.compositor = CompositorType::default();
+        *self.compositor.borrow_mut() = CompositorType::default();
 
         // Rebuild comps in unified media HashMap
         for comp in self.media.values_mut() {
@@ -137,10 +144,10 @@ impl Project {
     /// Set compositor type (CPU or GPU).
     ///
     /// Allows switching between CPU and GPU compositing backends.
-    /// GPU compositor requires OpenGL/WGPU context (future feature).
-    pub fn set_compositor(&mut self, compositor: CompositorType) {
+    /// GPU compositor requires OpenGL context.
+    pub fn set_compositor(&self, compositor: CompositorType) {
         log::info!("Compositor changed to: {:?}", compositor);
-        self.compositor = compositor;
+        *self.compositor.borrow_mut() = compositor;
     }
 
     /// Get mutable reference to a composition by UUID.

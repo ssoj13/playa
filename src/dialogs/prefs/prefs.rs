@@ -25,6 +25,19 @@ impl SettingsCategory {
     }
 }
 
+/// Compositor backend selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CompositorBackend {
+    Cpu,
+    Gpu,
+}
+
+impl Default for CompositorBackend {
+    fn default() -> Self {
+        CompositorBackend::Cpu // Default to CPU for compatibility
+    }
+}
+
 /// Application settings
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -49,6 +62,9 @@ pub struct AppSettings {
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
 
+    // Compositor backend (CPU or GPU)
+    pub compositor_backend: CompositorBackend,
+
     // Encoding dialog
     pub encode_dialog: crate::dialogs::encode::EncodeDialogSettings,
 
@@ -71,6 +87,7 @@ impl Default for AppSettings {
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             workers_override: 0,
+            compositor_backend: CompositorBackend::default(),
             encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
             selected_settings_category: Some("UI".to_string()),
         }
@@ -110,6 +127,18 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
             .range(0..=256),
     );
     ui.label("Takes effect on next launch. Defaults to ~75% of CPU cores.");
+
+    ui.add_space(16.0);
+    ui.heading("Compositing");
+    ui.add_space(8.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Backend:");
+        ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Cpu, "CPU");
+        ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Gpu, "GPU");
+    });
+    ui.label("GPU compositor uses OpenGL for 10-50x faster multi-layer blending.");
+    ui.label("Requires OpenGL 3.0+. Falls back to CPU on errors.");
 }
 
 /// Render settings window
