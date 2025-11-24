@@ -86,9 +86,9 @@ impl HotkeyHandler {
         // Global hotkeys (работают везде)
         self.add_binding(Global, "F1".to_string(), ToggleHelp);
         self.add_binding(Global, "F2".to_string(), TogglePlaylist);
-        self.add_binding(Global, "F3".to_string(), ToggleSettings);
-        self.add_binding(Global, "F4".to_string(), ToggleAttributeEditor);
-        self.add_binding(Global, "F5".to_string(), ToggleEncodeDialog);
+        self.add_binding(Global, "F3".to_string(), ToggleAttributeEditor);
+        self.add_binding(Global, "F4".to_string(), ToggleEncodeDialog);
+        self.add_binding(Global, "F5".to_string(), ToggleSettings);
         self.add_binding(Global, "Space".to_string(), TogglePlayPause);
         self.add_binding(Global, "ArrowUp".to_string(), TogglePlayPause);
         self.add_binding(Global, "K".to_string(), Stop);
