@@ -620,12 +620,17 @@ impl PlayaApp {
             AppEvent::JumpToPrevEdge => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        if let Some(&(frame, _)) = comp
-                            .get_child_edges_near(comp.current_frame)
-                            .iter()
-                            .find(|(f, _)| *f < comp.current_frame)
-                        {
-                            comp.set_current_frame(frame);
+                        let current = comp.current_frame;
+                        let edges = comp.get_child_edges_near(current);
+                        if edges.is_empty() {
+                            return;
+                        }
+                        // Find last edge strictly before current, otherwise wrap to first
+                        if let Some((frame, _)) = edges.iter().rev().find(|(f, _)| *f < current) {
+                            comp.set_current_frame(*frame);
+                        } else if let Some((frame, _)) = edges.last() {
+                            // wrap to last edge
+                            comp.set_current_frame(*frame);
                         }
                     }
                 }
@@ -633,12 +638,17 @@ impl PlayaApp {
             AppEvent::JumpToNextEdge => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        if let Some(&(frame, _)) = comp
-                            .get_child_edges_near(comp.current_frame)
-                            .iter()
-                            .find(|(f, _)| *f > comp.current_frame)
-                        {
-                            comp.set_current_frame(frame);
+                        let current = comp.current_frame;
+                        let edges = comp.get_child_edges_near(current);
+                        if edges.is_empty() {
+                            return;
+                        }
+                        // Find first edge strictly after current, otherwise wrap to last
+                        if let Some((frame, _)) = edges.iter().find(|(f, _)| *f > current) {
+                            comp.set_current_frame(*frame);
+                        } else if let Some((frame, _)) = edges.first() {
+                            // wrap to first edge
+                            comp.set_current_frame(*frame);
                         }
                     }
                 }
@@ -827,8 +837,7 @@ impl PlayaApp {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
                         let current = comp.current_frame as i32;
-                        let offset = (current - comp.start()).max(0);
-                        comp.set_comp_play_start(offset);
+                        comp.set_comp_play_start(current);
                     }
                 }
             }
@@ -836,35 +845,36 @@ impl PlayaApp {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
                         let current = comp.current_frame as i32;
-                        let offset = (comp.end() - current).max(0);
-                        comp.set_comp_play_end(offset);
+                        comp.set_comp_play_end(current);
                     }
                 }
             }
             AppEvent::ResetPlayRange => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        comp.set_comp_play_start(0);
-                        comp.set_comp_play_end(0); // 0 means use full range
+                        let start = comp.start();
+                        let end = comp.end();
+                        comp.set_comp_play_start(start);
+                        comp.set_comp_play_end(end);
                     }
                 }
             }
             AppEvent::SetCompPlayStart { comp_uuid, frame } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    let play_start = (frame - comp.start()).max(0);
-                    comp.set_comp_play_start(play_start);
+                    comp.set_comp_play_start(frame);
                 }
             }
             AppEvent::SetCompPlayEnd { comp_uuid, frame } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    let play_end = (comp.end() - frame).max(0);
-                    comp.set_comp_play_end(play_end);
+                    comp.set_comp_play_end(frame);
                 }
             }
             AppEvent::ResetCompPlayArea { comp_uuid } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    comp.set_comp_play_start(0);
-                    comp.set_comp_play_end(0);
+                    let start = comp.start();
+                    let end = comp.end();
+                    comp.set_comp_play_start(start);
+                    comp.set_comp_play_end(end);
                 }
             }
 
