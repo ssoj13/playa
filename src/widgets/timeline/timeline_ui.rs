@@ -321,35 +321,6 @@ pub fn render_canvas(
 
     ui.add_space(4.0);
 
-    // Handle keyboard shortcuts for jumping to layer edges
-    if ui.ctx().input(|i| i.key_pressed(egui::Key::OpenBracket)) {
-        dispatch(AppEvent::JumpToPrevEdge);
-    }
-    if ui.ctx().input(|i| i.key_pressed(egui::Key::CloseBracket)) {
-        dispatch(AppEvent::JumpToNextEdge);
-    }
-
-    // Handle keyboard shortcuts for work area
-    if ui.ctx().input(|i| i.key_pressed(egui::Key::B)) {
-        let ctrl_pressed = ui.ctx().input(|i| i.modifiers.ctrl);
-        if ctrl_pressed {
-            dispatch(AppEvent::ResetCompPlayArea {
-                comp_uuid: comp_id.clone(),
-            });
-        } else {
-            dispatch(AppEvent::SetCompPlayStart {
-                comp_uuid: comp_id.clone(),
-                frame: comp.current_frame,
-            });
-        }
-    }
-    if ui.ctx().input(|i| i.key_pressed(egui::Key::N)) {
-        dispatch(AppEvent::SetCompPlayEnd {
-            comp_uuid: comp_id.clone(),
-            frame: comp.current_frame,
-        });
-    }
-
     // Layers area with vertical scroll (but horizontal pan via state.pan_offset)
     // ScrollArea is needed here because layers can extend beyond visible area vertically
     egui::ScrollArea::vertical()

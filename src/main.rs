@@ -74,6 +74,8 @@ struct PlayaApp {
     #[serde(skip)]
     is_fullscreen: bool,
     #[serde(skip)]
+    fullscreen_dirty: bool,
+    #[serde(skip)]
     applied_mem_fraction: f64,
     #[serde(skip)]
     applied_workers: Option<usize>,
@@ -142,6 +144,7 @@ impl Default for PlayaApp {
             show_encode_dialog: false,
             encode_dialog: None,
             is_fullscreen: false,
+            fullscreen_dirty: false,
             applied_mem_fraction: 0.75,
             applied_workers: None,
             path_config: config::PathConfig::from_env_and_cli(None),
@@ -589,16 +592,17 @@ impl PlayaApp {
                 }
             }
             AppEvent::StepForward => {
-                // TODO: implement step forward
+                self.player.step(1);
             }
             AppEvent::StepBackward => {
-                // TODO: implement step backward
+                self.player.step(-1);
             }
             AppEvent::StepForwardLarge => {
-                // TODO: implement step forward large (25 frames)
+                self.player.step(crate::player::FRAME_JUMP_STEP);
             }
             AppEvent::StepBackwardLarge => {
-                // TODO: implement step backward large (25 frames)
+                self.player
+                    .step(-crate::player::FRAME_JUMP_STEP);
             }
             AppEvent::PreviousClip => {
                 // TODO: implement previous clip
@@ -607,20 +611,10 @@ impl PlayaApp {
                 // TODO: implement next clip
             }
             AppEvent::JumpToStart => {
-                if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        let play_start = comp.play_start();
-                        comp.set_current_frame(play_start);
-                    }
-                }
+                self.player.to_start();
             }
             AppEvent::JumpToEnd => {
-                if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        let play_end = comp.play_end();
-                        comp.set_current_frame(play_end);
-                    }
-                }
+                self.player.to_end();
             }
             AppEvent::JumpToPrevEdge => {
                 if let Some(comp_uuid) = &self.player.active_comp {
@@ -746,8 +740,17 @@ impl PlayaApp {
             AppEvent::ToggleSettings => {
                 self.show_settings = !self.show_settings;
             }
+            AppEvent::ToggleEncodeDialog => {
+                self.show_encode_dialog = !self.show_encode_dialog;
+                if self.show_encode_dialog && self.encode_dialog.is_none() {
+                    debug!("[ToggleEncodeDialog] Opening encode dialog, loading settings from AppSettings");
+                    self.encode_dialog =
+                        Some(EncodeDialog::load_from_settings(&self.settings.encode_dialog));
+                }
+            }
             AppEvent::ToggleFullscreen => {
-                // TODO: implement fullscreen toggle
+                self.is_fullscreen = !self.is_fullscreen;
+                self.fullscreen_dirty = true;
             }
             AppEvent::ToggleLoop => {
                 self.settings.loop_enabled = !self.settings.loop_enabled;
@@ -812,7 +815,8 @@ impl PlayaApp {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
                         let current = comp.current_frame as i32;
-                        comp.set_play_start(current);
+                        let offset = (current - comp.start()).max(0);
+                        comp.set_comp_play_start(offset);
                     }
                 }
             }
@@ -820,15 +824,16 @@ impl PlayaApp {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
                         let current = comp.current_frame as i32;
-                        comp.set_play_end(current);
+                        let offset = (comp.end() - current).max(0);
+                        comp.set_comp_play_end(offset);
                     }
                 }
             }
             AppEvent::ResetPlayRange => {
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
-                        comp.set_play_start(0);
-                        comp.set_play_end(0); // 0 means use full range
+                        comp.set_comp_play_start(0);
+                        comp.set_comp_play_end(0); // 0 means use full range
                     }
                 }
             }
@@ -1097,33 +1102,6 @@ impl PlayaApp {
             );
         }
 
-        // F1: Toggle help
-        if input.key_pressed(egui::Key::F1) {
-            self.event_bus.send(events::AppEvent::ToggleHelp);
-        }
-
-        // F2: Toggle playlist
-        if input.key_pressed(egui::Key::F2) {
-            self.event_bus.send(events::AppEvent::TogglePlaylist);
-        }
-
-        // F3: Toggle settings (not yet in EventBus, keep direct)
-        if input.key_pressed(egui::Key::F3) {
-            self.show_settings = !self.show_settings;
-        }
-
-        // F4: Toggle encode dialog (not yet in EventBus, keep direct)
-        if input.key_pressed(egui::Key::F4) {
-            self.show_encode_dialog = !self.show_encode_dialog;
-            // Load dialog state from settings when opening
-            if self.show_encode_dialog && self.encode_dialog.is_none() {
-                debug!("[F4] Opening encode dialog, loading settings from AppSettings");
-                self.encode_dialog = Some(EncodeDialog::load_from_settings(
-                    &self.settings.encode_dialog,
-                ));
-            }
-        }
-
         // ESC/Q: Priority-based handler. ESC: fullscreen -> encode dialog -> settings -> quit. Q: always quit.
         if input.key_pressed(egui::Key::Escape) || input.key_pressed(egui::Key::Q) {
             // Priority 1: Fullscreen/Cinema mode (highest priority - most immersive state)
@@ -1150,186 +1128,15 @@ impl PlayaApp {
             }
         }
 
-        // Play/Pause (Space, ArrowUp)
-        if input.key_pressed(egui::Key::Space) || input.key_pressed(egui::Key::ArrowUp) {
-            // Toggle between play and pause
-            if self.player.is_playing {
-                self.event_bus.send(events::AppEvent::Pause);
-            } else {
-                self.event_bus.send(events::AppEvent::Play);
+        // Ctrl+R: reset settings and force exit cinema/fullscreen (not routed via EventBus)
+        if input.modifiers.ctrl && input.key_pressed(egui::Key::R) {
+            self.reset_settings(ctx);
+            if self.is_fullscreen {
+                self.set_cinema_mode(ctx, false);
             }
         }
 
-        // Stop (K, .)
-        if input.key_pressed(egui::Key::K) || input.key_pressed(egui::Key::Period) {
-            self.event_bus.send(events::AppEvent::Stop);
-        }
-
-        // Only process playback hotkeys when no widget has keyboard focus
-        // (prevents arrow keys from triggering playback while editing text fields)
-        if !ctx.wants_keyboard_input() {
-            // Jump to start (1, Home)
-            if input.key_pressed(egui::Key::Num1) || input.key_pressed(egui::Key::Home) {
-                self.event_bus.send(events::AppEvent::JumpToStart);
-            }
-
-            // Jump to end (2, End)
-            if input.key_pressed(egui::Key::Num2) || input.key_pressed(egui::Key::End) {
-                self.event_bus.send(events::AppEvent::JumpToEnd);
-            }
-
-            // Frame stepping
-            // PageDown - step 1 frame forward (or 25 with Shift)
-            if input.key_pressed(egui::Key::PageDown) {
-                let step = if input.modifiers.shift {
-                    crate::player::FRAME_JUMP_STEP
-                } else {
-                    1
-                };
-                self.player.step(step);
-            }
-
-            // PageUp - step 1 frame backward (or 25 with Shift)
-            if input.key_pressed(egui::Key::PageUp) {
-                let step = if input.modifiers.shift {
-                    -crate::player::FRAME_JUMP_STEP
-                } else {
-                    -1
-                };
-                self.player.step(step);
-            }
-
-            // Ctrl+PageDown - jump to end
-            if input.modifiers.ctrl && input.key_pressed(egui::Key::PageDown) {
-                self.player.to_end();
-            }
-
-            // Ctrl+PageUp - jump to start
-            if input.modifiers.ctrl && input.key_pressed(egui::Key::PageUp) {
-                self.player.to_start();
-            }
-
-            // Base FPS controls
-            // Decrease base FPS (-)
-            if input.key_pressed(egui::Key::Minus) {
-                self.player.decrease_fps_base();
-            }
-
-            // Increase base FPS (=, +)
-            if input.key_pressed(egui::Key::Equals) || input.key_pressed(egui::Key::Plus) {
-                self.player.increase_fps_base();
-            }
-
-            // Arrow navigation
-            // Shift+ArrowLeft - step 25 frames backward
-            if input.modifiers.shift && input.key_pressed(egui::Key::ArrowLeft) {
-                self.player.step(-crate::player::FRAME_JUMP_STEP);
-            }
-            // Shift+ArrowRight - step 25 frames forward
-            else if input.modifiers.shift && input.key_pressed(egui::Key::ArrowRight) {
-                self.player.step(crate::player::FRAME_JUMP_STEP);
-            }
-            // ArrowLeft - step 1 frame backward (no modifiers)
-            else if !input.modifiers.any() && input.key_pressed(egui::Key::ArrowLeft) {
-                self.player.step(-1);
-            }
-            // ArrowRight - step 1 frame forward (no modifiers)
-            else if !input.modifiers.any() && input.key_pressed(egui::Key::ArrowRight) {
-                self.player.step(1);
-            }
-
-            // ArrowDown - stop playback
-            if input.key_pressed(egui::Key::ArrowDown) {
-                self.player.stop();
-            }
-
-            // J, , - jog backward
-            if input.key_pressed(egui::Key::J) || input.key_pressed(egui::Key::Comma) {
-                self.player.jog_backward();
-            }
-
-            // L, / - jog forward
-            if input.key_pressed(egui::Key::L) || input.key_pressed(egui::Key::Slash) {
-                self.player.jog_forward();
-            }
-
-            // Sequence navigation
-            // Jump to previous sequence start ([)
-            if input.key_pressed(egui::Key::OpenBracket) {
-                self.player.jump_prev_sequence();
-            }
-
-            // Jump to next sequence start (])
-            if input.key_pressed(egui::Key::CloseBracket) {
-                self.player.jump_next_sequence();
-            }
-
-            // Toggle Loop with ' and `
-            if input.key_pressed(egui::Key::Quote) || input.key_pressed(egui::Key::Backtick) {
-                self.player.loop_enabled = !self.player.loop_enabled;
-            }
-
-            // Toggle frame numbers on timeslider (Backspace)
-            if input.key_pressed(egui::Key::Backspace) {
-                self.settings.show_frame_numbers = !self.settings.show_frame_numbers;
-            }
-
-            // Set comp work area start (B = Begin) relative to comp.start
-            if !input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
-                let current = self.player.current_frame();
-                if let Some(comp_uuid) = &self.player.active_comp.clone() {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        let play_start = (current as i32 - comp.start() as i32).max(0);
-                        comp.set_comp_play_start(play_start);
-                    }
-                }
-            }
-
-            // Set comp work area end (N = eNd) relative to comp.end
-            if !input.modifiers.ctrl && input.key_pressed(egui::Key::N) {
-                let current = self.player.current_frame();
-                if let Some(comp_uuid) = &self.player.active_comp.clone() {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        let play_end = (comp.end() as i32 - current as i32).max(0);
-                        comp.set_comp_play_end(play_end);
-                    }
-                }
-            }
-
-            // Reset comp work area to full (Ctrl+B)
-            if input.modifiers.ctrl && input.key_pressed(egui::Key::B) {
-                if let Some(comp_uuid) = &self.player.active_comp.clone() {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        comp.set_comp_play_start(0);
-                        comp.set_comp_play_end(0);
-                    }
-                }
-            }
-
-            // Skip to start/end (Ctrl modifiers)
-            if input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowLeft) {
-                self.player.to_start();
-            }
-            if input.modifiers.ctrl && input.key_pressed(egui::Key::ArrowRight) {
-                self.player.to_end();
-            }
-
-            // Ctrl+R: reset settings and force exit cinema/fullscreen
-            if input.modifiers.ctrl && input.key_pressed(egui::Key::R) {
-                self.reset_settings(ctx);
-                if self.is_fullscreen {
-                    self.set_cinema_mode(ctx, false);
-                }
-            }
-
-            // Z: toggle cinema/fullscreen
-            if input.key_pressed(egui::Key::Z) {
-                let enable = !self.is_fullscreen;
-                self.set_cinema_mode(ctx, enable);
-            }
-
-            // Viewport controls F/A/H moved to hotkey system (context-aware)
-        } // End of !ctx.wants_keyboard_input()
+        // Viewport controls and playback are routed via EventBus (HotkeyHandler)
     }
 
     fn reset_settings(&mut self, ctx: &egui::Context) {
@@ -1589,6 +1396,12 @@ impl eframe::App for PlayaApp {
             font_id.size = self.settings.font_size;
         }
         ctx.set_style(style);
+
+        // Apply pending fullscreen changes requested via events
+        if self.fullscreen_dirty {
+            self.set_cinema_mode(ctx, self.is_fullscreen);
+            self.fullscreen_dirty = false;
+        }
 
         // Enable multipass for better taffy layout recalculation responsiveness
         ctx.options_mut(|opts| {

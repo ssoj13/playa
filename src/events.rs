@@ -136,6 +136,8 @@ pub enum AppEvent {
     ToggleAttributeEditor,
     /// Toggle settings dialog
     ToggleSettings,
+    /// Toggle encode dialog
+    ToggleEncodeDialog,
     /// Toggle fullscreen
     ToggleFullscreen,
     /// Toggle loop mode
