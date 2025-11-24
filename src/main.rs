@@ -1881,6 +1881,7 @@ impl eframe::App for PlayaApp {
         self.settings.current_shader = self.shader_manager.current_shader.clone();
         self.settings.show_help = self.show_help;
         self.settings.show_playlist = self.show_playlist;
+        self.settings.show_attributes_editor = self.show_attributes_editor;
         // Snapshot current project from runtime player into persisted field
         self.project = self.player.project.clone();
 
@@ -2109,6 +2110,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.player.loop_enabled = app.settings.loop_enabled;
             app.shader_manager.current_shader = app.settings.current_shader.clone();
             app.show_help = app.settings.show_help;
+            app.show_playlist = app.settings.show_playlist;
+            app.show_attributes_editor = app.settings.show_attributes_editor;
             info!(
                 "Applied settings: FPS={}, Loop={}, Shader={}, Help={}",
                 app.settings.fps_base,

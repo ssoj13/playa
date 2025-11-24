@@ -39,6 +39,7 @@ pub struct AppSettings {
     // UI
     pub show_help: bool,
     pub show_playlist: bool,
+    pub show_attributes_editor: bool,
     pub show_frame_numbers: bool, // Show frame numbers on timeslider
     pub dark_mode: bool,
     pub font_size: f32,
@@ -63,6 +64,7 @@ impl Default for AppSettings {
             current_shader: "default".to_string(),
             show_help: true,
             show_playlist: true,
+            show_attributes_editor: true,
             show_frame_numbers: true,
             dark_mode: true,
             font_size: 13.0,
