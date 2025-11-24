@@ -493,6 +493,11 @@ impl PlayaApp {
                         comp_uuid, old_frame, new_frame
                     );
 
+                    // Signal preload with epoch increment (cancels stale requests)
+                    if let Some(comp) = self.player.project.media.get(&comp_uuid) {
+                        comp.signal_preload(&self.workers);
+                    }
+
                     // Trigger frame loading around new position
                     self.enqueue_frame_loads_around_playhead(10);
                 }
