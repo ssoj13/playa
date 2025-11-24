@@ -544,6 +544,18 @@ pub fn render_canvas(
                                                     "[TIMELINE] Creating drag state: {:?} for layer {}",
                                                     tool, idx
                                                 );
+                                                // Ensure selection switches to dragged layer if it wasn't selected
+                                                if let Some(clicked_uuid) = comp.children.get(idx) {
+                                                    let modifiers = ui.ctx().input(|i| i.modifiers);
+                                                    let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
+                                                    if !multi && !comp.layer_selection.contains(clicked_uuid) {
+                                                        dispatch(AppEvent::CompSelectionChanged {
+                                                            comp_uuid: comp_id.clone(),
+                                                            selection: vec![clicked_uuid.clone()],
+                                                            anchor: Some(clicked_uuid.clone()),
+                                                        });
+                                                    }
+                                                }
                                                 if let Some(child_attrs) = attrs {
                                                     state.drag_state =
                                                         Some(tool.to_drag_state(idx, child_attrs, hover_pos));
