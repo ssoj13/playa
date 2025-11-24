@@ -173,26 +173,8 @@ impl Default for PlayaApp {
 
 impl PlayaApp {
     fn default_dock_state() -> DockState<DockTab> {
-        let mut dock_state = DockState::new(vec![DockTab::Viewport]);
-
-        let [viewport, _timeline] = dock_state.main_surface_mut().split_below(
-            NodeIndex::root(),
-            0.65,
-            vec![DockTab::Timeline],
-        );
-
-        let [_viewport, project] =
-            dock_state
-                .main_surface_mut()
-                .split_right(viewport, 0.75, vec![DockTab::Project]);
-
-        // Add attributes panel below project (vertical split)
-        let [_project, _attributes] =
-            dock_state
-                .main_surface_mut()
-                .split_below(project, 0.6, vec![DockTab::Attributes]);
-
-        dock_state
+        // By default show both Project and Attributes with default split position
+        Self::build_dock_state(true, true, 0.6)
     }
 
     /// Attach composition event sender to all comps in the current project.
@@ -1397,13 +1379,6 @@ impl PlayaApp {
     }
 
     fn render_project_tab(&mut self, ui: &mut egui::Ui) {
-        if !self.show_playlist {
-            ui.centered_and_justified(|ui| {
-                ui.label("Project panel is hidden. Press F2 to show.");
-            });
-            return;
-        }
-
         let project_actions = widgets::project::render(ui, &mut self.player);
 
         // Store hover state for input routing
@@ -1538,14 +1513,101 @@ impl PlayaApp {
         self.settings.timeline_lock_work_area = self.timeline_state.lock_work_area;
     }
 
-    fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
-        if !self.show_attributes_editor {
-            ui.centered_and_justified(|ui| {
-                ui.label("Attributes Editor is hidden. Press F4 to show.");
-            });
-            return;
+    fn sync_dock_tabs_visibility(&mut self) {
+        // Check which optional tabs should be visible
+        let show_project = self.show_playlist;
+        let show_attributes = self.show_attributes_editor;
+
+        // Get current visibility state
+        let current_tabs: Vec<DockTab> = self.dock_state
+            .iter_all_tabs()
+            .map(|(_, tab)| tab.clone())
+            .collect();
+
+        let current_has_project = current_tabs.contains(&DockTab::Project);
+        let current_has_attributes = current_tabs.contains(&DockTab::Attributes);
+
+        // If visibility state changed, rebuild dock structure with saved position
+        if show_project != current_has_project || show_attributes != current_has_attributes {
+            self.dock_state = Self::build_dock_state(
+                show_project,
+                show_attributes,
+                self.attributes_state.project_attributes_split,
+            );
+        }
+    }
+
+    /// Save current split position (call after DockArea rendering)
+    fn save_dock_split_positions(&mut self) {
+        if let Some(pos) = self.extract_project_attributes_split() {
+            self.attributes_state.project_attributes_split = pos;
+        }
+    }
+
+    /// Extract the current split position between Project and Attributes panels
+    fn extract_project_attributes_split(&self) -> Option<f32> {
+        // In our dock layout:
+        // - First vertical split = Viewport/Timeline (0.65)
+        // - Second vertical split = Project/Attributes (user's position)
+        // So we need to find the SECOND vertical split, not the first
+        use egui_dock::Node;
+
+        let surface = self.dock_state.main_surface();
+        let mut vertical_count = 0;
+
+        for node in surface.iter() {
+            if let Node::Vertical(split_node) = node {
+                vertical_count += 1;
+                // Return the second vertical split we find
+                if vertical_count == 2 {
+                    return Some(split_node.fraction);
+                }
+            }
+        }
+        None
+    }
+
+    fn build_dock_state(show_project: bool, show_attributes: bool, split_pos: f32) -> DockState<DockTab> {
+        let mut dock_state = DockState::new(vec![DockTab::Viewport]);
+
+        // Always split viewport and timeline vertically
+        let [viewport, _timeline] = dock_state.main_surface_mut().split_below(
+            NodeIndex::root(),
+            0.65,
+            vec![DockTab::Timeline],
+        );
+
+        if show_project || show_attributes {
+            if show_project && show_attributes {
+                // Both: create right panel with Project, then split it to add Attributes below
+                let [_viewport, right_panel] = dock_state
+                    .main_surface_mut()
+                    .split_right(viewport, 0.75, vec![DockTab::Project]);
+
+                // Split right panel vertically: Project stays on top, Attributes below
+                // Use saved split position
+                let _ = dock_state.main_surface_mut().split_below(
+                    right_panel,
+                    split_pos,
+                    vec![DockTab::Attributes],
+                );
+            } else if show_project {
+                // Only Project
+                let _ = dock_state
+                    .main_surface_mut()
+                    .split_right(viewport, 0.75, vec![DockTab::Project]);
+            } else {
+                // Only Attributes
+                let _ = dock_state
+                    .main_surface_mut()
+                    .split_right(viewport, 0.75, vec![DockTab::Attributes]);
+            }
         }
 
+        dock_state
+    }
+
+    fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
         if let Some(active) = self.player.active_comp.clone() {
             if let Some(comp) = self.player.project.media.get_mut(&active) {
                 // Collect selected layers (now UUIDs instead of indices)
@@ -1760,6 +1822,9 @@ impl eframe::App for PlayaApp {
             if self.is_fullscreen {
                 self.render_viewport_tab(ui);
             } else {
+                // Remove hidden tabs before rendering
+                self.sync_dock_tabs_visibility();
+
                 let dock_style = egui_dock::Style::from_egui(ctx.style().as_ref());
                 let mut dock_state =
                     std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
@@ -1770,6 +1835,9 @@ impl eframe::App for PlayaApp {
                         .show_inside(ui, &mut tabs);
                 }
                 self.dock_state = dock_state;
+
+                // Save split positions after DockArea rendering (only if changed by user)
+                self.save_dock_split_positions();
             }
         });
 

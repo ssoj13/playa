@@ -9,12 +9,20 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct AttributesState {
     pub name_column_width: f32,
+    /// Saved position of the split between Project and Attributes panels (0.0-1.0)
+    #[serde(default = "default_split_position")]
+    pub project_attributes_split: f32,
+}
+
+fn default_split_position() -> f32 {
+    0.6
 }
 
 impl Default for AttributesState {
     fn default() -> Self {
         Self {
             name_column_width: 180.0,
+            project_attributes_split: 0.6,
         }
     }
 }
