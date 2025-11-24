@@ -22,6 +22,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+use half::f16;
 use eframe::egui;
 use glob::glob;
 use log::info;
@@ -638,6 +639,7 @@ impl Comp {
         use log::debug;
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
         let mut earliest: Option<(i32, usize)> = None; // (start_frame, index in source_frames)
+        let mut target_format: PixelFormat = PixelFormat::Rgba8;
 
         debug!(
             "compose() called: frame_idx={}, children.len()={}",
@@ -701,6 +703,12 @@ impl Comp {
                     if earliest.map_or(true, |(s, _)| child_start < s) {
                         earliest = Some((child_start, idx));
                     }
+                    // Track highest precision format
+                    target_format = match (target_format, source_frames[idx].0.pixel_format()) {
+                        (PixelFormat::RgbaF32, _) | (_, PixelFormat::RgbaF32) => PixelFormat::RgbaF32,
+                        (PixelFormat::RgbaF16, _) | (_, PixelFormat::RgbaF16) => PixelFormat::RgbaF16,
+                        _ => PixelFormat::Rgba8,
+                    };
                 }
             }
         }
@@ -715,6 +723,61 @@ impl Comp {
             })
             .unwrap_or_else(|| self.dim());
 
+        // Promote all frames to target_format to avoid compositor mismatches
+        fn promote_frame(frame: &Frame, target: PixelFormat) -> Frame {
+            match (frame.pixel_format(), target) {
+                (PixelFormat::Rgba8, PixelFormat::Rgba8)
+                | (PixelFormat::RgbaF16, PixelFormat::RgbaF16)
+                | (PixelFormat::RgbaF32, PixelFormat::RgbaF32) => frame.clone(),
+                (PixelFormat::Rgba8, PixelFormat::RgbaF16) => {
+                    if let PixelBuffer::U8(buf) = &*frame.buffer() {
+                        let mut out = Vec::with_capacity(buf.len());
+                        for chunk in buf.chunks_exact(4) {
+                            out.push(f16::from_f32(chunk[0] as f32 / 255.0));
+                            out.push(f16::from_f32(chunk[1] as f32 / 255.0));
+                            out.push(f16::from_f32(chunk[2] as f32 / 255.0));
+                            out.push(f16::from_f32(chunk[3] as f32 / 255.0));
+                        }
+                        Frame::from_f16_buffer(out, frame.width(), frame.height())
+                    } else {
+                        frame.clone()
+                    }
+                }
+                (PixelFormat::Rgba8, PixelFormat::RgbaF32) => {
+                    if let PixelBuffer::U8(buf) = &*frame.buffer() {
+                        let mut out = Vec::with_capacity(buf.len());
+                        for chunk in buf.chunks_exact(4) {
+                            out.push(chunk[0] as f32 / 255.0);
+                            out.push(chunk[1] as f32 / 255.0);
+                            out.push(chunk[2] as f32 / 255.0);
+                            out.push(chunk[3] as f32 / 255.0);
+                        }
+                        Frame::from_f32_buffer(out, frame.width(), frame.height())
+                    } else {
+                        frame.clone()
+                    }
+                }
+                (PixelFormat::RgbaF16, PixelFormat::RgbaF32) => {
+                    if let PixelBuffer::F16(buf) = &*frame.buffer() {
+                        let mut out = Vec::with_capacity(buf.len());
+                        for f in buf {
+                            out.push(f.to_f32());
+                        }
+                        Frame::from_f32_buffer(out, frame.width(), frame.height())
+                    } else {
+                        frame.clone()
+                    }
+                }
+                // Avoid down-conversion to preserve precision; fall back to clone
+                _ => frame.clone(),
+            }
+        }
+
+        for (frame, opacity) in source_frames.iter_mut() {
+            *frame = promote_frame(frame, target_format);
+            *opacity = *opacity;
+        }
+
         // Always add a solid black base underneath so fully transparent layers show black.
         // Match the pixel format of the first child; fall back to U8 when no children.
         let make_u8_base = || {
@@ -724,30 +787,22 @@ impl Comp {
             }
             Frame::from_buffer(PixelBuffer::U8(buf), PixelFormat::Rgba8, dim.0, dim.1)
         };
-        let base = if let Some((_, idx)) = earliest {
-            if let Some((first, _)) = source_frames.get(idx) {
-                match &*first.buffer() {
-                    PixelBuffer::U8(_) => make_u8_base(),
-                    PixelBuffer::F16(_) => {
-                        let mut buf = vec![half::f16::from_f32(0.0); dim.0 * dim.1 * 4];
-                        for px in buf.chunks_exact_mut(4) {
-                            px[3] = half::f16::from_f32(1.0);
-                        }
-                        Frame::from_f16_buffer(buf, dim.0, dim.1)
-                    }
-                    PixelBuffer::F32(_) => {
-                        let mut buf = vec![0.0f32; dim.0 * dim.1 * 4];
-                        for px in buf.chunks_exact_mut(4) {
-                            px[3] = 1.0;
-                        }
-                        Frame::from_f32_buffer(buf, dim.0, dim.1)
-                    }
+        let base = match target_format {
+            PixelFormat::RgbaF32 => {
+                let mut buf = vec![0.0f32; dim.0 * dim.1 * 4];
+                for px in buf.chunks_exact_mut(4) {
+                    px[3] = 1.0;
                 }
-            } else {
-                make_u8_base()
+                Frame::from_f32_buffer(buf, dim.0, dim.1)
             }
-        } else {
-            make_u8_base()
+            PixelFormat::RgbaF16 => {
+                let mut buf = vec![f16::from_f32(0.0); dim.0 * dim.1 * 4];
+                for px in buf.chunks_exact_mut(4) {
+                    px[3] = f16::from_f32(1.0);
+                }
+                Frame::from_f16_buffer(buf, dim.0, dim.1)
+            }
+            PixelFormat::Rgba8 => make_u8_base(),
         };
         source_frames.insert(0, (base, 1.0));
         debug!(
