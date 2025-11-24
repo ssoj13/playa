@@ -16,6 +16,7 @@ pub enum BlendMode {
     Subtract,
     Multiply,
     Divide,
+    Difference,
 }
 
 /// Compositor type enum - allows switching between CPU/GPU backends.
@@ -91,6 +92,7 @@ impl CpuCompositor {
                             (b_clamped / t_clamped).min(1.0)
                         }
                     }
+                    BlendMode::Difference => (b_clamped - t_clamped).abs(),
                 }
             };
 
@@ -133,6 +135,7 @@ impl CpuCompositor {
                             (b_clamped / t_clamped).min(1.0)
                         }
                     }
+                    BlendMode::Difference => (b_clamped - t_clamped).abs(),
                 }
             };
 
@@ -170,6 +173,7 @@ impl CpuCompositor {
                             (b_clamped / t_clamped).min(1.0)
                         }
                     }
+                    BlendMode::Difference => (b_clamped - t_clamped).abs(),
                 }
             };
 

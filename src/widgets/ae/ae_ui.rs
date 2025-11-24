@@ -166,7 +166,7 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
             ComboBox::from_id_salt(format!("attr_enum_{}", key))
                 .selected_text(&selected)
                 .show_ui(ui, |ui| {
-                    for mode in ["normal", "screen", "add", "subtract", "multiply", "divide"] {
+                    for mode in ["normal", "screen", "add", "subtract", "multiply", "divide", "difference"] {
                         ui.selectable_value(&mut selected, mode.to_string(), mode);
                     }
                 });

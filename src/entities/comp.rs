@@ -785,6 +785,7 @@ impl Comp {
                             "subtract" => BlendMode::Subtract,
                             "multiply" => BlendMode::Multiply,
                             "divide" => BlendMode::Divide,
+                            "difference" => BlendMode::Difference,
                             _ => BlendMode::Normal,
                         })
                         .unwrap_or(BlendMode::Normal);
