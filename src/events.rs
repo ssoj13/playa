@@ -51,6 +51,8 @@ pub enum AppEvent {
     AddComp { name: String, fps: f32 },
     /// Remove media (clip or comp) by UUID
     RemoveMedia(String),
+    /// Remove all currently selected media items
+    RemoveSelectedMedia,
     /// Save project to file
     SaveProject(PathBuf),
     /// Load project from file

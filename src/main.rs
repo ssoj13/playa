@@ -571,6 +571,7 @@ impl PlayaApp {
         use events::AppEvent;
 
         match event {
+            // ===== Helpers =====
             // ===== Playback Control =====
             AppEvent::Play => {
                 self.player.is_playing = true;
@@ -660,8 +661,19 @@ impl PlayaApp {
                 comp.set_fps(fps);
                 self.player.project.add_comp(comp);
             }
-            AppEvent::RemoveMedia(_uuid) => {
-                // TODO: implement remove media
+            AppEvent::RemoveMedia(uuid) => {
+                self.remove_media_and_cleanup(&uuid);
+                self.post_remove_fixups();
+            }
+            AppEvent::RemoveSelectedMedia => {
+                let selection: Vec<String> = self.player.project.selection.clone();
+                if selection.is_empty() {
+                    log::warn!("RemoveSelectedMedia: selection empty");
+                }
+                for uuid in selection {
+                    self.remove_media_and_cleanup(&uuid);
+                }
+                self.post_remove_fixups();
             }
             AppEvent::SaveProject(path) => {
                 self.save_project(path);
@@ -958,6 +970,21 @@ impl PlayaApp {
                     self.player.project.media.insert(comp_uuid.clone(), comp);
                 }
             }
+            AppEvent::RemoveSelectedLayer => {
+                if let Some(active_uuid) = &self.player.active_comp.clone() {
+                    if let Some(comp) = self.player.project.media.get_mut(active_uuid) {
+                        if let Some(layer_idx) = comp.selected_layer {
+                            // Reuse existing RemoveLayer logic by dispatching
+                            self.event_bus.send(AppEvent::RemoveLayer {
+                                comp_uuid: active_uuid.clone(),
+                                layer_idx,
+                            });
+                        } else {
+                            log::warn!("RemoveSelectedLayer: no layer selected");
+                        }
+                    }
+                }
+            }
             AppEvent::MoveLayer {
                 comp_uuid,
                 layer_idx,
@@ -1155,6 +1182,94 @@ impl PlayaApp {
             self.viewport_state
                 .set_image_size(egui::vec2(width as f32, height as f32));
             self.viewport_state.set_mode_fit();
+        }
+    }
+
+    /// Remove media by UUID and clean up references in other comps.
+    fn remove_media_and_cleanup(&mut self, uuid: &str) {
+        if !self.player.project.media.contains_key(uuid) {
+            log::warn!("remove_media_and_cleanup: uuid {} not found", uuid);
+            return;
+        }
+
+        // Remove references from other comps (layers using this media)
+        let mut removed_refs = 0usize;
+        for (comp_uuid, comp) in self.player.project.media.iter_mut() {
+            if comp.has_child(uuid) {
+                comp.remove_child(uuid);
+                removed_refs += 1;
+                log::info!(
+                    "Removed child {} from comp {} while deleting media",
+                    uuid,
+                    comp_uuid
+                );
+            }
+        }
+        if removed_refs == 0 {
+            log::debug!(
+                "remove_media_and_cleanup: no layer references to {} found",
+                uuid
+            );
+        }
+
+        // Drop the media itself
+        self.player.project.remove_media(uuid);
+
+        // Clear selection/active pointers to this media
+        if self.player.active_comp.as_deref() == Some(uuid) {
+            self.player.active_comp = None;
+        }
+        if self.selected_media_uuid.as_deref() == Some(uuid) {
+            self.selected_media_uuid = None;
+        }
+        self.player.project.selection.retain(|u| u != uuid);
+        // Anchor may no longer be valid; recompute later
+        self.player.project.selection_anchor = None;
+    }
+
+    /// After deletions, ensure active/selection are valid and not empty.
+    fn post_remove_fixups(&mut self) {
+        // Ensure active comp exists
+        if self.player.active_comp.is_none() {
+            if self.player.project.media.is_empty() {
+                let uuid = self.player.project.ensure_default_comp();
+                self.player.set_active_comp(uuid);
+            } else {
+                // Pick last in order or any available
+                let fallback = self
+                    .player
+                    .project
+                    .comps_order
+                    .last()
+                    .cloned()
+                    .or_else(|| self.player.project.media.keys().next().cloned());
+                if let Some(uuid) = fallback {
+                    self.player.set_active_comp(uuid);
+                }
+            }
+        }
+
+        // Ensure selection exists and points to valid items
+        self.player
+            .project
+            .selection
+            .retain(|u| self.player.project.media.contains_key(u));
+        if self.player.project.selection.is_empty() {
+            if let Some(active) = self.player.active_comp.clone() {
+                self.player.project.selection.push(active.clone());
+                self.player.project.selection_anchor = self
+                    .player
+                    .project
+                    .comps_order
+                    .iter()
+                    .position(|u| u == &active);
+                self.selected_media_uuid = Some(active);
+            }
+        } else {
+            self.selected_media_uuid = self.player.project.selection.last().cloned();
+            self.player.project.selection_anchor = self.player.project.selection.last().and_then(
+                |u| self.player.project.comps_order.iter().position(|c| c == u),
+            );
         }
     }
 

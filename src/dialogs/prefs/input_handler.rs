@@ -134,6 +134,9 @@ impl HotkeyHandler {
         self.add_binding(Timeline, "F".to_string(), TimelineFit);
         self.add_binding(Timeline, "A".to_string(), TimelineResetZoom);
 
+        // Project-specific hotkeys
+        self.add_binding(Project, "Delete".to_string(), RemoveSelectedMedia);
+
         // Viewport-specific hotkeys
         self.add_binding(Viewport, "F".to_string(), FitViewport);
         self.add_binding(Viewport, "A".to_string(), Viewport100);
