@@ -388,6 +388,15 @@ pub fn render_canvas(
         timeline_rect_global = Some(timeline_rect);
         timeline_hovered = timeline_response.hovered();
 
+        // If mouse is over ruler or canvas rects, mark timeline hovered (hotkeys context)
+        if let Some(pos) = ui.ctx().pointer_hover_pos() {
+            if ruler_rect.map(|r| r.contains(pos)).unwrap_or(false)
+                || timeline_rect.contains(pos)
+            {
+                timeline_hovered = true;
+            }
+        }
+
         // Middle-drag pan on canvas - initialize only if not already dragging
         if timeline_response.hovered() && state.drag_state.is_none() {
             if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
