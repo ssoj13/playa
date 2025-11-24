@@ -963,46 +963,55 @@ impl PlayaApp {
                 }
             }
             AppEvent::AlignLayersStart { comp_uuid } => {
+                // [ key: Slide layer so its play_start aligns to current frame
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
+                        let old_child_start = comp.child_start(layer_uuid);
+                        let play_start = comp.child_play_start(layer_uuid);
+                        // Calculate offset of play_start from child_start
+                        let offset = play_start - old_child_start;
+                        // Move layer so play_start lands on cursor
+                        let new_child_start = current_frame - offset;
+
                         if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
-                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(current_frame));
+                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(new_child_start));
                         }
                     }
                 }
             }
             AppEvent::AlignLayersEnd { comp_uuid } => {
+                // ] key: Slide layer so its play_end aligns to current frame
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
-                        let play_start = comp.child_play_start(layer_uuid);
+                        let old_child_start = comp.child_start(layer_uuid);
                         let play_end = comp.child_play_end(layer_uuid);
-                        let duration = play_end - play_start;
-                        let new_start = current_frame - duration;
+                        // Calculate offset of play_end from child_start
+                        let offset = play_end - old_child_start;
+                        // Move layer so play_end lands on cursor
+                        let new_child_start = current_frame - offset;
 
                         if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
-                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(new_start));
+                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(new_child_start));
                         }
                     }
                 }
             }
             AppEvent::TrimLayersStart { comp_uuid } => {
+                // Alt-[ key: Set play_start to current frame (convert parent frame to child frame)
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
-                        let start = comp.child_start(layer_uuid);
-                        let play_start = comp.child_play_start(layer_uuid);
-
-                        // new_play_start = play_start + (current_frame - start)
-                        let offset = current_frame - start;
-                        let new_play_start = play_start + offset;
+                        let child_start = comp.child_start(layer_uuid);
+                        // Convert parent comp's current_frame to child's local frame
+                        let new_play_start = current_frame - child_start;
 
                         if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
                             attrs.set("play_start".to_string(), crate::entities::AttrValue::Int(new_play_start));
@@ -1011,17 +1020,15 @@ impl PlayaApp {
                 }
             }
             AppEvent::TrimLayersEnd { comp_uuid } => {
+                // Alt-] key: Set play_end to current frame (convert parent frame to child frame)
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
-                        let start = comp.child_start(layer_uuid);
-                        let play_start = comp.child_play_start(layer_uuid);
-
-                        // new_play_end = play_start + (current_frame - start)
-                        let offset = current_frame - start;
-                        let new_play_end = play_start + offset;
+                        let child_start = comp.child_start(layer_uuid);
+                        // Convert parent comp's current_frame to child's local frame
+                        let new_play_end = current_frame - child_start;
 
                         if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
                             attrs.set("play_end".to_string(), crate::entities::AttrValue::Int(new_play_end));
