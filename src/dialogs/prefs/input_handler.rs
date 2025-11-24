@@ -193,12 +193,27 @@ impl HotkeyHandler {
                     modifiers.shift,
                     modifiers.alt,
                 ) {
+                    log::debug!(
+                        "[HotkeyHandler] key={:?} ctrl={} shift={} alt={} window={:?} -> {:?}",
+                        key,
+                        modifiers.ctrl,
+                        modifiers.shift,
+                        modifiers.alt,
+                        self.focused_window,
+                        event
+                    );
                     return Some(event);
                 }
 
                 // Check without modifiers
                 if !modifiers.any() {
                     if let Some(event) = self.handle_key(&key_str) {
+                        log::debug!(
+                            "[HotkeyHandler] key={:?} no-mod window={:?} -> {:?}",
+                            key,
+                            self.focused_window,
+                            event
+                        );
                         return Some(event);
                     }
                 }

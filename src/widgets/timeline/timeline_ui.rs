@@ -322,6 +322,7 @@ pub fn render_canvas(
     let mut timeline_rect_global: Option<Rect> = None;
     let ruler_height = 20.0;
     let mut timeline_hovered = false; // Track hover state for input routing
+    let tab_rect = ui.max_rect(); // Full tab rect for hover detection
 
     // Draw ruler with proper layout sync
     ui.horizontal(|ui| {
@@ -911,7 +912,7 @@ pub fn render_canvas(
                                 });
                             }
                         } else {
-                            // Click on empty space: clear selection and scrub timeline
+                            // Click on empty space: scrub timeline without clearing selection
                             let frame = screen_x_to_frame(
                                 pos.x,
                                 timeline_rect.min.x,
@@ -923,13 +924,6 @@ pub fn render_canvas(
                                 frame.min(total_frames.saturating_sub(1)),
                             ));
                         }
-                    } else {
-                        // Click without position: clear selection
-                        dispatch(AppEvent::CompSelectionChanged {
-                            comp_uuid: comp_id.clone(),
-                            selection: Vec::new(),
-                            anchor: None,
-                        });
                     }
                 }
             }
@@ -959,6 +953,13 @@ pub fn render_canvas(
             Color32::from_rgb(255, 220, 100),
             (0.0, Color32::TRANSPARENT),
         ));
+    }
+
+    // Treat entire tab rect as timeline hover for hotkey routing
+    if let Some(pointer) = ui.ctx().pointer_hover_pos() {
+        if tab_rect.contains(pointer) {
+            timeline_hovered = true;
+        }
     }
 
     // Return actions with hover state
