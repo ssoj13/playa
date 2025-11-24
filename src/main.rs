@@ -727,25 +727,14 @@ impl PlayaApp {
                     .iter()
                     .position(|u| u == &uuid);
             }
-            AppEvent::SelectLayer(_index) => {
-                if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        comp.set_selected_layer(Some(_index));
-                    }
-                }
-            }
-            AppEvent::DeselectAll => {
-                if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        comp.set_selected_layer(None);
-                    }
-                }
-            }
-            AppEvent::DeselectLayer => {
-                if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        comp.set_selected_layer(None);
-                    }
+            AppEvent::CompSelectionChanged {
+                comp_uuid,
+                selection,
+                anchor,
+            } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    comp.layer_selection = selection;
+                    comp.layer_selection_anchor = anchor;
                 }
             }
 
@@ -983,15 +972,21 @@ impl PlayaApp {
             AppEvent::RemoveSelectedLayer => {
                 if let Some(active_uuid) = &self.player.active_comp.clone() {
                     if let Some(comp) = self.player.project.media.get_mut(active_uuid) {
-                        if let Some(layer_idx) = comp.selected_layer {
-                            // Reuse existing RemoveLayer logic by dispatching
-                            self.event_bus.send(AppEvent::RemoveLayer {
-                                comp_uuid: active_uuid.clone(),
-                                layer_idx,
-                            });
-                        } else {
+                        if comp.layer_selection.is_empty() {
                             log::warn!("RemoveSelectedLayer: no layer selected");
                         }
+                        // collect by uuid to avoid index shift
+                        let mut to_remove: Vec<String> = Vec::new();
+                        for idx in comp.layer_selection.iter().copied() {
+                            if let Some(child_uuid) = comp.children.get(idx) {
+                                to_remove.push(child_uuid.clone());
+                            }
+                        }
+                        for child_uuid in to_remove {
+                            comp.remove_child(&child_uuid);
+                        }
+                        comp.layer_selection.clear();
+                        comp.layer_selection_anchor = None;
                     }
                 }
             }
@@ -1060,10 +1055,6 @@ impl PlayaApp {
                     let _ = comp.set_child_play_end(layer_idx, new_play_end);
                 }
             }
-            AppEvent::RemoveSelectedLayer => {
-                // TODO: implement remove selected layer (need selection tracking)
-            }
-
             // ===== Drag-and-Drop (placeholders for now) =====
             AppEvent::DragStart { .. } => {
                 // TODO: implement drag start
@@ -1435,9 +1426,94 @@ impl PlayaApp {
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
         if let Some(active) = self.player.active_comp.clone() {
             if let Some(comp) = self.player.project.media.get_mut(&active) {
-                // Show attributes of selected layer if any, otherwise show comp attributes
-                if let Some(layer_idx) = comp.selected_layer {
-                    // Get layer instance UUID
+                // Collect selected layers
+                let selection: Vec<usize> = comp.layer_selection.clone();
+
+                if selection.len() > 1 {
+                    // Multi-select: compute intersection of attribute keys
+                    use std::collections::{BTreeSet, HashSet};
+                    let mut common_keys: BTreeSet<String> = BTreeSet::new();
+                    let mut first = true;
+                    for idx in selection.iter().copied() {
+                        if let Some(instance_uuid) = comp.children.get(idx) {
+                            if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
+                                let keys: BTreeSet<String> =
+                                    attrs.iter().map(|(k, _)| k.clone()).collect();
+                                if first {
+                                    common_keys = keys;
+                                    first = false;
+                                } else {
+                                    common_keys =
+                                        common_keys.intersection(&keys).cloned().collect();
+                                }
+                            }
+                        }
+                    }
+
+                    if common_keys.is_empty() {
+                        ui.label("(no common attributes)");
+                        return;
+                    }
+
+                    // Build merged view: take values from first selected; mark mixed when others differ
+                    let mut merged: crate::entities::Attrs = crate::entities::Attrs::new();
+                    let mut mixed_keys: HashSet<String> = HashSet::new();
+
+                    if let Some(first_idx) = selection.first().copied() {
+                        if let Some(instance_uuid) = comp.children.get(first_idx) {
+                            if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
+                                for key in common_keys.iter() {
+                                    if let Some(v) = attrs.get(key) {
+                                        merged.set(key.clone(), v.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    for key in common_keys.iter() {
+                        if let Some(base) = merged.get(key) {
+                            for idx in selection.iter().copied() {
+                                if let Some(instance_uuid) = comp.children.get(idx) {
+                                    if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
+                                        if let Some(other) = attrs.get(key) {
+                                            if other != base {
+                                                mixed_keys.insert(key.clone());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Render merged attrs; collect changes and apply to all selected layers
+                    let mut changed: Vec<(String, crate::entities::AttrValue)> = Vec::new();
+                    crate::widgets::ae::render_with_mixed(
+                        ui,
+                        &mut merged,
+                        &mut self.attributes_state,
+                        "Multiple layers",
+                        &mixed_keys,
+                        &mut changed,
+                    );
+
+                    if !changed.is_empty() {
+                        for (key, val) in changed {
+                            for idx in selection.iter().copied() {
+                                if let Some(instance_uuid) = comp.children.get(idx) {
+                                    if let Some(attrs) =
+                                        comp.children_attrs.get_mut(instance_uuid)
+                                    {
+                                        attrs.set(key.clone(), val.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(layer_idx) = selection.first().copied() {
+                    // Single layer selected
                     if let Some(instance_uuid) = comp.children.get(layer_idx) {
                         if let Some(attrs) = comp.children_attrs.get_mut(instance_uuid) {
                             let display_name = attrs

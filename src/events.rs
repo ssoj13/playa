@@ -123,11 +123,11 @@ pub enum AppEvent {
     /// Set active project item (UUID)
     ProjectActiveChanged(String),
     /// Select layer in timeline
-    SelectLayer(usize),
-    /// Deselect all items
-    DeselectAll,
-    /// Deselect timeline layer (alias for DeselectAll for now)
-    DeselectLayer,
+    CompSelectionChanged {
+        comp_uuid: String,
+        selection: Vec<usize>,
+        anchor: Option<usize>,
+    },
 
     // ===== UI State =====
     /// Toggle playlist panel visibility

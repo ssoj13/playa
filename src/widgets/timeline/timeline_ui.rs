@@ -19,6 +19,35 @@ use crate::events::AppEvent;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 
+fn compute_layer_selection(
+    current: &[usize],
+    anchor: Option<usize>,
+    clicked: usize,
+    modifiers: egui::Modifiers,
+) -> (Vec<usize>, Option<usize>) {
+    if modifiers.shift {
+        let anchor_idx = anchor.unwrap_or_else(|| current.last().copied().unwrap_or(clicked));
+        let (lo, hi) = if anchor_idx <= clicked {
+            (anchor_idx, clicked)
+        } else {
+            (clicked, anchor_idx)
+        };
+        let selection: Vec<usize> = (lo..=hi).collect();
+        (selection, Some(anchor_idx))
+    } else if modifiers.ctrl {
+        let mut selection: Vec<usize> = current.iter().copied().collect();
+        if let Some(pos) = selection.iter().position(|&v| v == clicked) {
+            selection.remove(pos);
+        } else {
+            selection.push(clicked);
+            selection.sort_unstable();
+        }
+        (selection, anchor)
+    } else {
+        (vec![clicked], Some(clicked))
+    }
+}
+
 /// Render timeline toolbar (transport controls, zoom, snap)
 pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl FnMut(AppEvent)) {
     ui.horizontal(|ui| {
@@ -203,7 +232,18 @@ pub fn render_outline(
                         }
 
                         if response.clicked() {
-                            dispatch(AppEvent::SelectLayer(idx));
+                            let modifiers = ui.input(|i| i.modifiers);
+                            let (selection, anchor) = compute_layer_selection(
+                                &comp.layer_selection,
+                                comp.layer_selection_anchor,
+                                idx,
+                                modifiers,
+                            );
+                            dispatch(AppEvent::CompSelectionChanged {
+                                comp_uuid: comp_id.clone(),
+                                selection,
+                                anchor,
+                            });
                         }
                     },
                 )
@@ -395,7 +435,12 @@ pub fn render_canvas(
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
                             let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
-                            let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
+                            let play_end = attrs
+                                .and_then(|a| {
+                                    let start = a.get_i32("start").unwrap_or(0);
+                                    Some(a.get_i32("play_end").unwrap_or(child_end - start))
+                                })
+                                .unwrap_or(0);
                             let is_visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
 
                             // Calculate layer geometry (deduplicated)
@@ -410,7 +455,7 @@ pub fn render_canvas(
                             } else {
                                 Color32::from_gray(70)
                             };
-                            let is_selected = comp.selected_layer == Some(idx);
+                            let is_selected = comp.layer_selection.contains(&idx);
                             let gray_color = if is_selected {
                                 // Slightly brighter grey with a blue tint when selected
                                 Color32::from_rgba_unmultiplied(110, 140, 190, 130)
@@ -825,7 +870,18 @@ pub fn render_canvas(
                         }
 
                         if let Some(idx) = clicked_layer {
-                            dispatch(AppEvent::SelectLayer(idx));
+                            let modifiers = ui.input(|i| i.modifiers);
+                            let (selection, anchor) = compute_layer_selection(
+                                &comp.layer_selection,
+                                comp.layer_selection_anchor,
+                                idx,
+                                modifiers,
+                            );
+                            dispatch(AppEvent::CompSelectionChanged {
+                                comp_uuid: comp_id.clone(),
+                                selection,
+                                anchor,
+                            });
                         } else {
                             // Click on empty space: clear selection and scrub timeline
                             let frame = screen_x_to_frame(
@@ -841,7 +897,11 @@ pub fn render_canvas(
                         }
                     } else {
                         // Click without position: clear selection
-                        dispatch(AppEvent::DeselectLayer);
+                        dispatch(AppEvent::CompSelectionChanged {
+                            comp_uuid: comp_id.clone(),
+                            selection: Vec::new(),
+                            anchor: None,
+                        });
                     }
                 }
             }

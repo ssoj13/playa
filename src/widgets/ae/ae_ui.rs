@@ -3,6 +3,7 @@
 use crate::entities::{AttrValue, Attrs};
 use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui};
 use egui_extras::{Column, TableBuilder};
+use std::collections::HashSet;
 
 /// Persistent UI state for the Attributes panel.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -23,6 +24,32 @@ impl Default for AttributesState {
 /// Displays all attributes with appropriate UI widgets for editing.
 /// Supports: Str, Int, UInt, Float, Vec3, Vec4, Mat3, Mat4
 pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) {
+    render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut Vec::new(), false);
+}
+
+/// Render attribute editor with support for mixed values (multiple selection).
+/// `mixed_keys` — keys that have differing values across selected objects (rendered dimmed).
+/// `changed_out` collects (key, value) pairs that were modified by the user.
+pub fn render_with_mixed(
+    ui: &mut Ui,
+    attrs: &mut Attrs,
+    state: &mut AttributesState,
+    display_name: &str,
+    mixed_keys: &HashSet<String>,
+    changed_out: &mut Vec<(String, AttrValue)>,
+) {
+    render_impl(ui, attrs, state, display_name, mixed_keys, changed_out, true);
+}
+
+fn render_impl(
+    ui: &mut Ui,
+    attrs: &mut Attrs,
+    state: &mut AttributesState,
+    display_name: &str,
+    mixed_keys: &HashSet<String>,
+    changed_out: &mut Vec<(String, AttrValue)>,
+    collect_changes: bool,
+) {
     if attrs.is_empty() {
         ui.label("(no attributes)");
         return;
@@ -77,7 +104,16 @@ pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, displ
                         ui.label(format!("{}:", key));
                     });
                     row.col(|ui| {
-                        render_value_editor(ui, &key, value);
+                        let is_mixed = mixed_keys.contains(&key);
+                        if collect_changes {
+                            let before = value.clone();
+                            let changed = render_value_editor(ui, &key, value, is_mixed);
+                            if changed && &before != value {
+                                changed_out.push((key.clone(), value.clone()));
+                            }
+                        } else {
+                            let _ = render_value_editor(ui, &key, value, is_mixed);
+                        }
                     });
                 });
             }
@@ -107,7 +143,14 @@ pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, displ
     );
 }
 
-fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue) {
+fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: bool) -> bool {
+    let mut changed = false;
+    let weak = ui.visuals().weak_text_color();
+    let mut scope_changed = false;
+    ui.scope(|ui| {
+        if mixed {
+            ui.visuals_mut().override_text_color = Some(weak);
+        }
     match (key, value) {
         // Known enum-like string attributes rendered as dropdowns
         ("blend_mode" | "layer_mode", AttrValue::Str(current)) => {
@@ -119,18 +162,21 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue) {
                         ui.selectable_value(&mut selected, mode.to_string(), mode);
                     }
                 });
-            *current = selected;
+            if &selected != current {
+                *current = selected;
+                scope_changed = true;
+            }
         }
 
         // Fallbacks
         (_, AttrValue::Bool(v)) => {
-            ui.checkbox(v, "");
+            scope_changed |= ui.checkbox(v, "").changed();
         }
         (_, AttrValue::Str(s)) => {
-            ui.text_edit_singleline(s);
+            scope_changed |= ui.text_edit_singleline(s).changed();
         }
         (_, AttrValue::Int(v)) => {
-            ui.add(egui::DragValue::new(v).speed(1.0));
+            scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0)).changed();
         }
         (_, AttrValue::UInt(v)) => {
             let mut temp = *v as i32;
@@ -143,31 +189,32 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue) {
                 .changed()
             {
                 *v = temp.max(0) as u32;
+                scope_changed = true;
             }
         }
         (_, AttrValue::Float(v)) => {
-            ui.add(egui::DragValue::new(v).speed(0.1));
+            scope_changed |= ui.add(egui::DragValue::new(v).speed(0.1)).changed();
         }
         (_, AttrValue::Vec3(arr)) => {
             ui.horizontal(|ui| {
                 ui.label("X:");
-                ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1));
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1)).changed();
                 ui.label("Y:");
-                ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1));
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1)).changed();
                 ui.label("Z:");
-                ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1));
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1)).changed();
             });
         }
         (_, AttrValue::Vec4(arr)) => {
             ui.horizontal(|ui| {
                 ui.label("X:");
-                ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1));
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1)).changed();
                 ui.label("Y:");
-                ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1));
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1)).changed();
                 ui.label("Z:");
-                ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1));
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1)).changed();
                 ui.label("W:");
-                ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1));
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1)).changed();
             });
         }
         (_, AttrValue::Mat3(_)) => {
@@ -177,4 +224,7 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue) {
             ui.label("(4x4 matrix - not editable)");
         }
     }
+    });
+    changed |= scope_changed;
+    changed
 }
