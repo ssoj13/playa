@@ -113,11 +113,11 @@ pub struct Comp {
     pub file_end: Option<i32>,
 
     // ===== Common Fields =====
-    /// Currently selected layers (indices) for this comp
+    /// Currently selected layers (layer_uuid from children_attrs)
     #[serde(default)]
-    pub layer_selection: Vec<usize>,
+    pub layer_selection: Vec<String>,
     #[serde(default)]
-    pub layer_selection_anchor: Option<usize>,
+    pub layer_selection_anchor: Option<String>,
 
     /// Current playback position within this comp (persisted)
     #[serde(default)]
@@ -217,6 +217,31 @@ impl Comp {
 
     pub fn set_end(&mut self, end: i32) {
         self.attrs.set("end", AttrValue::Int(end));
+    }
+
+    // Layer UUID <-> Index conversion helpers
+    /// Convert layer UUID to index in children array
+    pub fn uuid_to_idx(&self, uuid: &str) -> Option<usize> {
+        self.children.iter().position(|u| u == uuid)
+    }
+
+    /// Convert index to layer UUID
+    pub fn idx_to_uuid(&self, idx: usize) -> Option<&String> {
+        self.children.get(idx)
+    }
+
+    /// Convert multiple UUIDs to indices
+    pub fn uuids_to_indices(&self, uuids: &[String]) -> Vec<usize> {
+        uuids.iter()
+            .filter_map(|uuid| self.uuid_to_idx(uuid))
+            .collect()
+    }
+
+    /// Convert multiple indices to UUIDs
+    pub fn indices_to_uuids(&self, indices: &[usize]) -> Vec<String> {
+        indices.iter()
+            .filter_map(|&idx| self.idx_to_uuid(idx).cloned())
+            .collect()
     }
 
     pub fn set_fps(&mut self, fps: f32) {
@@ -1011,6 +1036,9 @@ impl Comp {
         idxs.sort_unstable();
         idxs.dedup();
 
+        // layer_selection already stores UUIDs - just clone them
+        let selected_uuids: Vec<String> = self.layer_selection.clone();
+
         // Build block of UUIDs
         let mut block: Vec<String> = Vec::new();
         let mut reordered = self.children.clone();
@@ -1033,6 +1061,13 @@ impl Comp {
             cursor += 1;
         }
         self.children = reordered;
+
+        // layer_selection stores UUIDs - no need to update after reorder
+        // Just restore the UUIDs that still exist in children
+        self.layer_selection = selected_uuids
+            .into_iter()
+            .filter(|uuid| self.children.contains(uuid))
+            .collect();
 
         // Move each by delta (preserve relative offsets)
         for uuid in block {

@@ -966,13 +966,8 @@ impl PlayaApp {
                         if comp.layer_selection.is_empty() {
                             log::warn!("RemoveSelectedLayer: no layer selected");
                         }
-                        // collect by uuid to avoid index shift
-                        let mut to_remove: Vec<String> = Vec::new();
-                        for idx in comp.layer_selection.iter().copied() {
-                            if let Some(child_uuid) = comp.children.get(idx) {
-                                to_remove.push(child_uuid.clone());
-                            }
-                        }
+                        // layer_selection already contains UUIDs
+                        let to_remove: Vec<String> = comp.layer_selection.clone();
                         for child_uuid in to_remove {
                             comp.remove_child(&child_uuid);
                         }
@@ -1016,20 +1011,24 @@ impl PlayaApp {
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let selection = comp.layer_selection.clone();
+                    let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
                     let selection_active =
-                        !selection.is_empty() && selection.iter().any(|i| *i == layer_idx);
+                        !selection.is_empty() && selection.iter().any(|uuid| uuid == &dragged_uuid);
 
                     if selection_active && selection.len() > 1 {
-                        let dragged_uuid = comp.children.get(layer_idx).cloned();
-                        let dragged_start = dragged_uuid
-                            .and_then(|u| comp.children_attrs.get(&u))
+                        let dragged_start = comp.children_attrs.get(&dragged_uuid)
                             .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
                             .unwrap_or(0);
                         let delta = new_start as i32 - dragged_start;
-                        let _ = comp.move_layers(&selection, delta, Some(new_idx));
+                        let selection_indices = comp.uuids_to_indices(&selection);
+                        let _ = comp.move_layers(&selection_indices, delta, Some(new_idx));
                     } else {
-                        // Single-layer move + optional reorder (existing behavior)
-                        let _ = comp.move_layers(&[layer_idx], new_start as i32, Some(new_idx));
+                        // Single-layer move: calculate delta from current position
+                        let dragged_start = comp.children_attrs.get(&dragged_uuid)
+                            .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                            .unwrap_or(0);
+                        let delta = new_start as i32 - dragged_start;
+                        let _ = comp.move_layers(&[layer_idx], delta, Some(new_idx));
                     }
                 }
             }
@@ -1040,19 +1039,19 @@ impl PlayaApp {
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let selection = comp.layer_selection.clone();
+                    let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
                     let selection_active =
-                        !selection.is_empty() && selection.iter().any(|i| *i == layer_idx);
+                        !selection.is_empty() && selection.iter().any(|uuid| uuid == &dragged_uuid);
 
                     if selection_active && selection.len() > 1 {
-                        let dragged_uuid = comp.children.get(layer_idx).cloned();
-                        let dragged_ps = dragged_uuid
-                            .and_then(|u| comp.children_attrs.get(&u))
+                        let dragged_ps = comp.children_attrs.get(&dragged_uuid)
                             .and_then(|a| Some(a.get_i32("play_start").unwrap_or(
                                 a.get_i32("start").unwrap_or(0),
                             )))
                             .unwrap_or(0);
                         let delta = new_play_start - dragged_ps;
-                        let _ = comp.trim_layers(&selection, delta, true);
+                        let selection_indices = comp.uuids_to_indices(&selection);
+                        let _ = comp.trim_layers(&selection_indices, delta, true);
                     } else {
                         let delta = {
                             let current = comp
@@ -1076,19 +1075,19 @@ impl PlayaApp {
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let selection = comp.layer_selection.clone();
+                    let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
                     let selection_active =
-                        !selection.is_empty() && selection.iter().any(|i| *i == layer_idx);
+                        !selection.is_empty() && selection.iter().any(|uuid| uuid == &dragged_uuid);
 
                     if selection_active && selection.len() > 1 {
-                        let dragged_uuid = comp.children.get(layer_idx).cloned();
-                        let dragged_pe = dragged_uuid
-                            .and_then(|u| comp.children_attrs.get(&u))
+                        let dragged_pe = comp.children_attrs.get(&dragged_uuid)
                             .and_then(|a| Some(a.get_i32("play_end").unwrap_or(
                                 a.get_i32("end").unwrap_or(0),
                             )))
                             .unwrap_or(0);
                         let delta = new_play_end - dragged_pe;
-                        let _ = comp.trim_layers(&selection, delta, false);
+                        let selection_indices = comp.uuids_to_indices(&selection);
+                        let _ = comp.trim_layers(&selection_indices, delta, false);
                     } else {
                         let delta = {
                             let current = comp
@@ -1476,26 +1475,24 @@ impl PlayaApp {
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
         if let Some(active) = self.player.active_comp.clone() {
             if let Some(comp) = self.player.project.media.get_mut(&active) {
-                // Collect selected layers
-                let selection: Vec<usize> = comp.layer_selection.clone();
+                // Collect selected layers (now UUIDs instead of indices)
+                let selection: Vec<String> = comp.layer_selection.clone();
 
                 if selection.len() > 1 {
                     // Multi-select: compute intersection of attribute keys
                     use std::collections::{BTreeSet, HashSet};
                     let mut common_keys: BTreeSet<String> = BTreeSet::new();
                     let mut first = true;
-                    for idx in selection.iter().copied() {
-                        if let Some(instance_uuid) = comp.children.get(idx) {
-                            if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
-                                let keys: BTreeSet<String> =
-                                    attrs.iter().map(|(k, _)| k.clone()).collect();
-                                if first {
-                                    common_keys = keys;
-                                    first = false;
-                                } else {
-                                    common_keys =
-                                        common_keys.intersection(&keys).cloned().collect();
-                                }
+                    for instance_uuid in selection.iter() {
+                        if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
+                            let keys: BTreeSet<String> =
+                                attrs.iter().map(|(k, _)| k.clone()).collect();
+                            if first {
+                                common_keys = keys;
+                                first = false;
+                            } else {
+                                common_keys =
+                                    common_keys.intersection(&keys).cloned().collect();
                             }
                         }
                     }
@@ -1509,13 +1506,11 @@ impl PlayaApp {
                     let mut merged: crate::entities::Attrs = crate::entities::Attrs::new();
                     let mut mixed_keys: HashSet<String> = HashSet::new();
 
-                    if let Some(first_idx) = selection.first().copied() {
-                        if let Some(instance_uuid) = comp.children.get(first_idx) {
-                            if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
-                                for key in common_keys.iter() {
-                                    if let Some(v) = attrs.get(key) {
-                                        merged.set(key.clone(), v.clone());
-                                    }
+                    if let Some(first_uuid) = selection.first() {
+                        if let Some(attrs) = comp.children_attrs.get(first_uuid) {
+                            for key in common_keys.iter() {
+                                if let Some(v) = attrs.get(key) {
+                                    merged.set(key.clone(), v.clone());
                                 }
                             }
                         }
@@ -1523,14 +1518,12 @@ impl PlayaApp {
 
                     for key in common_keys.iter() {
                         if let Some(base) = merged.get(key) {
-                            for idx in selection.iter().copied() {
-                                if let Some(instance_uuid) = comp.children.get(idx) {
-                                    if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
-                                        if let Some(other) = attrs.get(key) {
-                                            if other != base {
-                                                mixed_keys.insert(key.clone());
-                                                break;
-                                            }
+                            for instance_uuid in selection.iter() {
+                                if let Some(attrs) = comp.children_attrs.get(instance_uuid) {
+                                    if let Some(other) = attrs.get(key) {
+                                        if other != base {
+                                            mixed_keys.insert(key.clone());
+                                            break;
                                         }
                                     }
                                 }
@@ -1551,36 +1544,29 @@ impl PlayaApp {
 
                     if !changed.is_empty() {
                         for (key, val) in changed {
-                            for idx in selection.iter().copied() {
-                                if let Some(instance_uuid) = comp.children.get(idx) {
-                                    if let Some(attrs) =
-                                        comp.children_attrs.get_mut(instance_uuid)
-                                    {
-                                        attrs.set(key.clone(), val.clone());
-                                    }
+                            for instance_uuid in selection.iter() {
+                                if let Some(attrs) = comp.children_attrs.get_mut(instance_uuid) {
+                                    attrs.set(key.clone(), val.clone());
                                 }
                             }
                         }
                     }
-                } else if let Some(layer_idx) = selection.first().copied() {
+                } else if let Some(layer_uuid) = selection.first() {
                     // Single layer selected
-                    if let Some(instance_uuid) = comp.children.get(layer_idx) {
-                        if let Some(attrs) = comp.children_attrs.get_mut(instance_uuid) {
-                            let display_name = attrs
-                                .get_str("name")
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| format!("Layer {}", layer_idx));
-                            crate::widgets::ae::render(
-                                ui,
-                                attrs,
-                                &mut self.attributes_state,
-                                &display_name,
-                            );
-                        } else {
-                            ui.label("(layer has no attributes)");
-                        }
+                    let layer_idx = comp.uuid_to_idx(layer_uuid).unwrap_or(0);
+                    if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
+                        let display_name = attrs
+                            .get_str("name")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| format!("Layer {}", layer_idx));
+                        crate::widgets::ae::render(
+                            ui,
+                            attrs,
+                            &mut self.attributes_state,
+                            &display_name,
+                        );
                     } else {
-                        ui.label("(invalid layer index)");
+                        ui.label("(layer has no attributes)");
                     }
                 } else {
                     // No layer selected - show comp attributes

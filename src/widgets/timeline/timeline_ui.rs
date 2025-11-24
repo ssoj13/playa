@@ -20,31 +20,33 @@ use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 
 fn compute_layer_selection(
-    current: &[usize],
-    anchor: Option<usize>,
-    clicked: usize,
+    current: &[String],
+    anchor: Option<String>,
+    clicked_uuid: String,
+    clicked_idx: usize,
     modifiers: egui::Modifiers,
-) -> (Vec<usize>, Option<usize>) {
+    all_children: &[String],
+) -> (Vec<String>, Option<String>) {
     if modifiers.shift {
-        let anchor_idx = anchor.unwrap_or_else(|| current.last().copied().unwrap_or(clicked));
-        let (lo, hi) = if anchor_idx <= clicked {
-            (anchor_idx, clicked)
+        let anchor_uuid = anchor.as_ref().unwrap_or(&clicked_uuid);
+        let anchor_idx = all_children.iter().position(|u| u == anchor_uuid).unwrap_or(clicked_idx);
+        let (lo, hi) = if anchor_idx <= clicked_idx {
+            (anchor_idx, clicked_idx)
         } else {
-            (clicked, anchor_idx)
+            (clicked_idx, anchor_idx)
         };
-        let selection: Vec<usize> = (lo..=hi).collect();
-        (selection, Some(anchor_idx))
+        let selection: Vec<String> = all_children[lo..=hi].to_vec();
+        (selection, Some(anchor_uuid.clone()))
     } else if modifiers.ctrl {
-        let mut selection: Vec<usize> = current.iter().copied().collect();
-        if let Some(pos) = selection.iter().position(|&v| v == clicked) {
+        let mut selection: Vec<String> = current.to_vec();
+        if let Some(pos) = selection.iter().position(|v| v == &clicked_uuid) {
             selection.remove(pos);
         } else {
-            selection.push(clicked);
-            selection.sort_unstable();
+            selection.push(clicked_uuid.clone());
         }
         (selection, anchor)
     } else {
-        (vec![clicked], Some(clicked))
+        (vec![clicked_uuid.clone()], Some(clicked_uuid))
     }
 }
 
@@ -233,11 +235,14 @@ pub fn render_outline(
 
                         if response.clicked() {
                             let modifiers = ui.input(|i| i.modifiers);
+                            let clicked_uuid = child_uuid.clone();
                             let (selection, anchor) = compute_layer_selection(
                                 &comp.layer_selection,
-                                comp.layer_selection_anchor,
+                                comp.layer_selection_anchor.clone(),
+                                clicked_uuid,
                                 idx,
                                 modifiers,
+                                &comp.children,
                             );
                             dispatch(AppEvent::CompSelectionChanged {
                                 comp_uuid: comp_id.clone(),
@@ -463,7 +468,7 @@ pub fn render_canvas(
                             } else {
                                 Color32::from_gray(70)
                             };
-                            let is_selected = comp.layer_selection.contains(&idx);
+                            let is_selected = comp.layer_selection.contains(child_uuid);
                             let gray_color = if is_selected {
                                 // Slightly brighter grey with a blue tint when selected
                                 Color32::from_rgba_unmultiplied(110, 140, 190, 130)
@@ -588,40 +593,40 @@ pub fn render_canvas(
                                         let target_child = child_order.get(target_display_idx).copied().unwrap_or(*layer_idx);
 
                                         // Visual feedback: draw ghost bars for all selected (or just dragged) layers
-                                        let selection = if comp.layer_selection.contains(layer_idx) {
+                                        let dragged_uuid = comp.children.get(*layer_idx).cloned().unwrap_or_default();
+                                        let selection = if comp.layer_selection.contains(&dragged_uuid) {
                                             comp.layer_selection.clone()
                                         } else {
-                                            vec![*layer_idx]
+                                            vec![dragged_uuid.clone()]
                                         };
 
-                                        for idx_sel in selection {
-                                            if let Some(child_uuid) = comp.children.get(idx_sel) {
-                                                if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                    let current_row = layer_rows.get(&idx_sel).copied().unwrap_or(idx_sel);
-                                                    let target_row = (current_row as i32 + delta_children)
-                                                        .clamp(0, comp.children.len().saturating_sub(1) as i32)
-                                                        as usize;
+                                        for child_uuid in selection {
+                                            if let Some(attrs) = comp.children_attrs.get(&child_uuid) {
+                                                let idx_sel = comp.uuid_to_idx(&child_uuid).unwrap_or(0);
+                                                let current_row = layer_rows.get(&idx_sel).copied().unwrap_or(idx_sel);
+                                                let target_row = (current_row as i32 + delta_children)
+                                                    .clamp(0, comp.children.len().saturating_sub(1) as i32)
+                                                    as usize;
 
-                                                    let ghost_child_y = row_to_y(target_row, config, timeline_rect);
-                                                    let duration = (attrs.get_i32("end").unwrap_or(0)
-                                                        - attrs.get_i32("start").unwrap_or(0)
-                                                        + 1)
-                                                        .max(1);
+                                                let ghost_child_y = row_to_y(target_row, config, timeline_rect);
+                                                let duration = (attrs.get_i32("end").unwrap_or(0)
+                                                    - attrs.get_i32("start").unwrap_or(0)
+                                                    + 1)
+                                                    .max(1);
 
-                                                    // Apply same delta to maintain relative offsets
-                                                    let child_start = attrs.get_i32("start").unwrap_or(0);
-                                                    let ghost_start = child_start + delta_frames;
+                                                // Apply same delta to maintain relative offsets
+                                                let child_start = attrs.get_i32("start").unwrap_or(0);
+                                                let ghost_start = child_start + delta_frames;
 
-                                                    draw_drop_preview(
-                                                        &painter,
-                                                        ghost_start,
-                                                        ghost_child_y,
-                                                        duration,
-                                                        timeline_rect,
-                                                        config,
-                                                        state,
-                                                    );
-                                                }
+                                                draw_drop_preview(
+                                                    &painter,
+                                                    ghost_start,
+                                                    ghost_child_y,
+                                                    duration,
+                                                    timeline_rect,
+                                                    config,
+                                                    state,
+                                                );
                                             }
                                         }
 
@@ -890,17 +895,21 @@ pub fn render_canvas(
 
                         if let Some(idx) = clicked_layer {
                             let modifiers = ui.input(|i| i.modifiers);
-                            let (selection, anchor) = compute_layer_selection(
-                                &comp.layer_selection,
-                                comp.layer_selection_anchor,
-                                idx,
-                                modifiers,
-                            );
-                            dispatch(AppEvent::CompSelectionChanged {
-                                comp_uuid: comp_id.clone(),
-                                selection,
-                                anchor,
-                            });
+                            if let Some(clicked_uuid) = comp.children.get(idx).cloned() {
+                                let (selection, anchor) = compute_layer_selection(
+                                    &comp.layer_selection,
+                                    comp.layer_selection_anchor.clone(),
+                                    clicked_uuid,
+                                    idx,
+                                    modifiers,
+                                    &comp.children,
+                                );
+                                dispatch(AppEvent::CompSelectionChanged {
+                                    comp_uuid: comp_id.clone(),
+                                    selection,
+                                    anchor,
+                                });
+                            }
                         } else {
                             // Click on empty space: clear selection and scrub timeline
                             let frame = screen_x_to_frame(

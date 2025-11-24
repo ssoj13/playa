@@ -125,8 +125,8 @@ pub enum AppEvent {
     /// Select layer in timeline
     CompSelectionChanged {
         comp_uuid: String,
-        selection: Vec<usize>,
-        anchor: Option<usize>,
+        selection: Vec<String>,
+        anchor: Option<String>,
     },
 
     // ===== UI State =====
