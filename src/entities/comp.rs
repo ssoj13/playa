@@ -994,6 +994,111 @@ impl Comp {
         Ok(())
     }
 
+    /// Move multiple layers by delta; optionally reorder block to target_row (visual row).
+    /// `indices` are child indices in current order. Handles both single and multi-layer moves.
+    pub fn move_layers(
+        &mut self,
+        indices: &[usize],
+        delta: i32,
+        target_row: Option<usize>,
+    ) -> anyhow::Result<()> {
+        if indices.is_empty() {
+            return Ok(());
+        }
+
+        // Dedup and sort
+        let mut idxs: Vec<usize> = indices.to_vec();
+        idxs.sort_unstable();
+        idxs.dedup();
+
+        // Build block of UUIDs
+        let mut block: Vec<String> = Vec::new();
+        let mut reordered = self.children.clone();
+        for idx in idxs.iter().rev() {
+            if *idx < reordered.len() {
+                block.push(reordered.remove(*idx));
+            }
+        }
+        block.reverse();
+
+        // Reorder block if target_row is provided
+        let insert_at = target_row.unwrap_or_else(|| {
+            // default: place back at first removed index
+            *idxs.first().unwrap_or(&0)
+        });
+        let insert_at = insert_at.min(reordered.len());
+        let mut cursor = insert_at;
+        for uuid in block.iter() {
+            reordered.insert(cursor, uuid.clone());
+            cursor += 1;
+        }
+        self.children = reordered;
+
+        // Move each by delta (preserve relative offsets)
+        for uuid in block {
+            if let Some(idx) = self.children.iter().position(|u| u == &uuid) {
+                let current_start = self
+                    .children_attrs
+                    .get(&uuid)
+                    .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                    .unwrap_or(0);
+                let _ = self.move_child(idx, current_start + delta);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Trim multiple layers by delta on start or end.
+    /// `indices` are child indices; delta applied to play_start (is_start=true) or play_end (false).
+    pub fn trim_layers(&mut self, indices: &[usize], delta: i32, is_start: bool) -> anyhow::Result<()> {
+        if indices.is_empty() {
+            return Ok(());
+        }
+
+        let mut idxs: Vec<usize> = indices.to_vec();
+        idxs.sort_unstable();
+        idxs.dedup();
+
+        for idx in idxs {
+            if idx >= self.children.len() {
+                continue;
+            }
+            if let Some(child_uuid) = self.children.get(idx) {
+                let (bounds_start, bounds_end) = {
+                    let attrs = self.children_attrs.get(child_uuid);
+                    Self::child_bounds_abs(attrs.and_then(|a| a.get_i32("start")), attrs.and_then(|a| a.get_i32("end")))
+                };
+                if let Some(attrs) = self.children_attrs.get_mut(child_uuid) {
+                    if is_start {
+                        let current = attrs.get_i32("play_start").unwrap_or(bounds_start);
+                        let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
+                            (current + delta, attrs.get_i32("play_end").unwrap_or(bounds_end)),
+                            (bounds_start, bounds_end),
+                        );
+                        attrs.set("play_start", AttrValue::Int(clamped_start));
+                        attrs.set("play_end", AttrValue::Int(clamped_end));
+                    } else {
+                        let current = attrs.get_i32("play_end").unwrap_or(bounds_end);
+                        let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
+                            (attrs.get_i32("play_start").unwrap_or(bounds_start), current + delta),
+                            (bounds_start, bounds_end),
+                        );
+                        attrs.set("play_start", AttrValue::Int(clamped_start));
+                        attrs.set("play_end", AttrValue::Int(clamped_end));
+                    }
+                }
+            }
+        }
+
+        // Clear cache and emit event once
+        self.clear_cache();
+        self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+        Ok(())
+    }
+
     /// Set child play start (adjust play_start attribute - visible start offset from child start).
     pub fn set_child_play_start(
         &mut self,

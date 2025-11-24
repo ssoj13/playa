@@ -587,29 +587,42 @@ pub fn render_canvas(
                                         let target_display_idx = (current_display_idx as i32 + delta_children).max(0).min(comp.children.len() as i32 - 1) as usize;
                                         let target_child = child_order.get(target_display_idx).copied().unwrap_or(*layer_idx);
 
-                                        // Visual feedback: draw ghost bar at new position using the same helper as project drops
-                                        let child_uuid = &comp.children[*layer_idx];
-                                        if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                            let target_row = layer_rows
-                                                .get(&target_child)
-                                                .copied()
-                                                .unwrap_or(target_display_idx);
-                                            let ghost_child_y =
-                                                row_to_y(target_row, config, timeline_rect);
-                                            let duration = (attrs.get_i32("end").unwrap_or(0)
-                                                - attrs.get_i32("start").unwrap_or(0)
-                                                + 1)
-                                                .max(1);
+                                        // Visual feedback: draw ghost bars for all selected (or just dragged) layers
+                                        let selection = if comp.layer_selection.contains(layer_idx) {
+                                            comp.layer_selection.clone()
+                                        } else {
+                                            vec![*layer_idx]
+                                        };
 
-                                            draw_drop_preview(
-                                                &painter,
-                                                new_start,
-                                                ghost_child_y,
-                                                duration,
-                                                timeline_rect,
-                                                config,
-                                                state,
-                                            );
+                                        for idx_sel in selection {
+                                            if let Some(child_uuid) = comp.children.get(idx_sel) {
+                                                if let Some(attrs) = comp.children_attrs.get(child_uuid) {
+                                                    let current_row = layer_rows.get(&idx_sel).copied().unwrap_or(idx_sel);
+                                                    let target_row = (current_row as i32 + delta_children)
+                                                        .clamp(0, comp.children.len().saturating_sub(1) as i32)
+                                                        as usize;
+
+                                                    let ghost_child_y = row_to_y(target_row, config, timeline_rect);
+                                                    let duration = (attrs.get_i32("end").unwrap_or(0)
+                                                        - attrs.get_i32("start").unwrap_or(0)
+                                                        + 1)
+                                                        .max(1);
+
+                                                    // Apply same delta to maintain relative offsets
+                                                    let child_start = attrs.get_i32("start").unwrap_or(0);
+                                                    let ghost_start = child_start + delta_frames;
+
+                                                    draw_drop_preview(
+                                                        &painter,
+                                                        ghost_start,
+                                                        ghost_child_y,
+                                                        duration,
+                                                        timeline_rect,
+                                                        config,
+                                                        state,
+                                                    );
+                                                }
+                                            }
                                         }
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
