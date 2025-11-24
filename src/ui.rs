@@ -153,8 +153,14 @@ pub fn render_timeline_panel(
                                 );
                             });
 
-                        // Update persistent outline width
-                        timeline_state.outline_width = outline_response.response.rect.width();
+                        // Update persistent outline width only if significantly changed (>1px).
+                        // This prevents overwriting saved width with temporary values during UI initialization.
+                        // Without this check, egui would write incorrect width (~100px) on first frame,
+                        // causing the split position to reset every session.
+                        let new_width = outline_response.response.rect.width();
+                        if (new_width - timeline_state.outline_width).abs() > 1.0 {
+                            timeline_state.outline_width = new_width;
+                        }
 
                         egui::CentralPanel::default().show_inside(ui, |ui| {
                             // Same as outline: lock to exact height to prevent unwanted vertical scroll
