@@ -969,16 +969,19 @@ impl PlayaApp {
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
-                        let old_child_start = comp.child_start(layer_uuid);
-                        let play_start = comp.child_play_start(layer_uuid);
-                        // Calculate offset of play_start from child_start
-                        let offset = play_start - old_child_start;
-                        // Move layer so play_start lands on cursor
-                        let new_child_start = current_frame - offset;
-
-                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
-                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(new_child_start));
-                        }
+                        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
+                        // Use visible (trimmed) start so the trimmed edge lands on the cursor
+                        let (play_start, _) = comp
+                            .child_work_area_abs(layer_uuid)
+                            .unwrap_or_else(|| {
+                                let s = comp.child_start(layer_uuid);
+                                let e = comp.child_end(layer_uuid);
+                                (s, e)
+                            });
+                        let child_start = comp.child_start(layer_uuid);
+                        let delta = current_frame - play_start;
+                        let new_child_start = child_start + delta;
+                        let _ = comp.move_child(layer_idx, new_child_start);
                     }
                 }
             }
@@ -989,16 +992,19 @@ impl PlayaApp {
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
-                        let old_child_start = comp.child_start(layer_uuid);
-                        let play_end = comp.child_play_end(layer_uuid);
-                        // Calculate offset of play_end from child_start
-                        let offset = play_end - old_child_start;
-                        // Move layer so play_end lands on cursor
-                        let new_child_start = current_frame - offset;
-
-                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
-                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(new_child_start));
-                        }
+                        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
+                        // Use visible (trimmed) end so the trimmed edge lands on the cursor
+                        let (_, play_end) = comp
+                            .child_work_area_abs(layer_uuid)
+                            .unwrap_or_else(|| {
+                                let s = comp.child_start(layer_uuid);
+                                let e = comp.child_end(layer_uuid);
+                                (s, e)
+                            });
+                        let child_start = comp.child_start(layer_uuid);
+                        let delta = current_frame - play_end;
+                        let new_child_start = child_start + delta;
+                        let _ = comp.move_child(layer_idx, new_child_start);
                     }
                 }
             }
@@ -1009,12 +1015,8 @@ impl PlayaApp {
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
-                        let child_start = comp.child_start(layer_uuid);
-                        // Convert parent comp's current_frame to child's local frame
-                        let new_play_start = current_frame - child_start;
-
-                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
-                            attrs.set("play_start".to_string(), crate::entities::AttrValue::Int(new_play_start));
+                        if let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) {
+                            let _ = comp.set_child_play_start(layer_idx, current_frame);
                         }
                     }
                 }
@@ -1026,12 +1028,8 @@ impl PlayaApp {
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected.iter() {
-                        let child_start = comp.child_start(layer_uuid);
-                        // Convert parent comp's current_frame to child's local frame
-                        let new_play_end = current_frame - child_start;
-
-                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
-                            attrs.set("play_end".to_string(), crate::entities::AttrValue::Int(new_play_end));
+                        if let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) {
+                            let _ = comp.set_child_play_end(layer_idx, current_frame);
                         }
                     }
                 }
