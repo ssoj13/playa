@@ -29,6 +29,7 @@ use crate::entities::Comp;
 use crate::entities::Project;
 use crate::entities::frame::Frame;
 use log::{debug, info};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// FPS presets for jog/shuttle control
@@ -53,11 +54,11 @@ pub struct Player {
 
 impl Player {
     /// Create new player with empty project and defaults
-    pub fn new() -> Self {
+    pub fn new(cache_manager: Arc<crate::cache_man::CacheManager>) -> Self {
         info!("Player initialized with Comp-based architecture");
 
         Self {
-            project: Project::new(),
+            project: crate::entities::Project::new(cache_manager),
             active_comp: None,
             is_playing: false,
             fps_base: 24.0,
@@ -535,6 +536,8 @@ impl Player {
 
 impl Default for Player {
     fn default() -> Self {
-        Self::new()
+        // Create temporary cache manager for default player
+        let cache_manager = Arc::new(crate::cache_man::CacheManager::new(0.75, 2.0));
+        Self::new(cache_manager)
     }
 }

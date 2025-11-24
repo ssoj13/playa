@@ -1,7 +1,9 @@
+use crate::cache_man::CacheManager;
 use crate::entities::frame::{Frame, PixelFormat};
 use crate::player::Player;
 use crate::widgets::viewport::ViewportState;
 use eframe::egui;
+use std::sync::Arc;
 
 /// Status bar component (simplified, no cache progress)
 pub struct StatusBar {
@@ -28,6 +30,7 @@ impl StatusBar {
         player: &mut Player,
         viewport_state: &ViewportState,
         render_time_ms: f32,
+        cache_manager: Option<&Arc<CacheManager>>,
     ) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -75,6 +78,20 @@ impl StatusBar {
                 ui.monospace(format!("{:.1}ms", render_time_ms));
 
                 ui.separator();
+
+                // Memory usage
+                if let Some(manager) = cache_manager {
+                    let (usage, limit) = manager.mem();
+                    let usage_mb = usage / 1024 / 1024;
+                    let limit_mb = limit / 1024 / 1024;
+                    let percent = if limit > 0 {
+                        (usage as f64 / limit as f64 * 100.0) as u32
+                    } else {
+                        0
+                    };
+                    ui.monospace(format!("Mem: {}/{}MB ({}%)", usage_mb, limit_mb, percent));
+                    ui.separator();
+                }
 
                 // Loop toggle
                 ui.checkbox(&mut player.loop_enabled, "Loop");

@@ -46,6 +46,10 @@ pub struct Project {
     #[serde(skip)]
     #[serde(default = "Project::default_compositor")]
     pub compositor: RefCell<CompositorType>,
+
+    /// Global cache manager (runtime-only, set on creation/load)
+    #[serde(skip)]
+    cache_manager: Option<Arc<CacheManager>>,
 }
 
 impl Project {
@@ -54,7 +58,7 @@ impl Project {
         RefCell::new(CompositorType::default())
     }
 
-    pub fn new() -> Self {
+    pub fn new(cache_manager: Arc<CacheManager>) -> Self {
         Self {
             attrs: Attrs::new(),
             media: HashMap::new(),
@@ -63,6 +67,7 @@ impl Project {
             active: None,
             selection_anchor: None,
             compositor: RefCell::new(CompositorType::default()), // CPU compositor by default
+            cache_manager: Some(cache_manager),
         }
     }
 
@@ -162,18 +167,29 @@ impl Project {
         self.media.get(uuid)
     }
 
-    /// Add a composition to the project.
-    pub fn add_comp(&mut self, comp: Comp) {
+    /// Add a composition to the project (automatically sets cache_manager)
+    pub fn add_comp(&mut self, mut comp: Comp) {
+        // Automatically set cache_manager if available
+        if let Some(ref manager) = self.cache_manager {
+            comp.set_cache_manager(Arc::clone(manager));
+        }
+
         let uuid = comp.uuid.clone();
         self.media.insert(uuid.clone(), comp);
         self.comps_order.push(uuid);
     }
 
-    /// Set CacheManager for all comps (call after deserialization or creation)
-    pub fn set_cache_manager_all(&mut self, manager: Arc<CacheManager>) {
+    /// Set CacheManager for project and all existing comps (call after deserialization)
+    pub fn set_cache_manager(&mut self, manager: Arc<CacheManager>) {
+        self.cache_manager = Some(Arc::clone(&manager));
         for comp in self.media.values_mut() {
             comp.set_cache_manager(Arc::clone(&manager));
         }
+    }
+
+    /// Get reference to cache manager
+    pub fn cache_manager(&self) -> Option<&Arc<CacheManager>> {
+        self.cache_manager.as_ref()
     }
 
     /// Remove media (clip or comp) by UUID.

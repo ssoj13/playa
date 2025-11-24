@@ -32,6 +32,7 @@ use lru::LruCache;
 use serde::{Deserialize, Serialize};
 
 use crate::cache_man::CacheManager;
+use crate::workers::Workers;
 
 use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::loader::Loader;
@@ -505,6 +506,47 @@ impl Comp {
             }
         }
         self.cache.borrow_mut().clear();
+    }
+
+    /// Signal background preload for frames around current position
+    ///
+    /// Increments epoch to cancel stale requests. This is a placeholder
+    /// implementation - full background preloading will be implemented later
+    /// with proper Frame status management and worker communication.
+    ///
+    /// TODO: Implement background preload with Frame status transitions:
+    /// - Placeholder → Header → Loading → Loaded
+    /// - Use spiral strategy for image sequences (0, ±1, ±2, ...)
+    /// - Use forward strategy for video files (center → end)
+    #[allow(unused_variables)]
+    pub fn signal_preload(&self, workers: &Arc<Workers>) {
+        // Only preload in File mode
+        if self.mode != CompMode::File {
+            return;
+        }
+
+        // Increment epoch to cancel stale preload requests
+        let epoch = if let Some(ref manager) = self.cache_manager {
+            manager.increment_epoch()
+        } else {
+            return;
+        };
+
+        let center = self.current_frame;
+        let (play_start, play_end) = self.work_area_abs(true);
+
+        if play_end < play_start {
+            return;
+        }
+
+        debug!("Preload epoch {}: center={}, play_range={}..{} (placeholder)",
+               epoch, center, play_start, play_end);
+
+        // TODO: Implement actual preload with Frame objects and status management
+        // Strategy detection:
+        // - Video files: forward-only (center → end)
+        // - Image sequences: spiral (0, ±1, ±2, ...)
+        // For now, frames are loaded on-demand in get_file_frame()
     }
 
     /// Insert frame into cache with LRU eviction and memory tracking

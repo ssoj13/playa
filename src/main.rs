@@ -123,11 +123,12 @@ struct PlayaApp {
 
 impl Default for PlayaApp {
     fn default() -> Self {
-        let player = Player::new();
-        let status_bar = StatusBar::new();
-
         // Create global cache manager (memory tracking + epoch)
         let cache_manager = Arc::new(CacheManager::new(0.75, 2.0));
+
+        // Create player with cache manager
+        let player = Player::new(Arc::clone(&cache_manager));
+        let status_bar = StatusBar::new();
 
         // Create worker pool (75% of CPU cores for workers, 25% for UI thread)
         let num_workers = (num_cpus::get() * 3 / 4).max(1);
@@ -150,11 +151,7 @@ impl Default for PlayaApp {
             selected_media_uuid: None,
             last_render_time_ms: 0.0,
             settings: AppSettings::default(),
-            project: {
-                let mut proj = Project::new();
-                proj.set_cache_manager_all(Arc::clone(&cache_manager));
-                proj
-            },
+            project: Project::new(Arc::clone(&cache_manager)),
             show_help: true,
             show_playlist: true,
             show_settings: false,
@@ -1886,12 +1883,14 @@ impl eframe::App for PlayaApp {
 
         // Status bar (bottom panel)
         if !self.is_fullscreen {
+            let cache_mgr = self.player.project.cache_manager().map(Arc::clone);
             self.status_bar.render(
                 ctx,
                 self.frame.as_ref(),
                 &mut self.player,
                 &self.viewport_state,
                 self.last_render_time_ms,
+                cache_mgr.as_ref(),
             );
         }
 
@@ -2144,7 +2143,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
             // Recreate Player runtime from persisted project
-            let mut player = Player::new();
+            let mut player = Player::new(Arc::clone(&app.cache_manager));
             player.project = app.project.clone();
 
             // Rebuild Arc references and set event sender for all comps
