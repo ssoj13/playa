@@ -244,6 +244,58 @@ impl Comp {
             .collect()
     }
 
+    // Domain-specific helpers for layer attributes
+
+    /// Get child layer's start position
+    pub fn child_start(&self, child_uuid: &str) -> i32 {
+        self.children_attrs
+            .get(child_uuid)
+            .map(|a| a.get_i32_or_zero("start"))
+            .unwrap_or(0)
+    }
+
+    /// Get child layer's end position
+    pub fn child_end(&self, child_uuid: &str) -> i32 {
+        self.children_attrs
+            .get(child_uuid)
+            .map(|a| a.get_i32_or_zero("end"))
+            .unwrap_or(0)
+    }
+
+    /// Get child layer's play_start (with fallback to start)
+    pub fn child_play_start(&self, child_uuid: &str) -> i32 {
+        self.children_attrs
+            .get(child_uuid)
+            .map(|a| {
+                let start = a.get_i32_or_zero("start");
+                a.get_i32_or("play_start", start)
+            })
+            .unwrap_or(0)
+    }
+
+    /// Get child layer's play_end (with fallback to end)
+    pub fn child_play_end(&self, child_uuid: &str) -> i32 {
+        self.children_attrs
+            .get(child_uuid)
+            .map(|a| {
+                let end = a.get_i32_or_zero("end");
+                a.get_i32_or("play_end", end)
+            })
+            .unwrap_or(0)
+    }
+
+    /// Check if a specific layer is in selection
+    pub fn is_layer_selected(&self, layer_uuid: &str) -> bool {
+        self.layer_selection.contains(&layer_uuid.to_string())
+    }
+
+    /// Check if layer is selected and part of multi-selection
+    pub fn is_multi_selected(&self, layer_uuid: &str) -> bool {
+        !self.layer_selection.is_empty()
+            && self.is_layer_selected(layer_uuid)
+            && self.layer_selection.len() > 1
+    }
+
     pub fn set_fps(&mut self, fps: f32) {
         self.attrs.set("fps", AttrValue::Float(fps));
     }

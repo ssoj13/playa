@@ -1010,23 +1010,15 @@ impl PlayaApp {
                 new_idx,
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    let selection = comp.layer_selection.clone();
                     let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
-                    let selection_active =
-                        !selection.is_empty() && selection.iter().any(|uuid| uuid == &dragged_uuid);
 
-                    if selection_active && selection.len() > 1 {
-                        let dragged_start = comp.children_attrs.get(&dragged_uuid)
-                            .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
-                            .unwrap_or(0);
+                    if comp.is_multi_selected(&dragged_uuid) {
+                        let dragged_start = comp.child_start(&dragged_uuid);
                         let delta = new_start as i32 - dragged_start;
-                        let selection_indices = comp.uuids_to_indices(&selection);
+                        let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                         let _ = comp.move_layers(&selection_indices, delta, Some(new_idx));
                     } else {
-                        // Single-layer move: calculate delta from current position
-                        let dragged_start = comp.children_attrs.get(&dragged_uuid)
-                            .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
-                            .unwrap_or(0);
+                        let dragged_start = comp.child_start(&dragged_uuid);
                         let delta = new_start as i32 - dragged_start;
                         let _ = comp.move_layers(&[layer_idx], delta, Some(new_idx));
                     }
@@ -1038,19 +1030,12 @@ impl PlayaApp {
                 new_play_start,
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    let selection = comp.layer_selection.clone();
                     let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
-                    let selection_active =
-                        !selection.is_empty() && selection.iter().any(|uuid| uuid == &dragged_uuid);
 
-                    if selection_active && selection.len() > 1 {
-                        let dragged_ps = comp.children_attrs.get(&dragged_uuid)
-                            .and_then(|a| Some(a.get_i32("play_start").unwrap_or(
-                                a.get_i32("start").unwrap_or(0),
-                            )))
-                            .unwrap_or(0);
+                    if comp.is_multi_selected(&dragged_uuid) {
+                        let dragged_ps = comp.child_play_start(&dragged_uuid);
                         let delta = new_play_start - dragged_ps;
-                        let selection_indices = comp.uuids_to_indices(&selection);
+                        let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                         let _ = comp.trim_layers(&selection_indices, delta, true);
                     } else {
                         let delta = {
@@ -1074,19 +1059,12 @@ impl PlayaApp {
                 new_play_end,
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    let selection = comp.layer_selection.clone();
                     let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
-                    let selection_active =
-                        !selection.is_empty() && selection.iter().any(|uuid| uuid == &dragged_uuid);
 
-                    if selection_active && selection.len() > 1 {
-                        let dragged_pe = comp.children_attrs.get(&dragged_uuid)
-                            .and_then(|a| Some(a.get_i32("play_end").unwrap_or(
-                                a.get_i32("end").unwrap_or(0),
-                            )))
-                            .unwrap_or(0);
+                    if comp.is_multi_selected(&dragged_uuid) {
+                        let dragged_pe = comp.child_play_end(&dragged_uuid);
                         let delta = new_play_end - dragged_pe;
-                        let selection_indices = comp.uuids_to_indices(&selection);
+                        let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                         let _ = comp.trim_layers(&selection_indices, delta, false);
                     } else {
                         let delta = {

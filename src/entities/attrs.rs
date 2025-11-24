@@ -101,6 +101,28 @@ impl Attrs {
         }
     }
 
+    // Generic helpers with defaults (to reduce boilerplate)
+
+    /// Get i32 value with default fallback of 0
+    pub fn get_i32_or_zero(&self, key: &str) -> i32 {
+        self.get_i32(key).unwrap_or(0)
+    }
+
+    /// Get i32 value with custom default
+    pub fn get_i32_or(&self, key: &str, default: i32) -> i32 {
+        self.get_i32(key).unwrap_or(default)
+    }
+
+    /// Get float value with custom default
+    pub fn get_float_or(&self, key: &str, default: f32) -> f32 {
+        self.get_float(key).unwrap_or(default)
+    }
+
+    /// Get bool value with custom default
+    pub fn get_bool_or(&self, key: &str, default: bool) -> bool {
+        self.get_bool(key).unwrap_or(default)
+    }
+
     /// Get mutable reference to attribute value
     pub fn get_mut(&mut self, key: &str) -> Option<&mut AttrValue> {
         self.map.get_mut(key)

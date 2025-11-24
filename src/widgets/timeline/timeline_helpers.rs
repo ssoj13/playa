@@ -29,8 +29,8 @@ impl LayerTool {
     ) -> GlobalDragState {
         match self {
             LayerTool::AdjustPlayStart => {
-                let default_start = attrs.get_i32("start").unwrap_or(0);
-                let initial_play_start = attrs.get_i32("play_start").unwrap_or(default_start);
+                let default_start = attrs.get_i32_or_zero("start");
+                let initial_play_start = attrs.get_i32_or("play_start", default_start);
                 GlobalDragState::AdjustPlayStart {
                     layer_idx,
                     initial_play_start,
@@ -38,8 +38,8 @@ impl LayerTool {
                 }
             }
             LayerTool::AdjustPlayEnd => {
-                let default_end = attrs.get_i32("end").unwrap_or(0);
-                let initial_play_end = attrs.get_i32("play_end").unwrap_or(default_end);
+                let default_end = attrs.get_i32_or_zero("end");
+                let initial_play_end = attrs.get_i32_or("play_end", default_end);
                 GlobalDragState::AdjustPlayEnd {
                     layer_idx,
                     initial_play_end,
@@ -47,7 +47,7 @@ impl LayerTool {
                 }
             }
             LayerTool::Move => {
-                let initial_start = attrs.get_i32("start").unwrap_or(0);
+                let initial_start = attrs.get_i32_or_zero("start");
                 GlobalDragState::MovingLayer {
                     layer_idx,
                     initial_start,
