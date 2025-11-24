@@ -1,0 +1,216 @@
+//! Global cache memory manager with LRU eviction and epoch-based preload cancellation
+//!
+//! **Why**: Per-comp caches need coordinated memory tracking to prevent OOM.
+//! Epoch mechanism cancels stale preload requests during fast timeline scrubbing.
+//!
+//! **Used by**: App (global singleton), Comp (per-comp cache tracking)
+
+use log::{debug, info};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
+use sysinfo::System;
+
+/// Preload strategy for frame loading
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreloadStrategy {
+    /// Spiral pattern: 0, +1, -1, +2, -2, ... (good for image sequences with cheap seeking)
+    Spiral,
+    /// Forward-only: center → end (optimized for video where backward seeking is expensive)
+    Forward,
+}
+
+/// Global cache memory manager
+///
+/// Tracks memory usage across all Comp caches and provides epoch mechanism
+/// for cancelling stale preload requests.
+pub struct CacheManager {
+    /// Atomically tracked memory usage (bytes)
+    memory_usage: Arc<AtomicUsize>,
+    /// Maximum allowed memory (bytes)
+    max_memory_bytes: usize,
+    /// Epoch counter for cancelling stale requests
+    current_epoch: Arc<AtomicU64>,
+    /// Current preload strategy (per-session)
+    preload_strategy: PreloadStrategy,
+}
+
+impl CacheManager {
+    /// Create cache manager with memory limit
+    ///
+    /// # Arguments
+    ///
+    /// * `mem_fraction` - Fraction of available memory (0.0-1.0, e.g. 0.75 = 75%)
+    /// * `reserve_gb` - Reserve memory for system (GB, e.g. 2.0 = 2GB)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// let manager = CacheManager::new(0.75, 2.0); // 75% of available, reserve 2GB for system
+    /// ```
+    pub fn new(mem_fraction: f64, reserve_gb: f64) -> Self {
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+
+        let available = sys.available_memory() as usize;
+        let reserve = (reserve_gb * 1024.0 * 1024.0 * 1024.0) as usize;
+        let usable = available.saturating_sub(reserve);
+        let max_memory_bytes = (usable as f64 * mem_fraction) as usize;
+
+        info!(
+            "CacheManager init: available={} MB, reserve={} MB, limit={} MB ({}%)",
+            available / 1024 / 1024,
+            reserve / 1024 / 1024,
+            max_memory_bytes / 1024 / 1024,
+            (mem_fraction * 100.0) as u32
+        );
+
+        Self {
+            memory_usage: Arc::new(AtomicUsize::new(0)),
+            max_memory_bytes,
+            current_epoch: Arc::new(AtomicU64::new(0)),
+            preload_strategy: PreloadStrategy::Spiral,
+        }
+    }
+
+    /// Increment epoch and return new value
+    ///
+    /// Call this when current time changes to cancel all pending preload requests.
+    pub fn increment_epoch(&self) -> u64 {
+        let new_epoch = self.current_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        debug!("Epoch incremented: {}", new_epoch);
+        new_epoch
+    }
+
+    /// Get current epoch
+    pub fn current_epoch(&self) -> u64 {
+        self.current_epoch.load(Ordering::Relaxed)
+    }
+
+    /// Get shared epoch counter (for Workers)
+    pub fn epoch_ref(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.current_epoch)
+    }
+
+    /// Check if memory limit exceeded
+    pub fn check_memory_limit(&self) -> bool {
+        self.memory_usage.load(Ordering::Relaxed) > self.max_memory_bytes
+    }
+
+    /// Get memory statistics (usage, limit)
+    pub fn mem(&self) -> (usize, usize) {
+        let usage = self.memory_usage.load(Ordering::Relaxed);
+        (usage, self.max_memory_bytes)
+    }
+
+    /// Get memory usage percentage (0.0-1.0)
+    pub fn mem_usage_fraction(&self) -> f64 {
+        let (usage, limit) = self.mem();
+        if limit == 0 {
+            0.0
+        } else {
+            usage as f64 / limit as f64
+        }
+    }
+
+    /// Add memory usage
+    pub fn add_memory(&self, bytes: usize) {
+        let new_usage = self.memory_usage.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        if new_usage > self.max_memory_bytes {
+            debug!(
+                "Memory limit exceeded: {} MB / {} MB",
+                new_usage / 1024 / 1024,
+                self.max_memory_bytes / 1024 / 1024
+            );
+        }
+    }
+
+    /// Free memory usage
+    pub fn free_memory(&self, bytes: usize) {
+        self.memory_usage.fetch_sub(bytes, Ordering::Relaxed);
+    }
+
+    /// Set preload strategy based on media type
+    pub fn set_strategy(&mut self, is_video: bool) {
+        self.preload_strategy = if is_video {
+            PreloadStrategy::Forward
+        } else {
+            PreloadStrategy::Spiral
+        };
+        debug!("Preload strategy: {:?}", self.preload_strategy);
+    }
+
+    /// Get current preload strategy
+    pub fn strategy(&self) -> PreloadStrategy {
+        self.preload_strategy
+    }
+
+    /// Update memory limit (e.g. from settings)
+    pub fn set_memory_limit(&mut self, mem_fraction: f64, reserve_gb: f64) {
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+
+        let available = sys.available_memory() as usize;
+        let reserve = (reserve_gb * 1024.0 * 1024.0 * 1024.0) as usize;
+        let usable = available.saturating_sub(reserve);
+        self.max_memory_bytes = (usable as f64 * mem_fraction) as usize;
+
+        info!(
+            "Memory limit updated: {} MB ({}%)",
+            self.max_memory_bytes / 1024 / 1024,
+            (mem_fraction * 100.0) as u32
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cache_manager_creation() {
+        let manager = CacheManager::new(0.5, 1.0);
+        assert_eq!(manager.current_epoch(), 0);
+        assert_eq!(manager.strategy(), PreloadStrategy::Spiral);
+
+        let (usage, _limit) = manager.mem();
+        assert_eq!(usage, 0);
+    }
+
+    #[test]
+    fn test_epoch_increment() {
+        let manager = CacheManager::new(0.5, 1.0);
+        assert_eq!(manager.current_epoch(), 0);
+
+        let epoch1 = manager.increment_epoch();
+        assert_eq!(epoch1, 1);
+        assert_eq!(manager.current_epoch(), 1);
+
+        let epoch2 = manager.increment_epoch();
+        assert_eq!(epoch2, 2);
+    }
+
+    #[test]
+    fn test_memory_tracking() {
+        let manager = CacheManager::new(0.5, 1.0);
+
+        manager.add_memory(1024 * 1024); // 1 MB
+        let (usage, _) = manager.mem();
+        assert_eq!(usage, 1024 * 1024);
+
+        manager.free_memory(512 * 1024); // Free 0.5 MB
+        let (usage, _) = manager.mem();
+        assert_eq!(usage, 512 * 1024);
+    }
+
+    #[test]
+    fn test_strategy_switch() {
+        let mut manager = CacheManager::new(0.5, 1.0);
+        assert_eq!(manager.strategy(), PreloadStrategy::Spiral);
+
+        manager.set_strategy(true); // Video
+        assert_eq!(manager.strategy(), PreloadStrategy::Forward);
+
+        manager.set_strategy(false); // Image
+        assert_eq!(manager.strategy(), PreloadStrategy::Spiral);
+    }
+}

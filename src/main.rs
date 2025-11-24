@@ -1,3 +1,4 @@
+mod cache_man;
 mod cli;
 mod config;
 mod dialogs;
@@ -9,6 +10,7 @@ mod utils;
 mod widgets;
 mod workers;
 
+use cache_man::CacheManager;
 use clap::Parser;
 use cli::Args;
 use dialogs::encode::EncodeDialog;
@@ -86,6 +88,9 @@ struct PlayaApp {
     applied_workers: Option<usize>,
     #[serde(skip)]
     path_config: config::PathConfig,
+    /// Global cache manager (memory tracking + epoch)
+    #[serde(skip)]
+    cache_manager: Arc<CacheManager>,
     /// Global worker pool for background tasks (frame loading, encoding)
     #[serde(skip)]
     workers: Arc<Workers>,
@@ -121,9 +126,12 @@ impl Default for PlayaApp {
         let player = Player::new();
         let status_bar = StatusBar::new();
 
+        // Create global cache manager (memory tracking + epoch)
+        let cache_manager = Arc::new(CacheManager::new(0.75, 2.0));
+
         // Create worker pool (75% of CPU cores for workers, 25% for UI thread)
         let num_workers = (num_cpus::get() * 3 / 4).max(1);
-        let workers = Arc::new(Workers::new(num_workers));
+        let workers = Arc::new(Workers::new(num_workers, cache_manager.epoch_ref()));
 
         // Create event channel for composition events
         let (event_tx, event_rx) = crossbeam::channel::unbounded();
@@ -155,6 +163,7 @@ impl Default for PlayaApp {
             applied_mem_fraction: 0.75,
             applied_workers: None,
             path_config: config::PathConfig::from_env_and_cli(None),
+            cache_manager,
             workers,
             comp_event_receiver: event_rx,
             comp_event_sender,
@@ -1833,7 +1842,18 @@ impl eframe::App for PlayaApp {
             opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
         });
 
-        // cache_mem_percent is deprecated (old frame cache); kept only for config compatibility
+        // Apply memory settings from UI if changed
+        let mem_fraction = (self.settings.cache_memory_percent as f64 / 100.0).clamp(0.25, 0.95);
+        let reserve_gb = self.settings.reserve_system_memory_gb as f64;
+
+        if (mem_fraction - self.applied_mem_fraction).abs() > f64::EPSILON {
+            // Update cache manager with new limits
+            Arc::get_mut(&mut self.cache_manager)
+                .map(|cm| cm.set_memory_limit(mem_fraction, reserve_gb));
+            self.applied_mem_fraction = mem_fraction;
+            info!("Memory limit updated: {}% (reserve {} GB)", mem_fraction * 100.0, reserve_gb);
+        }
+
         self.player.update();
 
         // Handle composition events (CurrentFrameChanged → triggers frame loading)

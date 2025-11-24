@@ -1,9 +1,12 @@
 //! Global thread pool for background tasks (frame loading, encoding, etc.)
 //!
 //! Uses crossbeam for efficient MPMC queue with closure-based task execution.
+//! Epoch mechanism allows cancelling stale requests during fast timeline scrubbing.
 
 use crossbeam::channel::{Sender, unbounded};
 use log::{debug, error};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -25,13 +28,19 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 pub struct Workers {
     sender: Sender<Job>,
     _handles: Vec<thread::JoinHandle<()>>, // Keep handles to prevent premature drop
+    current_epoch: Arc<AtomicU64>,         // Epoch counter (shared with CacheManager)
 }
 
 impl Workers {
-    /// Create worker pool with `num_threads` threads.
+    /// Create worker pool with `num_threads` threads and shared epoch counter.
     ///
     /// Recommended: `num_cpus::get() * 3 / 4` (leave 25% for UI/main thread).
-    pub fn new(num_threads: usize) -> Self {
+    ///
+    /// # Arguments
+    ///
+    /// * `num_threads` - Number of worker threads
+    /// * `epoch` - Shared epoch counter for cancelling stale requests
+    pub fn new(num_threads: usize, epoch: Arc<AtomicU64>) -> Self {
         let (tx, rx): (Sender<Job>, _) = unbounded();
         let mut handles = Vec::new();
 
@@ -60,6 +69,7 @@ impl Workers {
         Self {
             sender: tx,
             _handles: handles,
+            current_epoch: epoch,
         }
     }
 
@@ -85,6 +95,28 @@ impl Workers {
         if let Err(e) = self.sender.send(Box::new(f)) {
             error!("Failed to enqueue job: {}", e);
         }
+    }
+
+    /// Get current epoch
+    pub fn current_epoch(&self) -> u64 {
+        self.current_epoch.load(Ordering::Relaxed)
+    }
+
+    /// Execute closure only if epoch matches current
+    ///
+    /// Automatically skips execution if request epoch is stale.
+    /// Used for frame preloading during fast timeline scrubbing.
+    pub fn execute_with_epoch<F>(&self, epoch: u64, f: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let current = self.current_epoch.load(Ordering::Relaxed);
+        if epoch != current {
+            debug!("Skipping stale request: epoch {} != current {}", epoch, current);
+            return;
+        }
+
+        self.execute(f);
     }
 }
 

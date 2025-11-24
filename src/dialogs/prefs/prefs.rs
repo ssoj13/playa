@@ -62,6 +62,10 @@ pub struct AppSettings {
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
 
+    // Cache & Memory
+    pub cache_memory_percent: f32,      // 25-95% of available (default 75%)
+    pub reserve_system_memory_gb: f32,  // Reserve for system (default 2.0 GB)
+
     // Compositor backend (CPU or GPU)
     pub compositor_backend: CompositorBackend,
 
@@ -87,6 +91,8 @@ impl Default for AppSettings {
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             workers_override: 0,
+            cache_memory_percent: 75.0,
+            reserve_system_memory_gb: 2.0,
             compositor_backend: CompositorBackend::default(),
             encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
             selected_settings_category: Some("UI".to_string()),
@@ -127,6 +133,27 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
             .range(0..=256),
     );
     ui.label("Takes effect on next launch. Defaults to ~75% of CPU cores.");
+
+    ui.add_space(16.0);
+    ui.heading("Cache & Memory");
+    ui.add_space(8.0);
+
+    ui.label("Cache Memory Limit (% of available):");
+    ui.add(
+        egui::Slider::new(&mut settings.cache_memory_percent, 25.0..=95.0)
+            .suffix("%")
+            .step_by(5.0),
+    );
+    ui.label("Maximum memory used for frame caching.");
+
+    ui.add_space(8.0);
+    ui.label("Reserve for System (GB):");
+    ui.add(
+        egui::Slider::new(&mut settings.reserve_system_memory_gb, 0.5..=8.0)
+            .suffix(" GB")
+            .step_by(0.5),
+    );
+    ui.label("Minimum memory reserved for OS and other apps.");
 
     ui.add_space(16.0);
     ui.heading("Compositing");
