@@ -42,6 +42,7 @@ pub fn render(
         hovered: false,
     };
     let mut render_time_ms = 0.0;
+    let old_shader = shader_manager.current_shader.clone();
 
     let ctx = ui.ctx().clone();
     let panel_rect = ui.max_rect();
@@ -180,6 +181,13 @@ pub fn render(
                     });
             });
         });
+
+    // If shader changed, recompile in renderer immediately
+    if shader_manager.current_shader != old_shader {
+        if let Ok(mut renderer) = viewport_renderer.lock() {
+            renderer.update_shader(shader_manager);
+        }
+    }
 
     // Track hover state for input routing
     actions.hovered = response.hovered();
