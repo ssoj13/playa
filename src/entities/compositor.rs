@@ -7,6 +7,17 @@
 
 use crate::entities::frame::{Frame, PixelBuffer};
 
+/// Supported blend modes for layer compositing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlendMode {
+    Normal,
+    Screen,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}
+
 /// Compositor type enum - allows switching between CPU/GPU backends.
 #[derive(Clone, Debug)]
 pub enum CompositorType {
@@ -17,7 +28,7 @@ pub enum CompositorType {
 
 impl CompositorType {
     /// Blend frames using the selected compositor backend.
-    pub fn blend(&self, frames: Vec<(Frame, f32)>) -> Option<Frame> {
+    pub fn blend(&self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
         match self {
             CompositorType::Cpu(cpu) => cpu.blend(frames),
             // CompositorType::Gpu(gpu) => gpu.blend(frames),
@@ -25,7 +36,11 @@ impl CompositorType {
     }
 
     /// Blend frames into a canvas with explicit dimensions.
-    pub fn blend_with_dim(&self, frames: Vec<(Frame, f32)>, dim: (usize, usize)) -> Option<Frame> {
+    pub fn blend_with_dim(
+        &self,
+        frames: Vec<(Frame, f32, BlendMode)>,
+        dim: (usize, usize),
+    ) -> Option<Frame> {
         match self {
             CompositorType::Cpu(cpu) => cpu.blend_with_dim(frames, dim),
             // CompositorType::Gpu(gpu) => gpu.blend(frames),
@@ -45,7 +60,13 @@ pub struct CpuCompositor;
 
 impl CpuCompositor {
     /// Blend two F32 buffers with opacity (RGBA format)
-    fn blend_f32(bottom: &[f32], top: &[f32], opacity: f32, result: &mut [f32]) {
+    fn blend_f32(
+        bottom: &[f32],
+        top: &[f32],
+        opacity: f32,
+        mode: &BlendMode,
+        result: &mut [f32],
+    ) {
         debug_assert_eq!(bottom.len(), top.len());
         debug_assert_eq!(bottom.len(), result.len());
 
@@ -53,16 +74,41 @@ impl CpuCompositor {
             let top_alpha = top[i + 3] * opacity;
             let inv_alpha = 1.0 - top_alpha;
 
-            // Blend RGB channels
-            result[i] = bottom[i] * inv_alpha + top[i] * top_alpha;
-            result[i + 1] = bottom[i + 1] * inv_alpha + top[i + 1] * top_alpha;
-            result[i + 2] = bottom[i + 2] * inv_alpha + top[i + 2] * top_alpha;
+            // Apply blend mode to color channels
+            let blend = |b: f32, t: f32| -> f32 {
+                let t_clamped = t.clamp(0.0, 1.0);
+                let b_clamped = b.clamp(0.0, 1.0);
+                match mode {
+                    BlendMode::Normal => t_clamped,
+                    BlendMode::Screen => 1.0 - (1.0 - b_clamped) * (1.0 - t_clamped),
+                    BlendMode::Add => (b_clamped + t_clamped).min(1.0),
+                    BlendMode::Subtract => (b_clamped - t_clamped).max(0.0),
+                    BlendMode::Multiply => b_clamped * t_clamped,
+                    BlendMode::Divide => {
+                        if t_clamped <= 0.00001 {
+                            b_clamped
+                        } else {
+                            (b_clamped / t_clamped).min(1.0)
+                        }
+                    }
+                }
+            };
+
+            result[i] = bottom[i] * inv_alpha + blend(bottom[i], top[i]) * top_alpha;
+            result[i + 1] = bottom[i + 1] * inv_alpha + blend(bottom[i + 1], top[i + 1]) * top_alpha;
+            result[i + 2] = bottom[i + 2] * inv_alpha + blend(bottom[i + 2], top[i + 2]) * top_alpha;
             result[i + 3] = bottom[i + 3] * inv_alpha + top_alpha;
         }
     }
 
     /// Blend two F16 buffers with opacity (RGBA format)
-    fn blend_f16(bottom: &[half::f16], top: &[half::f16], opacity: f32, result: &mut [half::f16]) {
+    fn blend_f16(
+        bottom: &[half::f16],
+        top: &[half::f16],
+        opacity: f32,
+        mode: &BlendMode,
+        result: &mut [half::f16],
+    ) {
         use half::f16;
         debug_assert_eq!(bottom.len(), top.len());
         debug_assert_eq!(bottom.len(), result.len());
@@ -71,17 +117,36 @@ impl CpuCompositor {
             let top_alpha = top[i + 3].to_f32() * opacity;
             let inv_alpha = 1.0 - top_alpha;
 
-            result[i] = f16::from_f32(bottom[i].to_f32() * inv_alpha + top[i].to_f32() * top_alpha);
+            let blend = |b: f32, t: f32| -> f32 {
+                let t_clamped = t.clamp(0.0, 1.0);
+                let b_clamped = b.clamp(0.0, 1.0);
+                match mode {
+                    BlendMode::Normal => t_clamped,
+                    BlendMode::Screen => 1.0 - (1.0 - b_clamped) * (1.0 - t_clamped),
+                    BlendMode::Add => (b_clamped + t_clamped).min(1.0),
+                    BlendMode::Subtract => (b_clamped - t_clamped).max(0.0),
+                    BlendMode::Multiply => b_clamped * t_clamped,
+                    BlendMode::Divide => {
+                        if t_clamped <= 0.00001 {
+                            b_clamped
+                        } else {
+                            (b_clamped / t_clamped).min(1.0)
+                        }
+                    }
+                }
+            };
+
+            result[i] = f16::from_f32(bottom[i].to_f32() * inv_alpha + blend(bottom[i].to_f32(), top[i].to_f32()) * top_alpha);
             result[i + 1] =
-                f16::from_f32(bottom[i + 1].to_f32() * inv_alpha + top[i + 1].to_f32() * top_alpha);
+                f16::from_f32(bottom[i + 1].to_f32() * inv_alpha + blend(bottom[i + 1].to_f32(), top[i + 1].to_f32()) * top_alpha);
             result[i + 2] =
-                f16::from_f32(bottom[i + 2].to_f32() * inv_alpha + top[i + 2].to_f32() * top_alpha);
+                f16::from_f32(bottom[i + 2].to_f32() * inv_alpha + blend(bottom[i + 2].to_f32(), top[i + 2].to_f32()) * top_alpha);
             result[i + 3] = f16::from_f32(bottom[i + 3].to_f32() * inv_alpha + top_alpha);
         }
     }
 
     /// Blend two U8 buffers with opacity (RGBA format)
-    fn blend_u8(bottom: &[u8], top: &[u8], opacity: f32, result: &mut [u8]) {
+    fn blend_u8(bottom: &[u8], top: &[u8], opacity: f32, mode: &BlendMode, result: &mut [u8]) {
         debug_assert_eq!(bottom.len(), top.len());
         debug_assert_eq!(bottom.len(), result.len());
 
@@ -89,19 +154,48 @@ impl CpuCompositor {
             let top_alpha = (top[i + 3] as f32 / 255.0) * opacity;
             let inv_alpha = 1.0 - top_alpha;
 
-            result[i] = (bottom[i] as f32 * inv_alpha + top[i] as f32 * top_alpha) as u8;
-            result[i + 1] =
-                (bottom[i + 1] as f32 * inv_alpha + top[i + 1] as f32 * top_alpha) as u8;
-            result[i + 2] =
-                (bottom[i + 2] as f32 * inv_alpha + top[i + 2] as f32 * top_alpha) as u8;
-            result[i + 3] = (bottom[i + 3] as f32 * inv_alpha + top_alpha * 255.0) as u8;
+            let blend = |b: f32, t: f32| -> f32 {
+                let t_clamped = t.clamp(0.0, 1.0);
+                let b_clamped = b.clamp(0.0, 1.0);
+                match mode {
+                    BlendMode::Normal => t_clamped,
+                    BlendMode::Screen => 1.0 - (1.0 - b_clamped) * (1.0 - t_clamped),
+                    BlendMode::Add => (b_clamped + t_clamped).min(1.0),
+                    BlendMode::Subtract => (b_clamped - t_clamped).max(0.0),
+                    BlendMode::Multiply => b_clamped * t_clamped,
+                    BlendMode::Divide => {
+                        if t_clamped <= 0.00001 {
+                            b_clamped
+                        } else {
+                            (b_clamped / t_clamped).min(1.0)
+                        }
+                    }
+                }
+            };
+
+            let r = bottom[i] as f32 / 255.0;
+            let g = bottom[i + 1] as f32 / 255.0;
+            let b = bottom[i + 2] as f32 / 255.0;
+            let tr = top[i] as f32 / 255.0;
+            let tg = top[i + 1] as f32 / 255.0;
+            let tb = top[i + 2] as f32 / 255.0;
+
+            let out_r = r * inv_alpha + blend(r, tr) * top_alpha;
+            let out_g = g * inv_alpha + blend(g, tg) * top_alpha;
+            let out_b = b * inv_alpha + blend(b, tb) * top_alpha;
+            let out_a = bottom[i + 3] as f32 / 255.0 * inv_alpha + top_alpha;
+
+            result[i] = (out_r.clamp(0.0, 1.0) * 255.0) as u8;
+            result[i + 1] = (out_g.clamp(0.0, 1.0) * 255.0) as u8;
+            result[i + 2] = (out_b.clamp(0.0, 1.0) * 255.0) as u8;
+            result[i + 3] = (out_a.clamp(0.0, 1.0) * 255.0) as u8;
         }
     }
 
     /// Blend frames bottom-to-top with opacity.
-    pub(crate) fn blend(&self, frames: Vec<(Frame, f32)>) -> Option<Frame> {
+    pub(crate) fn blend(&self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
         // Default to using first frame size
-        if let Some((first, _)) = frames.get(0) {
+        if let Some((first, _, _)) = frames.get(0) {
             let dim = (first.width(), first.height());
             return self.blend_with_dim(frames, dim);
         }
@@ -111,7 +205,7 @@ impl CpuCompositor {
     /// Blend frames onto a fixed-size canvas (width, height).
     pub(crate) fn blend_with_dim(
         &self,
-        frames: Vec<(Frame, f32)>,
+        frames: Vec<(Frame, f32, BlendMode)>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         use log::debug;
@@ -130,12 +224,12 @@ impl CpuCompositor {
         let (width, height) = dim;
         // Start with first frame cropped to canvas
         let mut iter = frames.iter();
-        let (base_frame, _) = iter.next().unwrap(); // safe: frames non-empty
+        let (base_frame, _, _) = iter.next().unwrap(); // safe: frames non-empty
         let mut result = base_frame.clone();
         result.crop(width, height, crate::entities::frame::CropAlign::LeftTop);
 
         // Blend each subsequent layer on top
-        for (layer_frame, opacity) in iter {
+        for (layer_frame, opacity, mode) in iter {
             let result_buffer = result.buffer();
             let layer_buffer = layer_frame.buffer();
 
@@ -157,7 +251,7 @@ impl CpuCompositor {
                         let base_slice = &$curr[b_off..b_off + overlap_w * 4];
                         let layer_slice = &$layer[l_off..l_off + overlap_w * 4];
                         let out_slice = &mut $out[b_off..b_off + overlap_w * 4];
-                        Self::$blend_fn(base_slice, layer_slice, *opacity, out_slice);
+                        Self::$blend_fn(base_slice, layer_slice, *opacity, mode, out_slice);
                     }
                 }};
             }

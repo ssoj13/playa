@@ -145,7 +145,7 @@ impl Default for PlayaApp {
             show_playlist: true,
             show_settings: false,
             show_encode_dialog: false,
-            show_attributes_editor: false,
+            show_attributes_editor: true,
             encode_dialog: None,
             is_fullscreen: false,
             fullscreen_dirty: false,
@@ -1016,34 +1016,8 @@ impl PlayaApp {
 
                     for layer_uuid in selected.iter() {
                         let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                        if let Some(attrs) = comp.children_attrs.get(layer_uuid) {
-                            let start = attrs.get_i32("start").unwrap_or(0);
-                            let end = attrs.get_i32("end").unwrap_or(start);
-                            let play_start = attrs.get_i32("play_start").unwrap_or(start);
-                            log::debug!(
-                                "[Alt-[ pre] child={} start={} end={} play_start={} cursor={}",
-                                layer_uuid,
-                                start,
-                                end,
-                                play_start,
-                                current_frame
-                            );
-                        }
                         // Clamp inside layer bounds inside setter
                         let _ = comp.set_child_play_start(layer_idx, current_frame);
-                        if let Some(attrs) = comp.children_attrs.get(layer_uuid) {
-                            let start = attrs.get_i32("start").unwrap_or(0);
-                            let end = attrs.get_i32("end").unwrap_or(start);
-                            let play_start = attrs.get_i32("play_start").unwrap_or(start);
-                            log::debug!(
-                                "[Alt-[ post] child={} start={} end={} play_start={} cursor={}",
-                                layer_uuid,
-                                start,
-                                end,
-                                play_start,
-                                current_frame
-                            );
-                        }
                     }
                 }
             }
@@ -1055,34 +1029,8 @@ impl PlayaApp {
 
                     for layer_uuid in selected.iter() {
                         let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                        if let Some(attrs) = comp.children_attrs.get(layer_uuid) {
-                            let start = attrs.get_i32("start").unwrap_or(0);
-                            let end = attrs.get_i32("end").unwrap_or(start);
-                            let play_end = attrs.get_i32("play_end").unwrap_or(end);
-                            log::debug!(
-                                "[Alt-] pre] child={} start={} end={} play_end={} cursor={}",
-                                layer_uuid,
-                                start,
-                                end,
-                                play_end,
-                                current_frame
-                            );
-                        }
                         // Clamp inside layer bounds inside setter
                         let _ = comp.set_child_play_end(layer_idx, current_frame);
-                        if let Some(attrs) = comp.children_attrs.get(layer_uuid) {
-                            let start = attrs.get_i32("start").unwrap_or(0);
-                            let end = attrs.get_i32("end").unwrap_or(start);
-                            let play_end = attrs.get_i32("play_end").unwrap_or(end);
-                            log::debug!(
-                                "[Alt-] post] child={} start={} end={} play_end={} cursor={}",
-                                layer_uuid,
-                                start,
-                                end,
-                                play_end,
-                                current_frame
-                            );
-                        }
                     }
                 }
             }
@@ -1252,11 +1200,6 @@ impl PlayaApp {
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(mut event) = self.hotkey_handler.handle_input(&input) {
-            log::debug!(
-                "[Hotkey] event: {:?}, focused_window: {:?}",
-                event,
-                focused_window
-            );
 
             // Fill comp_uuid for timeline-specific events
             if let Some(active_comp_uuid) = &self.player.active_comp {
@@ -1269,17 +1212,6 @@ impl PlayaApp {
                     }
                     _ => {}
                 }
-            }
-
-            // Debug: log timeline vs viewport hover for trim hotkeys
-            match &event {
-                AppEvent::TrimLayersStart { .. } | AppEvent::TrimLayersEnd { .. } => {
-                    log::debug!(
-                        "[Hotkey] Trim event routed. hover: timeline={} viewport={} project={}. focused_window={:?}",
-                        self.timeline_hovered, self.viewport_hovered, self.project_hovered, focused_window
-                    );
-                }
-                _ => {}
             }
 
             self.event_bus.send(event);

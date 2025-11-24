@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::loader::Loader;
 use super::{AttrValue, Attrs};
+use super::compositor::BlendMode;
 use crate::entities::loader_video;
 use crate::events::{CompEvent, CompEventSender};
 use crate::utils::media;
@@ -714,7 +715,7 @@ impl Comp {
     /// - Blends multiple children with CPU compositor (GPU compositor planned)
     fn compose(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         use log::debug;
-        let mut source_frames: Vec<(Frame, f32)> = Vec::new();
+        let mut source_frames: Vec<(Frame, f32, BlendMode)> = Vec::new();
         let mut earliest: Option<(i32, usize)> = None; // (start_frame, index in source_frames)
         let mut target_format: PixelFormat = PixelFormat::Rgba8;
 
@@ -775,7 +776,19 @@ impl Comp {
                 // Recursively get frame from source (Clip or Comp)
                 if let Some(frame) = source.get_frame(source_frame, project) {
                     let opacity = attrs.get_float("opacity").unwrap_or(1.0);
-                    source_frames.push((frame, opacity));
+                    let blend_mode = attrs
+                        .get_str("blend_mode")
+                        .or_else(|| attrs.get_str("layer_mode"))
+                        .map(|s| match s {
+                            "screen" => BlendMode::Screen,
+                            "add" => BlendMode::Add,
+                            "subtract" => BlendMode::Subtract,
+                            "multiply" => BlendMode::Multiply,
+                            "divide" => BlendMode::Divide,
+                            _ => BlendMode::Normal,
+                        })
+                        .unwrap_or(BlendMode::Normal);
+                    source_frames.push((frame, opacity, blend_mode));
                     let idx = source_frames.len() - 1;
                     if earliest.map_or(true, |(s, _)| child_start < s) {
                         earliest = Some((child_start, idx));
@@ -796,7 +809,7 @@ impl Comp {
             .and_then(|(_, idx)| {
                 source_frames
                     .get(*idx)
-                    .map(|(f, _)| (f.width().max(1), f.height().max(1)))
+                    .map(|(f, _, _)| (f.width().max(1), f.height().max(1)))
             })
             .unwrap_or_else(|| self.dim());
 
@@ -850,7 +863,7 @@ impl Comp {
             }
         }
 
-        for (frame, opacity) in source_frames.iter_mut() {
+        for (frame, opacity, _mode) in source_frames.iter_mut() {
             *frame = promote_frame(frame, target_format);
             *opacity = *opacity;
         }
@@ -881,7 +894,7 @@ impl Comp {
             }
             PixelFormat::Rgba8 => make_u8_base(),
         };
-        source_frames.insert(0, (base, 1.0));
+        source_frames.insert(0, (base, 1.0, BlendMode::Normal));
         debug!(
             "compose() collected {} frames, calling compositor.blend_with_dim({}, {})",
             source_frames.len(),
