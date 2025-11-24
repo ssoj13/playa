@@ -113,7 +113,7 @@ pub(super) struct LayerGeom {
 }
 
 impl LayerGeom {
-    /// Calculate layer geometry. play_start/play_end are ABSOLUTE source frames.
+    /// Calculate layer geometry. play_start/play_end are absolute frames in parent timeline.
     pub fn calc(
         child_start: i32,
         child_end: i32,
@@ -126,8 +126,8 @@ impl LayerGeom {
     ) -> Self {
         use eframe::egui::{Pos2, Rect};
 
-        let visible_start = child_start + play_start;
-        let visible_end = child_start + play_end;
+        let visible_start = play_start;
+        let visible_end = play_end;
 
         let frame_to_screen_x = |frame: f32, timeline_min_x: f32| -> f32 {
             let frame_offset = frame - state.pan_offset;

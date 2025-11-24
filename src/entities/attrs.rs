@@ -1,9 +1,16 @@
 //! Generic attribute storage shared across core types.
 //!
 //! Used by Frame, Clip, Layer, Comp, Project.
+//! Hashing notes:
+//! - `hash_all()` and `hash_filtered()` hash keys in sorted order for determinism.
+//! - `AttrValue` hashes floats via `to_bits`; matrices/vectors are flattened.
+//! - `Attrs` hashing is used by `Comp::compute_comp_hash` to invalidate cached frames
+//!   when any child attribute changes.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 
 /// Generic attribute value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -17,6 +24,24 @@ pub enum AttrValue {
     Vec4([f32; 4]),
     Mat3([[f32; 3]; 3]),
     Mat4([[f32; 4]; 4]),
+}
+
+impl std::hash::Hash for AttrValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        use AttrValue::*;
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Bool(v) => v.hash(state),
+            Str(v) => v.hash(state),
+            Int(v) => v.hash(state),
+            UInt(v) => v.hash(state),
+            Float(v) => v.to_bits().hash(state),
+            Vec3(arr) => arr.iter().for_each(|f| f.to_bits().hash(state)),
+            Vec4(arr) => arr.iter().for_each(|f| f.to_bits().hash(state)),
+            Mat3(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
+            Mat4(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
+        }
+    }
 }
 
 /// Attribute container: string key → typed value.
@@ -109,5 +134,39 @@ impl Attrs {
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
+    }
+
+    /// Hash attributes with optional include/exclude filters.
+    /// Keys are processed in sorted order for deterministic output.
+    pub fn hash_filtered(&self, include: Option<&[&str]>, exclude: Option<&[&str]>) -> u64 {
+        let include_set: Option<HashSet<&str>> = include.map(|v| v.iter().copied().collect());
+        let exclude_set: Option<HashSet<&str>> = exclude.map(|v| v.iter().copied().collect());
+
+        let mut keys: Vec<&String> = self.map.keys().collect();
+        keys.sort_unstable();
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for key in keys {
+            if let Some(ref inc) = include_set {
+                if !inc.contains(key.as_str()) {
+                    continue;
+                }
+            }
+            if let Some(ref exc) = exclude_set {
+                if exc.contains(key.as_str()) {
+                    continue;
+                }
+            }
+            key.hash(&mut hasher);
+            if let Some(val) = self.map.get(key) {
+                val.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Hash all attributes.
+    pub fn hash_all(&self) -> u64 {
+        self.hash_filtered(None, None)
     }
 }

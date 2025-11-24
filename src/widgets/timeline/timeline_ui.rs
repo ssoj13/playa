@@ -434,13 +434,12 @@ pub fn render_canvas(
                               Color32::from_gray(35)
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
-                            let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
+                            let play_start = attrs
+                                .and_then(|a| Some(a.get_i32("play_start").unwrap_or(child_start)))
+                                .unwrap_or(child_start);
                             let play_end = attrs
-                                .and_then(|a| {
-                                    let start = a.get_i32("start").unwrap_or(0);
-                                    Some(a.get_i32("play_end").unwrap_or(child_end - start))
-                                })
-                                .unwrap_or(0);
+                                .and_then(|a| Some(a.get_i32("play_end").unwrap_or(child_end)))
+                                .unwrap_or(child_end);
                             let is_visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
 
                             // Calculate layer geometry (deduplicated)
@@ -495,8 +494,12 @@ pub fn render_canvas(
                             let attrs = comp.children_attrs.get(child_uuid);
                             let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
                             let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
-                            let play_start = attrs.and_then(|a| Some(a.get_i32("play_start").unwrap_or(0))).unwrap_or(0);
-                            let play_end = attrs.and_then(|a| Some(a.get_i32("play_end").unwrap_or(0))).unwrap_or(0);
+                            let play_start = attrs
+                                .and_then(|a| Some(a.get_i32("play_start").unwrap_or(child_start)))
+                                .unwrap_or(child_start);
+                            let play_end = attrs
+                                .and_then(|a| Some(a.get_i32("play_end").unwrap_or(child_end)))
+                                .unwrap_or(child_end);
 
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);
@@ -625,7 +628,7 @@ pub fn render_canvas(
                                     GlobalDragState::AdjustPlayStart { layer_idx, initial_play_start, drag_start_x } => {
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
-                                        let new_play_start = (*initial_play_start + delta_frames).max(0);
+                                        let new_play_start = *initial_play_start + delta_frames;
 
                                         // Visual feedback: draw ghost play range preview
                                         if *layer_idx < comp.children.len() {
@@ -639,13 +642,10 @@ pub fn render_canvas(
                                                         physical_to_display(*layer_idx).unwrap_or(*layer_idx)
                                                     });
                                                 let layer_y = row_to_y(target_row, config, timeline_rect);
-                                                let layer_start = attrs.get_u32("start").unwrap_or(0) as usize;
-                                                let layer_end = attrs.get_u32("end").unwrap_or(0) as usize;
-
-                                                // New visual start accounting for play_start
-                                                let visual_start = layer_start + new_play_start as usize;
-                                                let ghost_x_start = frame_to_screen_x(visual_start as f32, timeline_rect.min.x, config, state);
-                                                let ghost_x_end = frame_to_screen_x(layer_end as f32, timeline_rect.min.x, config, state);
+                                                let visual_start = new_play_start as f32;
+                                                let layer_end = attrs.get_i32("end").unwrap_or(0) as f32;
+                                                let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
+                                                let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
 
                                                 let ghost_rect = Rect::from_min_max(
                                                     Pos2::new(ghost_x_start, layer_y + 4.0),
@@ -676,7 +676,7 @@ pub fn render_canvas(
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
                                         // play_end is ABSOLUTE source frame, so drag right = increase
-                                        let new_play_end = (*initial_play_end + delta_frames).max(0);
+                                        let new_play_end = *initial_play_end + delta_frames;
 
                                         // Visual feedback: draw ghost play range preview
                                         if *layer_idx < comp.children.len() {
@@ -690,14 +690,11 @@ pub fn render_canvas(
                                                         physical_to_display(*layer_idx).unwrap_or(*layer_idx)
                                                     });
                                                 let layer_y = row_to_y(target_row, config, timeline_rect);
-                                                let layer_start = attrs.get_i32("start").unwrap_or(0);
-                                                let play_start = attrs.get_i32("play_start").unwrap_or(0);
-
-                                                // visual_end = child_start + play_end (absolute frame)
-                                                let visual_start = layer_start + play_start;
-                                                let visual_end = layer_start + new_play_end;
-                                                let ghost_x_start = frame_to_screen_x(visual_start as f32, timeline_rect.min.x, config, state);
-                                                let ghost_x_end = frame_to_screen_x(visual_end as f32, timeline_rect.min.x, config, state);
+                                                let play_start = attrs.get_i32("play_start").unwrap_or(attrs.get_i32("start").unwrap_or(0));
+                                                let visual_start = play_start as f32;
+                                                let visual_end = new_play_end as f32;
+                                                let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
+                                                let ghost_x_end = frame_to_screen_x(visual_end, timeline_rect.min.x, config, state);
 
                                                 let ghost_rect = Rect::from_min_max(
                                                     Pos2::new(ghost_x_start, layer_y + 4.0),

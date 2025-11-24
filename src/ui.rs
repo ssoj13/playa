@@ -91,8 +91,8 @@ pub fn render_timeline_panel(
                 let old_work = comp.play_range(true);
                 comp.rebound();
                 if old_work == old_full {
-                    comp.set_comp_play_start(0);
-                    comp.set_comp_play_end(0);
+                    comp.set_comp_play_start(comp.start());
+                    comp.set_comp_play_end(comp.end());
                 }
 
                 // CRITICAL ORDER: Toolbar and view selector MUST be rendered BEFORE calculating

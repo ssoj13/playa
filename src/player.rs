@@ -102,8 +102,6 @@ impl Player {
     }
 
     /// Set play range of active comp in global comp frame indices (inclusive).
-    ///
-    /// Internally this is mapped to comp.play_start / comp.play_end offsets.
     pub fn set_play_range(&mut self, start: i32, end: i32) {
         if let Some(comp) = self.active_comp_mut() {
             if comp.end() < comp.start() {
@@ -116,15 +114,14 @@ impl Player {
             // Clamp requested range to comp bounds
             let clamped_start = start.clamp(comp_start, comp_end);
             let clamped_end = end.clamp(comp_start, comp_end);
-            if clamped_end < clamped_start {
-                return;
-            }
+            let (final_start, final_end) = if clamped_end < clamped_start {
+                (clamped_end, clamped_start)
+            } else {
+                (clamped_start, clamped_end)
+            };
 
-            let play_start = (clamped_start - comp_start).max(0);
-            let play_end = (comp_end - clamped_end).max(0);
-
-            comp.set_comp_play_start(play_start);
-            comp.set_comp_play_end(play_end);
+            comp.set_comp_play_start(final_start);
+            comp.set_comp_play_end(final_end);
 
             // Ensure current_frame lies inside new play range
             let (visible_start, visible_end) = comp.play_range(true);
@@ -138,9 +135,10 @@ impl Player {
     /// Reset play range of active comp to its full range.
     pub fn reset_play_range(&mut self) {
         if let Some(comp) = self.active_comp_mut() {
-            comp.set_comp_play_start(0);
-            comp.set_comp_play_end(0);
-            let (start, _) = comp.play_range(false);
+            let start = comp.start();
+            let end = comp.end();
+            comp.set_comp_play_start(start);
+            comp.set_comp_play_end(end);
             comp.set_current_frame(start);
         }
     }
@@ -240,6 +238,11 @@ impl Player {
             return;
         }
 
+        let (play_start, play_end) = self.play_range();
+        if play_end < play_start {
+            return;
+        }
+
         // Copy values before borrowing comp mutably
         let play_direction = self.play_direction;
         let loop_enabled = self.loop_enabled;
@@ -249,8 +252,15 @@ impl Player {
             None => return,
         };
 
-        let current = comp.current_frame;
-        let (play_start, play_end) = (0, total_frames.saturating_sub(1));
+        let mut current = comp.current_frame;
+        if current < play_start || current > play_end {
+            current = if play_direction >= 0.0 {
+                play_start
+            } else {
+                play_end
+            };
+            comp.set_current_frame(current);
+        }
 
         if play_direction > 0.0 {
             // Forward

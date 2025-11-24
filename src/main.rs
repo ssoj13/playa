@@ -287,13 +287,12 @@ impl PlayaApp {
         if comp.mode == crate::entities::comp::CompMode::File {
             debug!("Active comp is File mode, loading frames directly");
 
-            let play_start = comp.play_start();
-            let play_end = comp.play_end();
-            let comp_start = comp.start();
+            let (play_start, play_end) = comp.work_area_abs(true);
+            let comp_end = comp.end();
 
             // Calculate frame range to load
-            let load_start_i32 = (current_frame - radius as i32).max(comp_start + play_start);
-            let load_end_i32 = (current_frame + radius as i32).min(comp.end() - play_end);
+            let load_start_i32 = (current_frame - radius as i32).max(play_start);
+            let load_end_i32 = (current_frame + radius as i32).min(play_end).min(comp_end);
 
             debug!(
                 "Loading File mode frames [{}, {}]",
@@ -378,18 +377,21 @@ impl PlayaApp {
                 source.play_frame_count()
             );
 
-            // Get child range from attrs (supports negative values)
+            // Child placement/work area in parent timeline
             let child_start = attrs.get_i32("start").unwrap_or(0);
-            let child_end = attrs.get_i32("end").unwrap_or(0);
+            let child_end = attrs.get_i32("end").unwrap_or(child_start);
+            let (child_play_start, child_play_end) = comp
+                .child_work_area_abs(child_uuid)
+                .unwrap_or((child_start, child_end));
 
-            // Frames to load: [current - radius, current + radius] within child bounds
+            // Frames to load: [current - radius, current + radius] within child work area
             let current_i32 = current_frame;
             let window_start = current_i32 - radius as i32;
             let window_end = current_i32 + radius as i32;
 
-            // Find intersection between load window and child range
-            let load_start_i32 = window_start.max(child_start);
-            let load_end_i32 = window_end.min(child_end);
+            // Find intersection between load window and child work area
+            let load_start_i32 = window_start.max(child_play_start).max(child_start);
+            let load_end_i32 = window_end.min(child_play_end).min(child_end);
 
             // Skip child if no intersection (current_frame too far from child range)
             if load_start_i32 > load_end_i32 {
@@ -401,8 +403,8 @@ impl PlayaApp {
             }
 
             debug!(
-                "Child {}: range [{}, {}], will load frames [{}, {}]",
-                child_idx, child_start, child_end, load_start_i32, load_end_i32
+                "Child {}: range [{}, {}], work [{}, {}], will load frames [{}, {}]",
+                child_idx, child_start, child_end, child_play_start, child_play_end, load_start_i32, load_end_i32
             );
 
             for global_i32 in load_start_i32..=load_end_i32 {
@@ -411,34 +413,23 @@ impl PlayaApp {
                     continue;
                 }
 
-                // Convert global comp frame to local frame index
-                let play_start = attrs.get_i32("play_start").unwrap_or(0);
-                let frame_idx = (global_i32 - child_start) + play_start;
-                if frame_idx < 0 {
-                    debug!(
-                        "Frame {} not active in child {} (negative play_start)",
-                        global_i32, child_idx
-                    );
+                // Map parent frame to source comp absolute frame (anchor to source.start())
+                let offset = global_i32 - child_start;
+                if offset < 0 {
                     continue;
                 }
-
-                if frame_idx >= source.play_frame_count() {
-                    debug!(
-                        "Frame {} (frame_idx {}) out of bounds (comp len: {})",
-                        global_i32,
-                        frame_idx,
-                        source.play_frame_count()
-                    );
+                let source_frame = source.start() + offset;
+                if source_frame < source.start() || source_frame > source.end() {
                     continue;
                 }
 
                 // Get frame from File mode comp
-                let frame = match source.get_frame(frame_idx, &self.player.project) {
+                let frame = match source.get_frame(source_frame, &self.player.project) {
                     Some(f) => f,
                     None => {
                         debug!(
-                            "Failed to get frame {} (frame_idx {})",
-                            global_i32, frame_idx
+                            "Failed to get frame {} (source_frame {})",
+                            global_i32, source_frame
                         );
                         continue;
                     }
@@ -446,8 +437,8 @@ impl PlayaApp {
 
                 if frame.file().is_none() {
                     debug!(
-                        "Frame {} (frame_idx {}) has no backing file, skipping load",
-                        global_i32, frame_idx
+                        "Frame {} (source_frame {}) has no backing file, skipping load",
+                        global_i32, source_frame
                     );
                     continue;
                 }
@@ -459,8 +450,8 @@ impl PlayaApp {
                 }
 
                 debug!(
-                    "Enqueuing load for frame {} (frame_idx {}) with status {:?}",
-                    global_i32, frame_idx, status
+                    "Enqueuing load for frame {} (source_frame {}) with status {:?}",
+                    global_i32, source_frame, status
                 );
 
                 // Enqueue load on worker thread
