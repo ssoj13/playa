@@ -37,6 +37,10 @@ pub enum AppEvent {
     JumpToPrevEdge,
     /// Jump to next layer edge (timeline)
     JumpToNextEdge,
+    /// Jog forward (start/increase playback speed forward)
+    JogForward,
+    /// Jog backward (start/increase playback speed backward)
+    JogBackward,
     /// Previous clip
     PreviousClip,
     /// Next clip
@@ -192,10 +196,14 @@ pub enum AppEvent {
     ResetCompPlayArea { comp_uuid: String },
 
     // ===== FPS Control =====
-    /// Increase base FPS
-    IncreaseFPS,
-    /// Decrease base FPS
-    DecreaseFPS,
+    /// Increase base FPS (using presets)
+    IncreaseFPSBase,
+    /// Decrease base FPS (using presets)
+    DecreaseFPSBase,
+
+    // ===== Settings =====
+    /// Reset all settings to default
+    ResetSettings,
 }
 
 /// Window context for hotkeys

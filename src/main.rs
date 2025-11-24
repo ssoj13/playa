@@ -845,23 +845,30 @@ impl PlayaApp {
             }
 
             // ===== FPS Control =====
-            AppEvent::IncreaseFPS => {
-                self.settings.fps_base = (self.settings.fps_base + 1.0).min(120.0);
+            AppEvent::IncreaseFPSBase => {
+                self.player.increase_fps_base();
+                // Sync comp fps if active
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        let new_fps = (comp.fps() + 1.0).min(120.0);
-                        comp.set_fps(new_fps);
+                        comp.set_fps(self.player.fps_base);
                     }
                 }
             }
-            AppEvent::DecreaseFPS => {
-                self.settings.fps_base = (self.settings.fps_base - 1.0).max(1.0);
+            AppEvent::DecreaseFPSBase => {
+                self.player.decrease_fps_base();
+                // Sync comp fps if active
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        let new_fps = (comp.fps() - 1.0).max(1.0);
-                        comp.set_fps(new_fps);
+                        comp.set_fps(self.player.fps_base);
                     }
                 }
+            }
+
+            AppEvent::JogForward => {
+                self.player.jog_forward();
+            }
+            AppEvent::JogBackward => {
+                self.player.jog_backward();
             }
 
             // ===== Layer Operations =====
@@ -1152,6 +1159,14 @@ impl PlayaApp {
             }
             AppEvent::DragCancel => {
                 // TODO: implement drag cancel
+            }
+
+            // ===== Settings =====
+            AppEvent::ResetSettings => {
+                self.reset_settings(ctx);
+                if self.is_fullscreen {
+                    self.set_cinema_mode(ctx, false);
+                }
             }
         }
     }
