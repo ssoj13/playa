@@ -1,5 +1,5 @@
 //! Timeline UI helpers: tools, math and drawing utilities.
-use crate::entities::Comp;
+use crate::entities::{Comp, frame::FrameStatus};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 
 use super::{GlobalDragState, TimelineConfig, TimelineState};
@@ -223,6 +223,75 @@ pub(super) fn draw_playhead(
         Color32::from_rgb(255, 220, 100),
         (0.0, Color32::TRANSPARENT),
     ));
+}
+
+/// Draw load indicator showing frame cache status
+///
+/// Displays a colored bar showing which frames are loaded in cache:
+/// - Dark grey: Not loaded (FrameStatus::Placeholder/Header)
+/// - Orange: Loading (FrameStatus::Loading)
+/// - Green: Loaded (FrameStatus::Loaded)
+/// - Red: Error (FrameStatus::Error)
+pub(super) fn draw_load_indicator(
+    ui: &mut Ui,
+    comp: &Comp,
+    config: &TimelineConfig,
+    state: &TimelineState,
+    timeline_width: f32,
+) -> Rect {
+    let indicator_height = 4.0;
+
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(timeline_width, indicator_height),
+        Sense::hover(),
+    );
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+
+        // Get frame statuses from comp cache
+        if let Some(statuses) = comp.file_frame_statuses() {
+            let total = statuses.len();
+            if total == 0 {
+                return rect;
+            }
+
+            // Calculate visible frame range based on pan/zoom
+            let effective_ppf = config.pixels_per_frame * state.zoom;
+            let visible_start = state.pan_offset.max(0.0) as usize;
+            let visible_end = (state.pan_offset + (rect.width() / effective_ppf))
+                .min(total as f32) as usize;
+
+            // Draw each frame as a colored block
+            for frame_idx in visible_start..visible_end.min(total) {
+                let status = statuses.get(frame_idx).copied().unwrap_or(FrameStatus::Header);
+                let color = status.color();
+
+                let x_start = frame_to_screen_x(frame_idx as f32, rect.min.x, config, state);
+                let x_end = frame_to_screen_x((frame_idx + 1) as f32, rect.min.x, config, state);
+
+                // Clamp to visible rect
+                let x_start = x_start.max(rect.min.x);
+                let x_end = x_end.min(rect.max.x);
+
+                if x_start >= x_end || x_end < rect.min.x || x_start > rect.max.x {
+                    continue;
+                }
+
+                let block_rect = Rect::from_min_max(
+                    Pos2::new(x_start, rect.min.y),
+                    Pos2::new(x_end, rect.max.y),
+                );
+
+                painter.rect_filled(block_rect, 0.0, color);
+            }
+        } else {
+            // No statuses available - draw dark grey background
+            painter.rect_filled(rect, 0.0, Color32::from_gray(25));
+        }
+    }
+
+    rect
 }
 
 /// Compute visual rows for ALL layers using greedy layout algorithm

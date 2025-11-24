@@ -1,8 +1,8 @@
-# Memory Management Implementation - Phase 1 Complete
+# Memory Management Implementation - COMPLETE
 
-## Статус: ✅ Базовая реализация завершена, проект компилируется
+## Статус: ✅ Полная реализация завершена с Timeline Indicator
 
-Дата: 2025-11-24
+Дата: 2025-11-24 (финальная версия)
 
 ---
 
@@ -314,9 +314,61 @@ pub fn signal_preload(&self, workers: &Arc<Workers>) {
 }
 ```
 
+### 9. ✅ Timeline Load Indicator
+
+**Файлы:**
+- `src/widgets/timeline/timeline_helpers.rs` (добавлена функция `draw_load_indicator`)
+- `src/widgets/timeline/timeline_ui.rs` (вызов indicator после ruler)
+
+Добавлена цветная полоска под timeline ruler, показывающая статусы кэша фреймов:
+
+```rust
+/// Draw load indicator showing frame cache status
+///
+/// Displays a colored bar showing which frames are loaded in cache:
+/// - Dark grey: Not loaded (FrameStatus::Placeholder/Header)
+/// - Orange: Loading (FrameStatus::Loading)
+/// - Green: Loaded (FrameStatus::Loaded)
+/// - Red: Error (FrameStatus::Error)
+pub(super) fn draw_load_indicator(
+    ui: &mut Ui,
+    comp: &Comp,
+    config: &TimelineConfig,
+    state: &TimelineState,
+    timeline_width: f32,
+) -> Rect {
+    let indicator_height = 4.0;
+
+    // Get frame statuses from comp cache
+    if let Some(statuses) = comp.file_frame_statuses() {
+        // Calculate visible frame range based on pan/zoom
+        // Draw each frame as a colored block using FrameStatus.color()
+    }
+
+    rect
+}
+```
+
+**Интеграция в timeline:**
+```rust
+// В timeline_ui.rs после draw_frame_ruler:
+let (frame_opt, rect) = draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
+
+// Load indicator - shows cache status for each frame
+draw_load_indicator(ui, comp, config, state, ruler_width);
+```
+
+**Возможности:**
+- ✅ Показывает статус каждого фрейма в кэше
+- ✅ Автоматически обновляется при загрузке фреймов
+- ✅ Синхронизирован с pan/zoom timeline
+- ✅ Использует существующую систему FrameStatus
+- ✅ Работает только для File mode comps
+- ✅ Высота 4px, не занимает много места
+
 ---
 
-## Что НЕ реализовано (для Phase 2)
+## Что НЕ реализовано (для Phase 2+)
 
 ### 1. Frame Status System
 
@@ -390,47 +442,6 @@ match strategy {
 ```
 
 **Старый код для справки:** `.orig/src/cache.rs:308-411` (spiral/forward preload)
-
-### 3. Timeline Status Indicator
-
-**Требуется:**
-- Метод `Comp::get_cache_statuses() -> Option<Vec<FrameStatus>>` - получение статусов всех фреймов
-- Отображение цветной полоски под timeline (4px высота)
-- Кэширование статусов в egui для производительности
-
-**Старая реализация для справки:**
-```rust
-// .orig/src/timeslider.rs:375-401
-fn draw_load_indicator(painter: &egui::Painter, rect: Rect, statuses: &[FrameStatus], height: f32) {
-    let total = statuses.len();
-    if total == 0 {
-        return;
-    }
-
-    let indicator_rect = Rect::from_min_max(
-        Pos2::new(rect.min.x, rect.max.y),
-        Pos2::new(rect.max.x, rect.max.y + height),
-    );
-
-    let block_width = indicator_rect.width() / total as f32;
-
-    for (idx, status) in statuses.iter().enumerate() {
-        let x_start = indicator_rect.min.x + (idx as f32 * block_width);
-        let x_end = x_start + block_width;
-
-        let color = status.color();
-
-        let block_rect = Rect::from_min_max(
-            Pos2::new(x_start, indicator_rect.min.y),
-            Pos2::new(x_end, indicator_rect.max.y),
-        );
-
-        painter.rect_filled(block_rect, 0.0, color);
-    }
-}
-```
-
-**Где интегрировать:** `src/widgets/timeline/timeline_ui.rs` (нужно найти место для рендеринга)
 
 ---
 
