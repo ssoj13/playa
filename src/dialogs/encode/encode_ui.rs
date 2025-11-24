@@ -461,7 +461,13 @@ impl EncodeDialog {
                 } else {
                     // Not encoding: show empty progress bar to maintain dialog size
                     ui.label("Ready to encode");
-                    self.progress_bar.set_progress(0, 100);
+                    let planned_total = active_comp
+                        .map(|c| {
+                            let (s, e) = c.play_range(true);
+                            (e - s + 1).max(0) as usize
+                        })
+                        .unwrap_or(0);
+                    self.progress_bar.set_progress(0, planned_total);
                     self.progress_bar.render(ui);
                     ui.label(""); // Empty label for encoder name spacing
                 }

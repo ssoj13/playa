@@ -27,7 +27,7 @@ use glob::glob;
 use log::info;
 use serde::{Deserialize, Serialize};
 
-use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelDepth};
+use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::loader::Loader;
 use super::{AttrValue, Attrs};
 use crate::entities::loader_video;
@@ -637,6 +637,7 @@ impl Comp {
     fn compose(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         use log::debug;
         let mut source_frames: Vec<(Frame, f32)> = Vec::new();
+        let mut earliest: Option<(i32, usize)> = None; // (start_frame, index in source_frames)
 
         debug!(
             "compose() called: frame_idx={}, children.len()={}",
@@ -696,12 +697,59 @@ impl Comp {
                 if let Some(frame) = source.get_frame(source_frame, project) {
                     let opacity = attrs.get_float("opacity").unwrap_or(1.0);
                     source_frames.push((frame, opacity));
+                    let idx = source_frames.len() - 1;
+                    if earliest.map_or(true, |(s, _)| child_start < s) {
+                        earliest = Some((child_start, idx));
+                    }
                 }
             }
         }
 
         // Blend all children with project compositor (CPU or GPU)
-        let dim = self.dim();
+        let dim = earliest
+            .as_ref()
+            .and_then(|(_, idx)| {
+                source_frames
+                    .get(*idx)
+                    .map(|(f, _)| (f.width().max(1), f.height().max(1)))
+            })
+            .unwrap_or_else(|| self.dim());
+
+        // Always add a solid black base underneath so fully transparent layers show black.
+        // Match the pixel format of the first child; fall back to U8 when no children.
+        let make_u8_base = || {
+            let mut buf = vec![0u8; dim.0 * dim.1 * 4];
+            for px in buf.chunks_exact_mut(4) {
+                px[3] = 255; // opaque alpha
+            }
+            Frame::from_buffer(PixelBuffer::U8(buf), PixelFormat::Rgba8, dim.0, dim.1)
+        };
+        let base = if let Some((_, idx)) = earliest {
+            if let Some((first, _)) = source_frames.get(idx) {
+                match &*first.buffer() {
+                    PixelBuffer::U8(_) => make_u8_base(),
+                    PixelBuffer::F16(_) => {
+                        let mut buf = vec![half::f16::from_f32(0.0); dim.0 * dim.1 * 4];
+                        for px in buf.chunks_exact_mut(4) {
+                            px[3] = half::f16::from_f32(1.0);
+                        }
+                        Frame::from_f16_buffer(buf, dim.0, dim.1)
+                    }
+                    PixelBuffer::F32(_) => {
+                        let mut buf = vec![0.0f32; dim.0 * dim.1 * 4];
+                        for px in buf.chunks_exact_mut(4) {
+                            px[3] = 1.0;
+                        }
+                        Frame::from_f32_buffer(buf, dim.0, dim.1)
+                    }
+                }
+            } else {
+                make_u8_base()
+            }
+        } else {
+            make_u8_base()
+        };
+        source_frames.insert(0, (base, 1.0));
         debug!(
             "compose() collected {} frames, calling compositor.blend_with_dim({}, {})",
             source_frames.len(),
