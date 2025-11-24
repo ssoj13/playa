@@ -1388,6 +1388,21 @@ impl Comp {
         self.children.iter().any(|uuid| uuid == child_uuid)
     }
 
+    /// Find all children (instance UUIDs) that reference a specific source UUID
+    pub fn find_children_by_source(&self, source_uuid: &str) -> Vec<String> {
+        let mut result = Vec::new();
+        for child_uuid in &self.children {
+            if let Some(attrs) = self.children_attrs.get(child_uuid) {
+                if let Some(uuid) = attrs.get_str("uuid") {
+                    if uuid == source_uuid {
+                        result.push(child_uuid.clone());
+                    }
+                }
+            }
+        }
+        result
+    }
+
     /// Invalidate cache (alias for clear_cache with hash reset)
     fn invalidate_cache(&self) {
         self.cache.borrow_mut().clear();

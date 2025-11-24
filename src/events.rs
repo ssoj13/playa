@@ -111,6 +111,14 @@ pub enum AppEvent {
     },
     /// Remove selected layer
     RemoveSelectedLayer,
+    /// Align selected layers' start to current frame
+    AlignLayersStart { comp_uuid: String },
+    /// Align selected layers' end to current frame
+    AlignLayersEnd { comp_uuid: String },
+    /// Trim selected layers' play_start to current frame
+    TrimLayersStart { comp_uuid: String },
+    /// Trim selected layers' play_end to current frame
+    TrimLayersEnd { comp_uuid: String },
 
     // ===== Selection =====
     /// Select media item by UUID

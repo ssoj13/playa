@@ -87,7 +87,8 @@ impl HotkeyHandler {
         self.add_binding(Global, "F1".to_string(), ToggleHelp);
         self.add_binding(Global, "F2".to_string(), TogglePlaylist);
         self.add_binding(Global, "F3".to_string(), ToggleSettings);
-        self.add_binding(Global, "F4".to_string(), ToggleEncodeDialog);
+        self.add_binding(Global, "F4".to_string(), ToggleAttributeEditor);
+        self.add_binding(Global, "F5".to_string(), ToggleEncodeDialog);
         self.add_binding(Global, "Space".to_string(), TogglePlayPause);
         self.add_binding(Global, "ArrowUp".to_string(), TogglePlayPause);
         self.add_binding(Global, "K".to_string(), Stop);
@@ -114,9 +115,8 @@ impl HotkeyHandler {
         self.add_binding(Global, "Comma".to_string(), StepBackward);
         self.add_binding(Global, "L".to_string(), StepForward);
         self.add_binding(Global, "Slash".to_string(), StepForward);
-        self.add_binding(Global, "OpenBracket".to_string(), JumpToPrevEdge);
-        self.add_binding(Global, "CloseBracket".to_string(), JumpToNextEdge);
-        self.add_binding(Global, "Quote".to_string(), ToggleLoop);
+        self.add_binding(Global, "Semicolon".to_string(), JumpToPrevEdge);
+        self.add_binding(Global, "Quote".to_string(), JumpToNextEdge);
         self.add_binding(Global, "Backtick".to_string(), ToggleLoop);
         self.add_binding(Global, "Backspace".to_string(), ToggleFrameNumbers);
         self.add_binding(Global, "B".to_string(), SetPlayRangeStart);
@@ -133,6 +133,34 @@ impl HotkeyHandler {
         self.add_binding(Timeline, "Delete".to_string(), RemoveSelectedLayer);
         self.add_binding(Timeline, "F".to_string(), TimelineFit);
         self.add_binding(Timeline, "A".to_string(), TimelineResetZoom);
+        self.add_binding(
+            Timeline,
+            "OpenBracket".to_string(),
+            AlignLayersStart {
+                comp_uuid: String::new(), // Will be filled at runtime
+            },
+        );
+        self.add_binding(
+            Timeline,
+            "CloseBracket".to_string(),
+            AlignLayersEnd {
+                comp_uuid: String::new(),
+            },
+        );
+        self.add_binding(
+            Timeline,
+            "Alt+OpenBracket".to_string(),
+            TrimLayersStart {
+                comp_uuid: String::new(),
+            },
+        );
+        self.add_binding(
+            Timeline,
+            "Alt+CloseBracket".to_string(),
+            TrimLayersEnd {
+                comp_uuid: String::new(),
+            },
+        );
 
         // Project-specific hotkeys
         self.add_binding(Project, "Delete".to_string(), RemoveSelectedMedia);

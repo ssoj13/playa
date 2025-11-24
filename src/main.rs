@@ -14,6 +14,7 @@ use cli::Args;
 use dialogs::encode::EncodeDialog;
 use dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
 use eframe::{egui, glow};
+use events::AppEvent;
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use entities::Frame;
 use entities::Project;
@@ -71,6 +72,8 @@ struct PlayaApp {
     show_encode_dialog: bool,
     #[serde(skip)]
     encode_dialog: Option<EncodeDialog>,
+    #[serde(skip)]
+    show_attributes_editor: bool,
     #[serde(skip)]
     is_fullscreen: bool,
     #[serde(skip)]
@@ -142,6 +145,7 @@ impl Default for PlayaApp {
             show_playlist: true,
             show_settings: false,
             show_encode_dialog: false,
+            show_attributes_editor: false,
             encode_dialog: None,
             is_fullscreen: false,
             fullscreen_dirty: false,
@@ -737,7 +741,7 @@ impl PlayaApp {
                 self.show_help = !self.show_help;
             }
             AppEvent::ToggleAttributeEditor => {
-                // TODO: implement when attribute editor exists
+                self.show_attributes_editor = !self.show_attributes_editor;
             }
             AppEvent::ToggleSettings => {
                 self.show_settings = !self.show_settings;
@@ -976,6 +980,73 @@ impl PlayaApp {
                     }
                 }
             }
+            AppEvent::AlignLayersStart { comp_uuid } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let current_frame = comp.current_frame;
+                    let selected = comp.layer_selection.clone();
+
+                    for layer_uuid in selected.iter() {
+                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
+                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(current_frame));
+                        }
+                    }
+                }
+            }
+            AppEvent::AlignLayersEnd { comp_uuid } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let current_frame = comp.current_frame;
+                    let selected = comp.layer_selection.clone();
+
+                    for layer_uuid in selected.iter() {
+                        let play_start = comp.child_play_start(layer_uuid);
+                        let play_end = comp.child_play_end(layer_uuid);
+                        let duration = play_end - play_start;
+                        let new_start = current_frame - duration;
+
+                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
+                            attrs.set("start".to_string(), crate::entities::AttrValue::Int(new_start));
+                        }
+                    }
+                }
+            }
+            AppEvent::TrimLayersStart { comp_uuid } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let current_frame = comp.current_frame;
+                    let selected = comp.layer_selection.clone();
+
+                    for layer_uuid in selected.iter() {
+                        let start = comp.child_start(layer_uuid);
+                        let play_start = comp.child_play_start(layer_uuid);
+
+                        // new_play_start = play_start + (current_frame - start)
+                        let offset = current_frame - start;
+                        let new_play_start = play_start + offset;
+
+                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
+                            attrs.set("play_start".to_string(), crate::entities::AttrValue::Int(new_play_start));
+                        }
+                    }
+                }
+            }
+            AppEvent::TrimLayersEnd { comp_uuid } => {
+                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                    let current_frame = comp.current_frame;
+                    let selected = comp.layer_selection.clone();
+
+                    for layer_uuid in selected.iter() {
+                        let start = comp.child_start(layer_uuid);
+                        let play_start = comp.child_play_start(layer_uuid);
+
+                        // new_play_end = play_start + (current_frame - start)
+                        let offset = current_frame - start;
+                        let new_play_end = play_start + offset;
+
+                        if let Some(attrs) = comp.children_attrs.get_mut(layer_uuid) {
+                            attrs.set("play_end".to_string(), crate::entities::AttrValue::Int(new_play_end));
+                        }
+                    }
+                }
+            }
             AppEvent::MoveLayer {
                 comp_uuid,
                 layer_idx,
@@ -1137,12 +1208,26 @@ impl PlayaApp {
             .set_focused_window(focused_window.clone());
 
         // Try hotkey handler first (for context-aware hotkeys)
-        if let Some(event) = self.hotkey_handler.handle_input(&input) {
+        if let Some(mut event) = self.hotkey_handler.handle_input(&input) {
             log::debug!(
                 "Hotkey event: {:?}, focused_window: {:?}",
                 event,
                 focused_window
             );
+
+            // Fill comp_uuid for timeline-specific events
+            if let Some(active_comp_uuid) = &self.player.active_comp {
+                match &mut event {
+                    AppEvent::AlignLayersStart { comp_uuid }
+                    | AppEvent::AlignLayersEnd { comp_uuid }
+                    | AppEvent::TrimLayersStart { comp_uuid }
+                    | AppEvent::TrimLayersEnd { comp_uuid } => {
+                        *comp_uuid = active_comp_uuid.clone();
+                    }
+                    _ => {}
+                }
+            }
+
             self.event_bus.send(event);
             return; // Hotkey handled, don't process manual checks
         }
@@ -1220,14 +1305,17 @@ impl PlayaApp {
             return;
         }
 
-        // Remove references from other comps (layers using this media)
+        // Remove references from other comps (layers using this media as source)
         let mut removed_refs = 0usize;
         for (comp_uuid, comp) in self.player.project.media.iter_mut() {
-            if comp.has_child(uuid) {
-                comp.remove_child(uuid);
+            // Find all child instances that use this source_uuid
+            let children_to_remove = comp.find_children_by_source(uuid);
+            for child_uuid in children_to_remove {
+                comp.remove_child(&child_uuid);
                 removed_refs += 1;
                 log::info!(
-                    "Removed child {} from comp {} while deleting media",
+                    "Removed child instance {} (source {}) from comp {} while deleting media",
+                    child_uuid,
                     uuid,
                     comp_uuid
                 );
@@ -1311,7 +1399,7 @@ impl PlayaApp {
     fn render_project_tab(&mut self, ui: &mut egui::Ui) {
         if !self.show_playlist {
             ui.centered_and_justified(|ui| {
-                ui.label("Project panel hidden (enable playlist to show)");
+                ui.label("Project panel is hidden. Press F2 to show.");
             });
             return;
         }
@@ -1451,6 +1539,13 @@ impl PlayaApp {
     }
 
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
+        if !self.show_attributes_editor {
+            ui.centered_and_justified(|ui| {
+                ui.label("Attributes Editor is hidden. Press F4 to show.");
+            });
+            return;
+        }
+
         if let Some(active) = self.player.active_comp.clone() {
             if let Some(comp) = self.player.project.media.get_mut(&active) {
                 // Collect selected layers (now UUIDs instead of indices)
