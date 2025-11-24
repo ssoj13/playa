@@ -1122,6 +1122,10 @@ impl Comp {
 
     /// Recalculate comp start/end based on children (negative starts allowed).
     pub fn rebound(&mut self) {
+        // File-mode comps have their own start/end; don't override them.
+        if self.mode == CompMode::File {
+            return;
+        }
         let old_bounds = (self.start(), self.end());
         let old_work = self.play_range(true);
         if self.children.is_empty() {

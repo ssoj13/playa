@@ -1016,16 +1016,49 @@ impl PlayaApp {
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
                     let children_len = comp.get_children().len();
-                    if layer_idx != new_idx && layer_idx < children_len && new_idx < children_len {
-                        let mut reordered = comp.children.clone();
-                        let child_uuid = reordered.remove(layer_idx);
-                        reordered.insert(new_idx, child_uuid);
-                        comp.children = reordered;
-                    }
+                    let selection = comp.layer_selection.clone();
+                    let selection_active =
+                        !selection.is_empty() && selection.iter().any(|i| *i == layer_idx);
 
-                    let final_idx = new_idx.min(comp.get_children().len().saturating_sub(1));
-                    let new_start_i32 = new_start as i32;
-                    let _ = comp.move_child(final_idx, new_start_i32);
+                    // If multiple layers are selected and the dragged layer is among them,
+                    // move all selected layers by the same delta (time only, no reorder).
+                    if selection_active && selection.len() > 1 {
+                        let dragged_uuid = comp.children.get(layer_idx).cloned();
+                        let dragged_start = dragged_uuid
+                            .and_then(|u| comp.children_attrs.get(&u))
+                            .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                            .unwrap_or(0);
+                        let delta = new_start as i32 - dragged_start;
+
+                        for idx in selection {
+                            if idx >= comp.children.len() {
+                                continue;
+                            }
+                            let new_start_i32 = comp
+                                .children
+                                .get(idx)
+                                .and_then(|u| comp.children_attrs.get(u))
+                                .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                                .map(|s| s + delta)
+                                .unwrap_or(new_start as i32);
+                            let _ = comp.move_child(idx, new_start_i32);
+                        }
+                    } else {
+                        // Single-layer move + optional reorder (existing behavior)
+                        if layer_idx != new_idx
+                            && layer_idx < children_len
+                            && new_idx < children_len
+                        {
+                            let mut reordered = comp.children.clone();
+                            let child_uuid = reordered.remove(layer_idx);
+                            reordered.insert(new_idx, child_uuid);
+                            comp.children = reordered;
+                        }
+
+                        let final_idx = new_idx.min(comp.get_children().len().saturating_sub(1));
+                        let new_start_i32 = new_start as i32;
+                        let _ = comp.move_child(final_idx, new_start_i32);
+                    }
                 }
             }
             AppEvent::SetLayerPlayStart {
@@ -1034,7 +1067,38 @@ impl PlayaApp {
                 new_play_start,
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    let _ = comp.set_child_play_start(layer_idx, new_play_start);
+                    let selection = comp.layer_selection.clone();
+                    let selection_active =
+                        !selection.is_empty() && selection.iter().any(|i| *i == layer_idx);
+
+                    if selection_active && selection.len() > 1 {
+                        // Move all selected play_starts by the same delta
+                        let dragged_uuid = comp.children.get(layer_idx).cloned();
+                        let dragged_play_start = dragged_uuid
+                            .and_then(|u| comp.children_attrs.get(&u))
+                            .and_then(|a| Some(a.get_i32("play_start").unwrap_or(
+                                a.get_i32("start").unwrap_or(0),
+                            )))
+                            .unwrap_or(0);
+                        let delta = new_play_start - dragged_play_start;
+
+                        for idx in selection {
+                            if idx >= comp.children.len() {
+                                continue;
+                            }
+                            let current_ps = comp
+                                .children
+                                .get(idx)
+                                .and_then(|u| comp.children_attrs.get(u))
+                                .and_then(|a| Some(a.get_i32("play_start").unwrap_or(
+                                    a.get_i32("start").unwrap_or(0),
+                                )))
+                                .unwrap_or(0);
+                            let _ = comp.set_child_play_start(idx, current_ps + delta);
+                        }
+                    } else {
+                        let _ = comp.set_child_play_start(layer_idx, new_play_start);
+                    }
                 }
             }
             AppEvent::SetLayerPlayEnd {
@@ -1043,7 +1107,38 @@ impl PlayaApp {
                 new_play_end,
             } => {
                 if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
-                    let _ = comp.set_child_play_end(layer_idx, new_play_end);
+                    let selection = comp.layer_selection.clone();
+                    let selection_active =
+                        !selection.is_empty() && selection.iter().any(|i| *i == layer_idx);
+
+                    if selection_active && selection.len() > 1 {
+                        // Move all selected play_ends by the same delta
+                        let dragged_uuid = comp.children.get(layer_idx).cloned();
+                        let dragged_play_end = dragged_uuid
+                            .and_then(|u| comp.children_attrs.get(&u))
+                            .and_then(|a| Some(a.get_i32("play_end").unwrap_or(
+                                a.get_i32("end").unwrap_or(0),
+                            )))
+                            .unwrap_or(0);
+                        let delta = new_play_end - dragged_play_end;
+
+                        for idx in selection {
+                            if idx >= comp.children.len() {
+                                continue;
+                            }
+                            let current_pe = comp
+                                .children
+                                .get(idx)
+                                .and_then(|u| comp.children_attrs.get(u))
+                                .and_then(|a| Some(a.get_i32("play_end").unwrap_or(
+                                    a.get_i32("end").unwrap_or(0),
+                                )))
+                                .unwrap_or(0);
+                            let _ = comp.set_child_play_end(idx, current_pe + delta);
+                        }
+                    } else {
+                        let _ = comp.set_child_play_end(layer_idx, new_play_end);
+                    }
                 }
             }
             // ===== Drag-and-Drop (placeholders for now) =====
