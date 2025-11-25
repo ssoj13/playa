@@ -62,6 +62,9 @@ struct PlayaApp {
     selected_media_uuid: Option<String>,
     #[serde(skip)]
     last_render_time_ms: f32,
+    /// Last time cache stats were logged (for periodic logging)
+    #[serde(skip)]
+    last_stats_log_time: f64,
     settings: AppSettings,
     /// Persisted project (playlist); runtime player.project синхронизируется при save/load
     project: Project,
@@ -151,6 +154,7 @@ impl Default for PlayaApp {
             shader_manager: Shaders::new(),
             selected_media_uuid: None,
             last_render_time_ms: 0.0,
+            last_stats_log_time: 0.0,
             settings: AppSettings::default(),
             project: {
                 let settings = AppSettings::default();
@@ -1770,6 +1774,23 @@ impl eframe::App for PlayaApp {
         // Process all events from the event bus
         while let Some(event) = self.event_bus.try_recv() {
             self.handle_event(event);
+        }
+
+        // Periodic cache statistics logging (every 10 seconds)
+        let current_time = ctx.input(|i| i.time);
+        if current_time - self.last_stats_log_time > 10.0 {
+            if let Some(ref global_cache) = self.player.project.global_cache {
+                let stats = global_cache.stats();
+                let cache_size = global_cache.len();
+                log::info!(
+                    "Cache stats: {} entries | hits: {} | misses: {} | hit rate: {:.1}%",
+                    cache_size,
+                    stats.hits(),
+                    stats.misses(),
+                    stats.hit_rate() * 100.0
+                );
+            }
+            self.last_stats_log_time = current_time;
         }
 
         // Apply theme based on settings

@@ -6,6 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use lru::LruCache;
 use log::debug;
 
@@ -21,6 +22,66 @@ pub enum CacheStrategy {
     All,
 }
 
+/// Cache statistics for monitoring performance
+#[derive(Debug, Default)]
+pub struct CacheStats {
+    /// Total number of cache hits (frame found in cache)
+    hits: AtomicU64,
+    /// Total number of cache misses (frame not in cache)
+    misses: AtomicU64,
+}
+
+impl CacheStats {
+    /// Create new empty stats
+    pub fn new() -> Self {
+        Self {
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+        }
+    }
+
+    /// Record cache hit
+    pub fn record_hit(&self) {
+        self.hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record cache miss
+    pub fn record_miss(&self) {
+        self.misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get total hits
+    pub fn hits(&self) -> u64 {
+        self.hits.load(Ordering::Relaxed)
+    }
+
+    /// Get total misses
+    pub fn misses(&self) -> u64 {
+        self.misses.load(Ordering::Relaxed)
+    }
+
+    /// Get total accesses (hits + misses)
+    pub fn total(&self) -> u64 {
+        self.hits() + self.misses()
+    }
+
+    /// Calculate hit rate (0.0 - 1.0)
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.total();
+        if total == 0 {
+            0.0
+        } else {
+            self.hits() as f64 / total as f64
+        }
+    }
+
+    /// Reset all statistics
+    pub fn reset(&self) {
+        self.hits.store(0, Ordering::Relaxed);
+        self.misses.store(0, Ordering::Relaxed);
+    }
+}
+
 /// Global frame cache with LRU eviction
 ///
 /// Thread-safe cache shared across all Comps.
@@ -33,6 +94,8 @@ pub struct GlobalFrameCache {
     cache_manager: Arc<CacheManager>,
     /// Caching strategy (wrapped in Mutex for interior mutability)
     strategy: Arc<Mutex<CacheStrategy>>,
+    /// Cache statistics
+    stats: Arc<CacheStats>,
 }
 
 impl GlobalFrameCache {
@@ -54,6 +117,7 @@ impl GlobalFrameCache {
             cache: Arc::new(Mutex::new(LruCache::new(capacity))),
             cache_manager: manager,
             strategy: Arc::new(Mutex::new(strategy)),
+            stats: Arc::new(CacheStats::new()),
         }
     }
 
@@ -64,7 +128,16 @@ impl GlobalFrameCache {
     pub fn get(&self, comp_uuid: &str, frame_idx: i32) -> Option<Frame> {
         let key = (comp_uuid.to_string(), frame_idx);
         let mut cache = self.cache.lock().unwrap();
-        cache.get(&key).cloned()
+        let result = cache.get(&key).cloned();
+
+        // Record stats
+        if result.is_some() {
+            self.stats.record_hit();
+        } else {
+            self.stats.record_miss();
+        }
+
+        result
     }
 
     /// Check if frame exists in cache (without updating LRU)
@@ -156,16 +229,6 @@ impl GlobalFrameCache {
         debug!("Cleared entire cache");
     }
 
-    /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
-        let cache = self.cache.lock().unwrap();
-        let strategy = *self.strategy.lock().unwrap();
-        CacheStats {
-            entry_count: cache.len(),
-            strategy,
-        }
-    }
-
     /// Change caching strategy
     ///
     /// If switching to LastOnly, clears all but most recent frame per comp.
@@ -183,15 +246,21 @@ impl GlobalFrameCache {
             }
         }
     }
-}
 
-/// Cache statistics
-#[derive(Debug, Clone)]
-pub struct CacheStats {
-    /// Number of cached frames
-    pub entry_count: usize,
-    /// Current strategy
-    pub strategy: CacheStrategy,
+    /// Get cache statistics
+    pub fn stats(&self) -> Arc<CacheStats> {
+        Arc::clone(&self.stats)
+    }
+
+    /// Get current cache size (number of entries)
+    pub fn len(&self) -> usize {
+        self.cache.lock().unwrap().len()
+    }
+
+    /// Check if cache is empty
+    pub fn is_empty(&self) -> bool {
+        self.cache.lock().unwrap().is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -253,5 +322,52 @@ mod tests {
         assert!(!cache.contains("comp1", 0));
         assert!(!cache.contains("comp1", 1));
         assert!(cache.contains("comp2", 0)); // comp2 unaffected
+    }
+
+    #[test]
+    fn test_cache_statistics() {
+        let manager = Arc::new(CacheManager::new(0.75, 2.0));
+        let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
+
+        let frame = Frame::new(64, 64, PixelDepth::U8);
+        let comp_uuid = "test-comp";
+
+        // Initially zero stats
+        let stats = cache.stats();
+        assert_eq!(stats.hits(), 0);
+        assert_eq!(stats.misses(), 0);
+        assert_eq!(stats.total(), 0);
+        assert_eq!(stats.hit_rate(), 0.0);
+
+        // Insert frame
+        cache.insert(comp_uuid, 0, frame.clone());
+
+        // First get: cache hit
+        let _retrieved = cache.get(comp_uuid, 0);
+        assert_eq!(stats.hits(), 1);
+        assert_eq!(stats.misses(), 0);
+        assert_eq!(stats.total(), 1);
+        assert_eq!(stats.hit_rate(), 1.0);
+
+        // Get non-existent frame: cache miss
+        let _missing = cache.get(comp_uuid, 999);
+        assert_eq!(stats.hits(), 1);
+        assert_eq!(stats.misses(), 1);
+        assert_eq!(stats.total(), 2);
+        assert_eq!(stats.hit_rate(), 0.5);
+
+        // Another hit
+        let _retrieved2 = cache.get(comp_uuid, 0);
+        assert_eq!(stats.hits(), 2);
+        assert_eq!(stats.misses(), 1);
+        assert_eq!(stats.total(), 3);
+        assert!((stats.hit_rate() - 0.666).abs() < 0.01); // ~66.67%
+
+        // Reset stats
+        stats.reset();
+        assert_eq!(stats.hits(), 0);
+        assert_eq!(stats.misses(), 0);
+        assert_eq!(stats.total(), 0);
+        assert_eq!(stats.hit_rate(), 0.0);
     }
 }
