@@ -63,14 +63,19 @@ pub enum AppEvent {
     LoadProject(PathBuf),
 
     // ===== Timeline / Drag-and-Drop =====
-    /// Start dragging media item
-    DragStart { media_uuid: String },
-    /// Update drag position
-    DragMove { mouse_pos: (f32, f32) },
-    /// Drop media at target location
-    DragDrop { target_comp: String, frame: usize },
-    /// Cancel drag operation
-    DragCancel,
+    // TODO: Alternative EventBus-based drag and drop architecture (not currently used)
+    // Current implementation uses GlobalDragState in egui temp storage (see timeline.rs)
+    // These events were designed for a different architecture but never implemented.
+    // Keeping commented out in case we want to migrate to EventBus pattern in the future.
+    //
+    // /// Start dragging media item
+    // DragStart { media_uuid: String },
+    // /// Update drag position
+    // DragMove { mouse_pos: (f32, f32) },
+    // /// Drop media at target location
+    // DragDrop { target_comp: String, frame: usize },
+    // /// Cancel drag operation
+    // DragCancel,
 
     // ===== Layer Operations =====
     /// Add layer to composition

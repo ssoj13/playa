@@ -821,10 +821,8 @@ impl Comp {
             global_cache.insert(&self.uuid, frame_idx, composed.clone());
         }
 
-        // Clear dirty flag after caching
-        // SAFETY: This is safe because we just updated the cache
-        // Note: attrs is not &mut, but dirty flag doesn't affect serialization
-        // TODO: Make attrs mutable or use interior mutability
+        // Clear dirty flag after caching (uses interior mutability)
+        self.attrs.clear_dirty();
 
         Some(composed)
     }

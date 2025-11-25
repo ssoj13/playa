@@ -8,6 +8,7 @@
 //!   when any child attribute changes.
 
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -47,29 +48,36 @@ impl std::hash::Hash for AttrValue {
 /// Attribute container: string key → typed value.
 ///
 /// Includes dirty tracking for cache invalidation.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attrs {
     #[serde(default)]
     map: HashMap<String, AttrValue>,
 
     /// Dirty flag: set when attributes are modified via set()
     /// Used for cache invalidation instead of recomputing hashes
+    /// Wrapped in Cell for interior mutability (allows clear_dirty with &self)
     #[serde(skip)]
-    dirty: bool,
+    dirty: Cell<bool>,
+}
+
+impl Default for Attrs {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Attrs {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            dirty: false,
+            dirty: Cell::new(false),
         }
     }
 
     /// Set attribute value and mark as dirty
     pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
         self.map.insert(key.into(), value);
-        self.dirty = true; // Mark as dirty for cache invalidation
+        self.dirty.set(true); // Mark as dirty for cache invalidation
     }
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
@@ -206,16 +214,18 @@ impl Attrs {
 
     /// Check if attributes have been modified since last clear
     pub fn is_dirty(&self) -> bool {
-        self.dirty
+        self.dirty.get()
     }
 
     /// Clear dirty flag (call after cache update)
-    pub fn clear_dirty(&mut self) {
-        self.dirty = false;
+    /// Uses interior mutability via Cell, so can be called with &self
+    pub fn clear_dirty(&self) {
+        self.dirty.set(false);
     }
 
     /// Mark as dirty manually (e.g., for child attr changes)
-    pub fn mark_dirty(&mut self) {
-        self.dirty = true;
+    /// Uses interior mutability via Cell, so can be called with &self
+    pub fn mark_dirty(&self) {
+        self.dirty.set(true);
     }
 }

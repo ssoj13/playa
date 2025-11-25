@@ -1127,19 +1127,24 @@ impl PlayaApp {
                     }
                 }
             }
-            // ===== Drag-and-Drop (placeholders for now) =====
-            AppEvent::DragStart { .. } => {
-                // TODO: implement drag start
-            }
-            AppEvent::DragMove { .. } => {
-                // TODO: implement drag move
-            }
-            AppEvent::DragDrop { .. } => {
-                // TODO: implement drag drop
-            }
-            AppEvent::DragCancel => {
-                // TODO: implement drag cancel
-            }
+            // ===== Drag-and-Drop (not currently used) =====
+            // TODO: EventBus-based drag and drop events (alternative architecture)
+            // Current implementation uses GlobalDragState in egui temp storage (works well)
+            // These handlers are commented out because the events are not emitted anywhere.
+            // See src/events.rs for more details.
+            //
+            // AppEvent::DragStart { .. } => {
+            //     // TODO: implement drag start
+            // }
+            // AppEvent::DragMove { .. } => {
+            //     // TODO: implement drag move
+            // }
+            // AppEvent::DragDrop { .. } => {
+            //     // TODO: implement drag drop
+            // }
+            // AppEvent::DragCancel => {
+            //     // TODO: implement drag cancel
+            // }
 
             // ===== Settings =====
             AppEvent::ResetSettings => {

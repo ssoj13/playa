@@ -1216,7 +1216,6 @@ pub fn encode_sequence_from_comp(
 /// High-level encoding entry point: encodes a Comp.
 ///
 /// Comp is the single source of truth for play range and fps.
-/// TODO: Update callers to pass real Project instead of empty one
 pub fn encode_comp(
     comp: &Comp,
     project: &crate::entities::Project,
