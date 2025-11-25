@@ -510,15 +510,12 @@ impl Comp {
 
     /// Signal background preload for frames around current position
     ///
-    /// Increments epoch to cancel stale requests. This is a placeholder
-    /// implementation - full background preloading will be implemented later
-    /// with proper Frame status management and worker communication.
+    /// Increments epoch to cancel stale requests, determines preload strategy
+    /// (spiral vs forward) based on file type, and enqueues frames for loading.
     ///
-    /// TODO: Implement background preload with Frame status transitions:
-    /// - Placeholder → Header → Loading → Loaded
-    /// - Use spiral strategy for image sequences (0, ±1, ±2, ...)
-    /// - Use forward strategy for video files (center → end)
-    #[allow(unused_variables)]
+    /// Strategies:
+    /// - Spiral: image sequences (0, ±1, ±2, ...) - cheap seeking both directions
+    /// - Forward: video files (center → end) - expensive backward seeking
     pub fn signal_preload(&self, workers: &Arc<Workers>) {
         // Only preload in File mode
         if self.mode != CompMode::File {
@@ -539,14 +536,119 @@ impl Comp {
             return;
         }
 
-        debug!("Preload epoch {}: center={}, play_range={}..{} (placeholder)",
-               epoch, center, play_start, play_end);
+        // Determine strategy based on file type (video vs image sequence)
+        let is_video = self.detect_video_at_frame(center);
+        let strategy = if is_video {
+            crate::cache_man::PreloadStrategy::Forward
+        } else {
+            crate::cache_man::PreloadStrategy::Spiral
+        };
 
-        // TODO: Implement actual preload with Frame objects and status management
-        // Strategy detection:
-        // - Video files: forward-only (center → end)
-        // - Image sequences: spiral (0, ±1, ±2, ...)
-        // For now, frames are loaded on-demand in get_file_frame()
+        debug!(
+            "Preload epoch {}: center={}, range={}..{}, strategy={:?}",
+            epoch, center, play_start, play_end, strategy
+        );
+
+        match strategy {
+            crate::cache_man::PreloadStrategy::Spiral => {
+                self.preload_spiral(workers, epoch, center, play_start, play_end);
+            }
+            crate::cache_man::PreloadStrategy::Forward => {
+                self.preload_forward(workers, epoch, center, play_start, play_end);
+            }
+        }
+    }
+
+    /// Detect if frame points to a video file (vs image sequence)
+    fn detect_video_at_frame(&self, frame_idx: i32) -> bool {
+        if let Some(path) = self.resolve_frame_path(frame_idx) {
+            return media::is_video(&path);
+        }
+        false
+    }
+
+    /// Spiral preload: 0, +1, -1, +2, -2, ...
+    ///
+    /// Loads frames around center in spiral pattern for cheap bidirectional seeking.
+    /// Optimal for image sequences where seeking backwards is fast.
+    fn preload_spiral(
+        &self,
+        workers: &Arc<Workers>,
+        epoch: u64,
+        center: i32,
+        play_start: i32,
+        play_end: i32,
+    ) {
+        let max_offset = ((play_end - play_start) / 2).max(0);
+
+        for offset in 0..=max_offset {
+            // Backward: center - offset
+            if center >= offset {
+                let idx = center - offset;
+                if idx >= play_start && idx <= play_end {
+                    self.enqueue_load(workers, epoch, idx);
+                }
+            }
+
+            // Forward: center + offset (skip offset=0 as already loaded)
+            if offset > 0 {
+                let idx = center + offset;
+                if idx >= play_start && idx <= play_end {
+                    self.enqueue_load(workers, epoch, idx);
+                }
+            }
+        }
+    }
+
+    /// Forward-only preload: center, center+1, center+2, ...
+    ///
+    /// Loads frames forward from center for expensive backward seeking.
+    /// Optimal for video files where seeking backwards costs decompression.
+    fn preload_forward(
+        &self,
+        workers: &Arc<Workers>,
+        epoch: u64,
+        center: i32,
+        play_start: i32,
+        play_end: i32,
+    ) {
+        let start = center.max(play_start);
+        for idx in start..=play_end {
+            self.enqueue_load(workers, epoch, idx);
+        }
+    }
+
+    /// Enqueue single frame for background loading with epoch check
+    ///
+    /// Skips frames that are already loaded or have no backing file.
+    /// Uses execute_with_epoch() to automatically cancel stale requests.
+    fn enqueue_load(&self, workers: &Arc<Workers>, epoch: u64, frame_idx: i32) {
+        // Get frame (creates placeholder if needed)
+        let comp_hash = self.compute_comp_hash();
+        let key = (comp_hash, frame_idx as usize);
+
+        // Check if already cached
+        if let Some(_frame) = self.cache.borrow().peek(&key) {
+            // Already in cache, skip
+            return;
+        }
+
+        // Resolve path
+        let Some(path) = self.resolve_frame_path(frame_idx) else {
+            return;
+        };
+
+        // Create frame with unloaded status
+        let frame = Frame::new_unloaded(path);
+
+        // Enqueue with epoch check
+        workers.execute_with_epoch(epoch, move || {
+            // Load frame by setting status to Loaded
+            // This triggers actual image loading via Frame::set_status()
+            if let Err(e) = frame.set_status(FrameStatus::Loaded) {
+                debug!("Failed to load frame {}: {}", frame_idx, e);
+            }
+        });
     }
 
     /// Insert frame into cache with LRU eviction and memory tracking

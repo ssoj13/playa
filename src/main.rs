@@ -259,8 +259,8 @@ impl PlayaApp {
 
     /// Enqueue frame loading around playhead for active comp.
     ///
-    /// Loads frames in radius around current_frame (e.g., -10..+10).
-    /// Workers call frame.set_status(Loaded) which triggers actual load.
+    /// For File mode: uses signal_preload() with spiral/forward strategies.
+    /// For Layer mode: recursively loads frames from File mode children.
     fn enqueue_frame_loads_around_playhead(&self, radius: usize) {
         let current_frame = self.player.current_frame();
 
@@ -274,61 +274,10 @@ impl PlayaApp {
             return;
         };
 
-        debug!(
-            "Enqueuing frame loads around frame {} (radius: {}), comp mode: {:?}, children: {}",
-            current_frame,
-            radius,
-            comp.mode,
-            comp.children.len()
-        );
-
-        // Handle File mode comp (directly loads frames from file sequence)
+        // Handle File mode comp: use signal_preload() with spiral/forward strategies
         if comp.mode == crate::entities::comp::CompMode::File {
-            debug!("Active comp is File mode, loading frames directly");
-
-            let (play_start, play_end) = comp.work_area_abs(true);
-            let comp_end = comp.end();
-
-            // Calculate frame range to load
-            let load_start_i32 = (current_frame - radius as i32).max(play_start);
-            let load_end_i32 = (current_frame + radius as i32).min(play_end).min(comp_end);
-
-            debug!(
-                "Loading File mode frames [{}, {}]",
-                load_start_i32, load_end_i32
-            );
-
-            for frame_idx in load_start_i32..=load_end_i32 {
-                // Get frame from File mode comp
-                let frame = match comp.get_frame(frame_idx, &self.player.project) {
-                    Some(f) => f,
-                    None => {
-                        debug!("Failed to get frame {}", frame_idx);
-                        continue;
-                    }
-                };
-
-                if frame.file().is_none() {
-                    debug!("Frame {} has no backing file, skipping load", frame_idx);
-                    continue;
-                }
-
-                // Skip if already loaded
-                let status = frame.status();
-                if status == crate::entities::frame::FrameStatus::Loaded {
-                    continue;
-                }
-
-                // Queue for loading
-                debug!(
-                    "Queueing frame {} for load (status: {:?})",
-                    frame_idx, status
-                );
-                if let Err(e) = frame.set_status(crate::entities::frame::FrameStatus::Loading) {
-                    debug!("Failed to mark frame {} as Loading: {}", frame_idx, e);
-                }
-            }
-
+            debug!("File mode comp: triggering preload with spiral/forward strategy");
+            comp.signal_preload(&self.workers);
             return;
         }
 
@@ -493,12 +442,7 @@ impl PlayaApp {
                         comp_uuid, old_frame, new_frame
                     );
 
-                    // Signal preload with epoch increment (cancels stale requests)
-                    if let Some(comp) = self.player.project.media.get(&comp_uuid) {
-                        comp.signal_preload(&self.workers);
-                    }
-
-                    // Trigger frame loading around new position
+                    // Trigger frame loading with spiral/forward strategy
                     self.enqueue_frame_loads_around_playhead(10);
                 }
                 events::CompEvent::LayersChanged { comp_uuid } => {

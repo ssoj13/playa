@@ -31,8 +31,6 @@ pub struct CacheManager {
     max_memory_bytes: usize,
     /// Epoch counter for cancelling stale requests
     current_epoch: Arc<AtomicU64>,
-    /// Current preload strategy (per-session)
-    preload_strategy: PreloadStrategy,
 }
 
 impl CacheManager {
@@ -69,7 +67,6 @@ impl CacheManager {
             memory_usage: Arc::new(AtomicUsize::new(0)),
             max_memory_bytes,
             current_epoch: Arc::new(AtomicU64::new(0)),
-            preload_strategy: PreloadStrategy::Spiral,
         }
     }
 
@@ -130,21 +127,6 @@ impl CacheManager {
         self.memory_usage.fetch_sub(bytes, Ordering::Relaxed);
     }
 
-    /// Set preload strategy based on media type
-    pub fn set_strategy(&mut self, is_video: bool) {
-        self.preload_strategy = if is_video {
-            PreloadStrategy::Forward
-        } else {
-            PreloadStrategy::Spiral
-        };
-        debug!("Preload strategy: {:?}", self.preload_strategy);
-    }
-
-    /// Get current preload strategy
-    pub fn strategy(&self) -> PreloadStrategy {
-        self.preload_strategy
-    }
-
     /// Update memory limit (e.g. from settings)
     pub fn set_memory_limit(&mut self, mem_fraction: f64, reserve_gb: f64) {
         let mut sys = System::new_all();
@@ -171,7 +153,6 @@ mod tests {
     fn test_cache_manager_creation() {
         let manager = CacheManager::new(0.5, 1.0);
         assert_eq!(manager.current_epoch(), 0);
-        assert_eq!(manager.strategy(), PreloadStrategy::Spiral);
 
         let (usage, _limit) = manager.mem();
         assert_eq!(usage, 0);
@@ -203,15 +184,4 @@ mod tests {
         assert_eq!(usage, 512 * 1024);
     }
 
-    #[test]
-    fn test_strategy_switch() {
-        let mut manager = CacheManager::new(0.5, 1.0);
-        assert_eq!(manager.strategy(), PreloadStrategy::Spiral);
-
-        manager.set_strategy(true); // Video
-        assert_eq!(manager.strategy(), PreloadStrategy::Forward);
-
-        manager.set_strategy(false); // Image
-        assert_eq!(manager.strategy(), PreloadStrategy::Spiral);
-    }
 }
