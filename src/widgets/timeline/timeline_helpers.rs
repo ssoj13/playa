@@ -249,8 +249,8 @@ pub(super) fn draw_load_indicator(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
 
-        // Get frame statuses from comp cache
-        if let Some(statuses) = comp.file_frame_statuses() {
+        // Get frame statuses from comp cache (works for File and Layer mode)
+        if let Some(statuses) = comp.cache_frame_statuses() {
             log::debug!("draw_load_indicator: got {} frame statuses", statuses.len());
             let total = statuses.len();
             if total == 0 {

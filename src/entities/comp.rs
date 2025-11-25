@@ -398,7 +398,8 @@ impl Comp {
         let hi = end.max(start).clamp(lo, comp_end);
         self.set_play_start(lo);
         self.set_play_end(hi);
-        self.clear_cache();
+        // Don't clear cache - already loaded frames remain valid
+        // Preload will automatically load new frames in the updated work area
         self.event_sender.emit(CompEvent::LayersChanged {
             comp_uuid: self.uuid.clone(),
         });
@@ -457,27 +458,34 @@ impl Comp {
         }
     }
 
-    /// Return cached frame statuses for File comps, aligned to local frame indices.
+    /// Return cached frame statuses aligned to comp timeline.
     ///
-    /// Uses per-comp cache entries to build a strip of statuses:
-    /// - Default is `Header` (expected file, not yet loaded).
-    /// - Cached frames override with their current status.
-    /// Skips Layer comps and empty comps.
-    pub fn file_frame_statuses(&self) -> Option<Vec<FrameStatus>> {
-        if self.mode != CompMode::File {
-            log::debug!("file_frame_statuses: mode is not File (mode={:?})", self.mode);
-            return None;
-        }
-
+    /// Works for BOTH File and Layer mode comps:
+    /// - File mode: shows which image sequence frames are loaded
+    /// - Layer mode: shows which composed frames are cached
+    ///
+    /// Status colors:
+    /// - Header (blue): not yet loaded/rendered
+    /// - Loading (orange): currently loading
+    /// - Loaded (green): in cache
+    /// - Error (red): failed to load/render
+    pub fn cache_frame_statuses(&self) -> Option<Vec<FrameStatus>> {
         let duration = self.frame_count();
         if duration <= 0 {
-            log::debug!("file_frame_statuses: duration <= 0 (duration={})", duration);
+            log::debug!("cache_frame_statuses: duration <= 0 (duration={})", duration);
             return None;
         }
 
-        log::debug!("file_frame_statuses: returning statuses for {} frames", duration);
+        log::debug!("cache_frame_statuses: mode={:?}, returning statuses for {} frames", self.mode, duration);
 
-        let seq_start = self.file_start.unwrap_or(self.start());
+        // For File mode: align to file sequence start (e.g., frame 1001)
+        // For Layer mode: align to comp start (e.g., frame 0)
+        let seq_start = if self.mode == CompMode::File {
+            self.file_start.unwrap_or(self.start())
+        } else {
+            self.start()
+        };
+
         let mut statuses = vec![FrameStatus::Header; duration as usize];
 
         for ((_, seq_frame), frame) in self.cache.borrow().iter() {
@@ -514,8 +522,9 @@ impl Comp {
 
     /// Signal background preload for frames around current position
     ///
-    /// Increments epoch to cancel stale requests, determines preload strategy
-    /// (spiral vs forward) based on file type, and enqueues frames for loading.
+    /// Determines preload strategy (spiral vs forward) based on file type and enqueues frames.
+    /// Does NOT increment epoch - let all frames load even during scrubbing.
+    /// Cache eviction will handle memory limits automatically.
     ///
     /// Strategies:
     /// - Spiral: image sequences (0, ±1, ±2, ...) - cheap seeking both directions
@@ -526,15 +535,26 @@ impl Comp {
             return;
         }
 
-        // Increment epoch to cancel stale preload requests
+        // Get current epoch without incrementing (let frames load in background)
         let epoch = if let Some(ref manager) = self.cache_manager {
-            manager.increment_epoch()
+            manager.current_epoch()
         } else {
             return;
         };
 
         let center = self.current_frame;
         let (play_start, play_end) = self.work_area_abs(true);
+
+        // Debug: show coordinate spaces
+        debug!(
+            "signal_preload: current_frame={}, comp[{}..{}], file_start={:?}, work_area[{}..{}]",
+            center,
+            self.start(),
+            self.end(),
+            self.file_start,
+            play_start,
+            play_end
+        );
 
         if play_end < play_start {
             return;
@@ -583,7 +603,15 @@ impl Comp {
         play_start: i32,
         play_end: i32,
     ) {
-        let max_offset = ((play_end - play_start) / 2).max(0);
+        // Calculate max offset to reach furthest boundary (forward or backward)
+        let offset_backward = center - play_start;
+        let offset_forward = play_end - center;
+        let max_offset = offset_backward.max(offset_forward).max(0);
+
+        debug!(
+            "preload_spiral: center={}, range=[{}..{}], offset_backward={}, offset_forward={}, max_offset={}",
+            center, play_start, play_end, offset_backward, offset_forward, max_offset
+        );
 
         for offset in 0..=max_offset {
             // Backward: center - offset
@@ -627,9 +655,15 @@ impl Comp {
     /// Skips frames that are already loaded or have no backing file.
     /// Uses execute_with_epoch() to automatically cancel stale requests.
     fn enqueue_load(&self, workers: &Arc<Workers>, epoch: u64, frame_idx: i32) {
-        // Get frame (creates placeholder if needed)
+        // Convert frame_idx to seq_frame (same as get_file_frame)
+        let comp_start = self.start();
+        let local_idx = frame_idx - comp_start;
+        let seq_start = self.file_start.unwrap_or(self.start());
+        let seq_frame = seq_start.saturating_add(local_idx);
+
+        // Cache key uses sequence frame number (same as get_file_frame)
         let comp_hash = self.compute_comp_hash();
-        let key = (comp_hash, frame_idx as usize);
+        let key = (comp_hash, seq_frame.max(0) as usize);
 
         // Check if already cached
         if let Some(_frame) = self.cache.borrow().peek(&key) {
@@ -637,20 +671,58 @@ impl Comp {
             return;
         }
 
-        // Resolve path
-        let Some(path) = self.resolve_frame_path(frame_idx) else {
+        // Resolve path using seq_frame
+        let Some(path) = self.resolve_frame_path(seq_frame) else {
             return;
         };
 
         // Create frame with unloaded status
         let frame = Frame::new_unloaded(path);
 
+        // Clone cache, manager, event sender and copy values for closure
+        let cache = self.cache.clone();
+        let manager = self.cache_manager.clone();
+        let event_sender = self.event_sender.clone();
+        let comp_uuid = self.uuid.clone();
+        let seq_frame_for_log = seq_frame; // Copy for logging
+
         // Enqueue with epoch check
         workers.execute_with_epoch(epoch, move || {
-            // Load frame by setting status to Loaded
-            // This triggers actual image loading via Frame::set_status()
-            if let Err(e) = frame.set_status(FrameStatus::Loaded) {
-                debug!("Failed to load frame {}: {}", frame_idx, e);
+            // Load frame by setting status to Loaded (triggers actual image loading)
+            match frame.set_status(FrameStatus::Loaded) {
+                Ok(_) => {
+                    let frame_size = frame.mem();
+
+                    // LRU eviction: free frames until under memory limit
+                    if let Some(ref mgr) = manager {
+                        while mgr.check_memory_limit() {
+                            let mut cache_mut = cache.borrow_mut();
+                            if let Some((_, evicted)) = cache_mut.pop_lru() {
+                                let evicted_size = evicted.mem();
+                                mgr.free_memory(evicted_size);
+                                debug!("Evicted frame ({} bytes)", evicted_size);
+                            } else {
+                                break; // Cache empty, nothing to evict
+                            }
+                        }
+
+                        // Add memory for new frame
+                        mgr.add_memory(frame_size);
+                    }
+
+                    // Insert into cache
+                    cache.borrow_mut().push(key, frame);
+
+                    debug!("Loaded frame {} ({} bytes)", seq_frame_for_log, frame_size);
+
+                    // Notify UI to repaint (frame loaded in background)
+                    event_sender.emit(CompEvent::LayersChanged {
+                        comp_uuid: comp_uuid.clone(),
+                    });
+                }
+                Err(e) => {
+                    debug!("Failed to load frame {}: {}", seq_frame_for_log, e);
+                }
             }
         });
     }

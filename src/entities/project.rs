@@ -149,6 +149,20 @@ impl Project {
         }
     }
 
+    /// Rebuild runtime state AND set cache manager (unified after deserialization).
+    ///
+    /// Combines set_cache_manager() + rebuild_runtime() in correct order.
+    /// Use this after Project::from_json() or Project.clone().
+    pub fn rebuild_with_manager(
+        &mut self,
+        manager: Arc<CacheManager>,
+        event_sender: Option<crate::events::CompEventSender>,
+    ) {
+        log::info!("Project::rebuild_with_manager() - unified rebuild");
+        self.set_cache_manager(manager);
+        self.rebuild_runtime(event_sender);
+    }
+
     /// Set compositor type (CPU or GPU).
     ///
     /// Allows switching between CPU and GPU compositing backends.

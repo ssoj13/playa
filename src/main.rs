@@ -484,11 +484,12 @@ impl PlayaApp {
             Ok(mut project) => {
                 info!("Loaded project from {}", path.display());
 
-                // Rebuild runtime with event sender for all comps
-                project.rebuild_runtime(Some(self.comp_event_sender.clone()));
+                // Rebuild runtime + set cache manager (unified)
+                project.rebuild_with_manager(
+                    Arc::clone(&self.cache_manager),
+                    Some(self.comp_event_sender.clone()),
+                );
 
-                // Set cache manager (lost during deserialization)
-                project.set_cache_manager(Arc::clone(&self.cache_manager));
                 self.player.project = project;
                 // Restore active comp from project (also sync selection)
                 if let Some(active) = self.player.project.active.clone() {
@@ -2098,13 +2099,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut player = Player::new(Arc::clone(&app.cache_manager));
             player.project = app.project.clone();
 
-            // Set cache manager (lost during Project clone)
-            player.project.set_cache_manager(Arc::clone(&app.cache_manager));
-
-            // Rebuild Arc references and set event sender for all comps
-            player
-                .project
-                .rebuild_runtime(Some(app.comp_event_sender.clone()));
+            // Rebuild runtime + set cache manager (unified, lost during clone)
+            player.project.rebuild_with_manager(
+                Arc::clone(&app.cache_manager),
+                Some(app.comp_event_sender.clone()),
+            );
 
             // Restore active from project or ensure default
             let active_uuid = player.project.active.clone().or_else(|| {
@@ -2175,11 +2174,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Loading playlist: {}", playlist_path.display());
                     match crate::entities::Project::from_json(playlist_path) {
                         Ok(mut project) => {
-                            // Rebuild runtime with event sender for all comps
-                            project.rebuild_runtime(Some(app.comp_event_sender.clone()));
-
-                            // Set cache manager (lost during deserialization)
-                            project.set_cache_manager(Arc::clone(&app.cache_manager));
+                            // Rebuild runtime + set cache manager (unified)
+                            project.rebuild_with_manager(
+                                Arc::clone(&app.cache_manager),
+                                Some(app.comp_event_sender.clone()),
+                            );
 
                             app.player.project = project;
                             info!("Playlist loaded via Project");

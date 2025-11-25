@@ -128,7 +128,7 @@ pub fn render_outline(
                 // Match the top padding of the timeline canvas (ruler + optional status bar + spacing)
                 // Ruler: 20.0, Status strip: 6.0 if present, spacer: 4.0
                 let status_bar_height = comp
-                    .file_frame_statuses()
+                    .cache_frame_statuses()
                     .as_ref()
                     .map(|_| 6.0)
                     .unwrap_or(0.0);
@@ -314,7 +314,7 @@ pub fn render_canvas(
         timeline_width,
         ui.available_width()
     );
-    let status_strip = comp.file_frame_statuses();
+    let status_strip = comp.cache_frame_statuses();
     let status_bar_height = status_strip.as_ref().map(|_| 6.0).unwrap_or(0.0);
 
     // Options + time ruler row (always visible)
@@ -820,7 +820,7 @@ pub fn render_canvas(
 
                                     // Check if this visual row has time overlap with any existing layer
                                     let drop_end = drop_frame + dur;
-                                    let mut has_overlap = false;
+                                    let mut _has_overlap = false;
 
                                     // Only check overlap if mouse is within timeline bounds
                                     if hover_pos.y >= timeline_rect.min.y {
@@ -837,7 +837,7 @@ pub fn render_canvas(
                                                 if child_row == mouse_row {
                                                     // Check time overlap
                                                     if drop_frame <= child_end && drop_end >= child_start {
-                                                        has_overlap = true;
+                                                        _has_overlap = true;
                                                         break;
                                                     }
                                                 }

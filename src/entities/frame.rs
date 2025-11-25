@@ -97,13 +97,13 @@ pub enum TonemapMode {
     Reinhard, // Reinhard tone mapping (photographic)
 }
 
-/// Frame loading status
+/// Frame loading status (for cache indicator)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FrameStatus {
     Placeholder, // No filename, green placeholder
     Header,      // Filename set, header loaded (resolution known), buffer is green placeholder
     Loading,     // Async loading in progress
-    Loaded,      // Image data loaded into buffer
+    Loaded,      // Cached: File mode = image loaded into buffer, Layer mode = composed result cached
     Error,       // Loading failed
 }
 

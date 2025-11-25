@@ -762,7 +762,7 @@ void main() {
         // For now, just use regular blend and crop result
         // TODO: Implement proper canvas-sized blending
         let result = self.blend(frames)?;
-        let mut cropped = result;
+        let cropped = result;
         cropped.crop(dim.0, dim.1, super::frame::CropAlign::LeftTop);
         Some(cropped)
     }
