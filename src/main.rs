@@ -486,6 +486,9 @@ impl PlayaApp {
 
                 // Rebuild runtime with event sender for all comps
                 project.rebuild_runtime(Some(self.comp_event_sender.clone()));
+
+                // Set cache manager (lost during deserialization)
+                project.set_cache_manager(Arc::clone(&self.cache_manager));
                 self.player.project = project;
                 // Restore active comp from project (also sync selection)
                 if let Some(active) = self.player.project.active.clone() {
@@ -2095,6 +2098,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut player = Player::new(Arc::clone(&app.cache_manager));
             player.project = app.project.clone();
 
+            // Set cache manager (lost during Project clone)
+            player.project.set_cache_manager(Arc::clone(&app.cache_manager));
+
             // Rebuild Arc references and set event sender for all comps
             player
                 .project
@@ -2171,6 +2177,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(mut project) => {
                             // Rebuild runtime with event sender for all comps
                             project.rebuild_runtime(Some(app.comp_event_sender.clone()));
+
+                            // Set cache manager (lost during deserialization)
+                            project.set_cache_manager(Arc::clone(&app.cache_manager));
+
                             app.player.project = project;
                             info!("Playlist loaded via Project");
                         }

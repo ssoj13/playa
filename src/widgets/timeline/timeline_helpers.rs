@@ -251,6 +251,7 @@ pub(super) fn draw_load_indicator(
 
         // Get frame statuses from comp cache
         if let Some(statuses) = comp.file_frame_statuses() {
+            log::debug!("draw_load_indicator: got {} frame statuses", statuses.len());
             let total = statuses.len();
             if total == 0 {
                 return rect;

@@ -89,8 +89,11 @@ impl StatusBar {
                     } else {
                         0
                     };
+                    log::debug!("StatusBar: cache_manager present, usage={}MB, limit={}MB", usage_mb, limit_mb);
                     ui.monospace(format!("Mem: {}/{}MB ({}%)", usage_mb, limit_mb, percent));
                     ui.separator();
+                } else {
+                    log::warn!("StatusBar: cache_manager is None!");
                 }
 
                 // Loop toggle

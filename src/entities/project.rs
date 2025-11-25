@@ -59,6 +59,7 @@ impl Project {
     }
 
     pub fn new(cache_manager: Arc<CacheManager>) -> Self {
+        log::info!("Project::new() called with cache_manager");
         Self {
             attrs: Attrs::new(),
             media: HashMap::new(),
@@ -181,6 +182,7 @@ impl Project {
 
     /// Set CacheManager for project and all existing comps (call after deserialization)
     pub fn set_cache_manager(&mut self, manager: Arc<CacheManager>) {
+        log::info!("Project::set_cache_manager() called, setting for {} comps", self.media.len());
         self.cache_manager = Some(Arc::clone(&manager));
         for comp in self.media.values_mut() {
             comp.set_cache_manager(Arc::clone(&manager));
@@ -189,6 +191,9 @@ impl Project {
 
     /// Get reference to cache manager
     pub fn cache_manager(&self) -> Option<&Arc<CacheManager>> {
+        if self.cache_manager.is_none() {
+            log::warn!("Project::cache_manager() returning None!");
+        }
         self.cache_manager.as_ref()
     }
 

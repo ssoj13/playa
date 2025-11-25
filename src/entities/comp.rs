@@ -465,13 +465,17 @@ impl Comp {
     /// Skips Layer comps and empty comps.
     pub fn file_frame_statuses(&self) -> Option<Vec<FrameStatus>> {
         if self.mode != CompMode::File {
+            log::debug!("file_frame_statuses: mode is not File (mode={:?})", self.mode);
             return None;
         }
 
         let duration = self.frame_count();
         if duration <= 0 {
+            log::debug!("file_frame_statuses: duration <= 0 (duration={})", duration);
             return None;
         }
+
+        log::debug!("file_frame_statuses: returning statuses for {} frames", duration);
 
         let seq_start = self.file_start.unwrap_or(self.start());
         let mut statuses = vec![FrameStatus::Header; duration as usize];
