@@ -229,7 +229,7 @@ pub fn render_outline(
                                     .set("opacity", crate::entities::AttrValue::Float(opacity));
                                 attrs_mut.set("blend_mode", crate::entities::AttrValue::Str(blend));
                                 attrs_mut.set("speed", crate::entities::AttrValue::Float(speed));
-                                comp.clear_cache();
+                                // attrs.set() automatically marks as dirty
                             }
                         }
 

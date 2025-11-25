@@ -235,6 +235,8 @@ pub enum CompEvent {
     LayersChanged { comp_uuid: String },
     /// Timeline settings changed (play range, etc.)
     TimelineChanged { comp_uuid: String },
+    /// Attributes changed (requires cascade invalidation for parent comps)
+    AttrsChanged { comp_uuid: String },
 }
 
 /// Event sender for Comp to emit CompEvents.

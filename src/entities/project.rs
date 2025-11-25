@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Attrs, Comp, CompositorType};
 use crate::cache_man::CacheManager;
+use crate::global_cache::{CacheStrategy, GlobalFrameCache};
 
 /// Top-level project / scene.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -50,6 +51,10 @@ pub struct Project {
     /// Global cache manager (runtime-only, set on creation/load)
     #[serde(skip)]
     cache_manager: Option<Arc<CacheManager>>,
+
+    /// Global frame cache (runtime-only, replaces per-Comp local caches)
+    #[serde(skip)]
+    pub global_cache: Option<Arc<GlobalFrameCache>>,
 }
 
 impl Project {
@@ -59,7 +64,19 @@ impl Project {
     }
 
     pub fn new(cache_manager: Arc<CacheManager>) -> Self {
-        log::info!("Project::new() called with cache_manager");
+        Self::new_with_strategy(cache_manager, CacheStrategy::All)
+    }
+
+    pub fn new_with_strategy(cache_manager: Arc<CacheManager>, strategy: CacheStrategy) -> Self {
+        log::info!("Project::new_with_strategy() called with cache_manager, strategy={:?}", strategy);
+
+        // Create global frame cache with specified capacity and strategy
+        let global_cache = Arc::new(GlobalFrameCache::new(
+            10000,                   // Default capacity: 10k frames
+            Arc::clone(&cache_manager),
+            strategy,
+        ));
+
         Self {
             attrs: Attrs::new(),
             media: HashMap::new(),
@@ -69,6 +86,7 @@ impl Project {
             selection_anchor: None,
             compositor: RefCell::new(CompositorType::default()), // CPU compositor by default
             cache_manager: Some(cache_manager),
+            global_cache: Some(global_cache),
         }
     }
 
@@ -131,20 +149,25 @@ impl Project {
 
     /// Rebuild runtime-only state after deserialization.
     ///
-    /// - Clears per-comp caches.
     /// - Reinitializes compositor to default (CPU).
-    /// - Sets event sender for all comps.
+    /// - Sets event sender and global_cache for all comps.
     pub fn rebuild_runtime(&mut self, event_sender: Option<crate::events::CompEventSender>) {
         // Reinitialize compositor (not serialized)
         *self.compositor.borrow_mut() = CompositorType::default();
 
         // Rebuild comps in unified media HashMap
         for comp in self.media.values_mut() {
-            comp.clear_cache();
+            // NOTE: No need to clear cache - GlobalFrameCache is project-level
+            // Cache will be naturally invalidated via dirty tracking
 
             // Set event sender for comps if provided
             if let Some(ref sender) = event_sender {
                 comp.set_event_sender(sender.clone());
+            }
+
+            // Set global_cache reference for each comp
+            if let Some(ref cache) = self.global_cache {
+                comp.set_global_cache(Arc::clone(cache));
             }
         }
     }
@@ -159,7 +182,16 @@ impl Project {
         event_sender: Option<crate::events::CompEventSender>,
     ) {
         log::info!("Project::rebuild_with_manager() - unified rebuild");
-        self.set_cache_manager(manager);
+        self.set_cache_manager(manager.clone());
+
+        // Create global frame cache
+        let global_cache = Arc::new(GlobalFrameCache::new(
+            10000,
+            manager,
+            CacheStrategy::All,
+        ));
+        self.global_cache = Some(global_cache);
+
         self.rebuild_runtime(event_sender);
     }
 
@@ -182,11 +214,16 @@ impl Project {
         self.media.get(uuid)
     }
 
-    /// Add a composition to the project (automatically sets cache_manager)
+    /// Add a composition to the project (automatically sets cache_manager and global_cache)
     pub fn add_comp(&mut self, mut comp: Comp) {
         // Automatically set cache_manager if available
         if let Some(ref manager) = self.cache_manager {
             comp.set_cache_manager(Arc::clone(manager));
+        }
+
+        // Automatically set global_cache if available
+        if let Some(ref cache) = self.global_cache {
+            comp.set_global_cache(Arc::clone(cache));
         }
 
         let uuid = comp.uuid.clone();
@@ -215,5 +252,126 @@ impl Project {
     pub fn remove_media(&mut self, uuid: &str) {
         self.media.remove(uuid);
         self.comps_order.retain(|u| u != uuid);
+    }
+
+    /// Cascade invalidation: mark all parent comps as dirty
+    ///
+    /// When a comp's attrs are modified, all parent comps that reference it
+    /// must be invalidated to force recomposition.
+    /// This method recursively traverses up the parent hierarchy.
+    pub fn invalidate_cascade(&mut self, comp_uuid: &str) {
+        log::debug!("Cascade invalidation starting from comp: {}", comp_uuid);
+
+        // Find all parents recursively
+        let mut parents_to_invalidate = Vec::new();
+        let mut current_uuid = comp_uuid.to_string();
+
+        loop {
+            // Find parent of current comp
+            let parent_uuid = self.media.get(&current_uuid)
+                .and_then(|comp| comp.parent.clone());
+
+            match parent_uuid {
+                Some(parent) => {
+                    parents_to_invalidate.push(parent.clone());
+                    current_uuid = parent;
+                }
+                None => break, // Reached root
+            }
+        }
+
+        // Mark all parents as dirty and clear their caches
+        for parent_uuid in &parents_to_invalidate {
+            if let Some(parent_comp) = self.media.get_mut(parent_uuid) {
+                log::debug!("Invalidating parent comp: {}", parent_uuid);
+                parent_comp.attrs.mark_dirty();
+
+                // Clear cached frames for this parent comp
+                if let Some(ref cache) = self.global_cache {
+                    cache.clear_comp(parent_uuid);
+                }
+            }
+        }
+
+        log::debug!(
+            "Cascade invalidation complete: {} parents invalidated",
+            parents_to_invalidate.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cache_man::CacheManager;
+
+    #[test]
+    fn test_cascade_invalidation() {
+        let manager = Arc::new(CacheManager::new(0.75, 2.0));
+        let mut project = Project::new(manager);
+
+        // Create hierarchy: grandparent -> parent -> child
+        let mut child = Comp::new("Child", 0, 100, 24.0);
+        let child_uuid = child.uuid.clone();
+
+        let mut parent = Comp::new("Parent", 0, 100, 24.0);
+        let parent_uuid = parent.uuid.clone();
+        parent.children.push(child_uuid.clone());
+        child.parent = Some(parent_uuid.clone());
+
+        let mut grandparent = Comp::new("Grandparent", 0, 100, 24.0);
+        let grandparent_uuid = grandparent.uuid.clone();
+        grandparent.children.push(parent_uuid.clone());
+        parent.parent = Some(grandparent_uuid.clone());
+
+        // Add comps to project
+        project.media.insert(child_uuid.clone(), child);
+        project.media.insert(parent_uuid.clone(), parent);
+        project.media.insert(grandparent_uuid.clone(), grandparent);
+
+        // Clear dirty flags (Comp::new() marks attrs as dirty)
+        project.media.get_mut(&child_uuid).unwrap().attrs.clear_dirty();
+        project.media.get_mut(&parent_uuid).unwrap().attrs.clear_dirty();
+        project.media.get_mut(&grandparent_uuid).unwrap().attrs.clear_dirty();
+
+        // Mark only child as dirty
+        project.media.get_mut(&child_uuid).unwrap().attrs.mark_dirty();
+        assert!(project.media.get(&child_uuid).unwrap().attrs.is_dirty());
+
+        // Parent and grandparent should be clean
+        assert!(!project.media.get(&parent_uuid).unwrap().attrs.is_dirty());
+        assert!(!project.media.get(&grandparent_uuid).unwrap().attrs.is_dirty());
+
+        // Trigger cascade invalidation from child
+        project.invalidate_cascade(&child_uuid);
+
+        // After cascade, both parent and grandparent should be dirty
+        assert!(
+            project.media.get(&parent_uuid).unwrap().attrs.is_dirty(),
+            "Parent should be dirty after cascade"
+        );
+        assert!(
+            project.media.get(&grandparent_uuid).unwrap().attrs.is_dirty(),
+            "Grandparent should be dirty after cascade"
+        );
+    }
+
+    #[test]
+    fn test_cascade_invalidation_no_parents() {
+        let manager = Arc::new(CacheManager::new(0.75, 2.0));
+        let mut project = Project::new(manager);
+
+        // Create orphan comp (no parents)
+        let mut comp = Comp::new("Orphan", 0, 100, 24.0);
+        let comp_uuid = comp.uuid.clone();
+        comp.attrs.mark_dirty();
+
+        project.media.insert(comp_uuid.clone(), comp);
+
+        // Cascade invalidation should not crash
+        project.invalidate_cascade(&comp_uuid);
+
+        // Comp should still be dirty
+        assert!(project.media.get(&comp_uuid).unwrap().attrs.is_dirty());
     }
 }

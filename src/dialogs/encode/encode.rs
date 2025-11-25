@@ -1230,6 +1230,7 @@ pub fn encode_comp(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache_man::CacheManager;
 
     /// Test encoding with placeholder frames
     #[test]
@@ -1340,7 +1341,8 @@ mod tests {
             .set("width", crate::entities::AttrValue::UInt(64));
         comp.attrs
             .set("height", crate::entities::AttrValue::UInt(64));
-        let project = crate::entities::project::Project::new();
+        let manager = Arc::new(CacheManager::new(0.75, 2.0));
+        let project = crate::entities::project::Project::new(manager);
 
         // Run encoding
         println!(

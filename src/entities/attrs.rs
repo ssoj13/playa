@@ -45,21 +45,31 @@ impl std::hash::Hash for AttrValue {
 }
 
 /// Attribute container: string key → typed value.
+///
+/// Includes dirty tracking for cache invalidation.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Attrs {
     #[serde(default)]
     map: HashMap<String, AttrValue>,
+
+    /// Dirty flag: set when attributes are modified via set()
+    /// Used for cache invalidation instead of recomputing hashes
+    #[serde(skip)]
+    dirty: bool,
 }
 
 impl Attrs {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
+            dirty: false,
         }
     }
 
+    /// Set attribute value and mark as dirty
     pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
         self.map.insert(key.into(), value);
+        self.dirty = true; // Mark as dirty for cache invalidation
     }
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
@@ -190,5 +200,22 @@ impl Attrs {
     /// Hash all attributes.
     pub fn hash_all(&self) -> u64 {
         self.hash_filtered(None, None)
+    }
+
+    // === Dirty tracking methods ===
+
+    /// Check if attributes have been modified since last clear
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Clear dirty flag (call after cache update)
+    pub fn clear_dirty(&mut self) {
+        self.dirty = false;
+    }
+
+    /// Mark as dirty manually (e.g., for child attr changes)
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 }

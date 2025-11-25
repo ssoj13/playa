@@ -4,6 +4,7 @@ mod config;
 mod dialogs;
 mod entities;
 mod events;
+mod global_cache;
 mod player;
 mod ui;
 mod utils;
@@ -151,7 +152,10 @@ impl Default for PlayaApp {
             selected_media_uuid: None,
             last_render_time_ms: 0.0,
             settings: AppSettings::default(),
-            project: Project::new(Arc::clone(&cache_manager)),
+            project: {
+                let settings = AppSettings::default();
+                Project::new_with_strategy(Arc::clone(&cache_manager), settings.cache_strategy)
+            },
             show_help: true,
             show_playlist: true,
             show_settings: false,
@@ -454,6 +458,12 @@ impl PlayaApp {
                 events::CompEvent::TimelineChanged { comp_uuid } => {
                     debug!("Comp {} timeline changed", comp_uuid);
                     // Future: update timeline bounds, recalculate durations
+                }
+                events::CompEvent::AttrsChanged { comp_uuid } => {
+                    debug!("Comp {} attrs changed - triggering cascade invalidation", comp_uuid);
+                    // Cascade invalidation: mark all parent comps as dirty
+                    self.player.project.invalidate_cascade(&comp_uuid);
+                    self.project.invalidate_cascade(&comp_uuid);
                 }
             }
         }
@@ -1030,7 +1040,7 @@ impl PlayaApp {
                         let child_uuid = reordered.remove(from_idx);
                         reordered.insert(to_idx, child_uuid);
                         comp.children = reordered;
-                        comp.clear_cache();
+                        comp.attrs.mark_dirty(); // Mark dirty after reordering children
                     }
                 }
             }
@@ -1875,7 +1885,19 @@ impl eframe::App for PlayaApp {
 
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
+            let old_strategy = self.settings.cache_strategy;
             render_settings_window(ctx, &mut self.show_settings, &mut self.settings);
+
+            // Apply cache strategy changes immediately
+            if self.settings.cache_strategy != old_strategy {
+                log::info!("Cache strategy changed to: {:?}", self.settings.cache_strategy);
+                if let Some(ref global_cache) = self.player.project.global_cache {
+                    global_cache.set_strategy(self.settings.cache_strategy);
+                }
+                if let Some(ref global_cache) = self.project.global_cache {
+                    global_cache.set_strategy(self.settings.cache_strategy);
+                }
+            }
         }
 
         // Encode dialog (can be shown even in cinema mode)

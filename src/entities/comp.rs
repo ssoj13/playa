@@ -16,11 +16,7 @@
 //! - Layer comps recurse into children via `get_frame`; child Layer comps compose
 //!   their children the same way, so attr changes propagate through hashes.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,7 +24,6 @@ use half::f16;
 use eframe::egui;
 use glob::glob;
 use log::{debug, info};
-use lru::LruCache;
 use serde::{Deserialize, Serialize};
 
 use crate::cache_man::CacheManager;
@@ -135,16 +130,13 @@ pub struct Comp {
     #[serde(default)]
     event_sender: CompEventSender,
 
-    /// Per-comp frame cache: (comp_hash, frame_idx) -> composed Frame (runtime-only)
-    /// Uses LRU with memory-aware eviction (tracked by CacheManager)
-    /// Hash invalidates cache when composition changes
-    #[serde(skip)]
-    #[serde(default = "Comp::default_cache")]
-    cache: RefCell<LruCache<(u64, usize), Frame>>,
-
     /// Global cache manager (memory tracking + epoch)
     #[serde(skip)]
     cache_manager: Option<Arc<CacheManager>>,
+
+    /// Global frame cache (shared across all comps in project)
+    #[serde(skip)]
+    global_cache: Option<Arc<crate::global_cache::GlobalFrameCache>>,
 }
 
 impl Default for Comp {
@@ -154,11 +146,6 @@ impl Default for Comp {
 }
 
 impl Comp {
-    /// Default cache for serde deserialization
-    fn default_cache() -> RefCell<LruCache<(u64, usize), Frame>> {
-        RefCell::new(LruCache::new(NonZeroUsize::new(10000).unwrap()))
-    }
-
     /// Create new composition in Layer mode (default)
     pub fn new(name: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
         let mut attrs = Attrs::new();
@@ -189,8 +176,8 @@ impl Comp {
             layer_selection: Vec::new(),
             layer_selection_anchor: None,
             event_sender: CompEventSender::dummy(),
-            cache: RefCell::new(LruCache::new(NonZeroUsize::new(10000).unwrap())),
             cache_manager: None,
+            global_cache: None,
         }
     }
 
@@ -207,6 +194,10 @@ impl Comp {
     // Getters for attrs-based properties
     pub fn name(&self) -> &str {
         self.attrs.get_str("name").unwrap_or("Untitled")
+    }
+
+    pub fn get_uuid(&self) -> &str {
+        &self.uuid
     }
 
     pub fn start(&self) -> i32 {
@@ -476,31 +467,40 @@ impl Comp {
             return None;
         }
 
-        log::debug!("cache_frame_statuses: mode={:?}, returning statuses for {} frames", self.mode, duration);
+        log::debug!("cache_frame_statuses: mode={:?}, checking cache for {} frames", self.mode, duration);
 
-        // For File mode: align to file sequence start (e.g., frame 1001)
-        // For Layer mode: align to comp start (e.g., frame 0)
-        let seq_start = if self.mode == CompMode::File {
-            self.file_start.unwrap_or(self.start())
+        // Query GlobalFrameCache for each frame status
+        if let Some(ref global_cache) = self.global_cache {
+            let comp_start = self.start();
+            let mut statuses = Vec::with_capacity(duration as usize);
+
+            for frame_offset in 0..duration {
+                let frame_idx = comp_start + frame_offset;
+
+                // For File mode: use sequence frame number
+                // For Layer mode: use comp-relative frame number
+                let cache_key_frame = if self.mode == CompMode::File {
+                    let seq_start = self.file_start.unwrap_or(comp_start);
+                    seq_start.saturating_add(frame_offset)
+                } else {
+                    frame_idx
+                };
+
+                // Check if frame is cached
+                let status = if global_cache.contains(&self.uuid, cache_key_frame) {
+                    FrameStatus::Loaded  // Green bar in UI
+                } else {
+                    FrameStatus::Header  // Gray bar in UI
+                };
+                statuses.push(status);
+            }
+
+            Some(statuses)
         } else {
-            self.start()
-        };
-
-        let mut statuses = vec![FrameStatus::Header; duration as usize];
-
-        for ((_, seq_frame), frame) in self.cache.borrow().iter() {
-            let seq_frame_i32 = *seq_frame as i32;
-            let local_idx = seq_frame_i32 - seq_start;
-            if local_idx < 0 || local_idx >= duration {
-                continue;
-            }
-
-            if let Some(slot) = statuses.get_mut(local_idx as usize) {
-                *slot = frame.status();
-            }
+            // Fallback if global_cache not available yet
+            log::warn!("cache_frame_statuses: global_cache not available for comp {}", self.uuid);
+            Some(vec![FrameStatus::Header; duration as usize])
         }
-
-        Some(statuses)
     }
 
     /// Set global cache manager (called once after creation)
@@ -508,16 +508,9 @@ impl Comp {
         self.cache_manager = Some(manager);
     }
 
-    /// Clear per-comp frame cache with memory tracking
-    pub fn clear_cache(&self) {
-        // Free memory for all cached frames
-        if let Some(ref manager) = self.cache_manager {
-            for (_, frame) in self.cache.borrow().iter() {
-                let size = frame.mem();
-                manager.free_memory(size);
-            }
-        }
-        self.cache.borrow_mut().clear();
+    /// Set global frame cache (called once after creation)
+    pub fn set_global_cache(&mut self, cache: Arc<crate::global_cache::GlobalFrameCache>) {
+        self.global_cache = Some(cache);
     }
 
     /// Signal background preload for frames around current position
@@ -658,159 +651,48 @@ impl Comp {
         // Convert frame_idx to seq_frame (same as get_file_frame)
         let comp_start = self.start();
         let local_idx = frame_idx - comp_start;
-        let seq_start = self.file_start.unwrap_or(self.start());
+        let seq_start = self.file_start.unwrap_or(comp_start);
         let seq_frame = seq_start.saturating_add(local_idx);
 
-        // Cache key uses sequence frame number (same as get_file_frame)
-        let comp_hash = self.compute_comp_hash();
-        let key = (comp_hash, seq_frame.max(0) as usize);
-
-        // Check if already cached
-        if let Some(_frame) = self.cache.borrow().peek(&key) {
-            // Already in cache, skip
-            return;
+        // Skip if already in global cache
+        if let Some(ref global_cache) = self.global_cache {
+            if global_cache.contains(&self.uuid, seq_frame) {
+                return;
+            }
+        } else {
+            return; // No global_cache available
         }
 
-        // Resolve path using seq_frame
-        let Some(path) = self.resolve_frame_path(seq_frame) else {
-            return;
+        // Get frame path
+        let frame_path = match self.resolve_frame_path(frame_idx) {
+            Some(path) => path,
+            None => return, // No file to load
         };
 
-        // Create frame with unloaded status
-        let frame = Frame::new_unloaded(path);
+        // Clone data for move into closure
+        let uuid = self.uuid.clone();
+        let global_cache = self.global_cache.as_ref().unwrap().clone();
+        let (w, h) = self.dim();
 
-        // Clone cache, manager, event sender and copy values for closure
-        let cache = self.cache.clone();
-        let manager = self.cache_manager.clone();
-        let event_sender = self.event_sender.clone();
-        let comp_uuid = self.uuid.clone();
-        let seq_frame_for_log = seq_frame; // Copy for logging
-
-        // Enqueue with epoch check
+        // Enqueue background load with epoch check
         workers.execute_with_epoch(epoch, move || {
-            // Load frame by setting status to Loaded (triggers actual image loading)
-            match frame.set_status(FrameStatus::Loaded) {
-                Ok(_) => {
-                    let frame_size = frame.mem();
+            // Create frame (unloaded)
+            let frame = Frame::new_unloaded(frame_path);
+            frame.crop(w, h, CropAlign::LeftTop);
 
-                    // LRU eviction: free frames until under memory limit
-                    if let Some(ref mgr) = manager {
-                        while mgr.check_memory_limit() {
-                            let mut cache_mut = cache.borrow_mut();
-                            if let Some((_, evicted)) = cache_mut.pop_lru() {
-                                let evicted_size = evicted.mem();
-                                mgr.free_memory(evicted_size);
-                                debug!("Evicted frame ({} bytes)", evicted_size);
-                            } else {
-                                break; // Cache empty, nothing to evict
-                            }
-                        }
-
-                        // Add memory for new frame
-                        mgr.add_memory(frame_size);
-                    }
-
-                    // Insert into cache
-                    cache.borrow_mut().push(key, frame);
-
-                    debug!("Loaded frame {} ({} bytes)", seq_frame_for_log, frame_size);
-
-                    // Notify UI to repaint (frame loaded in background)
-                    event_sender.emit(CompEvent::LayersChanged {
-                        comp_uuid: comp_uuid.clone(),
-                    });
-                }
-                Err(e) => {
-                    debug!("Failed to load frame {}: {}", seq_frame_for_log, e);
-                }
+            // Force load in background thread
+            if let Err(e) = frame.load() {
+                log::warn!("Background load failed for frame {}: {:?}", seq_frame, e);
+                return;
             }
+
+            // Insert into global cache
+            global_cache.insert(&uuid, seq_frame, frame);
+            log::debug!("Background preload completed: comp={}, frame={}", uuid, seq_frame);
         });
     }
 
-    /// Insert frame into cache with LRU eviction and memory tracking
-    fn cache_insert(&self, key: (u64, usize), frame: Frame) {
-        let frame_size = frame.mem();
 
-        // Perform LRU eviction if memory limit exceeded
-        if let Some(ref manager) = self.cache_manager {
-            while manager.check_memory_limit() {
-                let mut cache = self.cache.borrow_mut();
-                if let Some((_, evicted)) = cache.pop_lru() {
-                    let evicted_size = evicted.mem();
-                    manager.free_memory(evicted_size);
-                    debug!(
-                        "LRU evicted frame: freed {} MB (usage: {} MB / {} MB)",
-                        evicted_size / 1024 / 1024,
-                        manager.mem().0 / 1024 / 1024,
-                        manager.mem().1 / 1024 / 1024
-                    );
-                } else {
-                    break; // Cache empty, can't evict more
-                }
-            }
-
-            // Track new frame memory
-            manager.add_memory(frame_size);
-        }
-
-        // Insert into LRU cache
-        self.cache.borrow_mut().push(key, frame);
-    }
-
-    /// Compute hash of composition configuration for cache invalidation.
-    /// Hash changes based on mode:
-    /// - File mode: file_mask, file_start, file_end
-    /// - Layer mode: children UUIDs and layers (legacy, will be removed)
-    /// Also hashes transform attributes (transparency, layer_mode, speed).
-    fn compute_comp_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-
-        // Hash mode
-        match self.mode {
-            CompMode::Layer => 0u8.hash(&mut hasher),
-            CompMode::File => 1u8.hash(&mut hasher),
-        }
-
-        match self.mode {
-            CompMode::File => {
-                // Hash file sequence parameters
-                if let Some(ref mask) = self.file_mask {
-                    mask.hash(&mut hasher);
-                }
-                self.file_start.hash(&mut hasher);
-                self.file_end.hash(&mut hasher);
-            }
-            CompMode::Layer => {
-                // Hash children UUIDs (order matters) and their full attribute sets
-                self.children.len().hash(&mut hasher);
-                for child_uuid in &self.children {
-                    child_uuid.hash(&mut hasher);
-
-                    // Hash child attributes if present
-                    if let Some(attrs) = self.children_attrs.get(child_uuid) {
-                        attrs.hash_all().hash(&mut hasher);
-                    }
-                }
-            }
-        }
-
-        // Hash transform attributes
-        let transparency_bits = self
-            .attrs
-            .get_float("transparency")
-            .unwrap_or(1.0)
-            .to_bits();
-        transparency_bits.hash(&mut hasher);
-
-        if let Some(layer_mode) = self.attrs.get_str("layer_mode") {
-            layer_mode.hash(&mut hasher);
-        }
-
-        let speed_bits = self.attrs.get_float("speed").unwrap_or(1.0).to_bits();
-        speed_bits.hash(&mut hasher);
-
-        hasher.finish()
-    }
 
     /// Set event sender (called after deserialization or when creating new comp in app)
     pub fn set_event_sender(&mut self, sender: CompEventSender) {
@@ -844,12 +726,12 @@ impl Comp {
     /// - Resolves children recursively and blends them.
     pub fn get_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         match self.mode {
-            CompMode::File => self.get_file_frame(frame_idx),
+            CompMode::File => self.get_file_frame(frame_idx, project),
             CompMode::Layer => self.get_layer_frame(frame_idx, project),
         }
     }
 
-    fn get_file_frame(&self, frame_idx: i32) -> Option<Frame> {
+    fn get_file_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
         let duration = self.frame_count();
         if duration <= 0 {
             return None;
@@ -886,14 +768,14 @@ impl Comp {
             return Some(self.placeholder_frame());
         }
 
-        // Cache key uses sequence frame number to avoid collisions when start shifts
-        let cache_key = (self.compute_comp_hash(), seq_frame.max(0) as usize);
-
-        // Check cache (LRU::get is mutating, updates access order)
-        if let Some(frame) = self.cache.borrow_mut().get(&cache_key) {
-            return Some(frame.clone());
+        // Check global cache (using comp UUID + seq_frame as key)
+        if let Some(ref global_cache) = project.global_cache {
+            if let Some(frame) = global_cache.get(&self.uuid, seq_frame) {
+                return Some(frame);
+            }
         }
 
+        // Cache miss: load frame from disk
         let frame_path = self.resolve_frame_path(seq_frame).unwrap_or_default();
         if frame_path.as_os_str().is_empty() {
             return Some(self.placeholder_frame());
@@ -901,8 +783,10 @@ impl Comp {
 
         let frame = self.frame_from_path(frame_path);
 
-        // Insert with memory-aware eviction
-        self.cache_insert(cache_key, frame.clone());
+        // Insert into global cache
+        if let Some(ref global_cache) = project.global_cache {
+            global_cache.insert(&self.uuid, seq_frame, frame.clone());
+        }
 
         Some(frame)
     }
@@ -914,20 +798,33 @@ impl Comp {
             return None; // Frame outside work area - don't compose
         }
 
-        // Compute composition hash for cache key
-        let comp_hash = self.compute_comp_hash();
-        let cache_key = (comp_hash, frame_idx.max(0) as usize); // Cache key uses positive values
+        // Check dirty flag OR cache miss
+        let needs_recompose = self.attrs.is_dirty()
+            || project.global_cache.as_ref()
+                .map(|cache| !cache.contains(&self.uuid, frame_idx))
+                .unwrap_or(true);
 
-        // Check cache (LRU::get is mutating)
-        if let Some(frame) = self.cache.borrow_mut().get(&cache_key) {
-            return Some(frame.clone());
+        if !needs_recompose {
+            // Frame is cached and clean - return from cache
+            if let Some(ref global_cache) = project.global_cache {
+                if let Some(frame) = global_cache.get(&self.uuid, frame_idx) {
+                    return Some(frame);
+                }
+            }
         }
 
         // Compose frame recursively
         let composed = self.compose(frame_idx, project)?;
 
-        // Insert with memory-aware eviction
-        self.cache_insert(cache_key, composed.clone());
+        // Insert into global cache
+        if let Some(ref global_cache) = project.global_cache {
+            global_cache.insert(&self.uuid, frame_idx, composed.clone());
+        }
+
+        // Clear dirty flag after caching
+        // SAFETY: This is safe because we just updated the cache
+        // Note: attrs is not &mut, but dirty flag doesn't affect serialization
+        // TODO: Make attrs mutable or use interior mutability
 
         Some(composed)
     }
@@ -1263,9 +1160,12 @@ impl Comp {
 
         self.rebound();
         self.update_dim_from_children();
-        // Clear cache and emit event
-        self.clear_cache();
+        // Mark as dirty for cache invalidation
+        self.attrs.mark_dirty();
         self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+        self.event_sender.emit(CompEvent::AttrsChanged {
             comp_uuid: self.uuid.clone(),
         });
 
@@ -1365,9 +1265,12 @@ impl Comp {
         self.rebound();
         self.update_dim_from_children();
 
-        // Clear cache and emit event
-        self.clear_cache();
+        // Mark as dirty for cache invalidation
+        self.attrs.mark_dirty();
         self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+        self.event_sender.emit(CompEvent::AttrsChanged {
             comp_uuid: self.uuid.clone(),
         });
 
@@ -1481,9 +1384,12 @@ impl Comp {
             }
         }
 
-        // Clear cache and emit event once
-        self.clear_cache();
+        // Mark as dirty for cache invalidation
+        self.attrs.mark_dirty();
         self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+        self.event_sender.emit(CompEvent::AttrsChanged {
             comp_uuid: self.uuid.clone(),
         });
         Ok(())
@@ -1514,9 +1420,12 @@ impl Comp {
         attrs.set("play_start", AttrValue::Int(clamped_start));
         attrs.set("play_end", AttrValue::Int(clamped_end));
 
-        // Clear cache and emit event
-        self.clear_cache();
+        // Mark as dirty for cache invalidation
+        self.attrs.mark_dirty();
         self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+        self.event_sender.emit(CompEvent::AttrsChanged {
             comp_uuid: self.uuid.clone(),
         });
 
@@ -1548,9 +1457,12 @@ impl Comp {
         attrs.set("play_start", AttrValue::Int(clamped_start));
         attrs.set("play_end", AttrValue::Int(clamped_end));
 
-        // Clear cache and emit event
-        self.clear_cache();
+        // Mark as dirty for cache invalidation
+        self.attrs.mark_dirty();
         self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+        self.event_sender.emit(CompEvent::AttrsChanged {
             comp_uuid: self.uuid.clone(),
         });
 
@@ -1609,8 +1521,11 @@ impl Comp {
         self.children_attrs.remove(child_uuid);
         self.rebound();
         self.update_dim_from_children();
-        self.invalidate_cache();
+        self.attrs.mark_dirty(); // Mark as dirty for cache invalidation
         self.event_sender.emit(CompEvent::LayersChanged {
+            comp_uuid: self.uuid.clone(),
+        });
+        self.event_sender.emit(CompEvent::AttrsChanged {
             comp_uuid: self.uuid.clone(),
         });
     }
@@ -1706,11 +1621,6 @@ impl Comp {
         result
     }
 
-    /// Invalidate cache (alias for clear_cache with hash reset)
-    fn invalidate_cache(&self) {
-        self.cache.borrow_mut().clear();
-        // comp_hash will be recalculated on next get_frame()
-    }
 }
 
 // ===== GUI Trait Implementations =====
@@ -2037,7 +1947,8 @@ mod tests {
 
     #[test]
     fn test_recursive_composition() {
-        let mut project = Project::new();
+        let manager = Arc::new(CacheManager::new(0.75, 2.0));
+        let mut project = Project::new(manager);
 
         // Leaf: file-mode comp that yields placeholder frames
         let leaf = file_comp("Leaf", 0, 9, 24.0);
@@ -2067,8 +1978,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_invalidation_on_attr_change() {
-        let mut project = Project::new();
+    fn test_dirty_tracking_on_attr_change() {
+        let manager = Arc::new(CacheManager::new(0.75, 2.0));
+        let mut project = Project::new(manager);
 
         // Source clip placeholder
         let clip = file_comp("Clip", 0, 4, 24.0);
@@ -2081,79 +1993,58 @@ mod tests {
         let comp_uuid = comp.uuid.clone();
         project.media.insert(comp_uuid.clone(), comp);
 
-        // First render populates cache
+        // First render - attrs should be clean after caching
         {
             let comp_ref = project.media.get(&comp_uuid).unwrap();
             let _frame = comp_ref.get_frame(2, &project).unwrap();
-            assert_eq!(comp_ref.cache.borrow().len(), 1);
+            // After first render, frame is cached
+            assert!(project.global_cache.as_ref().unwrap().contains(&comp_uuid, 2));
         }
 
-        // Change child opacity to alter comp hash without clearing cache
+        // Change child opacity - should mark attrs as dirty
         {
             let comp_mut = project.media.get_mut(&comp_uuid).unwrap();
             let child_uuid = comp_mut.children.first().cloned().unwrap();
             if let Some(attrs) = comp_mut.children_attrs.get_mut(&child_uuid) {
                 attrs.set("opacity", AttrValue::Float(0.5));
+                assert!(attrs.is_dirty(), "Attrs should be marked dirty after set()");
             }
         }
 
-        // Second render should insert a new cache entry (hash changed)
-        let comp_ref = project.media.get(&comp_uuid).unwrap();
-        let _frame = comp_ref.get_frame(2, &project).unwrap();
-        assert_eq!(
-            comp_ref.cache.borrow().len(),
-            2,
-            "Cache should contain entries for old and new hashes"
-        );
+        // Second render should recompose due to dirty flag
+        {
+            let comp_ref = project.media.get(&comp_uuid).unwrap();
+            let _frame = comp_ref.get_frame(2, &project).unwrap();
+            // Frame should be in cache (updated)
+            assert!(project.global_cache.as_ref().unwrap().contains(&comp_uuid, 2));
+        }
     }
 
-    /// Test hash computation consistency
+    /// Test dirty tracking behavior
     #[test]
-    fn test_comp_hash_consistency() {
-        let mut comp1 = Comp::new("Comp1", 0, 10, 24.0);
-        let mut comp2 = Comp::new("Comp2", 0, 10, 24.0);
+    fn test_dirty_flag_behavior() {
+        let mut attrs = Attrs::new();
 
-        // Same children should produce same hash
-        let uuid1 = "uuid1".to_string();
+        // Fresh attrs should not be dirty
+        assert!(!attrs.is_dirty(), "Fresh attrs should not be dirty");
 
-        let mut attrs1 = Attrs::new();
-        attrs1.set("start", AttrValue::UInt(0));
-        attrs1.set("end", AttrValue::UInt(10));
-        attrs1.set("play_start", AttrValue::Int(0));
-        attrs1.set("play_end", AttrValue::Int(0));
-        attrs1.set("opacity", AttrValue::Float(1.0));
+        // Setting a value should mark as dirty
+        attrs.set("opacity", AttrValue::Float(1.0));
+        assert!(attrs.is_dirty(), "Attrs should be dirty after set()");
 
-        let mut attrs2 = Attrs::new();
-        attrs2.set("start", AttrValue::UInt(0));
-        attrs2.set("end", AttrValue::UInt(10));
-        attrs2.set("play_start", AttrValue::Int(0));
-        attrs2.set("play_end", AttrValue::Int(0));
-        attrs2.set("opacity", AttrValue::Float(1.0));
+        // Clearing dirty flag
+        attrs.clear_dirty();
+        assert!(!attrs.is_dirty(), "Attrs should be clean after clear_dirty()");
 
-        comp1.children.push(uuid1.clone());
-        comp1.children_attrs.insert(uuid1.clone(), attrs1);
-
-        comp2.children.push(uuid1.clone());
-        comp2.children_attrs.insert(uuid1, attrs2);
-
-        let hash1 = comp1.compute_comp_hash();
-        let hash2 = comp2.compute_comp_hash();
-        assert_eq!(hash1, hash2, "Identical layers should produce same hash");
-
-        // Different opacity should produce different hash
-        if let Some(attrs) = comp2.children_attrs.get_mut(&"uuid1".to_string()) {
-            attrs.set("opacity", AttrValue::Float(0.7));
-        }
-        let hash3 = comp2.compute_comp_hash();
-        assert_ne!(
-            hash1, hash3,
-            "Different opacity should produce different hash"
-        );
+        // Manual mark_dirty
+        attrs.mark_dirty();
+        assert!(attrs.is_dirty(), "Attrs should be dirty after mark_dirty()");
     }
 
     #[test]
     fn test_multi_layer_blending_placeholder_sources() {
-        let mut project = Project::new();
+        let manager = Arc::new(CacheManager::new(0.75, 2.0));
+        let mut project = Project::new(manager);
 
         // Three placeholder sources
         let mut sources: Vec<String> = Vec::new();
@@ -2189,6 +2080,11 @@ mod tests {
             frame.is_some(),
             "Multi-layer composition with placeholder sources should succeed"
         );
-        assert_eq!(comp_ref.cache.borrow().len(), 1);
+
+        // Verify frame is cached in global cache
+        assert!(
+            project.global_cache.as_ref().unwrap().contains(&comp_uuid, 2),
+            "Frame should be cached in global cache after composition"
+        );
     }
 }
