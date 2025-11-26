@@ -365,7 +365,7 @@ pub fn render_canvas(
     if let Some(statuses) = &status_strip {
         let (rect, _) =
             ui.allocate_exact_size(Vec2::new(ruler_width, status_bar_height), Sense::hover());
-        draw_status_strip(ui, rect, statuses);
+        draw_status_strip(ui, rect, statuses, comp_start, total_frames);
     }
 
     ui.add_space(4.0);
@@ -983,13 +983,20 @@ pub fn render_canvas(
     }
 }
 
-fn draw_status_strip(ui: &Ui, rect: Rect, statuses: &[FrameStatus]) {
+fn draw_status_strip(
+    ui: &Ui,
+    rect: Rect,
+    statuses: &[FrameStatus],
+    comp_start: i32,
+    total_frames: i32,
+) {
     if statuses.is_empty() {
         return;
     }
 
     let painter = ui.painter();
-    let block_width = rect.width() / statuses.len() as f32;
+    // block_width based on total_frames (0 to comp_end+1), not statuses.len()
+    let block_width = rect.width() / total_frames as f32;
     let mut run_start = 0usize;
     let mut current = statuses[0];
 
@@ -998,8 +1005,12 @@ fn draw_status_strip(ui: &Ui, rect: Rect, statuses: &[FrameStatus]) {
             if end_idx <= start_idx {
                 return;
             }
-            let x_start = rect.min.x + (start_idx as f32 * block_width);
-            let x_end = rect.min.x + (end_idx as f32 * block_width);
+            // Convert status indices to absolute frame numbers
+            let abs_start = comp_start + start_idx as i32;
+            let abs_end = comp_start + end_idx as i32;
+
+            let x_start = rect.min.x + (abs_start as f32 * block_width);
+            let x_end = rect.min.x + (abs_end as f32 * block_width);
             let run_rect =
                 Rect::from_min_max(Pos2::new(x_start, rect.min.y), Pos2::new(x_end, rect.max.y));
             painter.rect_filled(run_rect, 0.0, status.color());

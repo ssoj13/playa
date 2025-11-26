@@ -249,27 +249,42 @@ pub(super) fn draw_load_indicator(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
 
-        // Get frame statuses from comp cache (works for File and Layer mode)
+        // Get frame statuses from comp cache (uses global_cache internally)
         if let Some(statuses) = comp.cache_frame_statuses() {
-            log::debug!("draw_load_indicator: got {} frame statuses", statuses.len());
-            let total = statuses.len();
-            if total == 0 {
+            let comp_start = comp.start();
+            let comp_end = comp.end();
+            let duration = comp.frame_count();
+
+            // Sanity check: statuses.len() should match frame_count()
+            if statuses.len() != duration as usize {
+                log::warn!(
+                    "draw_load_indicator: statuses.len()={} != frame_count()={}",
+                    statuses.len(),
+                    duration
+                );
                 return rect;
             }
 
-            // Calculate visible frame range based on pan/zoom
+            // Calculate visible frame range in absolute frame numbers
             let effective_ppf = config.pixels_per_frame * state.zoom;
-            let visible_start = state.pan_offset.max(0.0) as usize;
-            let visible_end = (state.pan_offset + (rect.width() / effective_ppf))
-                .min(total as f32) as usize;
+            let visible_start_frame = state.pan_offset.max(comp_start as f32) as i32;
+            let visible_end_frame = (state.pan_offset + (rect.width() / effective_ppf))
+                .min((comp_end + 1) as f32) as i32;
 
             // Draw each frame as a colored block
-            for frame_idx in visible_start..visible_end.min(total) {
-                let status = statuses.get(frame_idx).copied().unwrap_or(FrameStatus::Header);
+            for frame in visible_start_frame..visible_end_frame.min(comp_end + 1) {
+                // Convert absolute frame to status array index
+                let frame_offset = frame - comp_start;
+                if frame_offset < 0 || frame_offset >= duration {
+                    continue;
+                }
+
+                let status = statuses[frame_offset as usize];
                 let color = status.color();
 
-                let x_start = frame_to_screen_x(frame_idx as f32, rect.min.x, config, state);
-                let x_end = frame_to_screen_x((frame_idx + 1) as f32, rect.min.x, config, state);
+                // Use absolute frame number for screen position
+                let x_start = frame_to_screen_x(frame as f32, rect.min.x, config, state);
+                let x_end = frame_to_screen_x((frame + 1) as f32, rect.min.x, config, state);
 
                 // Clamp to visible rect
                 let x_start = x_start.max(rect.min.x);
