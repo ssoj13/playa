@@ -343,7 +343,8 @@ pub fn render_canvas(
         }
 
         // Load indicator - shows cache status for each frame
-        draw_load_indicator(ui, comp, config, state, ruler_width);
+        // Pass ruler_rect to ensure alignment with ruler ticks
+        draw_load_indicator(ui, comp, config, state, rect);
 
         // Middle-drag pan on ruler - initialize only, processing is in main loop
         if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
@@ -362,10 +363,27 @@ pub fn render_canvas(
         }
     });
 
+    // Status strip (if present) - draw inside horizontal layout to align with ruler
     if let Some(statuses) = &status_strip {
-        let (rect, _) =
-            ui.allocate_exact_size(Vec2::new(ruler_width, status_bar_height), Sense::hover());
-        draw_status_strip(ui, rect, statuses, comp_start, total_frames);
+        if let Some(ruler) = ruler_rect {
+            ui.horizontal(|ui| {
+                // Add left spacer only in non-Split modes (same as ruler)
+                if !matches!(view_mode, super::TimelineViewMode::Split) {
+                    ui.allocate_exact_size(
+                        Vec2::new(config.name_column_width, status_bar_height),
+                        Sense::hover(),
+                    );
+                }
+
+                // Allocate status strip with same width as ruler
+                let (status_rect, _) = ui.allocate_exact_size(
+                    Vec2::new(ruler.width(), status_bar_height),
+                    Sense::hover(),
+                );
+                // Pass ruler_rect to ensure alignment
+                draw_status_strip(ui, status_rect, statuses, comp_start, total_frames, ruler, config, state);
+            });
+        }
     }
 
     ui.add_space(4.0);
@@ -989,40 +1007,98 @@ fn draw_status_strip(
     statuses: &[FrameStatus],
     comp_start: i32,
     total_frames: i32,
+    ruler_rect: Rect,
+    config: &super::TimelineConfig,
+    state: &super::TimelineState,
 ) {
     if statuses.is_empty() {
         return;
     }
 
     let painter = ui.painter();
-    // block_width based on total_frames (0 to comp_end+1), not statuses.len()
-    let block_width = rect.width() / total_frames as f32;
-    let mut run_start = 0usize;
-    let mut current = statuses[0];
+    // Use ruler's base_x to ensure alignment with ruler ticks and indicator
+    let base_x = ruler_rect.min.x;
+    
+    // Calculate visible frame range using the VISIBLE width (ruler_rect.width()),
+    // matching how the ruler and indicator calculate visible range
+    let effective_ppf = config.pixels_per_frame * state.zoom;
+    let visible_start_frame = state.pan_offset.max(comp_start as f32) as i32;
+    let visible_end_frame = (state.pan_offset + (ruler_rect.width() / effective_ppf))
+        .min((comp_start + statuses.len() as i32) as f32) as i32;
 
-    let draw_run =
-        |painter: &egui::Painter, start_idx: usize, end_idx: usize, status: FrameStatus| {
-            if end_idx <= start_idx {
-                return;
+    let mut run_start_frame: Option<i32> = None;
+    let mut current_status: Option<FrameStatus> = None;
+
+    // Draw status runs for visible frames only
+    for frame in visible_start_frame..visible_end_frame {
+        let frame_offset = frame - comp_start;
+        if frame_offset < 0 || frame_offset >= statuses.len() as i32 {
+            continue;
+        }
+
+        let status = statuses[frame_offset as usize];
+
+        if let Some(ref current) = current_status {
+            if *current != status {
+                // Draw the previous run
+                if let (Some(start_frame), Some(prev_status)) = (run_start_frame, current_status) {
+                    let x_start = super::timeline_helpers::frame_to_screen_x(
+                        start_frame as f32,
+                        base_x,
+                        config,
+                        state,
+                    );
+                    let x_end = super::timeline_helpers::frame_to_screen_x(
+                        frame as f32,
+                        base_x,
+                        config,
+                        state,
+                    );
+                    // Clamp to visible rect
+                    let x_start = x_start.max(ruler_rect.min.x);
+                    let x_end = x_end.min(ruler_rect.max.x);
+                    if x_start < x_end {
+                        let run_rect = Rect::from_min_max(
+                            Pos2::new(x_start, rect.min.y),
+                            Pos2::new(x_end, rect.max.y),
+                        );
+                        painter.rect_filled(run_rect, 0.0, prev_status.color());
+                    }
+                }
+                // Start new run
+                run_start_frame = Some(frame);
+                current_status = Some(status);
             }
-            // Convert status indices to absolute frame numbers
-            let abs_start = comp_start + start_idx as i32;
-            let abs_end = comp_start + end_idx as i32;
-
-            let x_start = rect.min.x + (abs_start as f32 * block_width);
-            let x_end = rect.min.x + (abs_end as f32 * block_width);
-            let run_rect =
-                Rect::from_min_max(Pos2::new(x_start, rect.min.y), Pos2::new(x_end, rect.max.y));
-            painter.rect_filled(run_rect, 0.0, status.color());
-        };
-
-    for (idx, status) in statuses.iter().enumerate().skip(1) {
-        if *status != current {
-            draw_run(painter, run_start, idx, current);
-            run_start = idx;
-            current = *status;
+        } else {
+            // First frame
+            run_start_frame = Some(frame);
+            current_status = Some(status);
         }
     }
 
-    draw_run(painter, run_start, statuses.len(), current);
+    // Draw the last run
+    if let (Some(start_frame), Some(status)) = (run_start_frame, current_status) {
+        let x_start = super::timeline_helpers::frame_to_screen_x(
+            start_frame as f32,
+            base_x,
+            config,
+            state,
+        );
+        let x_end = super::timeline_helpers::frame_to_screen_x(
+            visible_end_frame as f32,
+            base_x,
+            config,
+            state,
+        );
+        // Clamp to visible rect
+        let x_start = x_start.max(ruler_rect.min.x);
+        let x_end = x_end.min(ruler_rect.max.x);
+        if x_start < x_end {
+            let run_rect = Rect::from_min_max(
+                Pos2::new(x_start, rect.min.y),
+                Pos2::new(x_end, rect.max.y),
+            );
+            painter.rect_filled(run_rect, 0.0, status.color());
+        }
+    }
 }

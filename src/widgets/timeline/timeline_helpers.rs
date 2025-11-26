@@ -232,19 +232,30 @@ pub(super) fn draw_playhead(
 /// - Orange: Loading (FrameStatus::Loading)
 /// - Green: Loaded (FrameStatus::Loaded)
 /// - Red: Error (FrameStatus::Error)
+///
+/// `ruler_rect` is used to align the indicator with the ruler ticks and ensure
+/// they use the same base x coordinate and visible width.
 pub(super) fn draw_load_indicator(
     ui: &mut Ui,
     comp: &Comp,
     config: &TimelineConfig,
     state: &TimelineState,
-    timeline_width: f32,
+    ruler_rect: Rect,
 ) -> Rect {
     let indicator_height = 4.0;
 
+    // Allocate indicator rect with the same width and x position as ruler
+    // This ensures it's placed right after the ruler in the horizontal layout
     let (rect, _) = ui.allocate_exact_size(
-        Vec2::new(timeline_width, indicator_height),
+        Vec2::new(ruler_rect.width(), indicator_height),
         Sense::hover(),
     );
+
+    // Use the actual allocated rect position for drawing, but use ruler_rect.min.x
+    // for frame-to-screen calculations to ensure alignment with ruler ticks
+    let base_x = ruler_rect.min.x;
+    // Use allocated rect's Y position (it will be below ruler in layout)
+    let indicator_y = rect.min.y;
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -265,14 +276,17 @@ pub(super) fn draw_load_indicator(
                 return rect;
             }
 
-            // Calculate visible frame range in absolute frame numbers
+            // Calculate visible frame range using the VISIBLE width (ruler_rect.width()),
+            // matching exactly how the ruler calculates visible range in draw_frame_ruler
             let effective_ppf = config.pixels_per_frame * state.zoom;
+            // Match the calculation from draw_frame_ruler (line 156-158)
+            // Use ruler_rect.width() which is the actual visible width of the ruler
             let visible_start_frame = state.pan_offset.max(comp_start as f32) as i32;
-            let visible_end_frame = (state.pan_offset + (rect.width() / effective_ppf))
+            let visible_end_frame = (state.pan_offset + (ruler_rect.width() / effective_ppf))
                 .min((comp_end + 1) as f32) as i32;
 
-            // Draw each frame as a colored block
-            for frame in visible_start_frame..visible_end_frame.min(comp_end + 1) {
+            // Draw each frame as a colored block, only for visible frames
+            for frame in visible_start_frame..visible_end_frame {
                 // Convert absolute frame to status array index
                 let frame_offset = frame - comp_start;
                 if frame_offset < 0 || frame_offset >= duration {
@@ -282,28 +296,35 @@ pub(super) fn draw_load_indicator(
                 let status = statuses[frame_offset as usize];
                 let color = status.color();
 
-                // Use absolute frame number for screen position
-                let x_start = frame_to_screen_x(frame as f32, rect.min.x, config, state);
-                let x_end = frame_to_screen_x((frame + 1) as f32, rect.min.x, config, state);
+                // Use ruler's base_x to ensure alignment with ruler ticks
+                // This is critical: we use ruler_rect.min.x, not rect.min.x, for frame calculations
+                let x_start = frame_to_screen_x(frame as f32, base_x, config, state);
+                let x_end = frame_to_screen_x((frame + 1) as f32, base_x, config, state);
 
-                // Clamp to visible rect
-                let x_start = x_start.max(rect.min.x);
-                let x_end = x_end.min(rect.max.x);
+                // Clamp to visible rect (ruler_rect bounds) to ensure we only draw what's visible
+                let x_start = x_start.max(ruler_rect.min.x);
+                let x_end = x_end.min(ruler_rect.max.x);
 
-                if x_start >= x_end || x_end < rect.min.x || x_start > rect.max.x {
+                if x_start >= x_end || x_end < ruler_rect.min.x || x_start > ruler_rect.max.x {
                     continue;
                 }
 
+                // Use allocated rect's Y position for drawing
                 let block_rect = Rect::from_min_max(
-                    Pos2::new(x_start, rect.min.y),
-                    Pos2::new(x_end, rect.max.y),
+                    Pos2::new(x_start, indicator_y),
+                    Pos2::new(x_end, indicator_y + indicator_height),
                 );
 
                 painter.rect_filled(block_rect, 0.0, color);
             }
         } else {
-            // No statuses available - draw dark grey background
-            painter.rect_filled(rect, 0.0, Color32::from_gray(25));
+            // No statuses available - draw dark grey background only in visible area
+            // Use ruler_rect bounds for X, but allocated rect for Y
+            let visible_rect = Rect::from_min_max(
+                Pos2::new(ruler_rect.min.x, indicator_y),
+                Pos2::new(ruler_rect.max.x, indicator_y + indicator_height),
+            );
+            painter.rect_filled(visible_rect, 0.0, Color32::from_gray(25));
         }
     }
 
