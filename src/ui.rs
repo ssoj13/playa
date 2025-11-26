@@ -141,10 +141,13 @@ pub fn render_timeline_panel(
 
                 match timeline_state.view_mode {
                     crate::widgets::timeline::TimelineViewMode::Split => {
+                        // Ensure outline_width is at least 400px (default) if it's too small
+                        // This prevents the splitter from being too narrow after loading saved state
+                        let saved_width = timeline_state.outline_width.max(400.0);
                         let outline_response = egui::SidePanel::left("timeline_outline")
                             .resizable(true)
                             .min_width(100.0)
-                            .default_width(timeline_state.outline_width)
+                            .default_width(saved_width)
                             .show_inside(ui, |ui| {
                                 // Lock panel to exact height to prevent vertical scrollbar.
                                 // set_height() alone is not enough - egui can still add scrollbar
@@ -162,13 +165,22 @@ pub fn render_timeline_panel(
                                 );
                             });
 
-                        // Update persistent outline width only if significantly changed (>1px).
-                        // This prevents overwriting saved width with temporary values during UI initialization.
-                        // Without this check, egui would write incorrect width (~100px) on first frame,
-                        // causing the split position to reset every session.
+                        // Update persistent outline width only if significantly changed (>1px) AND
+                        // the new width is reasonable (not the minimum width, which egui may set
+                        // during initialization). This prevents overwriting saved width with temporary
+                        // values during UI initialization.
                         let new_width = outline_response.response.rect.width();
-                        if (new_width - timeline_state.outline_width).abs() > 1.0 {
-                            timeline_state.outline_width = new_width;
+                        // Only update if:
+                        // 1. The difference is significant (>1px)
+                        // 2. The new width is not the minimum width (100px) - this prevents reset on first frame
+                        // 3. The new width is reasonable (>= 150px) - this ensures we don't save invalid values
+                        // 4. The new width is not significantly smaller than the saved width (user didn't collapse it)
+                        if (new_width - timeline_state.outline_width).abs() > 1.0
+                            && new_width >= 150.0
+                            && new_width != 100.0
+                            && new_width >= timeline_state.outline_width * 0.5 // Don't save if collapsed to <50% of saved width
+                        {
+                            timeline_state.outline_width = new_width.max(400.0); // Ensure minimum 400px
                         }
 
                         egui::CentralPanel::default().show_inside(ui, |ui| {
