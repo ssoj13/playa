@@ -13,11 +13,11 @@ Playa is an image sequence player. Async loading, OpenGL rendering, Video encodi
 ![Screenshot](.github/screenshot.jpg)
 
 ## Recent updates
-- Trim hotkeys: [`[`]/`]`] прижимают trimmed края к курсору; `Alt-[` / `Alt-]` тримят по курсору без зависимости от положения мыши.
-- Drag: если тащим невыбранный слой без Ctrl/Shift/Cmd — сначала выбираем его, потом двигаем; с модификаторами мультивыбор сохраняется.
-- Blend modes применяются в композе (`normal`, `screen`, `add`, `subtract`, `multiply`, `divide`, `difference`), выбираются в атрибутах слоя.
-- Шейдерный комбобокс в вьюпорте сразу пересобирает шейдер.
-- Панель Attributes включена по умолчанию, видимость Project/Attributes сохраняется между сессиями.
+- Trim hotkeys: `[`/`]` snap trimmed edges to cursor; `Alt-[` / `Alt-]` trim at cursor regardless of mouse position.
+- Drag: dragging an unselected layer without Ctrl/Shift/Cmd first selects it, then moves; with modifiers multi-selection is preserved.
+- Blend modes applied in composition (`normal`, `screen`, `add`, `subtract`, `multiply`, `divide`, `difference`), selected in layer attributes.
+- Shader combobox in viewport immediately recompiles shader on selection.
+- Attributes panel enabled by default, Project/Attributes visibility persists between sessions.
 
 
 ## Features

@@ -249,7 +249,15 @@ impl Project {
     }
 
     /// Remove media (clip or comp) by UUID.
+    /// Automatically clears cached frames for this comp from global cache.
     pub fn remove_media(&mut self, uuid: &str) {
+        // Clear cached frames for this comp first
+        if let Some(ref cache) = self.global_cache {
+            cache.clear_comp(uuid);
+            log::debug!("Cleared cache for removed comp: {}", uuid);
+        }
+
+        // Remove from media pool and order
         self.media.remove(uuid);
         self.comps_order.retain(|u| u != uuid);
     }

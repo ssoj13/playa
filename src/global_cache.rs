@@ -151,6 +151,7 @@ impl GlobalFrameCache {
     ///
     /// Automatically evicts oldest frames if memory limit exceeded.
     /// Tracks memory usage via CacheManager.
+    /// If replacing existing frame, properly frees old frame's memory first.
     pub fn insert(&self, comp_uuid: &str, frame_idx: i32, frame: Frame) {
         let key = (comp_uuid.to_string(), frame_idx);
         let frame_size = frame.mem();
@@ -178,12 +179,22 @@ impl GlobalFrameCache {
                 }
             }
 
+            // Remove old frame if exists (prevents memory leak when replacing)
+            if let Some(old_frame) = cache.pop(&key) {
+                let old_size = old_frame.mem();
+                self.cache_manager.free_memory(old_size);
+                debug!(
+                    "Replaced existing frame: {}:{} (freed {} bytes)",
+                    comp_uuid, frame_idx, old_size
+                );
+            }
+
             // Insert new frame
             cache.push(key, frame);
-        }
 
-        // Track memory
-        self.cache_manager.add_memory(frame_size);
+            // Track new frame's memory
+            self.cache_manager.add_memory(frame_size);
+        }
 
         debug!(
             "Cached frame: {}:{} ({} bytes)",

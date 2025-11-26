@@ -519,6 +519,8 @@ impl Comp {
     /// Does NOT increment epoch - let all frames load even during scrubbing.
     /// Cache eviction will handle memory limits automatically.
     ///
+    /// Smart optimization: Skips preload if entire work area is already cached.
+    ///
     /// Strategies:
     /// - Spiral: image sequences (0, ±1, ±2, ...) - cheap seeking both directions
     /// - Forward: video files (center → end) - expensive backward seeking
@@ -551,6 +553,31 @@ impl Comp {
 
         if play_end < play_start {
             return;
+        }
+
+        // Smart check: Skip preload if entire work area is already cached
+        if let Some(ref global_cache) = self.global_cache {
+            let comp_start = self.start();
+            let seq_start = self.file_start.unwrap_or(comp_start);
+
+            let mut all_cached = true;
+            for frame_idx in play_start..=play_end {
+                let local_idx = frame_idx - comp_start;
+                let seq_frame = seq_start.saturating_add(local_idx);
+
+                if !global_cache.contains(&self.uuid, seq_frame) {
+                    all_cached = false;
+                    break;
+                }
+            }
+
+            if all_cached {
+                debug!(
+                    "Preload skipped: work area [{}..{}] fully cached ({} frames)",
+                    play_start, play_end, play_end - play_start + 1
+                );
+                return;
+            }
         }
 
         // Determine strategy based on file type (video vs image sequence)
@@ -647,6 +674,7 @@ impl Comp {
     ///
     /// Skips frames that are already loaded or have no backing file.
     /// Uses execute_with_epoch() to automatically cancel stale requests.
+    /// Double-checks cache before loading to avoid redundant work.
     fn enqueue_load(&self, workers: &Arc<Workers>, epoch: u64, frame_idx: i32) {
         // Convert frame_idx to seq_frame (same as get_file_frame)
         let comp_start = self.start();
@@ -676,6 +704,15 @@ impl Comp {
 
         // Enqueue background load with epoch check
         workers.execute_with_epoch(epoch, move || {
+            // Double-check: skip if frame was cached by another thread
+            if global_cache.contains(&uuid, seq_frame) {
+                log::debug!(
+                    "Background preload skipped (already cached): comp={}, frame={}",
+                    uuid, seq_frame
+                );
+                return;
+            }
+
             // Create frame (unloaded)
             let frame = Frame::new_unloaded(frame_path);
             frame.crop(w, h, CropAlign::LeftTop);
@@ -686,7 +723,7 @@ impl Comp {
                 return;
             }
 
-            // Insert into global cache
+            // Insert into global cache (will replace old frame if exists)
             global_cache.insert(&uuid, seq_frame, frame);
             log::debug!("Background preload completed: comp={}, frame={}", uuid, seq_frame);
         });
