@@ -477,17 +477,8 @@ impl Comp {
             for frame_offset in 0..duration {
                 let frame_idx = comp_start + frame_offset;
 
-                // For File mode: use sequence frame number
-                // For Layer mode: use comp-relative frame number
-                let cache_key_frame = if self.mode == CompMode::File {
-                    let seq_start = self.file_start.unwrap_or(comp_start);
-                    seq_start.saturating_add(frame_offset)
-                } else {
-                    frame_idx
-                };
-
-                // Check if frame is cached
-                let status = if global_cache.contains(&self.uuid, cache_key_frame) {
+                // Unified cache key: frame_idx for both File and Layer modes
+                let status = if global_cache.contains(&self.uuid, frame_idx) {
                     FrameStatus::Loaded  // Green bar in UI
                 } else {
                     FrameStatus::Header  // Gray bar in UI
