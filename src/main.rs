@@ -267,11 +267,10 @@ impl PlayaApp {
 
     /// Enqueue frame loading around playhead for active comp.
     ///
-    /// For File mode: uses signal_preload() with spiral/forward strategies.
-    /// For Layer mode: recursively loads frames from File mode children.
-    fn enqueue_frame_loads_around_playhead(&self, radius: usize) {
-        let current_frame = self.player.current_frame();
-
+    /// Unified interface: works for both File mode and Layer mode.
+    /// File mode: loads frames from disk using spiral/forward strategies
+    /// Layer mode: composes frames from children (on-demand for now)
+    fn enqueue_frame_loads_around_playhead(&self, _radius: usize) {
         // Get active comp
         let Some(comp_uuid) = &self.player.active_comp else {
             debug!("No active comp for frame loading");
@@ -282,157 +281,8 @@ impl PlayaApp {
             return;
         };
 
-        // Handle File mode comp: use signal_preload() with spiral/forward strategies
-        if comp.mode == crate::entities::comp::CompMode::File {
-            debug!("File mode comp: triggering preload with spiral/forward strategy");
-            comp.signal_preload(&self.workers);
-            return;
-        }
-
-        // Handle Layer mode comp (recursively loads frames from File mode children)
-        debug!(
-            "Active comp is Layer mode, processing {} children",
-            comp.children.len()
-        );
-
-        // Enqueue loads for all children in comp
-        for (child_idx, child_uuid) in comp.children.iter().enumerate() {
-            let Some(attrs) = comp.children_attrs.get(child_uuid) else {
-                debug!("Child {} missing attrs", child_idx);
-                continue;
-            };
-
-            // Get source UUID from child attrs (child_uuid is now instance UUID)
-            let Some(source_uuid) = attrs.get_str("uuid") else {
-                debug!("Child {} missing uuid attribute", child_idx);
-                continue;
-            };
-
-            // Resolve source from Project.media by UUID
-            let Some(source) = self.player.project.media.get(source_uuid) else {
-                debug!(
-                    "Child {} references missing source {}",
-                    child_idx, source_uuid
-                );
-                continue;
-            };
-
-            // Only process File mode comps for frame loading (Layer mode comps are composed on-demand)
-            if source.mode != crate::entities::comp::CompMode::File {
-                debug!(
-                    "Child {} is Layer mode comp, skipping frame loading",
-                    child_idx
-                );
-                continue;
-            }
-
-            debug!(
-                "Processing child {}: comp {} has {} frames",
-                child_idx,
-                child_uuid,
-                source.play_frame_count()
-            );
-
-            // Child placement/work area in parent timeline
-            let child_start = attrs.get_i32("start").unwrap_or(0);
-            let child_end = attrs.get_i32("end").unwrap_or(child_start);
-            let (child_play_start, child_play_end) = comp
-                .child_work_area_abs(child_uuid)
-                .unwrap_or((child_start, child_end));
-
-            // Frames to load: [current - radius, current + radius] within child work area
-            let current_i32 = current_frame;
-            let window_start = current_i32 - radius as i32;
-            let window_end = current_i32 + radius as i32;
-
-            // Find intersection between load window and child work area
-            let load_start_i32 = window_start.max(child_play_start).max(child_start);
-            let load_end_i32 = window_end.min(child_play_end).min(child_end);
-
-            // Skip child if no intersection (current_frame too far from child range)
-            if load_start_i32 > load_end_i32 {
-                debug!(
-                    "Child {}: range [{}, {}] outside load window [{}, {}], skipping",
-                    child_idx, child_start, child_end, window_start, window_end
-                );
-                continue;
-            }
-
-            debug!(
-                "Child {}: range [{}, {}], work [{}, {}], will load frames [{}, {}]",
-                child_idx, child_start, child_end, child_play_start, child_play_end, load_start_i32, load_end_i32
-            );
-
-            for global_i32 in load_start_i32..=load_end_i32 {
-                // Check if frame is within child range
-                if global_i32 < child_start || global_i32 > child_end {
-                    continue;
-                }
-
-                // Map parent frame to source comp absolute frame (anchor to source.start())
-                let offset = global_i32 - child_start;
-                if offset < 0 {
-                    continue;
-                }
-                let source_frame = source.start() + offset;
-                if source_frame < source.start() || source_frame > source.end() {
-                    continue;
-                }
-
-                // Get frame from File mode comp
-                let frame = match source.get_frame(source_frame, &self.player.project) {
-                    Some(f) => f,
-                    None => {
-                        debug!(
-                            "Failed to get frame {} (source_frame {})",
-                            global_i32, source_frame
-                        );
-                        continue;
-                    }
-                };
-
-                if frame.file().is_none() {
-                    debug!(
-                        "Frame {} (source_frame {}) has no backing file, skipping load",
-                        global_i32, source_frame
-                    );
-                    continue;
-                }
-
-                // Skip if already loaded
-                let status = frame.status();
-                if status == crate::entities::frame::FrameStatus::Loaded {
-                    continue;
-                }
-
-                debug!(
-                    "Enqueuing load for frame {} (source_frame {}) with status {:?}",
-                    global_i32, source_frame, status
-                );
-
-                // Enqueue load on worker thread
-                let workers = Arc::clone(&self.workers);
-                let frame_clone = frame.clone();
-
-                workers.execute(move || {
-                    use crate::entities::frame::FrameStatus;
-
-                    debug!(
-                        "Worker loading frame with status {:?}",
-                        frame_clone.status()
-                    );
-                    // Transition to Loaded triggers actual load via Frame::load()
-                    if let Err(e) = frame_clone.set_status(FrameStatus::Loaded) {
-                        error!("Failed to load frame: {}", e);
-                    } else {
-                        debug!(
-                            "Frame loaded successfully, new status: {:?}",
-                            frame_clone.status()
-                        );
-                    }
-                });
-            }
-        }
+        // Trigger preload (works for both File and Layer modes)
+        comp.signal_preload(&self.workers, None);
     }
 
     /// Handle composition events (frame changes, layer updates)
@@ -531,21 +381,37 @@ impl PlayaApp {
             // ===== Helpers =====
             // ===== Playback Control =====
             AppEvent::Play => {
+                debug!("Play: starting playback at frame {}", self.player.current_frame());
                 self.player.is_playing = true;
+                self.player.last_frame_time = Some(std::time::Instant::now());
             }
             AppEvent::Pause => {
+                debug!("Pause: stopping playback at frame {}", self.player.current_frame());
                 self.player.is_playing = false;
+                self.player.last_frame_time = None;
+                self.player.fps_play = self.player.fps_base;
             }
             AppEvent::TogglePlayPause => {
                 self.player.is_playing = !self.player.is_playing;
+                if self.player.is_playing {
+                    debug!("TogglePlayPause: starting playback at frame {}", self.player.current_frame());
+                    self.player.last_frame_time = Some(std::time::Instant::now());
+                } else {
+                    debug!("TogglePlayPause: pausing at frame {}", self.player.current_frame());
+                    self.player.last_frame_time = None;
+                    self.player.fps_play = self.player.fps_base;
+                }
             }
             AppEvent::Stop => {
                 self.player.stop();
             }
             AppEvent::SetFrame(frame) => {
+                debug!("SetFrame: moving to frame {}", frame);
                 if let Some(comp_uuid) = &self.player.active_comp {
                     if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
                         comp.set_current_frame(frame);
+                        // Manually trigger preload since event bus might not be set up
+                        self.enqueue_frame_loads_around_playhead(10);
                     }
                 }
             }

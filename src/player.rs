@@ -47,7 +47,7 @@ pub struct Player {
     pub fps_play: f32, // Current playback FPS (temporary, resets on stop)
     pub loop_enabled: bool,
     pub play_direction: f32, // 1.0 forward, -1.0 backward
-    last_frame_time: Option<Instant>,
+    pub last_frame_time: Option<Instant>,
     /// Index of selected media in Project.comps_order (playlist)
     pub selected_seq_idx: Option<usize>,
 }
@@ -133,16 +133,7 @@ impl Player {
         }
     }
 
-    /// Reset play range of active comp to its full range.
-    pub fn reset_play_range(&mut self) {
-        if let Some(comp) = self.active_comp_mut() {
-            let start = comp.start();
-            let end = comp.end();
-            comp.set_comp_play_start(start);
-            comp.set_comp_play_end(end);
-            comp.set_current_frame(start);
-        }
-    }
+
 
     /// Get current frame index from active comp
     pub fn current_frame(&self) -> i32 {
@@ -187,23 +178,7 @@ impl Player {
         self.project.selection.push(comp_uuid);
     }
 
-    /// Helper: set active clip by UUID (for playlist navigation).
-    pub fn set_active_clip_by_uuid(&mut self, clip_uuid: &str) {
-        // Find which child in active comp contains this clip
-        if let Some(comp) = self.active_comp_mut() {
-            for child_uuid in comp.children.iter() {
-                if child_uuid == clip_uuid {
-                    if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                        // Jump to start of this child
-                        let child_start = attrs.get_i32("start").unwrap_or(0);
-                        comp.set_current_frame(child_start);
-                        log::debug!("Jumped to clip {} at frame {}", clip_uuid, child_start);
-                        return;
-                    }
-                }
-            }
-        }
-    }
+
 
     /// Update playback state
     pub fn update(&mut self) {
@@ -291,20 +266,6 @@ impl Player {
             } else {
                 comp.set_current_frame(current - 1);
             }
-        }
-    }
-
-    /// Toggle play/pause (Space, K, ArrowUp)
-    pub fn toggle_play_pause(&mut self) {
-        self.is_playing = !self.is_playing;
-        if self.is_playing {
-            debug!("Playback started at frame {}", self.current_frame());
-            self.last_frame_time = Some(Instant::now());
-        } else {
-            debug!("Playback paused at frame {}", self.current_frame());
-            self.last_frame_time = None;
-            // Reset fps_play to fps_base on stop
-            self.fps_play = self.fps_base;
         }
     }
 
@@ -469,61 +430,9 @@ impl Player {
         }
     }
 
-    /// Jump to next sequence start (] key)
-    pub fn jump_next_sequence(&mut self) {
-        if self.project.comps_order.is_empty() {
-            return;
-        }
 
-        let len = self.project.comps_order.len();
-        let idx = self.selected_seq_idx.unwrap_or(0);
 
-        let next_idx = if idx + 1 < len {
-            idx + 1
-        } else if self.loop_enabled {
-            0
-        } else {
-            idx
-        };
 
-        if next_idx != idx {
-            if let Some(uuid) = self.project.comps_order.get(next_idx).cloned() {
-                self.set_active_clip_by_uuid(&uuid);
-                self.selected_seq_idx = Some(next_idx);
-                debug!("Jumped to next media index {}", next_idx);
-            }
-        }
-
-        self.last_frame_time = None;
-    }
-
-    /// Jump to previous sequence start ([ key)
-    pub fn jump_prev_sequence(&mut self) {
-        if self.project.comps_order.is_empty() {
-            return;
-        }
-
-        let len = self.project.comps_order.len();
-        let idx = self.selected_seq_idx.unwrap_or(0);
-
-        let prev_idx = if idx > 0 {
-            idx - 1
-        } else if self.loop_enabled {
-            len.saturating_sub(1)
-        } else {
-            idx
-        };
-
-        if prev_idx != idx {
-            if let Some(uuid) = self.project.comps_order.get(prev_idx).cloned() {
-                self.set_active_clip_by_uuid(&uuid);
-                self.selected_seq_idx = Some(prev_idx);
-                debug!("Jumped to previous media index {}", prev_idx);
-            }
-        }
-
-        self.last_frame_time = None;
-    }
 
     /// Reset settings
     pub fn reset_settings(&mut self) {

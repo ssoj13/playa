@@ -524,12 +524,7 @@ impl Comp {
     /// Strategies:
     /// - Spiral: image sequences (0, ±1, ±2, ...) - cheap seeking both directions
     /// - Forward: video files (center → end) - expensive backward seeking
-    pub fn signal_preload(&self, workers: &Arc<Workers>) {
-        // Only preload in File mode
-        if self.mode != CompMode::File {
-            return;
-        }
-
+    pub fn signal_preload(&self, workers: &Arc<Workers>, center_override: Option<i32>) {
         // Get current epoch without incrementing (let frames load in background)
         let epoch = if let Some(ref manager) = self.cache_manager {
             manager.current_epoch()
@@ -537,7 +532,7 @@ impl Comp {
             return;
         };
 
-        let center = self.current_frame;
+        let center = center_override.unwrap_or(self.current_frame);
         let (play_start, play_end) = self.work_area_abs(true);
 
         // Debug: show coordinate spaces
@@ -638,7 +633,7 @@ impl Comp {
             if center >= offset {
                 let idx = center - offset;
                 if idx >= play_start && idx <= play_end {
-                    self.enqueue_load(workers, epoch, idx);
+                    self.enqueue_frame(workers, epoch, idx);
                 }
             }
 
@@ -646,7 +641,7 @@ impl Comp {
             if offset > 0 {
                 let idx = center + offset;
                 if idx >= play_start && idx <= play_end {
-                    self.enqueue_load(workers, epoch, idx);
+                    self.enqueue_frame(workers, epoch, idx);
                 }
             }
         }
@@ -666,67 +661,71 @@ impl Comp {
     ) {
         let start = center.max(play_start);
         for idx in start..=play_end {
-            self.enqueue_load(workers, epoch, idx);
+            self.enqueue_frame(workers, epoch, idx);
         }
     }
 
-    /// Enqueue single frame for background loading with epoch check
+    /// Enqueue single frame for background processing with epoch check
     ///
-    /// Skips frames that are already loaded or have no backing file.
+    /// File mode: loads frame from disk
+    /// Layer mode: composes frame from children
+    /// 
+    /// Skips frames that are already in cache.
     /// Uses execute_with_epoch() to automatically cancel stale requests.
-    /// Double-checks cache before loading to avoid redundant work.
-    fn enqueue_load(&self, workers: &Arc<Workers>, epoch: u64, frame_idx: i32) {
-        // Convert frame_idx to seq_frame (same as get_file_frame)
-        let comp_start = self.start();
-        let local_idx = frame_idx - comp_start;
-        let seq_start = self.file_start.unwrap_or(comp_start);
-        let seq_frame = seq_start.saturating_add(local_idx);
-
-        // Skip if already in global cache
+    fn enqueue_frame(&self, workers: &Arc<Workers>, epoch: u64, frame_idx: i32) {
+        // Skip if already in global cache (unified key: uuid + frame_idx)
         if let Some(ref global_cache) = self.global_cache {
-            if global_cache.contains(&self.uuid, seq_frame) {
+            if global_cache.contains(&self.uuid, frame_idx) {
                 return;
             }
         } else {
             return; // No global_cache available
         }
 
-        // Get frame path
-        let frame_path = match self.resolve_frame_path(frame_idx) {
-            Some(path) => path,
-            None => return, // No file to load
-        };
+        match self.mode {
+            CompMode::File => {
+                // File mode: load from disk
+                let comp_start = self.start();
+                let local_idx = frame_idx - comp_start;
+                let seq_start = self.file_start.unwrap_or(comp_start);
+                let seq_frame = seq_start.saturating_add(local_idx);
 
-        // Clone data for move into closure
-        let uuid = self.uuid.clone();
-        let global_cache = self.global_cache.as_ref().unwrap().clone();
-        let (w, h) = self.dim();
+                // Get frame path
+                let frame_path = match self.resolve_frame_path(seq_frame) {
+                    Some(path) => path,
+                    None => return,
+                };
 
-        // Enqueue background load with epoch check
-        workers.execute_with_epoch(epoch, move || {
-            // Double-check: skip if frame was cached by another thread
-            if global_cache.contains(&uuid, seq_frame) {
-                log::debug!(
-                    "Background preload skipped (already cached): comp={}, frame={}",
-                    uuid, seq_frame
-                );
-                return;
+                // Clone data for move into closure
+                let uuid = self.uuid.clone();
+                let global_cache = self.global_cache.as_ref().unwrap().clone();
+                let (w, h) = self.dim();
+
+                // Enqueue background load
+                workers.execute_with_epoch(epoch, move || {
+                    if global_cache.contains(&uuid, frame_idx) {
+                        return;
+                    }
+
+                    let frame = Frame::new_unloaded(frame_path);
+                    frame.crop(w, h, CropAlign::LeftTop);
+
+                    if let Err(e) = frame.load() {
+                        log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
+                        return;
+                    }
+
+                    global_cache.insert(&uuid, frame_idx, frame);
+                    log::debug!("Background preload completed: comp={}, frame={}", uuid, frame_idx);
+                });
             }
-
-            // Create frame (unloaded)
-            let frame = Frame::new_unloaded(frame_path);
-            frame.crop(w, h, CropAlign::LeftTop);
-
-            // Force load in background thread
-            if let Err(e) = frame.load() {
-                log::warn!("Background load failed for frame {}: {:?}", seq_frame, e);
-                return;
+            CompMode::Layer => {
+                // Layer mode: compose from children
+                // TODO: need project reference to call compose()
+                // For now, skip - composition happens on-demand via get_frame()
+                log::debug!("Layer mode preload skipped (composition on-demand): frame={}", frame_idx);
             }
-
-            // Insert into global cache (will replace old frame if exists)
-            global_cache.insert(&uuid, seq_frame, frame);
-            log::debug!("Background preload completed: comp={}, frame={}", uuid, seq_frame);
-        });
+        }
     }
 
 
@@ -805,9 +804,9 @@ impl Comp {
             return Some(self.placeholder_frame());
         }
 
-        // Check global cache (using comp UUID + seq_frame as key)
+        // Check global cache (using comp UUID + frame_idx as key - unified with Layer mode)
         if let Some(ref global_cache) = project.global_cache {
-            if let Some(frame) = global_cache.get(&self.uuid, seq_frame) {
+            if let Some(frame) = global_cache.get(&self.uuid, frame_idx) {
                 return Some(frame);
             }
         }
@@ -820,9 +819,9 @@ impl Comp {
 
         let frame = self.frame_from_path(frame_path);
 
-        // Insert into global cache
+        // Insert into global cache with frame_idx as key (unified with Layer mode)
         if let Some(ref global_cache) = project.global_cache {
-            global_cache.insert(&self.uuid, seq_frame, frame.clone());
+            global_cache.insert(&self.uuid, frame_idx, frame.clone());
         }
 
         Some(frame)
