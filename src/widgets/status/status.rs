@@ -111,7 +111,8 @@ impl StatusBar {
 
                 // Comp/Clip range info: <start | play_start <current_frame> play_end | end>
                 if let Some(comp_uuid) = &player.active_comp {
-                    if let Some(comp) = player.project.media.get(comp_uuid) {
+                    let media = player.project.media.read().unwrap();
+                    if let Some(comp) = media.get(comp_uuid) {
                         ui.separator();
                         let start = comp.start();
                         let end = comp.end();

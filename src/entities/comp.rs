@@ -37,6 +37,16 @@ use crate::entities::loader_video;
 use crate::events::{CompEvent, CompEventSender};
 use crate::utils::media;
 
+use std::cell::RefCell;
+use super::compositor::CpuCompositor;
+
+// Thread-local CPU compositor for background composition
+// Each worker thread gets its own compositor instance (zero allocation after init)
+// GPU compositor remains in Project.compositor (main thread only)
+thread_local! {
+    static THREAD_COMPOSITOR: RefCell<CpuCompositor> = RefCell::new(CpuCompositor);
+}
+
 /// Comp operating mode: Layer composition or File sequence loading
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompMode {
@@ -515,7 +525,12 @@ impl Comp {
     /// Strategies:
     /// - Spiral: image sequences (0, ±1, ±2, ...) - cheap seeking both directions
     /// - Forward: video files (center → end) - expensive backward seeking
-    pub fn signal_preload(&self, workers: &Arc<Workers>, center_override: Option<i32>) {
+    pub fn signal_preload(
+        &self,
+        workers: &Arc<Workers>,
+        project: &super::Project,
+        center_override: Option<i32>,
+    ) {
         // Get current epoch without incrementing (let frames load in background)
         let epoch = if let Some(ref manager) = self.cache_manager {
             manager.current_epoch()
@@ -581,10 +596,10 @@ impl Comp {
 
         match strategy {
             crate::cache_man::PreloadStrategy::Spiral => {
-                self.preload_spiral(workers, epoch, center, play_start, play_end);
+                self.preload_spiral(workers, project, epoch, center, play_start, play_end);
             }
             crate::cache_man::PreloadStrategy::Forward => {
-                self.preload_forward(workers, epoch, center, play_start, play_end);
+                self.preload_forward(workers, project, epoch, center, play_start, play_end);
             }
         }
     }
@@ -604,6 +619,7 @@ impl Comp {
     fn preload_spiral(
         &self,
         workers: &Arc<Workers>,
+        project: &super::Project,
         epoch: u64,
         center: i32,
         play_start: i32,
@@ -624,7 +640,7 @@ impl Comp {
             if center >= offset {
                 let idx = center - offset;
                 if idx >= play_start && idx <= play_end {
-                    self.enqueue_frame(workers, epoch, idx);
+                    self.enqueue_frame(workers, project, epoch, idx);
                 }
             }
 
@@ -632,7 +648,7 @@ impl Comp {
             if offset > 0 {
                 let idx = center + offset;
                 if idx >= play_start && idx <= play_end {
-                    self.enqueue_frame(workers, epoch, idx);
+                    self.enqueue_frame(workers, project, epoch, idx);
                 }
             }
         }
@@ -645,6 +661,7 @@ impl Comp {
     fn preload_forward(
         &self,
         workers: &Arc<Workers>,
+        project: &super::Project,
         epoch: u64,
         center: i32,
         play_start: i32,
@@ -652,7 +669,7 @@ impl Comp {
     ) {
         let start = center.max(play_start);
         for idx in start..=play_end {
-            self.enqueue_frame(workers, epoch, idx);
+            self.enqueue_frame(workers, project, epoch, idx);
         }
     }
 
@@ -660,10 +677,16 @@ impl Comp {
     ///
     /// File mode: loads frame from disk
     /// Layer mode: composes frame from children
-    /// 
+    ///
     /// Skips frames that are already in cache.
     /// Uses execute_with_epoch() to automatically cancel stale requests.
-    fn enqueue_frame(&self, workers: &Arc<Workers>, epoch: u64, frame_idx: i32) {
+    fn enqueue_frame(
+        &self,
+        workers: &Arc<Workers>,
+        project: &super::Project,
+        epoch: u64,
+        frame_idx: i32,
+    ) {
         // Skip if already in global cache (unified key: uuid + frame_idx)
         if let Some(ref global_cache) = self.global_cache {
             if global_cache.contains(&self.uuid, frame_idx) {
@@ -711,10 +734,35 @@ impl Comp {
                 });
             }
             CompMode::Layer => {
-                // Layer mode: compose from children
-                // TODO: need project reference to call compose()
-                // For now, skip - composition happens on-demand via get_frame()
-                log::debug!("Layer mode preload skipped (composition on-demand): frame={}", frame_idx);
+                // Layer mode: compose from children in background
+                // Clone data for move into closure
+                let uuid = self.uuid.clone();
+                let global_cache = self.global_cache.as_ref().unwrap().clone();
+                let project_clone = project.clone(); // Cheap: Arc fields just increment refcount
+                let comp_clone = self.clone();
+
+                // Enqueue background composition
+                workers.execute_with_epoch(epoch, move || {
+                    if global_cache.contains(&uuid, frame_idx) {
+                        return;
+                    }
+
+                    // Compose frame using CPU compositor (use_gpu=false for thread safety)
+                    if let Some(frame) = comp_clone.compose(frame_idx, &project_clone, false) {
+                        global_cache.insert(&uuid, frame_idx, frame);
+                        log::debug!(
+                            "Background composition completed: comp={}, frame={}",
+                            uuid,
+                            frame_idx
+                        );
+                    } else {
+                        log::debug!(
+                            "Background composition returned None: comp={}, frame={}",
+                            uuid,
+                            frame_idx
+                        );
+                    }
+                });
             }
         }
     }
@@ -751,10 +799,10 @@ impl Comp {
     ///
     /// Layer mode:
     /// - Resolves children recursively and blends them.
-    pub fn get_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
+    pub fn get_frame(&self, frame_idx: i32, project: &super::Project, use_gpu: bool) -> Option<Frame> {
         match self.mode {
             CompMode::File => self.get_file_frame(frame_idx, project),
-            CompMode::Layer => self.get_layer_frame(frame_idx, project),
+            CompMode::Layer => self.get_layer_frame(frame_idx, project, use_gpu),
         }
     }
 
@@ -818,7 +866,7 @@ impl Comp {
         Some(frame)
     }
 
-    fn get_layer_frame(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
+    fn get_layer_frame(&self, frame_idx: i32, project: &super::Project, use_gpu: bool) -> Option<Frame> {
         // Check if frame is within play area (work area)
         let (play_start, play_end) = self.play_range(true);
         if frame_idx < play_start || frame_idx > play_end {
@@ -841,7 +889,7 @@ impl Comp {
         }
 
         // Compose frame recursively
-        let composed = self.compose(frame_idx, project)?;
+        let composed = self.compose(frame_idx, project, use_gpu)?;
 
         // Insert into global cache
         if let Some(ref global_cache) = project.global_cache {
@@ -923,8 +971,10 @@ impl Comp {
     /// - Converts global comp frame to local source frame
     /// - Resolves Comp from Project.media by UUID
     /// - Recursively gets frames (supports nested Comps)
-    /// - Blends multiple children with CPU compositor (GPU compositor planned)
-    fn compose(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
+    /// - Blends multiple children with CPU or GPU compositor
+    /// - use_gpu=true: uses Project.compositor (main thread only)
+    /// - use_gpu=false: uses thread_local CPU compositor (safe for background threads)
+    fn compose(&self, frame_idx: i32, project: &super::Project, use_gpu: bool) -> Option<Frame> {
         use log::debug;
         let mut source_frames: Vec<(Frame, f32, BlendMode)> = Vec::new();
         let mut earliest: Option<(i32, usize)> = None; // (start_frame, index in source_frames)
@@ -970,8 +1020,13 @@ impl Comp {
                 continue;
             };
 
-            // Resolve source from Project.media
-            if let Some(source) = project.media.get(source_uuid) {
+            // Resolve source from Project.media and clone to avoid holding lock during recursive compose
+            let source_comp = {
+                let media = project.media.read().unwrap();
+                media.get(source_uuid).cloned()
+            };
+
+            if let Some(source) = source_comp {
                 // Visibility toggle
                 if attrs.get_bool("visible").unwrap_or(true) == false {
                     continue;
@@ -985,7 +1040,7 @@ impl Comp {
                 let source_frame = source.start() + offset;
 
                 // Recursively get frame from source (Clip or Comp)
-                if let Some(frame) = source.get_frame(source_frame, project) {
+                if let Some(frame) = source.get_frame(source_frame, project, use_gpu) {
                     let opacity = attrs.get_float("opacity").unwrap_or(1.0);
                     let blend_mode = attrs
                         .get_str("blend_mode")
@@ -1108,12 +1163,21 @@ impl Comp {
         };
         source_frames.insert(0, (base, 1.0, BlendMode::Normal));
         debug!(
-            "compose() collected {} frames, calling compositor.blend_with_dim({}, {})",
+            "compose() collected {} frames, calling compositor.blend_with_dim({}, {}) [use_gpu={}]",
             source_frames.len(),
             dim.0,
-            dim.1
+            dim.1,
+            use_gpu
         );
-        project.compositor.borrow_mut().blend_with_dim(source_frames, dim)
+
+        // Use GPU compositor (main thread) or CPU compositor (background threads)
+        if use_gpu {
+            project.compositor.borrow_mut().blend_with_dim(source_frames, dim)
+        } else {
+            THREAD_COMPOSITOR.with(|comp| {
+                comp.borrow_mut().blend_with_dim(source_frames, dim)
+            })
+        }
     }
 
     /// Add a new child to the composition at specified start frame.
@@ -1128,8 +1192,7 @@ impl Comp {
     ) -> anyhow::Result<()> {
         // Get source to determine duration
         let source = project
-            .media
-            .get(&source_uuid)
+            .get_comp(&source_uuid)
             .ok_or_else(|| anyhow::anyhow!("Source {} not found", source_uuid))?;
 
         // First child defines comp resolution
@@ -1598,6 +1661,12 @@ impl Comp {
             self.attrs.set("play_start", AttrValue::Int(new_start));
             self.attrs.set("play_end", AttrValue::Int(new_end));
         }
+    }
+
+    /// Called when comp becomes active in timeline.
+    /// Recalculates bounds and realigns play_range if needed.
+    pub fn on_activate(&mut self) {
+        self.rebound();
     }
 
     /// Ensure comp resolution matches the earliest (by start) child.

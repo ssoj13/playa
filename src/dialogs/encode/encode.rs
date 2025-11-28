@@ -590,7 +590,7 @@ pub fn encode_sequence_from_comp(
     });
 
     // Get first frame to determine target dimensions
-    let first_frame = comp.get_frame(play_range.0, project).ok_or_else(|| {
+    let first_frame = comp.get_frame(play_range.0, project, true).ok_or_else(|| {
         EncodeError::EncodeFrameFailed(format!("First frame {} not available", play_range.0))
     })?;
 
@@ -957,7 +957,7 @@ pub fn encode_sequence_from_comp(
         }
 
         // Get composed frame from Comp
-        let frame = comp.get_frame(frame_idx, project).ok_or_else(|| {
+        let frame = comp.get_frame(frame_idx, project, true).ok_or_else(|| {
             EncodeError::EncodeFrameFailed(format!("Frame {} not available in comp", frame_idx))
         })?;
 

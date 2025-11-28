@@ -79,8 +79,9 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                 return;
             }
 
+            let media = player.project.media.read().unwrap();
             for comp_uuid in &all_comps {
-                let comp = match player.project.media.get(comp_uuid) {
+                let comp = match media.get(comp_uuid) {
                     Some(c) => c,
                     None => continue,
                 };

@@ -128,6 +128,15 @@ pub enum AppEvent {
     TrimLayersStart { comp_uuid: String },
     /// Trim selected layers' play_end to current frame
     TrimLayersEnd { comp_uuid: String },
+    /// Update layer attributes (visible, opacity, blend_mode, speed)
+    LayerAttributesChanged {
+        comp_uuid: String,
+        layer_uuid: String,
+        visible: bool,
+        opacity: f32,
+        blend_mode: String,
+        speed: f32,
+    },
 
     // ===== Selection =====
     /// Select media item by UUID

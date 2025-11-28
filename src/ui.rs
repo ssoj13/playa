@@ -81,28 +81,20 @@ pub fn render_timeline_panel(
 
         // Timeline section (split: outline + canvas)
         if let Some(comp_uuid) = &player.active_comp.clone() {
-            if let Some(comp) = player.project.media.get_mut(comp_uuid) {
+            // Reset pan to frame 0 when switching comps (ruler shows absolute frame numbers)
+            if timeline_state
+                .last_comp_uuid
+                .as_ref()
+                .map(|u| u != comp_uuid)
+                .unwrap_or(true)
+            {
+                timeline_state.pan_offset = 0.0;
+                timeline_state.last_comp_uuid = Some(comp_uuid.clone());
+            }
+
+            let media = player.project.media.read().unwrap();
+            if let Some(comp) = media.get(comp_uuid) {
                 let config = TimelineConfig::default();
-
-                // Reset pan to frame 0 when switching comps (ruler shows absolute frame numbers)
-                if timeline_state
-                    .last_comp_uuid
-                    .as_ref()
-                    .map(|u| u != comp_uuid)
-                    .unwrap_or(true)
-                {
-                    timeline_state.pan_offset = 0.0;
-                    timeline_state.last_comp_uuid = Some(comp_uuid.clone());
-                }
-
-                // Recalculate bounds on activation; realign play_range only if it matched full range
-                let old_full = comp.play_range(false);
-                let old_work = comp.play_range(true);
-                comp.rebound();
-                if old_work == old_full {
-                    comp.set_comp_play_start(comp.start());
-                    comp.set_comp_play_end(comp.end());
-                }
 
                 // CRITICAL ORDER: Toolbar and view selector MUST be rendered BEFORE calculating
                 // splitter_height. If we calculate height first, then render toolbar (which takes

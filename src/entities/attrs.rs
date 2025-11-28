@@ -8,10 +8,10 @@
 //!   when any child attribute changes.
 
 use serde::{Deserialize, Serialize};
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Generic attribute value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -48,16 +48,17 @@ impl std::hash::Hash for AttrValue {
 /// Attribute container: string key → typed value.
 ///
 /// Includes dirty tracking for cache invalidation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Attrs {
     #[serde(default)]
     map: HashMap<String, AttrValue>,
 
     /// Dirty flag: set when attributes are modified via set()
     /// Used for cache invalidation instead of recomputing hashes
-    /// Wrapped in Cell for interior mutability (allows clear_dirty with &self)
+    /// Thread-safe AtomicBool for Send+Sync (allows background composition)
     #[serde(skip)]
-    dirty: Cell<bool>,
+    #[serde(default = "Attrs::default_dirty")]
+    dirty: AtomicBool,
 }
 
 impl Default for Attrs {
@@ -67,17 +68,21 @@ impl Default for Attrs {
 }
 
 impl Attrs {
+    fn default_dirty() -> AtomicBool {
+        AtomicBool::new(false)
+    }
+
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
-            dirty: Cell::new(false),
+            dirty: AtomicBool::new(false),
         }
     }
 
     /// Set attribute value and mark as dirty
     pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
         self.map.insert(key.into(), value);
-        self.dirty.set(true); // Mark as dirty for cache invalidation
+        self.dirty.store(true, Ordering::Relaxed); // Mark as dirty for cache invalidation
     }
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
@@ -214,18 +219,28 @@ impl Attrs {
 
     /// Check if attributes have been modified since last clear
     pub fn is_dirty(&self) -> bool {
-        self.dirty.get()
+        self.dirty.load(Ordering::Relaxed)
     }
 
     /// Clear dirty flag (call after cache update)
-    /// Uses interior mutability via Cell, so can be called with &self
+    /// Thread-safe via AtomicBool, can be called with &self
     pub fn clear_dirty(&self) {
-        self.dirty.set(false);
+        self.dirty.store(false, Ordering::Relaxed);
     }
 
     /// Mark as dirty manually (e.g., for child attr changes)
-    /// Uses interior mutability via Cell, so can be called with &self
+    /// Thread-safe via AtomicBool, can be called with &self
     pub fn mark_dirty(&self) {
-        self.dirty.set(true);
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+}
+
+// Manual Clone impl because AtomicBool doesn't impl Clone
+impl Clone for Attrs {
+    fn clone(&self) -> Self {
+        Self {
+            map: self.map.clone(),
+            dirty: AtomicBool::new(self.dirty.load(Ordering::Relaxed)),
+        }
     }
 }

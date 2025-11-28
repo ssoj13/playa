@@ -110,7 +110,7 @@ pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl
 pub fn render_outline(
     ui: &mut Ui,
     comp_uuid: &str,
-    comp: &mut Comp,
+    comp: &Comp,
     config: &TimelineConfig,
     _state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
@@ -223,14 +223,14 @@ pub fn render_outline(
                         }
 
                         if dirty {
-                            if let Some(attrs_mut) = comp.children_attrs.get_mut(child_uuid) {
-                                attrs_mut.set("visible", crate::entities::AttrValue::Bool(visible));
-                                attrs_mut
-                                    .set("opacity", crate::entities::AttrValue::Float(opacity));
-                                attrs_mut.set("blend_mode", crate::entities::AttrValue::Str(blend));
-                                attrs_mut.set("speed", crate::entities::AttrValue::Float(speed));
-                                // attrs.set() automatically marks as dirty
-                            }
+                            dispatch(crate::events::AppEvent::LayerAttributesChanged {
+                                comp_uuid: comp_id.clone(),
+                                layer_uuid: child_uuid.clone(),
+                                visible,
+                                opacity,
+                                blend_mode: blend,
+                                speed,
+                            });
                         }
 
                         if response.clicked() {
@@ -270,7 +270,7 @@ pub fn render_outline(
 pub fn render_canvas(
     ui: &mut Ui,
     comp_uuid: &str,
-    comp: &mut Comp,
+    comp: &Comp,
     config: &TimelineConfig,
     state: &mut TimelineState,
     view_mode: super::TimelineViewMode,

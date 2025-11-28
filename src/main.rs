@@ -201,7 +201,7 @@ impl PlayaApp {
     /// Attach composition event sender to all comps in the current project.
     fn attach_comp_event_sender(&mut self) {
         let sender = self.comp_event_sender.clone();
-        for comp in self.player.project.media.values_mut() {
+        for comp in self.player.project.media.write().unwrap().values_mut() {
             comp.set_event_sender(sender.clone());
         }
     }
@@ -235,7 +235,7 @@ impl PlayaApp {
                     let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
                     info!("Adding clip (File mode): {} ({})", name, uuid);
 
-                    self.player.project.media.insert(uuid.clone(), comp);
+                    self.player.project.update_comp(comp);
                     self.player.project.comps_order.push(uuid.clone());
 
                     // Remember first sequence for activation
@@ -276,13 +276,13 @@ impl PlayaApp {
             debug!("No active comp for frame loading");
             return;
         };
-        let Some(comp) = self.player.project.media.get(comp_uuid) else {
+        let Some(comp) = self.player.project.get_comp(comp_uuid) else {
             debug!("Active comp {} not found in media", comp_uuid);
             return;
         };
 
         // Trigger preload (works for both File and Layer modes)
-        comp.signal_preload(&self.workers, None);
+        comp.signal_preload(&self.workers, &self.player.project, None);
     }
 
     /// Handle composition events (frame changes, layer updates)
@@ -408,11 +408,11 @@ impl PlayaApp {
             AppEvent::SetFrame(frame) => {
                 debug!("SetFrame: moving to frame {}", frame);
                 if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                    self.player.project.modify_comp(comp_uuid, |comp| {
                         comp.set_current_frame(frame);
-                        // Manually trigger preload since event bus might not be set up
-                        self.enqueue_frame_loads_around_playhead(10);
-                    }
+                    });
+                    // Manually trigger preload since event bus might not be set up
+                    self.enqueue_frame_loads_around_playhead(10);
                 }
             }
             AppEvent::StepForward => {
@@ -441,39 +441,37 @@ impl PlayaApp {
                 self.player.to_end();
             }
             AppEvent::JumpToPrevEdge => {
-                if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                if let Some(comp_uuid) = self.player.active_comp.clone() {
+                    self.player.project.modify_comp(&comp_uuid, |comp| {
                         let current = comp.current_frame;
                         let edges = comp.get_child_edges_near(current);
-                        if edges.is_empty() {
-                            return;
+                        if !edges.is_empty() {
+                            // Find last edge strictly before current, otherwise wrap to first
+                            if let Some((frame, _)) = edges.iter().rev().find(|(f, _)| *f < current) {
+                                comp.set_current_frame(*frame);
+                            } else if let Some((frame, _)) = edges.last() {
+                                // wrap to last edge
+                                comp.set_current_frame(*frame);
+                            }
                         }
-                        // Find last edge strictly before current, otherwise wrap to first
-                        if let Some((frame, _)) = edges.iter().rev().find(|(f, _)| *f < current) {
-                            comp.set_current_frame(*frame);
-                        } else if let Some((frame, _)) = edges.last() {
-                            // wrap to last edge
-                            comp.set_current_frame(*frame);
-                        }
-                    }
+                    });
                 }
             }
             AppEvent::JumpToNextEdge => {
-                if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                if let Some(comp_uuid) = self.player.active_comp.clone() {
+                    self.player.project.modify_comp(&comp_uuid, |comp| {
                         let current = comp.current_frame;
                         let edges = comp.get_child_edges_near(current);
-                        if edges.is_empty() {
-                            return;
+                        if !edges.is_empty() {
+                            // Find first edge strictly after current, otherwise wrap to last
+                            if let Some((frame, _)) = edges.iter().find(|(f, _)| *f > current) {
+                                comp.set_current_frame(*frame);
+                            } else if let Some((frame, _)) = edges.first() {
+                                // wrap to first edge
+                                comp.set_current_frame(*frame);
+                            }
                         }
-                        // Find first edge strictly after current, otherwise wrap to last
-                        if let Some((frame, _)) = edges.iter().find(|(f, _)| *f > current) {
-                            comp.set_current_frame(*frame);
-                        } else if let Some((frame, _)) = edges.first() {
-                            // wrap to first edge
-                            comp.set_current_frame(*frame);
-                        }
-                    }
+                    });
                 }
             }
 
@@ -555,10 +553,10 @@ impl PlayaApp {
                 selection,
                 anchor,
             } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     comp.layer_selection = selection;
                     comp.layer_selection_anchor = anchor;
-                }
+                });
             }
 
             // ===== UI State =====
@@ -607,7 +605,8 @@ impl PlayaApp {
             AppEvent::TimelineFitAll(canvas_width) => {
                 // Fit comp play_range to timeline view
                 if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.media.get(comp_uuid) {
+                    let media = self.player.project.media.read().unwrap();
+                    if let Some(comp) = media.get(comp_uuid) {
                         let (min_frame, max_frame) = comp.play_range(true);
                         let duration = (max_frame - min_frame + 1).max(1); // +1 for inclusive range
 
@@ -647,47 +646,47 @@ impl PlayaApp {
             // ===== Play Range Control =====
             AppEvent::SetPlayRangeStart => {
                 if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                    self.player.project.modify_comp(comp_uuid, |comp| {
                         let current = comp.current_frame as i32;
                         comp.set_comp_play_start(current);
-                    }
+                    });
                 }
             }
             AppEvent::SetPlayRangeEnd => {
                 if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                    self.player.project.modify_comp(comp_uuid, |comp| {
                         let current = comp.current_frame as i32;
                         comp.set_comp_play_end(current);
-                    }
+                    });
                 }
             }
             AppEvent::ResetPlayRange => {
                 if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.get_comp_mut(comp_uuid) {
+                    self.player.project.modify_comp(comp_uuid, |comp| {
                         let start = comp.start();
                         let end = comp.end();
                         comp.set_comp_play_start(start);
                         comp.set_comp_play_end(end);
-                    }
+                    });
                 }
             }
             AppEvent::SetCompPlayStart { comp_uuid, frame } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     comp.set_comp_play_start(frame);
-                }
+                });
             }
             AppEvent::SetCompPlayEnd { comp_uuid, frame } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     comp.set_comp_play_end(frame);
-                }
+                });
             }
             AppEvent::ResetCompPlayArea { comp_uuid } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let start = comp.start();
                     let end = comp.end();
                     comp.set_comp_play_start(start);
                     comp.set_comp_play_end(end);
-                }
+                });
             }
 
             // ===== FPS Control =====
@@ -695,18 +694,20 @@ impl PlayaApp {
                 self.player.increase_fps_base();
                 // Sync comp fps if active
                 if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        comp.set_fps(self.player.fps_base);
-                    }
+                    let fps = self.player.fps_base;
+                    self.player.project.modify_comp(comp_uuid, |comp| {
+                        comp.set_fps(fps);
+                    });
                 }
             }
             AppEvent::DecreaseFPSBase => {
                 self.player.decrease_fps_base();
                 // Sync comp fps if active
                 if let Some(comp_uuid) = &self.player.active_comp {
-                    if let Some(comp) = self.player.project.media.get_mut(comp_uuid) {
-                        comp.set_fps(self.player.fps_base);
-                    }
+                    let fps = self.player.fps_base;
+                    self.player.project.modify_comp(comp_uuid, |comp| {
+                        comp.set_fps(fps);
+                    });
                 }
             }
 
@@ -724,84 +725,84 @@ impl PlayaApp {
                 start_frame,
                 target_row,
             } => {
-                let mut comp_opt = {
-                    let media = &mut self.player.project.media;
-                    media.remove(&comp_uuid)
+                // First, read source comp data if needed
+                let source_data = if target_row.is_some() {
+                    self.player.project.get_comp(&source_uuid)
+                        .map(|s| (s.frame_count(), s.dim()))
+                } else {
+                    None
                 };
 
-                if let Some(mut comp) = comp_opt.take() {
-                    let add_result = if let Some(target_row) = target_row {
-                        let (duration, source_dim) = self
-                            .player
-                            .project
-                            .media
-                            .get(&source_uuid)
-                            .map(|s| (s.frame_count(), s.dim()))
-                            .unwrap_or((1, (64, 64)));
-                        comp.add_child_with_duration(
-                            source_uuid.clone(),
-                            start_frame,
-                            duration,
-                            Some(target_row),
-                            source_dim,
-                        )
+                // Modify parent comp to add child
+                let add_result = {
+                    let mut media = self.player.project.media.write().unwrap();
+                    if let Some(comp) = media.get_mut(&comp_uuid) {
+                        if let Some(target_row) = target_row {
+                            let (duration, source_dim) = source_data.unwrap_or((1, (64, 64)));
+                            comp.add_child_with_duration(
+                                source_uuid.clone(),
+                                start_frame,
+                                duration,
+                                Some(target_row),
+                                source_dim,
+                            )
+                        } else {
+                            comp.add_child(source_uuid.clone(), start_frame, &self.player.project)
+                        }
                     } else {
-                        comp.add_child(source_uuid.clone(), start_frame, &self.player.project)
-                    };
+                        Err(anyhow::anyhow!("Parent comp not found"))
+                    }
+                };
 
-                    if let Err(e) = add_result {
-                        log::error!("Failed to add layer: {}", e);
-                    } else if let Some(child_comp) = self.player.project.media.get_mut(&source_uuid)
-                    {
+                // Set parent reference in child comp
+                if let Ok(_) = add_result {
+                    self.player.project.modify_comp(&source_uuid, |child_comp| {
                         if child_comp.get_parent() != Some(&comp_uuid) {
                             child_comp.set_parent(Some(comp_uuid.clone()));
                         }
-                    }
-
-                    // Put comp back
-                    self.player.project.media.insert(comp_uuid.clone(), comp);
+                    });
+                } else if let Err(e) = add_result {
+                    log::error!("Failed to add layer: {}", e);
                 }
             }
             AppEvent::RemoveLayer {
                 comp_uuid,
                 layer_idx,
             } => {
-                let mut comp_opt = {
-                    let media = &mut self.player.project.media;
-                    media.remove(&comp_uuid)
-                };
+                // First, read child_uuid and source_uuid from parent comp
+                let child_data = self.player.project.get_comp(&comp_uuid).and_then(|comp| {
+                    comp.get_children().get(layer_idx).cloned().map(|child_uuid| {
+                        let source_uuid = comp.children_attrs.get(&child_uuid)
+                            .and_then(|attrs| attrs.get_str("uuid").map(|s| s.to_string()));
+                        (child_uuid, source_uuid)
+                    })
+                });
 
-                if let Some(mut comp) = comp_opt.take() {
-                    // Get child UUID by index
-                    if let Some(child_uuid) = comp.get_children().get(layer_idx).cloned() {
-                        if let Some(attrs) = comp.children_attrs.get(&child_uuid) {
-                            if let Some(source_uuid) = attrs.get_str("uuid") {
-                                if let Some(child_comp) =
-                                    self.player.project.media.get_mut(source_uuid)
-                                {
-                                    if child_comp.get_parent() == Some(&comp_uuid) {
-                                        child_comp.set_parent(None);
-                                    }
-                                }
+                if let Some((child_uuid, source_uuid_opt)) = child_data {
+                    // Clear parent reference in child comp if it exists
+                    if let Some(source_uuid) = source_uuid_opt {
+                        self.player.project.modify_comp(&source_uuid, |child_comp| {
+                            if child_comp.get_parent() == Some(&comp_uuid) {
+                                child_comp.set_parent(None);
                             }
-                        }
+                        });
+                    }
 
+                    // Remove child from parent comp
+                    self.player.project.modify_comp(&comp_uuid, |comp| {
                         if comp.has_child(&child_uuid) {
                             comp.remove_child(&child_uuid);
                         } else {
                             log::error!("Child {} not found in comp {}", child_uuid, comp_uuid);
                         }
-                    } else {
-                        log::error!("Layer index {} out of bounds", layer_idx);
-                    }
-
-                    // Put comp back
-                    self.player.project.media.insert(comp_uuid.clone(), comp);
+                    });
+                } else {
+                    log::error!("Layer index {} out of bounds", layer_idx);
                 }
             }
             AppEvent::RemoveSelectedLayer => {
                 if let Some(active_uuid) = &self.player.active_comp.clone() {
-                    if let Some(comp) = self.player.project.media.get_mut(active_uuid) {
+                    self.player.project.modify_comp(active_uuid, |comp| {
                         if comp.layer_selection.is_empty() {
                             log::warn!("RemoveSelectedLayer: no layer selected");
                         }
@@ -812,12 +813,12 @@ impl PlayaApp {
                         }
                         comp.layer_selection.clear();
                         comp.layer_selection_anchor = None;
-                    }
+                    });
                 }
             }
             AppEvent::AlignLayersStart { comp_uuid } => {
                 // [ key: Slide layer so its play_start aligns to current frame
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
@@ -836,11 +837,11 @@ impl PlayaApp {
                         let new_child_start = child_start + delta;
                         let _ = comp.move_child(layer_idx, new_child_start);
                     }
-                }
+                });
             }
             AppEvent::AlignLayersEnd { comp_uuid } => {
                 // ] key: Slide layer so its play_end aligns to current frame
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
@@ -859,11 +860,11 @@ impl PlayaApp {
                         let new_child_start = child_start + delta;
                         let _ = comp.move_child(layer_idx, new_child_start);
                     }
-                }
+                });
             }
             AppEvent::TrimLayersStart { comp_uuid } => {
                 // Alt-[ key: Set play_start to current frame (convert parent frame to child frame)
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
@@ -872,11 +873,11 @@ impl PlayaApp {
                         // Clamp inside layer bounds inside setter
                         let _ = comp.set_child_play_start(layer_idx, current_frame);
                     }
-                }
+                });
             }
             AppEvent::TrimLayersEnd { comp_uuid } => {
                 // Alt-] key: Set play_end to current frame (convert parent frame to child frame)
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let current_frame = comp.current_frame;
                     let selected = comp.layer_selection.clone();
 
@@ -885,25 +886,42 @@ impl PlayaApp {
                         // Clamp inside layer bounds inside setter
                         let _ = comp.set_child_play_end(layer_idx, current_frame);
                     }
-                }
+                });
+            }
+            AppEvent::LayerAttributesChanged {
+                comp_uuid,
+                layer_uuid,
+                visible,
+                opacity,
+                blend_mode,
+                speed,
+            } => {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
+                    if let Some(attrs) = comp.children_attrs.get_mut(&layer_uuid) {
+                        attrs.set("visible", crate::entities::AttrValue::Bool(visible));
+                        attrs.set("opacity", crate::entities::AttrValue::Float(opacity));
+                        attrs.set("blend_mode", crate::entities::AttrValue::Str(blend_mode));
+                        attrs.set("speed", crate::entities::AttrValue::Float(speed));
+                    }
+                });
             }
             AppEvent::MoveLayer {
                 comp_uuid,
                 layer_idx,
                 new_start,
             } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     if let Err(e) = comp.move_child(layer_idx, new_start as i32) {
                         log::error!("Failed to move layer: {}", e);
                     }
-                }
+                });
             }
             AppEvent::ReorderLayer {
                 comp_uuid,
                 from_idx,
                 to_idx,
             } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let children = comp.get_children();
                     if from_idx != to_idx && from_idx < children.len() && to_idx < children.len() {
                         let mut reordered = comp.children.clone();
@@ -912,7 +930,7 @@ impl PlayaApp {
                         comp.children = reordered;
                         comp.attrs.mark_dirty(); // Mark dirty after reordering children
                     }
-                }
+                });
             }
             AppEvent::MoveAndReorderLayer {
                 comp_uuid,
@@ -920,7 +938,7 @@ impl PlayaApp {
                 new_start,
                 new_idx,
             } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
 
                     if comp.is_multi_selected(&dragged_uuid) {
@@ -933,14 +951,14 @@ impl PlayaApp {
                         let delta = new_start as i32 - dragged_start;
                         let _ = comp.move_layers(&[layer_idx], delta, Some(new_idx));
                     }
-                }
+                });
             }
             AppEvent::SetLayerPlayStart {
                 comp_uuid,
                 layer_idx,
                 new_play_start,
             } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
 
                     if comp.is_multi_selected(&dragged_uuid) {
@@ -962,14 +980,14 @@ impl PlayaApp {
                         };
                         let _ = comp.trim_layers(&[layer_idx], delta, true);
                     }
-                }
+                });
             }
             AppEvent::SetLayerPlayEnd {
                 comp_uuid,
                 layer_idx,
                 new_play_end,
             } => {
-                if let Some(comp) = self.player.project.media.get_mut(&comp_uuid) {
+                self.player.project.modify_comp(&comp_uuid, |comp| {
                     let dragged_uuid = comp.idx_to_uuid(layer_idx).cloned().unwrap_or_default();
 
                     if comp.is_multi_selected(&dragged_uuid) {
@@ -991,7 +1009,7 @@ impl PlayaApp {
                         };
                         let _ = comp.trim_layers(&[layer_idx], delta, false);
                     }
-                }
+                });
             }
             // ===== Drag-and-Drop (not currently used) =====
             // TODO: EventBus-based drag and drop events (alternative architecture)
@@ -1141,27 +1159,30 @@ impl PlayaApp {
 
     /// Remove media by UUID and clean up references in other comps.
     fn remove_media_and_cleanup(&mut self, uuid: &str) {
-        if !self.player.project.media.contains_key(uuid) {
+        if !self.player.project.media.read().unwrap().contains_key(uuid) {
             log::warn!("remove_media_and_cleanup: uuid {} not found", uuid);
             return;
         }
 
         // Remove references from other comps (layers using this media as source)
         let mut removed_refs = 0usize;
-        for (comp_uuid, comp) in self.player.project.media.iter_mut() {
-            // Find all child instances that use this source_uuid
-            let children_to_remove = comp.find_children_by_source(uuid);
-            for child_uuid in children_to_remove {
-                comp.remove_child(&child_uuid);
-                removed_refs += 1;
-                log::info!(
-                    "Removed child instance {} (source {}) from comp {} while deleting media",
-                    child_uuid,
-                    uuid,
-                    comp_uuid
-                );
+        {
+            let mut media = self.player.project.media.write().unwrap();
+            for (comp_uuid, comp) in media.iter_mut() {
+                // Find all child instances that use this source_uuid
+                let children_to_remove = comp.find_children_by_source(uuid);
+                for child_uuid in children_to_remove {
+                    comp.remove_child(&child_uuid);
+                    removed_refs += 1;
+                    log::info!(
+                        "Removed child instance {} (source {}) from comp {} while deleting media",
+                        child_uuid,
+                        uuid,
+                        comp_uuid
+                    );
+                }
             }
-        }
+        } // Release write lock
         if removed_refs == 0 {
             log::debug!(
                 "remove_media_and_cleanup: no layer references to {} found",
@@ -1188,7 +1209,7 @@ impl PlayaApp {
     fn post_remove_fixups(&mut self) {
         // Ensure active comp exists
         if self.player.active_comp.is_none() {
-            if self.player.project.media.is_empty() {
+            if self.player.project.media.read().unwrap().is_empty() {
                 let uuid = self.player.project.ensure_default_comp();
                 self.player.set_active_comp(uuid);
             } else {
@@ -1199,7 +1220,7 @@ impl PlayaApp {
                     .comps_order
                     .last()
                     .cloned()
-                    .or_else(|| self.player.project.media.keys().next().cloned());
+                    .or_else(|| self.player.project.media.read().unwrap().keys().next().cloned());
                 if let Some(uuid) = fallback {
                     self.player.set_active_comp(uuid);
                 }
@@ -1210,7 +1231,7 @@ impl PlayaApp {
         self.player
             .project
             .selection
-            .retain(|u| self.player.project.media.contains_key(u));
+            .retain(|u| self.player.project.media.read().unwrap().contains_key(u));
         if self.player.project.selection.is_empty() {
             if let Some(active) = self.player.active_comp.clone() {
                 self.player.project.selection.push(active.clone());
@@ -1300,7 +1321,7 @@ impl PlayaApp {
             // Set event sender for the new comp
             comp.set_event_sender(self.comp_event_sender.clone());
 
-            self.player.project.media.insert(uuid.clone(), comp);
+            self.player.project.update_comp(comp);
             self.player.project.comps_order.push(uuid.clone());
 
             // Activate the new comp
@@ -1311,7 +1332,7 @@ impl PlayaApp {
 
         // Remove composition
         if let Some(comp_uuid) = project_actions.remove_comp {
-            self.player.project.media.remove(&comp_uuid);
+            self.player.project.media.write().unwrap().remove(&comp_uuid);
             self.player
                 .project
                 .comps_order
@@ -1333,7 +1354,7 @@ impl PlayaApp {
         // Clear all compositions
         if project_actions.clear_all_comps {
             // Remove all media (clips and comps are unified now)
-            self.player.project.media.clear();
+            self.player.project.media.write().unwrap().clear();
             self.player.project.comps_order.clear();
             self.player.active_comp = None;
             info!("All media cleared");
@@ -1496,7 +1517,7 @@ impl PlayaApp {
 
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
         if let Some(active) = self.player.active_comp.clone() {
-            if let Some(comp) = self.player.project.media.get_mut(&active) {
+            self.player.project.modify_comp(&active, |comp| {
                 // Collect selected layers (now UUIDs instead of indices)
                 let selection: Vec<String> = comp.layer_selection.clone();
 
@@ -1600,11 +1621,7 @@ impl PlayaApp {
                         &comp_name,
                     );
                 }
-            } else {
-                ui.label("No active comp");
-            }
-        } else {
-            ui.label("No active comp");
+            });
         }
     }
 }
@@ -1796,11 +1813,12 @@ impl eframe::App for PlayaApp {
         if self.show_encode_dialog
             && let Some(ref mut dialog) = self.encode_dialog
         {
+            let media = self.player.project.media.read().unwrap();
             let active_comp = self
                 .player
                 .active_comp
                 .as_ref()
-                .and_then(|uuid| self.player.project.media.get(uuid));
+                .and_then(|uuid| media.get(uuid));
             let should_stay_open = dialog.render(ctx, &self.player.project, active_comp);
 
             // Save dialog state (on every render - cheap clone)
