@@ -257,12 +257,32 @@ impl Frame {
 
     /// Create frame from F32 buffer (used by compositor)
     pub(crate) fn from_f32_buffer(buffer: Vec<f32>, width: usize, height: usize) -> Self {
+        Self::from_f32_buffer_with_status(buffer, width, height, FrameStatus::Loaded)
+    }
+
+    /// Create frame from F16 buffer (used by compositor)
+    pub(crate) fn from_f16_buffer(buffer: Vec<F16>, width: usize, height: usize) -> Self {
+        Self::from_f16_buffer_with_status(buffer, width, height, FrameStatus::Loaded)
+    }
+
+    /// Create frame from U8 buffer (used by compositor)
+    pub(crate) fn from_u8_buffer(buffer: Vec<u8>, width: usize, height: usize) -> Self {
+        Self::from_u8_buffer_with_status(buffer, width, height, FrameStatus::Loaded)
+    }
+
+    /// Create frame from F32 buffer with explicit status (used by compositor)
+    pub(crate) fn from_f32_buffer_with_status(
+        buffer: Vec<f32>,
+        width: usize,
+        height: usize,
+        status: FrameStatus,
+    ) -> Self {
         let data = FrameData {
             buffer: Arc::new(PixelBuffer::F32(buffer)),
             pixel_format: PixelFormat::RgbaF32,
             width,
             height,
-            status: FrameStatus::Loaded,
+            status,
             attrs: Attrs::new(),
         };
 
@@ -272,14 +292,19 @@ impl Frame {
         }
     }
 
-    /// Create frame from F16 buffer (used by compositor)
-    pub(crate) fn from_f16_buffer(buffer: Vec<F16>, width: usize, height: usize) -> Self {
+    /// Create frame from F16 buffer with explicit status (used by compositor)
+    pub(crate) fn from_f16_buffer_with_status(
+        buffer: Vec<F16>,
+        width: usize,
+        height: usize,
+        status: FrameStatus,
+    ) -> Self {
         let data = FrameData {
             buffer: Arc::new(PixelBuffer::F16(buffer)),
             pixel_format: PixelFormat::RgbaF16,
             width,
             height,
-            status: FrameStatus::Loaded,
+            status,
             attrs: Attrs::new(),
         };
 
@@ -289,14 +314,19 @@ impl Frame {
         }
     }
 
-    /// Create frame from U8 buffer (used by compositor)
-    pub(crate) fn from_u8_buffer(buffer: Vec<u8>, width: usize, height: usize) -> Self {
+    /// Create frame from U8 buffer with explicit status (used by compositor)
+    pub(crate) fn from_u8_buffer_with_status(
+        buffer: Vec<u8>,
+        width: usize,
+        height: usize,
+        status: FrameStatus,
+    ) -> Self {
         let data = FrameData {
             buffer: Arc::new(PixelBuffer::U8(buffer)),
             pixel_format: PixelFormat::Rgba8,
             width,
             height,
-            status: FrameStatus::Loaded,
+            status,
             attrs: Attrs::new(),
         };
 

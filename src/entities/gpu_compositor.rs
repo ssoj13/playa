@@ -191,7 +191,7 @@
 //! ```
 
 use super::compositor::BlendMode;
-use super::frame::{Frame, PixelBuffer, PixelFormat};
+use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
 use eframe::glow::{self, HasContext};
 use log::{debug, warn};
 use std::collections::HashMap;
@@ -469,13 +469,14 @@ void main() {
         }
     }
 
-    /// Download texture to Frame
+    /// Download texture to Frame with explicit status
     fn download_texture_to_frame(
         &self,
         texture: glow::Texture,
         width: usize,
         height: usize,
         format: PixelFormat,
+        status: FrameStatus,
     ) -> Result<Frame, String> {
         let gl = &self.gl;
 
@@ -492,7 +493,7 @@ void main() {
                         glow::FLOAT,
                         glow::PixelPackData::Slice(Some(bytemuck::cast_slice_mut(&mut data))),
                     );
-                    Ok(Frame::from_f32_buffer(data, width, height))
+                    Ok(Frame::from_f32_buffer_with_status(data, width, height, status))
                 }
                 PixelFormat::RgbaF16 => {
                     let mut u16_data = vec![0u16; width * height * 4];
@@ -504,7 +505,7 @@ void main() {
                         glow::PixelPackData::Slice(Some(bytemuck::cast_slice_mut(&mut u16_data))),
                     );
                     let f16_data: Vec<half::f16> = u16_data.iter().map(|&u| half::f16::from_bits(u)).collect();
-                    Ok(Frame::from_f16_buffer(f16_data, width, height))
+                    Ok(Frame::from_f16_buffer_with_status(f16_data, width, height, status))
                 }
                 PixelFormat::Rgba8 => {
                     let mut data = vec![0u8; width * height * 4];
@@ -515,7 +516,7 @@ void main() {
                         glow::UNSIGNED_BYTE,
                         glow::PixelPackData::Slice(Some(&mut data)),
                     );
-                    Ok(Frame::from_u8_buffer(data, width, height))
+                    Ok(Frame::from_u8_buffer_with_status(data, width, height, status))
                 }
             }
         }
@@ -685,9 +686,25 @@ void main() {
 
     /// Internal GPU blend implementation (can fail)
     fn blend_impl(&mut self, frames: Vec<(Frame, f32, BlendMode)>) -> Result<Frame, String> {
+        use crate::entities::frame::FrameStatus;
+
         if frames.is_empty() {
             return Err("No frames to blend".to_string());
         }
+
+        // Calculate minimum status from all input frames
+        // Composition is only as good as its worst component
+        let min_status = frames
+            .iter()
+            .map(|(f, _, _)| f.status())
+            .min_by_key(|s| match s {
+                FrameStatus::Error => 0,
+                FrameStatus::Placeholder => 1,
+                FrameStatus::Header => 2,
+                FrameStatus::Loading => 3,
+                FrameStatus::Loaded => 4,
+            })
+            .unwrap_or(FrameStatus::Placeholder);
 
         // Ensure OpenGL resources are initialized
         self.ensure_initialized()?;
@@ -699,11 +716,12 @@ void main() {
         let format = first_frame.pixel_format();
 
         debug!(
-            "GPU blend: {} frames, {}x{}, format: {:?}",
+            "GPU blend: {} frames, {}x{}, format: {:?}, min_status: {:?}",
             frames.len(),
             width,
             height,
-            format
+            format,
+            min_status
         );
 
         // Upload all frames to textures
@@ -738,8 +756,8 @@ void main() {
             }
         }
 
-        // Download result from GPU
-        let result_frame = self.download_texture_to_frame(result_texture, width, height, format)?;
+        // Download result from GPU with min_status from inputs
+        let result_frame = self.download_texture_to_frame(result_texture, width, height, format, min_status)?;
 
         // Cleanup all textures
         unsafe {
@@ -749,7 +767,7 @@ void main() {
             self.gl.delete_texture(result_texture);
         }
 
-        debug!("GPU blend completed successfully");
+        debug!("GPU blend completed successfully with status: {:?}", min_status);
         Ok(result_frame)
     }
 

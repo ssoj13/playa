@@ -5,7 +5,7 @@
 //! - CPU compositor (default, works everywhere)
 //! - GPU compositor (requires OpenGL context, 10-50x faster)
 
-use crate::entities::frame::{Frame, PixelBuffer};
+use crate::entities::frame::{Frame, FrameStatus, PixelBuffer};
 
 // === GPU Compositor Toggle ===
 // To enable GPU compositor: uncomment the line below
@@ -231,6 +231,22 @@ impl CpuCompositor {
             return None;
         }
 
+        // Calculate minimum status from all input frames
+        // Composition is only as good as its worst component
+        let min_status = frames
+            .iter()
+            .map(|(f, _, _)| f.status())
+            .min_by_key(|s| match s {
+                FrameStatus::Error => 0,
+                FrameStatus::Placeholder => 1,
+                FrameStatus::Header => 2,
+                FrameStatus::Loading => 3,
+                FrameStatus::Loaded => 4,
+            })
+            .unwrap_or(FrameStatus::Placeholder);
+
+        debug!("  -> min_status from inputs: {:?}", min_status);
+
         let (width, height) = dim;
         // Start with first frame cropped to canvas
         let mut iter = frames.iter();
@@ -266,22 +282,22 @@ impl CpuCompositor {
                 }};
             }
 
-            // Blend based on pixel format
+            // Blend based on pixel format - use min_status for composed result
             match (&*result_buffer, &*layer_buffer) {
                 (PixelBuffer::F32(curr), PixelBuffer::F32(layer)) => {
                     let mut blended = curr.clone();
                     blend_rows!(blend_f32, curr, layer, blended);
-                    result = Frame::from_f32_buffer(blended, width, height);
+                    result = Frame::from_f32_buffer_with_status(blended, width, height, min_status);
                 }
                 (PixelBuffer::F16(curr), PixelBuffer::F16(layer)) => {
                     let mut blended = curr.clone();
                     blend_rows!(blend_f16, curr, layer, blended);
-                    result = Frame::from_f16_buffer(blended, width, height);
+                    result = Frame::from_f16_buffer_with_status(blended, width, height, min_status);
                 }
                 (PixelBuffer::U8(curr), PixelBuffer::U8(layer)) => {
                     let mut blended = curr.clone();
                     blend_rows!(blend_u8, curr, layer, blended);
-                    result = Frame::from_u8_buffer(blended, width, height);
+                    result = Frame::from_u8_buffer_with_status(blended, width, height, min_status);
                 }
                 _ => {
                     log::warn!("Pixel format mismatch during compositing, skipping layer");
