@@ -53,9 +53,9 @@ struct Frame {
 
 ```rust
 struct Comp {
-    uuid: String,
+    uuid: Uuid,                // uuid::Uuid - 16 bytes fixed, Copy trait
     name: String,
-    comp_type: CompType,      // SequenceDir | VideoFile | Nested
+    comp_type: CompType,       // SequenceDir | VideoFile | Nested
     layers: Vec<Layer>,        // child compositions
     current_frame: i32,        // current playhead position
     attrs: AttrBag,            // width, height, fps, play_start, play_end, etc.
@@ -63,7 +63,7 @@ struct Comp {
 }
 
 struct Layer {
-    child_uuid: String,        // reference to child Comp
+    child_uuid: Uuid,          // reference to child Comp
     start: i32,                // offset in parent timeline
     play_start: i32,           // visible range start (trim)
     play_end: i32,             // visible range end (trim)
@@ -79,20 +79,35 @@ struct Layer {
 - `VideoFile` - video via FFmpeg
 - `Nested` - composition containing other comps
 
+
+
+
+
+
+
+
+
+
 ### Project (entities/project.rs)
 Контейнер всех Comp + cache management.
 
 ```rust
 struct Project {
-    media: Arc<RwLock<HashMap<String, Comp>>>,  // uuid -> Comp
-    comps_order: Vec<String>,                    // playlist order
-    selection: Vec<String>,                      // selected UUIDs
-    active: Option<String>,                      // active comp UUID
+    media: Arc<RwLock<HashMap<Uuid, Comp>>>,  // uuid -> Comp (Uuid as key)
+    comps_order: Vec<Uuid>,                    // playlist order
+    selection: Vec<Uuid>,                      // selected UUIDs
+    active: Option<Uuid>,                      // active comp UUID
     cache_manager: Arc<CacheManager>,
     global_cache: Arc<GlobalFrameCache>,
     compositor: RefCell<CompositorType>,
 }
 ```
+
+
+
+
+
+
 
 ### Player (player.rs)
 Playback engine с frame-accurate timing.
@@ -100,12 +115,12 @@ Playback engine с frame-accurate timing.
 ```rust
 struct Player {
     project: Project,
-    active_comp: Option<String>,
+    active_comp: Option<Uuid>,  // Uuid is Copy, no clone needed
     is_playing: bool,
-    fps_base: f32,             // persistent base FPS
-    fps_play: f32,             // current playback FPS (resets on stop)
+    fps_base: f32,              // persistent base FPS
+    fps_play: f32,              // current playback FPS (resets on stop)
     loop_enabled: bool,
-    play_direction: f32,       // 1.0 forward, -1.0 backward
+    play_direction: f32,        // 1.0 forward, -1.0 backward
     last_frame_time: Option<Instant>,
 }
 ```
@@ -117,6 +132,14 @@ struct Player {
 - Direction change resets speed to 1x
 
 **FPS Presets:** 1, 2, 4, 8, 12, 24, 30, 60, 120, 240
+
+
+
+
+
+
+
+
 
 ### Attrs (entities/attrs.rs)
 
@@ -161,6 +184,17 @@ enum AttrValue {
 - `hash_filtered(include, exclude)` - selective hash
 - Keys sorted для determinism
 - Floats hashed via `to_bits()`
+
+
+
+
+
+
+
+
+
+
+
 
 ---
 
@@ -412,7 +446,7 @@ Result:  Comp { file_mask: "/shots/render.*.exr",
 
 **GlobalFrameCache** (global_cache.rs):
 - LRU eviction по entry count
-- Key: `(comp_uuid, frame_idx)`
+- Key: `(Uuid, frame_idx)` - 16-byte UUID + frame index
 - Strategies: `LastOnly` (minimal RAM) | `All` (max perf)
 - Stats: hits/misses/hit_rate
 
@@ -438,7 +472,7 @@ Result:  Comp { file_mask: "/shots/render.*.exr",
 
 **Key Events:**
 - `CurrentFrameChanged` - playhead moved
-- `LayerSelected(uuid)` - layer selection
+- `LayerSelected(Uuid)` - layer selection (Uuid by value)
 - `SetFrame(idx)` - jump to frame
 - `PlaybackToggle`, `Stop`, `JogForward`, `JogBackward`
 
