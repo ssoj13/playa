@@ -131,7 +131,7 @@ struct Player {
 - `L` - jog forward (1x → 2x → 4x → 8x...)
 - Direction change resets speed to 1x
 
-**FPS Presets:** 1, 2, 4, 8, 12, 24, 30, 60, 120, 240
+**FPS Presets:** 1, 2, 4, 8, 12, 24, 30, 60, 120, 240, 480, 960
 
 
 
@@ -184,7 +184,6 @@ enum AttrValue {
 - `hash_filtered(include, exclude)` - selective hash
 - Keys sorted для determinism
 - Floats hashed via `to_bits()`
-
 
 
 
@@ -268,7 +267,7 @@ Player.update() [called at 60Hz]
         ▼
 ┌───────────────────────────────┐
 │ ViewportRenderer picks up     │
-│ new frame from Player         │
+│ new frame ref from Player     │
 └───────────────────────────────┘
 ```
 
@@ -466,13 +465,13 @@ Result:  Comp { file_mask: "/shots/render.*.exr",
 ### Event System
 
 **EventBus** (events.rs):
-- `mpsc::channel` based
-- Events: `AppEvent`, `CompEvent`
-- UI → EventBus → Player/Project mutations
+- `crossbeam` based
+- Events: `AppEvent`, `ProjectEvent`, `CompEvent`, `PlayEvent`, `IOEvent`, `KeyEvent`, `MouseEvent`
+- UI → EventBus → Player/Project mutations, playback, dialogs, everything.
 
 **Key Events:**
 - `CurrentFrameChanged` - playhead moved
-- `LayerSelected(Uuid)` - layer selection (Uuid by value)
+- `LayerSelected([Uuids])` - layer selection (Uuids by value)
 - `SetFrame(idx)` - jump to frame
 - `PlaybackToggle`, `Stop`, `JogForward`, `JogBackward`
 
@@ -486,13 +485,13 @@ Result:  Comp { file_mask: "/shots/render.*.exr",
 ┌─────────────────────────────────────────────────────────────┐
 │ [Toolbar] [View: Split|Canvas|Outline]                      │
 ├─────────────────────────────────────────────────────────────┤
-│ Outline              │ Canvas                               │
+│ Outline              │ Canvas      ▲ playhead               │
 │ ┌──────────────────┐ │ ┌───────────────────────────────────┐│
-│ │ Layer 1 [S][M]   │ │ │▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░││
-│ │ Layer 2 [S][M]   │ │ │░░░░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░││
-│ │ Layer 3 [S][M]   │ │ │░░░░░░░░░░░░░░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓││
-│ └──────────────────┘ │ │                 ▲ playhead         ││
-│                      │ └───────────────────────────────────┘│
+│ │ Layer 1 [S][M]   │ │ │▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░││
+│ │ Layer 2 [S][M]   │ │ │░░░░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░││
+│ │ Layer 3 [S][M]   │ │ │░░░░░░░░░░░░░░░░░▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓││
+│ │                  │ │ │                                   ││
+│ └──────────────────┘ │ └───────────────────────────────────┘│
 └──────────────────────┴──────────────────────────────────────┘
 ```
 
