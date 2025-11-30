@@ -235,8 +235,8 @@ impl PlayaApp {
                     let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
                     info!("Adding clip (File mode): {} ({})", name, uuid);
 
-                    self.player.project.update_comp(comp);
-                    self.player.project.comps_order.push(uuid.clone());
+                    // add_comp() injects global_cache + cache_manager AND adds to comps_order
+                    self.player.project.add_comp(comp);
 
                     // Remember first sequence for activation
                     if self.player.active_comp.is_none() && first_uuid.is_none() {
@@ -1321,8 +1321,8 @@ impl PlayaApp {
             // Set event sender for the new comp
             comp.set_event_sender(self.comp_event_sender.clone());
 
-            self.player.project.update_comp(comp);
-            self.player.project.comps_order.push(uuid.clone());
+            // add_comp() injects global_cache + cache_manager AND adds to comps_order
+            self.player.project.add_comp(comp);
 
             // Activate the new comp
             self.player.set_active_comp(uuid.clone());
