@@ -5,6 +5,7 @@
 // to AppEvent messages and dispatched through the EventBus.
 
 use std::path::PathBuf;
+use uuid::Uuid;
 
 /// Main application event enum.
 /// All user interactions, keyboard shortcuts, and system events are represented as AppEvents.
@@ -54,7 +55,7 @@ pub enum AppEvent {
     /// Add new composition with specified parameters
     AddComp { name: String, fps: f32 },
     /// Remove media (clip or comp) by UUID
-    RemoveMedia(String),
+    RemoveMedia(Uuid),
     /// Remove all currently selected media items
     RemoveSelectedMedia,
     /// Save project to file
@@ -80,58 +81,58 @@ pub enum AppEvent {
     // ===== Layer Operations =====
     /// Add layer to composition
     AddLayer {
-        comp_uuid: String,
-        source_uuid: String,
+        comp_uuid: Uuid,
+        source_uuid: Uuid,
         start_frame: i32,
         target_row: Option<usize>, // Optional target visual row for insertion
     },
     /// Remove layer from composition
-    RemoveLayer { comp_uuid: String, layer_idx: usize },
+    RemoveLayer { comp_uuid: Uuid, layer_idx: usize },
     /// Move layer to new start position
     MoveLayer {
-        comp_uuid: String,
+        comp_uuid: Uuid,
         layer_idx: usize,
         new_start: i32,
     },
     /// Reorder layer vertically within a composition
     ReorderLayer {
-        comp_uuid: String,
+        comp_uuid: Uuid,
         from_idx: usize,
         to_idx: usize,
     },
     /// Move and reorder layer in one op (drag)
     MoveAndReorderLayer {
-        comp_uuid: String,
+        comp_uuid: Uuid,
         layer_idx: usize,
         new_start: i32,
         new_idx: usize,
     },
     /// Adjust layer play start (trim in)
     SetLayerPlayStart {
-        comp_uuid: String,
+        comp_uuid: Uuid,
         layer_idx: usize,
         new_play_start: i32,
     },
     /// Adjust layer play end (trim out)
     SetLayerPlayEnd {
-        comp_uuid: String,
+        comp_uuid: Uuid,
         layer_idx: usize,
         new_play_end: i32,
     },
     /// Remove selected layer
     RemoveSelectedLayer,
     /// Align selected layers' start to current frame
-    AlignLayersStart { comp_uuid: String },
+    AlignLayersStart { comp_uuid: Uuid },
     /// Align selected layers' end to current frame
-    AlignLayersEnd { comp_uuid: String },
+    AlignLayersEnd { comp_uuid: Uuid },
     /// Trim selected layers' play_start to current frame
-    TrimLayersStart { comp_uuid: String },
+    TrimLayersStart { comp_uuid: Uuid },
     /// Trim selected layers' play_end to current frame
-    TrimLayersEnd { comp_uuid: String },
+    TrimLayersEnd { comp_uuid: Uuid },
     /// Update layer attributes (visible, opacity, blend_mode, speed)
     LayerAttributesChanged {
-        comp_uuid: String,
-        layer_uuid: String,
+        comp_uuid: Uuid,
+        layer_uuid: Uuid,
         visible: bool,
         opacity: f32,
         blend_mode: String,
@@ -140,19 +141,19 @@ pub enum AppEvent {
 
     // ===== Selection =====
     /// Select media item by UUID
-    SelectMedia(String),
+    SelectMedia(Uuid),
     /// Set project selection (ordered UUIDs) with optional anchor index (runtime)
     ProjectSelectionChanged {
-        selection: Vec<String>,
+        selection: Vec<Uuid>,
         anchor: Option<usize>,
     },
     /// Set active project item (UUID)
-    ProjectActiveChanged(String),
+    ProjectActiveChanged(Uuid),
     /// Select layer in timeline
     CompSelectionChanged {
-        comp_uuid: String,
-        selection: Vec<String>,
-        anchor: Option<String>,
+        comp_uuid: Uuid,
+        selection: Vec<Uuid>,
+        anchor: Option<Uuid>,
     },
 
     // ===== UI State =====
@@ -203,11 +204,11 @@ pub enum AppEvent {
     /// Reset play range to full
     ResetPlayRange,
     /// Set comp play area start to absolute frame
-    SetCompPlayStart { comp_uuid: String, frame: i32 },
+    SetCompPlayStart { comp_uuid: Uuid, frame: i32 },
     /// Set comp play area end to absolute frame
-    SetCompPlayEnd { comp_uuid: String, frame: i32 },
+    SetCompPlayEnd { comp_uuid: Uuid, frame: i32 },
     /// Reset comp play area to full
-    ResetCompPlayArea { comp_uuid: String },
+    ResetCompPlayArea { comp_uuid: Uuid },
 
     // ===== FPS Control =====
     /// Increase base FPS (using presets)
@@ -241,16 +242,16 @@ pub enum HotkeyWindow {
 pub enum CompEvent {
     /// Current frame changed in a composition
     CurrentFrameChanged {
-        comp_uuid: String,
+        comp_uuid: Uuid,
         old_frame: i32,
         new_frame: i32,
     },
     /// Layers were modified (added, removed, reordered)
-    LayersChanged { comp_uuid: String },
+    LayersChanged { comp_uuid: Uuid },
     /// Timeline settings changed (play range, etc.)
-    TimelineChanged { comp_uuid: String },
+    TimelineChanged { comp_uuid: Uuid },
     /// Attributes changed (requires cascade invalidation for parent comps)
-    AttrsChanged { comp_uuid: String },
+    AttrsChanged { comp_uuid: Uuid },
 }
 
 /// Event sender for Comp to emit CompEvents.

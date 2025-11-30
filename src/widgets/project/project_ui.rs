@@ -1,4 +1,5 @@
 use eframe::egui;
+use uuid::Uuid;
 
 use crate::events::AppEvent;
 use crate::player::Player;
@@ -65,7 +66,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
             ui.set_min_height(scroll_height);
 
             // Collect all comps to render (unified order)
-            let all_comps: Vec<String> = player.project.comps_order.clone();
+            let all_comps: Vec<Uuid> = player.project.comps_order.clone();
 
             if all_comps.is_empty() {
                 ui.add_space(20.0);
@@ -233,7 +234,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                     );
                 }
                 if delete_resp.clicked() {
-                    actions.remove_comp = Some(comp_uuid.clone());
+                    actions.remove_comp = Some(*comp_uuid);
                 }
 
                 // Selection logic (click) and activation (double click) via events
@@ -265,7 +266,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                     });
                     actions
                         .events
-                        .push(AppEvent::ProjectActiveChanged(comp_uuid.clone()));
+                        .push(AppEvent::ProjectActiveChanged(*comp_uuid));
                 }
 
                 // Drag handling
@@ -275,7 +276,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                             data.insert_temp(
                                 egui::Id::new("global_drag_state"),
                                 crate::widgets::timeline::GlobalDragState::ProjectItem {
-                                    source_uuid: comp_uuid.clone(),
+                                    source_uuid: *comp_uuid,
                                     duration: Some(frame_count),
                                 },
                             );
@@ -300,13 +301,13 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
 }
 
 fn compute_selection(
-    order: &[String],
-    current_selection: &[String],
+    order: &[Uuid],
+    current_selection: &[Uuid],
     anchor: Option<usize>,
     clicked_idx: usize,
     modifiers: egui::Modifiers,
-) -> (Vec<String>, Option<usize>) {
-    let mut selection: Vec<String> = current_selection.to_vec();
+) -> (Vec<Uuid>, Option<usize>) {
+    let mut selection: Vec<Uuid> = current_selection.to_vec();
     let mut new_anchor = anchor;
 
     if modifiers.shift {
@@ -324,20 +325,20 @@ fn compute_selection(
         };
         for u in order.iter().skip(start).take(end - start + 1) {
             if !selection.contains(u) {
-                selection.push(u.clone());
+                selection.push(*u);
             }
         }
         new_anchor = Some(clicked_idx);
     } else if modifiers.command || modifiers.ctrl {
-        if let Some(pos) = selection.iter().position(|u| u == &order[clicked_idx]) {
+        if let Some(pos) = selection.iter().position(|u| *u == order[clicked_idx]) {
             selection.remove(pos);
         } else {
-            selection.push(order[clicked_idx].clone());
+            selection.push(order[clicked_idx]);
         }
         new_anchor = Some(clicked_idx);
     } else {
         selection.clear();
-        selection.push(order[clicked_idx].clone());
+        selection.push(order[clicked_idx]);
         new_anchor = Some(clicked_idx);
     }
 

@@ -80,20 +80,19 @@ pub fn render_timeline_panel(
         ui.set_max_height(available_height);
 
         // Timeline section (split: outline + canvas)
-        if let Some(comp_uuid) = &player.active_comp.clone() {
+        if let Some(comp_uuid) = player.active_comp {
             // Reset pan to frame 0 when switching comps (ruler shows absolute frame numbers)
             if timeline_state
                 .last_comp_uuid
-                .as_ref()
                 .map(|u| u != comp_uuid)
                 .unwrap_or(true)
             {
                 timeline_state.pan_offset = 0.0;
-                timeline_state.last_comp_uuid = Some(comp_uuid.clone());
+                timeline_state.last_comp_uuid = Some(comp_uuid);
             }
 
             let media = player.project.media.read().unwrap();
-            if let Some(comp) = media.get(comp_uuid) {
+            if let Some(comp) = media.get(&comp_uuid) {
                 let config = TimelineConfig::default();
 
                 // CRITICAL ORDER: Toolbar and view selector MUST be rendered BEFORE calculating

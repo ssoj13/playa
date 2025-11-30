@@ -6,6 +6,7 @@
 
 use eframe::egui::Pos2;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Timeline actions result - returned from render functions
 #[derive(Default)]
@@ -40,7 +41,7 @@ pub struct TimelineState {
     pub drag_state: Option<GlobalDragState>, // Active drag operation (centralized for all drag types)
     pub snap_enabled: bool,
     pub lock_work_area: bool,
-    pub last_comp_uuid: Option<String>, // Track last active comp to recenter on change
+    pub last_comp_uuid: Option<Uuid>, // Track last active comp to recenter on change
     pub view_mode: TimelineViewMode,
     #[serde(skip)]
     pub last_canvas_width: f32, // Last known canvas width for Fit calculation
@@ -68,7 +69,7 @@ impl Default for TimelineState {
 pub enum GlobalDragState {
     /// Dragging clip/comp from Project Window to timeline
     ProjectItem {
-        source_uuid: String,
+        source_uuid: Uuid,
         duration: Option<i32>,
     },
     /// Panning timeline horizontally (middle mouse button)

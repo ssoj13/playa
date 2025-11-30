@@ -9,6 +9,7 @@ use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use lru::LruCache;
 use log::debug;
+use uuid::Uuid;
 
 use crate::cache_man::CacheManager;
 use crate::entities::Frame;
@@ -89,7 +90,7 @@ impl CacheStats {
 #[derive(Debug)]
 pub struct GlobalFrameCache {
     /// LRU cache: (comp_uuid, frame_idx) -> Frame
-    cache: Arc<Mutex<LruCache<(String, i32), Frame>>>,
+    cache: Arc<Mutex<LruCache<(Uuid, i32), Frame>>>,
     /// Cache manager for memory tracking
     cache_manager: Arc<CacheManager>,
     /// Caching strategy (wrapped in Mutex for interior mutability)
@@ -125,8 +126,8 @@ impl GlobalFrameCache {
     ///
     /// Returns None if frame not cached.
     /// Updates LRU access order on hit.
-    pub fn get(&self, comp_uuid: &str, frame_idx: i32) -> Option<Frame> {
-        let key = (comp_uuid.to_string(), frame_idx);
+    pub fn get(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
+        let key = (comp_uuid, frame_idx);
         let mut cache = self.cache.lock().unwrap();
         let result = cache.get(&key).cloned();
 
@@ -141,8 +142,8 @@ impl GlobalFrameCache {
     }
 
     /// Check if frame exists in cache (without updating LRU)
-    pub fn contains(&self, comp_uuid: &str, frame_idx: i32) -> bool {
-        let key = (comp_uuid.to_string(), frame_idx);
+    pub fn contains(&self, comp_uuid: Uuid, frame_idx: i32) -> bool {
+        let key = (comp_uuid, frame_idx);
         let cache = self.cache.lock().unwrap();
         cache.peek(&key).is_some()
     }
@@ -152,8 +153,8 @@ impl GlobalFrameCache {
     /// Automatically evicts oldest frames if memory limit exceeded.
     /// Tracks memory usage via CacheManager.
     /// If replacing existing frame, properly frees old frame's memory first.
-    pub fn insert(&self, comp_uuid: &str, frame_idx: i32, frame: Frame) {
-        let key = (comp_uuid.to_string(), frame_idx);
+    pub fn insert(&self, comp_uuid: Uuid, frame_idx: i32, frame: Frame) {
+        let key = (comp_uuid, frame_idx);
         let frame_size = frame.mem();
 
         // Apply strategy: LastOnly clears previous frames for this comp
@@ -205,14 +206,14 @@ impl GlobalFrameCache {
     /// Clear all cached frames for a specific comp
     ///
     /// Used when comp attributes change (dirty tracking).
-    pub fn clear_comp(&self, comp_uuid: &str) {
+    pub fn clear_comp(&self, comp_uuid: Uuid) {
         let mut cache = self.cache.lock().unwrap();
 
         // Collect keys to remove (can't modify while iterating)
-        let to_remove: Vec<(String, i32)> = cache
+        let to_remove: Vec<(Uuid, i32)> = cache
             .iter()
-            .filter(|((uuid, _), _)| uuid == comp_uuid)
-            .map(|(key, _)| key.clone())
+            .filter(|((uuid, _), _)| *uuid == comp_uuid)
+            .map(|(key, _)| *key)
             .collect();
 
         // Remove and free memory
@@ -277,7 +278,7 @@ impl GlobalFrameCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::frame::{PixelDepth};
+    use crate::entities::frame::PixelDepth;
 
     #[test]
     fn test_cache_basic_operations() {
@@ -286,7 +287,7 @@ mod tests {
 
         // Create test frame
         let frame = Frame::new(64, 64, PixelDepth::U8);
-        let comp_uuid = "test-comp";
+        let comp_uuid = Uuid::new_v4();
 
         // Insert and retrieve
         cache.insert(comp_uuid, 0, frame.clone());
@@ -303,7 +304,7 @@ mod tests {
 
         let frame1 = Frame::new(64, 64, PixelDepth::U8);
         let frame2 = Frame::new(64, 64, PixelDepth::U8);
-        let comp_uuid = "test-comp";
+        let comp_uuid = Uuid::new_v4();
 
         // Insert frame 0
         cache.insert(comp_uuid, 0, frame1);
@@ -321,18 +322,20 @@ mod tests {
         let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
 
         let frame = Frame::new(64, 64, PixelDepth::U8);
+        let comp1 = Uuid::new_v4();
+        let comp2 = Uuid::new_v4();
 
         // Insert frames for two comps
-        cache.insert("comp1", 0, frame.clone());
-        cache.insert("comp1", 1, frame.clone());
-        cache.insert("comp2", 0, frame.clone());
+        cache.insert(comp1, 0, frame.clone());
+        cache.insert(comp1, 1, frame.clone());
+        cache.insert(comp2, 0, frame.clone());
 
         // Clear comp1
-        cache.clear_comp("comp1");
+        cache.clear_comp(comp1);
 
-        assert!(!cache.contains("comp1", 0));
-        assert!(!cache.contains("comp1", 1));
-        assert!(cache.contains("comp2", 0)); // comp2 unaffected
+        assert!(!cache.contains(comp1, 0));
+        assert!(!cache.contains(comp1, 1));
+        assert!(cache.contains(comp2, 0)); // comp2 unaffected
     }
 
     #[test]
@@ -341,7 +344,7 @@ mod tests {
         let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
 
         let frame = Frame::new(64, 64, PixelDepth::U8);
-        let comp_uuid = "test-comp";
+        let comp_uuid = Uuid::new_v4();
 
         // Initially zero stats
         let stats = cache.stats();

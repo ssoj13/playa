@@ -125,6 +125,7 @@ Generic key-value storage для entity metadata. Thread-safe dirty tracking.
 ```rust
 struct Attrs {
     map: HashMap<String, AttrValue>,
+    set/get(String): getter/setter triggering dirty flag
     dirty: AtomicBool,  // cache invalidation flag
 }
 

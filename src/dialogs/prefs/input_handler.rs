@@ -3,6 +3,7 @@
 use crate::events::{AppEvent, HotkeyWindow};
 use eframe::egui;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Hotkey handler for managing keyboard shortcuts
 pub struct HotkeyHandler {
@@ -138,28 +139,28 @@ impl HotkeyHandler {
             Timeline,
             "OpenBracket".to_string(),
             AlignLayersStart {
-                comp_uuid: String::new(), // Will be filled at runtime
+                comp_uuid: Uuid::nil(), // Will be filled at runtime
             },
         );
         self.add_binding(
             Timeline,
             "CloseBracket".to_string(),
             AlignLayersEnd {
-                comp_uuid: String::new(),
+                comp_uuid: Uuid::nil(),
             },
         );
         self.add_binding(
             Timeline,
             "Alt+OpenBracket".to_string(),
             TrimLayersStart {
-                comp_uuid: String::new(),
+                comp_uuid: Uuid::nil(),
             },
         );
         self.add_binding(
             Timeline,
             "Alt+CloseBracket".to_string(),
             TrimLayersEnd {
-                comp_uuid: String::new(),
+                comp_uuid: Uuid::nil(),
             },
         );
 

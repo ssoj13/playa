@@ -31,6 +31,7 @@ use crate::entities::frame::Frame;
 use log::{debug, info};
 use std::sync::Arc;
 use std::time::Instant;
+use uuid::Uuid;
 
 /// FPS presets for jog/shuttle control
 const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0];
@@ -41,7 +42,7 @@ pub const FRAME_JUMP_STEP: i32 = 25;
 /// Playback state manager with new architecture
 pub struct Player {
     pub project: Project,
-    pub active_comp: Option<String>, // UUID of active comp
+    pub active_comp: Option<Uuid>, // UUID of active comp
     pub is_playing: bool,
     pub fps_base: f32, // Base FPS (persistent setting)
     pub fps_play: f32, // Current playback FPS (temporary, resets on stop)
@@ -72,7 +73,7 @@ impl Player {
 
     /// Helper: get active comp cloned
     fn active_comp(&self) -> Option<Comp> {
-        if let Some(ref uuid) = self.active_comp {
+        if let Some(uuid) = self.active_comp {
             self.project.get_comp(uuid)
         } else {
             None
@@ -84,8 +85,8 @@ impl Player {
     where
         F: FnOnce(&mut Comp),
     {
-        if let Some(uuid) = self.active_comp.clone() {
-            if let Some(mut comp) = self.project.get_comp(&uuid) {
+        if let Some(uuid) = self.active_comp {
+            if let Some(mut comp) = self.project.get_comp(uuid) {
                 f(&mut comp);
                 self.project.update_comp(comp);
             }
@@ -150,8 +151,8 @@ impl Player {
     /// Uses GPU compositor (main thread only)
     pub fn get_current_frame(&mut self) -> Option<Frame> {
         let frame_idx = self.current_frame();
-        let comp_uuid = self.active_comp.clone()?;
-        let comp = self.project.get_comp(&comp_uuid)?;
+        let comp_uuid = self.active_comp?;
+        let comp = self.project.get_comp(comp_uuid)?;
         comp.get_frame(frame_idx, &self.project, true) // use_gpu=true for main thread display
     }
 
@@ -159,9 +160,9 @@ impl Player {
     ///
     /// Updates active_comp and emits CurrentFrameChanged event.
     /// Stops playback during transition.
-    pub fn set_active_comp(&mut self, comp_uuid: String) {
+    pub fn set_active_comp(&mut self, comp_uuid: Uuid) {
         // Check if comp exists in media
-        if !self.project.contains_comp(&comp_uuid) {
+        if !self.project.contains_comp(comp_uuid) {
             log::warn!("Comp {} not found, cannot activate", comp_uuid);
             return;
         }
@@ -170,11 +171,11 @@ impl Player {
         self.is_playing = false;
 
         // Switch to new comp
-        self.active_comp = Some(comp_uuid.clone());
-        self.project.active = Some(comp_uuid.clone());
+        self.active_comp = Some(comp_uuid);
+        self.project.active = Some(comp_uuid);
 
         // Recalculate bounds and emit CurrentFrameChanged event (triggers frame loading)
-        self.project.modify_comp(&comp_uuid, |comp| {
+        self.project.modify_comp(comp_uuid, |comp| {
             comp.on_activate();
             let frame = comp.current_frame;
             comp.set_current_frame(frame);
@@ -182,7 +183,7 @@ impl Player {
         });
 
         // Keep selection in sync: ensure active is included and ordered
-        self.project.selection.retain(|u| u != &comp_uuid);
+        self.project.selection.retain(|u| *u != comp_uuid);
         self.project.selection.push(comp_uuid);
     }
 

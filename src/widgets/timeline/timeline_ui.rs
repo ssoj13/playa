@@ -18,35 +18,36 @@ use crate::entities::{Comp, frame::FrameStatus};
 use crate::events::AppEvent;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
+use uuid::Uuid;
 
 fn compute_layer_selection(
-    current: &[String],
-    anchor: Option<String>,
-    clicked_uuid: String,
+    current: &[Uuid],
+    anchor: Option<Uuid>,
+    clicked_uuid: Uuid,
     clicked_idx: usize,
     modifiers: egui::Modifiers,
-    all_children: &[String],
-) -> (Vec<String>, Option<String>) {
+    all_children: &[Uuid],
+) -> (Vec<Uuid>, Option<Uuid>) {
     if modifiers.shift {
-        let anchor_uuid = anchor.as_ref().unwrap_or(&clicked_uuid);
-        let anchor_idx = all_children.iter().position(|u| u == anchor_uuid).unwrap_or(clicked_idx);
+        let anchor_uuid = anchor.unwrap_or(clicked_uuid);
+        let anchor_idx = all_children.iter().position(|u| *u == anchor_uuid).unwrap_or(clicked_idx);
         let (lo, hi) = if anchor_idx <= clicked_idx {
             (anchor_idx, clicked_idx)
         } else {
             (clicked_idx, anchor_idx)
         };
-        let selection: Vec<String> = all_children[lo..=hi].to_vec();
-        (selection, Some(anchor_uuid.clone()))
+        let selection: Vec<Uuid> = all_children[lo..=hi].to_vec();
+        (selection, Some(anchor_uuid))
     } else if modifiers.ctrl {
-        let mut selection: Vec<String> = current.to_vec();
-        if let Some(pos) = selection.iter().position(|v| v == &clicked_uuid) {
+        let mut selection: Vec<Uuid> = current.to_vec();
+        if let Some(pos) = selection.iter().position(|v| *v == clicked_uuid) {
             selection.remove(pos);
         } else {
-            selection.push(clicked_uuid.clone());
+            selection.push(clicked_uuid);
         }
         (selection, anchor)
     } else {
-        (vec![clicked_uuid.clone()], Some(clicked_uuid))
+        (vec![clicked_uuid], Some(clicked_uuid))
     }
 }
 
@@ -109,14 +110,14 @@ pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl
 /// Render left outline: layer list only (no toolbar)
 pub fn render_outline(
     ui: &mut Ui,
-    comp_uuid: &str,
+    comp_uuid: Uuid,
     comp: &Comp,
     config: &TimelineConfig,
     _state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
     mut dispatch: impl FnMut(AppEvent),
 ) {
-    let comp_id = comp_uuid.to_string();
+    let comp_id = comp_uuid;
 
     // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
     let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
@@ -182,7 +183,8 @@ pub fn render_outline(
                             .children_attrs
                             .get(child_uuid)
                             .and_then(|attrs| attrs.get_str("name"))
-                            .unwrap_or(child_uuid.as_str());
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| child_uuid.to_string());
                         row_ui.label(child_name);
 
                         if row_ui
@@ -224,8 +226,8 @@ pub fn render_outline(
 
                         if dirty {
                             dispatch(crate::events::AppEvent::LayerAttributesChanged {
-                                comp_uuid: comp_id.clone(),
-                                layer_uuid: child_uuid.clone(),
+                                comp_uuid: comp_id,
+                                layer_uuid: *child_uuid,
                                 visible,
                                 opacity,
                                 blend_mode: blend,
@@ -235,17 +237,17 @@ pub fn render_outline(
 
                         if response.clicked() {
                             let modifiers = ui.input(|i| i.modifiers);
-                            let clicked_uuid = child_uuid.clone();
+                            let clicked_uuid = *child_uuid;
                             let (selection, anchor) = compute_layer_selection(
                                 &comp.layer_selection,
-                                comp.layer_selection_anchor.clone(),
+                                comp.layer_selection_anchor,
                                 clicked_uuid,
                                 idx,
                                 modifiers,
                                 &comp.children,
                             );
                             dispatch(AppEvent::CompSelectionChanged {
-                                comp_uuid: comp_id.clone(),
+                                comp_uuid: comp_id,
                                 selection,
                                 anchor,
                             });
@@ -259,7 +261,7 @@ pub fn render_outline(
 
     if let Some(update) = dnd_response.final_update() {
         dispatch(AppEvent::ReorderLayer {
-            comp_uuid: comp_id.clone(),
+            comp_uuid: comp_id,
             from_idx: update.from,
             to_idx: update.to,
         });
@@ -269,7 +271,7 @@ pub fn render_outline(
 /// Render After Effects-style timeline (right canvas)
 pub fn render_canvas(
     ui: &mut Ui,
-    comp_uuid: &str,
+    comp_uuid: Uuid,
     comp: &Comp,
     config: &TimelineConfig,
     state: &mut TimelineState,
@@ -279,7 +281,7 @@ pub fn render_canvas(
     // Save canvas width for Fit button calculation
     state.last_canvas_width = ui.available_width();
 
-    let comp_id = comp_uuid.to_string();
+    let comp_id = comp_uuid;
     // Calculate dimensions - timeline should show from 0 to end (not start to end)
     // This allows negative starts and ensures ruler shows full range
     let comp_start = comp.start();
@@ -486,7 +488,7 @@ pub fn render_canvas(
 
                             // Child bar color (use hash of child_uuid for stable color)
                             let base_color = if is_visible {
-                                hash_color(child_uuid)
+                                hash_color(*child_uuid)
                             } else {
                                 Color32::from_gray(70)
                             };
@@ -571,7 +573,7 @@ pub fn render_canvas(
                                                     let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
                                                     if !multi && !comp.layer_selection.contains(clicked_uuid) {
                                                         dispatch(AppEvent::CompSelectionChanged {
-                                                            comp_uuid: comp_id.clone(),
+                                                            comp_uuid: comp_id,
                                                             selection: vec![clicked_uuid.clone()],
                                                             anchor: Some(clicked_uuid.clone()),
                                                         });
@@ -636,7 +638,7 @@ pub fn render_canvas(
 
                                         for child_uuid in selection {
                                             if let Some(attrs) = comp.children_attrs.get(&child_uuid) {
-                                                let idx_sel = comp.uuid_to_idx(&child_uuid).unwrap_or(0);
+                                                let idx_sel = comp.uuid_to_idx(child_uuid).unwrap_or(0);
                                                 let current_row = layer_rows.get(&idx_sel).copied().unwrap_or(idx_sel);
                                                 let target_row = (current_row as i32 + delta_children)
                                                     .clamp(0, comp.children.len().saturating_sub(1) as i32)
@@ -676,7 +678,7 @@ pub fn render_canvas(
 
                                             if has_horizontal_move || has_vertical_move {
                                                 dispatch(AppEvent::MoveAndReorderLayer {
-                                                    comp_uuid: comp_id.clone(),
+                                                    comp_uuid: comp_id,
                                                     layer_idx: *layer_idx,
                                                     new_start,
                                                     new_idx: target_child,
@@ -726,7 +728,7 @@ pub fn render_canvas(
                                         // On release, commit the play start adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
                                             dispatch(AppEvent::SetLayerPlayStart {
-                                                comp_uuid: comp_id.clone(),
+                                                comp_uuid: comp_id,
                                                 layer_idx: *layer_idx,
                                                 new_play_start,
                                             });
@@ -775,7 +777,7 @@ pub fn render_canvas(
                                         // On release, commit the play end adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
                                             dispatch(AppEvent::SetLayerPlayEnd {
-                                                comp_uuid: comp_id.clone(),
+                                                comp_uuid: comp_id,
                                                 layer_idx: *layer_idx,
                                                 new_play_end,
                                             });
@@ -890,7 +892,7 @@ pub fn render_canvas(
                                         };
 
                                         dispatch(AppEvent::AddLayer {
-                                            comp_uuid: comp_id.clone(),
+                                            comp_uuid: comp_id,
                                             source_uuid: source_uuid.clone(),
                                             start_frame: drop_frame,
                                             target_row,
@@ -939,7 +941,7 @@ pub fn render_canvas(
                                     &comp.children,
                                 );
                                 dispatch(AppEvent::CompSelectionChanged {
-                                    comp_uuid: comp_id.clone(),
+                                    comp_uuid: comp_id,
                                     selection,
                                     anchor,
                                 });

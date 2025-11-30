@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::{Attrs, Comp, CompositorType};
 use crate::cache_man::CacheManager;
@@ -25,18 +26,18 @@ pub struct Project {
     /// Unified media pool: all comps (both Layer and File modes) keyed by UUID
     /// Thread-safe for concurrent reads from background composition workers
     #[serde(with = "arc_rwlock_hashmap")]
-    pub media: Arc<RwLock<HashMap<String, Comp>>>,
+    pub media: Arc<RwLock<HashMap<Uuid, Comp>>>,
 
     /// Order for all media (clips + comps) in UI (UUIDs)
-    pub comps_order: Vec<String>,
+    pub comps_order: Vec<Uuid>,
 
     /// Current selection (ordered UUIDs)
     #[serde(default)]
-    pub selection: Vec<String>,
+    pub selection: Vec<Uuid>,
 
     /// Currently active item (UUID)
     #[serde(default)]
-    pub active: Option<String>,
+    pub active: Option<Uuid>,
 
     /// Runtime-only selection anchor for shift-click range
     #[serde(skip)]
@@ -125,25 +126,25 @@ impl Project {
     /// Creates "Main" comp if none exist, and sets it as active.
     ///
     /// Returns UUID of the default/first comp.
-    pub fn ensure_default_comp(&mut self) -> String {
+    pub fn ensure_default_comp(&mut self) -> Uuid {
         // Check if we have any comps in media (Layer mode comps in comps_order)
         let has_comps = !self.comps_order.is_empty();
 
         if !has_comps {
             let comp = Comp::new("Main", 0, 0, 24.0);
-            let uuid = comp.uuid.clone();
-            self.media.write().unwrap().insert(uuid.clone(), comp);
-            self.comps_order.push(uuid.clone());
+            let uuid = comp.uuid;
+            self.media.write().unwrap().insert(uuid, comp);
+            self.comps_order.push(uuid);
             log::info!("Created default comp: {}", uuid);
             uuid
         } else {
             // Return first comp UUID from order
-            self.comps_order.first().cloned().unwrap_or_else(|| {
+            self.comps_order.first().copied().unwrap_or_else(|| {
                 // Fallback: create new if order is broken
                 let comp = Comp::new("Main", 0, 0, 24.0);
-                let uuid = comp.uuid.clone();
-                self.media.write().unwrap().insert(uuid.clone(), comp);
-                self.comps_order.push(uuid.clone());
+                let uuid = comp.uuid;
+                self.media.write().unwrap().insert(uuid, comp);
+                self.comps_order.push(uuid);
                 uuid
             })
         }
@@ -209,29 +210,29 @@ impl Project {
 
     /// Get cloned composition by UUID.
     /// Returns owned Comp (cloned from media pool).
-    pub fn get_comp(&self, uuid: &str) -> Option<Comp> {
-        self.media.read().unwrap().get(uuid).cloned()
+    pub fn get_comp(&self, uuid: Uuid) -> Option<Comp> {
+        self.media.read().unwrap().get(&uuid).cloned()
     }
 
     /// Update composition in media pool.
     /// Replaces existing comp with same UUID.
     pub fn update_comp(&self, comp: Comp) {
-        self.media.write().unwrap().insert(comp.uuid.clone(), comp);
+        self.media.write().unwrap().insert(comp.uuid, comp);
     }
 
     /// Check if composition exists in media pool.
-    pub fn contains_comp(&self, uuid: &str) -> bool {
-        self.media.read().unwrap().contains_key(uuid)
+    pub fn contains_comp(&self, uuid: Uuid) -> bool {
+        self.media.read().unwrap().contains_key(&uuid)
     }
 
     /// Modify composition in-place via closure.
     /// Acquires write lock, calls closure with mutable reference, releases lock.
     /// Returns true if comp was found and modified.
-    pub fn modify_comp<F>(&self, uuid: &str, f: F) -> bool
+    pub fn modify_comp<F>(&self, uuid: Uuid, f: F) -> bool
     where
         F: FnOnce(&mut Comp),
     {
-        if let Some(comp) = self.media.write().unwrap().get_mut(uuid) {
+        if let Some(comp) = self.media.write().unwrap().get_mut(&uuid) {
             f(comp);
             true
         } else {
@@ -251,8 +252,8 @@ impl Project {
             comp.set_global_cache(Arc::clone(cache));
         }
 
-        let uuid = comp.uuid.clone();
-        self.media.write().unwrap().insert(uuid.clone(), comp);
+        let uuid = comp.uuid;
+        self.media.write().unwrap().insert(uuid, comp);
         self.comps_order.push(uuid);
     }
 
@@ -279,7 +280,7 @@ impl Project {
 
     /// Remove media (clip or comp) by UUID.
     /// Automatically clears cached frames for this comp from global cache.
-    pub fn remove_media(&mut self, uuid: &str) {
+    pub fn remove_media(&mut self, uuid: Uuid) {
         // Clear cached frames for this comp first
         if let Some(ref cache) = self.global_cache {
             cache.clear_comp(uuid);
@@ -287,8 +288,8 @@ impl Project {
         }
 
         // Remove from media pool and order
-        self.media.write().unwrap().remove(uuid);
-        self.comps_order.retain(|u| u != uuid);
+        self.media.write().unwrap().remove(&uuid);
+        self.comps_order.retain(|u| *u != uuid);
     }
 
     /// Cascade invalidation: mark all parent comps as dirty
@@ -296,23 +297,23 @@ impl Project {
     /// When a comp's attrs are modified, all parent comps that reference it
     /// must be invalidated to force recomposition.
     /// This method recursively traverses up the parent hierarchy.
-    pub fn invalidate_cascade(&mut self, comp_uuid: &str) {
+    pub fn invalidate_cascade(&mut self, comp_uuid: Uuid) {
         log::debug!("Cascade invalidation starting from comp: {}", comp_uuid);
 
         // Find all parents recursively
         let mut parents_to_invalidate = Vec::new();
-        let mut current_uuid = comp_uuid.to_string();
+        let mut current_uuid = comp_uuid;
 
         {
             let media = self.media.read().unwrap();
             loop {
                 // Find parent of current comp
                 let parent_uuid = media.get(&current_uuid)
-                    .and_then(|comp| comp.parent.clone());
+                    .and_then(|comp| comp.parent);
 
                 match parent_uuid {
                     Some(parent) => {
-                        parents_to_invalidate.push(parent.clone());
+                        parents_to_invalidate.push(parent);
                         current_uuid = parent;
                     }
                     None => break, // Reached root
@@ -329,7 +330,7 @@ impl Project {
 
                 // Clear cached frames for this parent comp
                 if let Some(ref cache) = self.global_cache {
-                    cache.clear_comp(parent_uuid);
+                    cache.clear_comp(*parent_uuid);
                 }
             }
         }
@@ -353,24 +354,24 @@ mod tests {
 
         // Create hierarchy: grandparent -> parent -> child
         let mut child = Comp::new("Child", 0, 100, 24.0);
-        let child_uuid = child.uuid.clone();
+        let child_uuid = child.uuid;
 
         let mut parent = Comp::new("Parent", 0, 100, 24.0);
-        let parent_uuid = parent.uuid.clone();
-        parent.children.push(child_uuid.clone());
-        child.parent = Some(parent_uuid.clone());
+        let parent_uuid = parent.uuid;
+        parent.children.push(child_uuid);
+        child.parent = Some(parent_uuid);
 
         let mut grandparent = Comp::new("Grandparent", 0, 100, 24.0);
-        let grandparent_uuid = grandparent.uuid.clone();
-        grandparent.children.push(parent_uuid.clone());
-        parent.parent = Some(grandparent_uuid.clone());
+        let grandparent_uuid = grandparent.uuid;
+        grandparent.children.push(parent_uuid);
+        parent.parent = Some(grandparent_uuid);
 
         // Add comps to project
         {
             let mut media = project.media.write().unwrap();
-            media.insert(child_uuid.clone(), child);
-            media.insert(parent_uuid.clone(), parent);
-            media.insert(grandparent_uuid.clone(), grandparent);
+            media.insert(child_uuid, child);
+            media.insert(parent_uuid, parent);
+            media.insert(grandparent_uuid, grandparent);
         }
 
         // Clear dirty flags (Comp::new() marks attrs as dirty)
@@ -396,7 +397,7 @@ mod tests {
         }
 
         // Trigger cascade invalidation from child
-        project.invalidate_cascade(&child_uuid);
+        project.invalidate_cascade(child_uuid);
 
         // After cascade, both parent and grandparent should be dirty
         {
@@ -419,26 +420,26 @@ mod tests {
 
         // Create orphan comp (no parents)
         let mut comp = Comp::new("Orphan", 0, 100, 24.0);
-        let comp_uuid = comp.uuid.clone();
+        let comp_uuid = comp.uuid;
         comp.attrs.mark_dirty();
 
-        project.media.write().unwrap().insert(comp_uuid.clone(), comp);
+        project.media.write().unwrap().insert(comp_uuid, comp);
 
         // Cascade invalidation should not crash
-        project.invalidate_cascade(&comp_uuid);
+        project.invalidate_cascade(comp_uuid);
 
         // Comp should still be dirty
         assert!(project.media.read().unwrap().get(&comp_uuid).unwrap().attrs.is_dirty());
     }
 }
 
-// Serde helper for Arc<RwLock<HashMap<String, Comp>>>
+// Serde helper for Arc<RwLock<HashMap<Uuid, Comp>>>
 mod arc_rwlock_hashmap {
     use super::*;
     use serde::{Deserializer, Serializer};
 
     pub fn serialize<S>(
-        map: &Arc<RwLock<HashMap<String, Comp>>>,
+        map: &Arc<RwLock<HashMap<Uuid, Comp>>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -447,11 +448,11 @@ mod arc_rwlock_hashmap {
         map.read().unwrap().serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<RwLock<HashMap<String, Comp>>>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<RwLock<HashMap<Uuid, Comp>>>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let map = HashMap::<String, Comp>::deserialize(deserializer)?;
+        let map = HashMap::<Uuid, Comp>::deserialize(deserializer)?;
         Ok(Arc::new(RwLock::new(map)))
     }
 }
