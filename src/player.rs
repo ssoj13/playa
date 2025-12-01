@@ -29,9 +29,10 @@
 //! `update()` called at 60Hz, advances frame index based on FPS.
 //! Handles sequence boundaries (loop or stop at end).
 
-use crate::entities::Project;
+use crate::entities::{Attrs, AttrValue, Project};
 use crate::entities::frame::Frame;
 use log::{debug, info};
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -45,16 +46,23 @@ pub const FRAME_JUMP_STEP: i32 = 25;
 ///
 /// Player manages playback state only. Project is passed by reference
 /// to methods that need it. PlayaApp owns the single Project instance.
+///
+/// **Attrs keys**:
+/// - `active_comp`: Option<Uuid> as JSON
+/// - `is_playing`: Bool
+/// - `fps_base`: Float (persistent base FPS)
+/// - `fps_play`: Float (temporary playback FPS)
+/// - `loop_enabled`: Bool
+/// - `play_direction`: Float (1.0 forward, -1.0 backward)
+/// - `selected_seq_idx`: Option<usize> as JSON
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Player {
-    pub active_comp: Option<Uuid>, // UUID of active comp
-    pub is_playing: bool,
-    pub fps_base: f32, // Base FPS (persistent setting)
-    pub fps_play: f32, // Current playback FPS (temporary, resets on stop)
-    pub loop_enabled: bool,
-    pub play_direction: f32, // 1.0 forward, -1.0 backward
+    /// All serializable player state
+    pub attrs: Attrs,
+
+    /// Last frame timestamp (runtime-only, not serializable)
+    #[serde(skip)]
     pub last_frame_time: Option<Instant>,
-    /// Index of selected media in Project.comps_order (playlist)
-    pub selected_seq_idx: Option<usize>,
 }
 
 impl Player {
@@ -62,21 +70,98 @@ impl Player {
     pub fn new() -> Self {
         info!("Player initialized (project-less architecture)");
 
+        let mut attrs = Attrs::new();
+        // Initialize defaults via attrs
+        attrs.set_json("active_comp", &None::<Uuid>);
+        attrs.set("is_playing", AttrValue::Bool(false));
+        attrs.set("fps_base", AttrValue::Float(24.0));
+        attrs.set("fps_play", AttrValue::Float(24.0));
+        attrs.set("loop_enabled", AttrValue::Bool(true));
+        attrs.set("play_direction", AttrValue::Float(1.0));
+        attrs.set_json("selected_seq_idx", &None::<usize>);
+
         Self {
-            active_comp: None,
-            is_playing: false,
-            fps_base: 24.0,
-            fps_play: 24.0,
-            loop_enabled: true,
-            play_direction: 1.0,
+            attrs,
             last_frame_time: None,
-            selected_seq_idx: None,
         }
+    }
+
+    // === Accessor methods for attrs fields ===
+
+    /// Get active comp UUID
+    pub fn active_comp(&self) -> Option<Uuid> {
+        self.attrs.get_json("active_comp").unwrap_or(None)
+    }
+
+    /// Set active comp UUID (low-level, does NOT update project state)
+    /// Use `set_active_comp()` for full activation with project sync
+    pub fn set_active_comp_uuid(&mut self, uuid: Option<Uuid>) {
+        self.attrs.set_json("active_comp", &uuid);
+    }
+
+    /// Check if playing
+    pub fn is_playing(&self) -> bool {
+        self.attrs.get_bool_or("is_playing", false)
+    }
+
+    /// Set playing state
+    pub fn set_is_playing(&mut self, playing: bool) {
+        self.attrs.set("is_playing", AttrValue::Bool(playing));
+    }
+
+    /// Get base FPS
+    pub fn fps_base(&self) -> f32 {
+        self.attrs.get_float_or("fps_base", 24.0)
+    }
+
+    /// Set base FPS
+    pub fn set_fps_base(&mut self, fps: f32) {
+        self.attrs.set("fps_base", AttrValue::Float(fps));
+    }
+
+    /// Get playback FPS
+    pub fn fps_play(&self) -> f32 {
+        self.attrs.get_float_or("fps_play", 24.0)
+    }
+
+    /// Set playback FPS
+    pub fn set_fps_play(&mut self, fps: f32) {
+        self.attrs.set("fps_play", AttrValue::Float(fps));
+    }
+
+    /// Check if loop is enabled
+    pub fn loop_enabled(&self) -> bool {
+        self.attrs.get_bool_or("loop_enabled", true)
+    }
+
+    /// Set loop enabled
+    pub fn set_loop_enabled(&mut self, enabled: bool) {
+        self.attrs.set("loop_enabled", AttrValue::Bool(enabled));
+    }
+
+    /// Get play direction (1.0 forward, -1.0 backward)
+    pub fn play_direction(&self) -> f32 {
+        self.attrs.get_float_or("play_direction", 1.0)
+    }
+
+    /// Set play direction
+    fn set_play_direction(&mut self, dir: f32) {
+        self.attrs.set("play_direction", AttrValue::Float(dir));
+    }
+
+    /// Get selected sequence index
+    pub fn selected_seq_idx(&self) -> Option<usize> {
+        self.attrs.get_json("selected_seq_idx").unwrap_or(None)
+    }
+
+    /// Set selected sequence index
+    pub fn set_selected_seq_idx(&mut self, idx: Option<usize>) {
+        self.attrs.set_json("selected_seq_idx", &idx);
     }
 
     /// Get total frames of active comp (play_frame_count - work area)
     pub fn total_frames(&self, project: &Project) -> i32 {
-        self.active_comp
+        self.active_comp()
             .and_then(|uuid| project.get_comp(uuid))
             .map(|c| c.play_frame_count())
             .unwrap_or(0)
@@ -84,7 +169,7 @@ impl Player {
 
     /// Get current play range of active comp (start, end), or (0, 0) if none.
     pub fn play_range(&self, project: &Project) -> (i32, i32) {
-        if let Some(comp) = self.active_comp.and_then(|uuid| project.get_comp(uuid)) {
+        if let Some(comp) = self.active_comp().and_then(|uuid| project.get_comp(uuid)) {
             comp.play_range(true)
         } else {
             (0, 0)
@@ -93,7 +178,7 @@ impl Player {
 
     /// Set play range of active comp in global comp frame indices (inclusive).
     pub fn set_play_range(&mut self, start: i32, end: i32, project: &mut Project) {
-        if let Some(uuid) = self.active_comp {
+        if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 if comp.end() < comp.start() {
                     return;
@@ -126,7 +211,7 @@ impl Player {
 
     /// Get current frame index from active comp
     pub fn current_frame(&self, project: &Project) -> i32 {
-        self.active_comp
+        self.active_comp()
             .and_then(|uuid| project.get_comp(uuid))
             .map(|c| c.current_frame)
             .unwrap_or(0)
@@ -135,7 +220,7 @@ impl Player {
     /// Get current frame as owned Frame (Composed)
     /// Uses GPU compositor (main thread only)
     pub fn get_current_frame(&self, project: &Project) -> Option<Frame> {
-        let comp_uuid = self.active_comp?;
+        let comp_uuid = self.active_comp()?;
         let comp = project.get_comp(comp_uuid)?;
         let frame_idx = comp.current_frame;
         comp.get_frame(frame_idx, project, true) // use_gpu=true for main thread display
@@ -153,11 +238,11 @@ impl Player {
         }
 
         // Stop playback during transition
-        self.is_playing = false;
+        self.set_is_playing(false);
 
         // Switch to new comp
-        self.active_comp = Some(comp_uuid);
-        project.active = Some(comp_uuid);
+        self.set_active_comp_uuid(Some(comp_uuid));
+        project.set_active(Some(comp_uuid));
 
         // Recalculate bounds and emit CurrentFrameChanged event (triggers frame loading)
         project.modify_comp(comp_uuid, |comp| {
@@ -168,29 +253,31 @@ impl Player {
         });
 
         // Keep selection in sync: ensure active is included and ordered
-        project.selection.retain(|u| *u != comp_uuid);
-        project.selection.push(comp_uuid);
+        project.retain_selection(|u| *u != comp_uuid);
+        project.push_selection(comp_uuid);
     }
 
 
 
     /// Update playback state
     pub fn update(&mut self, project: &mut Project) {
-        if !self.is_playing || self.total_frames(project) == 0 {
+        if !self.is_playing() || self.total_frames(project) == 0 {
             return;
         }
 
         // Ensure play_fps is not lower than base_fps
         // base_fps acts as a "floor" that pushes play_fps from below
-        if self.fps_play < self.fps_base {
-            self.fps_play = self.fps_base;
+        let fps_base = self.fps_base();
+        let fps_play = self.fps_play();
+        if fps_play < fps_base {
+            self.set_fps_play(fps_base);
         }
 
         let now = Instant::now();
 
         if let Some(last_time) = self.last_frame_time {
             let elapsed = now.duration_since(last_time).as_secs_f32();
-            let frame_duration = 1.0 / self.fps_play;
+            let frame_duration = 1.0 / self.fps_play();
 
             if elapsed >= frame_duration {
                 self.advance_frame(project);
@@ -214,12 +301,12 @@ impl Player {
         }
 
         // Copy values before closure
-        let play_direction = self.play_direction;
-        let loop_enabled = self.loop_enabled;
+        let play_direction = self.play_direction();
+        let loop_enabled = self.loop_enabled();
 
         // Closure returns whether playback should stop
         let mut should_stop = false;
-        if let Some(uuid) = self.active_comp {
+        if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 let mut current = comp.current_frame;
                 if current < play_start || current > play_end {
@@ -264,18 +351,18 @@ impl Player {
         }
 
         if should_stop {
-            self.is_playing = false;
+            self.set_is_playing(false);
         }
     }
 
     /// Stop playback (always stops, doesn't toggle)
     pub fn stop(&mut self) {
-        if self.is_playing {
-            self.is_playing = false;
+        if self.is_playing() {
+            self.set_is_playing(false);
             debug!("Playback stopped");
             self.last_frame_time = None;
             // Reset fps_play to fps_base on stop
-            self.fps_play = self.fps_base;
+            self.set_fps_play(self.fps_base());
         }
     }
 
@@ -283,7 +370,7 @@ impl Player {
     pub fn to_start(&mut self, project: &mut Project) {
         let (start, _) = self.play_range(project);
         debug!("Rewinding to frame {}", start);
-        if let Some(uuid) = self.active_comp {
+        if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 comp.set_current_frame(start);
             });
@@ -295,7 +382,7 @@ impl Player {
     pub fn to_end(&mut self, project: &mut Project) {
         let (_, end) = self.play_range(project);
         debug!("Skipping to end: frame {}", end);
-        if let Some(uuid) = self.active_comp {
+        if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 comp.set_current_frame(end);
             });
@@ -309,7 +396,7 @@ impl Player {
     /// so scrubbing/timeline can move outside work area while playback still
     /// respects play_range.
     pub fn set_frame(&mut self, frame: i32, project: &mut Project) {
-        if let Some(uuid) = self.active_comp {
+        if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 let comp_start = comp.start();
                 let comp_end = comp.end();
@@ -333,6 +420,7 @@ impl Player {
 
         let current = self.current_frame(project);
         let (play_start, play_end) = self.play_range(project);
+        let loop_enabled = self.loop_enabled();
 
         // Calculate target frame with saturating arithmetic
         let target = if count > 0 {
@@ -343,7 +431,7 @@ impl Player {
 
         // Apply loop/clamp logic based on loop_enabled
         let final_frame = if target > play_end {
-            if self.loop_enabled {
+            if loop_enabled {
                 // Loop: wrap around to play_start
                 let overflow = target - play_end;
                 let range_size = play_end - play_start + 1;
@@ -353,7 +441,7 @@ impl Player {
                 play_end
             }
         } else if target < play_start {
-            if self.loop_enabled {
+            if loop_enabled {
                 // Loop: wrap around to play_end
                 let underflow = play_start - target;
                 let range_size = play_end - play_start + 1;
@@ -366,7 +454,7 @@ impl Player {
             target
         };
 
-        if let Some(uuid) = self.active_comp {
+        if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 comp.set_current_frame(final_frame);
             });
@@ -375,16 +463,16 @@ impl Player {
 
     /// Internal helper to start jogging in the specified direction
     fn start_jog(&mut self, direction: f32) {
-        if !self.is_playing {
+        if !self.is_playing() {
             // Start playing in specified direction
-            self.play_direction = direction;
-            self.is_playing = true;
-            self.fps_play = self.fps_base; // Start with base FPS
+            self.set_play_direction(direction);
+            self.set_is_playing(true);
+            self.set_fps_play(self.fps_base()); // Start with base FPS
             self.last_frame_time = Some(Instant::now());
-        } else if self.play_direction.signum() != direction.signum() {
+        } else if self.play_direction().signum() != direction.signum() {
             // Change direction
-            self.play_direction = direction;
-            self.fps_play = self.fps_base; // Reset on direction change
+            self.set_play_direction(direction);
+            self.set_fps_play(self.fps_base()); // Reset on direction change
         } else {
             // Already playing in same direction, increase speed
             self.increase_fps_play();
@@ -403,49 +491,52 @@ impl Player {
 
     /// Increase base FPS to next preset (-/+ keys, Keypad)
     pub fn increase_fps_base(&mut self) {
+        let fps_base = self.fps_base();
         // Find first preset strictly greater than current FPS
-        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f > self.fps_base) {
-            self.fps_base = FPS_PRESETS[idx];
+        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f > fps_base) {
+            let new_fps = FPS_PRESETS[idx];
+            self.set_fps_base(new_fps);
             // If not playing, update fps_play too
-            if !self.is_playing {
-                self.fps_play = self.fps_base;
+            if !self.is_playing() {
+                self.set_fps_play(new_fps);
             }
-            debug!("Base FPS increased to {}", self.fps_base);
+            debug!("Base FPS increased to {}", new_fps);
         }
     }
 
     /// Decrease base FPS to previous preset (-/+ keys, Keypad)
     pub fn decrease_fps_base(&mut self) {
+        let fps_base = self.fps_base();
         // Find last preset strictly less than current FPS
-        if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f < self.fps_base) {
-            self.fps_base = FPS_PRESETS[idx];
+        if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f < fps_base) {
+            let new_fps = FPS_PRESETS[idx];
+            self.set_fps_base(new_fps);
             // If not playing, update fps_play too
-            if !self.is_playing {
-                self.fps_play = self.fps_base;
+            if !self.is_playing() {
+                self.set_fps_play(new_fps);
             }
-            debug!("Base FPS decreased to {}", self.fps_base);
+            debug!("Base FPS decreased to {}", new_fps);
         }
     }
 
     /// Increase play FPS to next preset (J/L when playing)
     fn increase_fps_play(&mut self) {
-        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= self.fps_play)
+        let fps_play = self.fps_play();
+        if let Some(idx) = FPS_PRESETS.iter().position(|&f| f >= fps_play)
             && idx + 1 < FPS_PRESETS.len()
         {
-            self.fps_play = FPS_PRESETS[idx + 1];
-            debug!("Play FPS increased to {}", self.fps_play);
+            let new_fps = FPS_PRESETS[idx + 1];
+            self.set_fps_play(new_fps);
+            debug!("Play FPS increased to {}", new_fps);
         }
     }
 
 
-
-
-
     /// Reset settings
     pub fn reset_settings(&mut self) {
-        self.fps_base = 24.0;
-        self.fps_play = 24.0;
-        self.loop_enabled = true;
+        self.set_fps_base(24.0);
+        self.set_fps_play(24.0);
+        self.set_loop_enabled(true);
         info!("Player settings reset");
     }
 }

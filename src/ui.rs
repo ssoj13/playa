@@ -82,7 +82,7 @@ pub fn render_timeline_panel(
         ui.set_max_height(available_height);
 
         // Timeline section (split: outline + canvas)
-        if let Some(comp_uuid) = player.active_comp {
+        if let Some(comp_uuid) = player.active_comp() {
             // Reset pan to frame 0 when switching comps (ruler shows absolute frame numbers)
             if timeline_state
                 .last_comp_uuid

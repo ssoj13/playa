@@ -18,26 +18,20 @@ use crate::cache_man::CacheManager;
 use crate::global_cache::{CacheStrategy, GlobalFrameCache};
 
 /// Top-level project / scene.
+///
+/// **Attrs keys** (stored in `attrs`):
+/// - `comps_order`: Vec<Uuid> as JSON - UI order of media items
+/// - `selection`: Vec<Uuid> as JSON - current selection (ordered)
+/// - `active`: Option<Uuid> as JSON - currently active item
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
-    /// Global project attributes (fps defaults, resolution presets, etc.)
+    /// All serializable project state (includes comps_order, selection, active)
     pub attrs: Attrs,
 
     /// Unified media pool: all comps (both Layer and File modes) keyed by UUID
     /// Thread-safe for concurrent reads from background composition workers
     #[serde(with = "arc_rwlock_hashmap")]
     pub media: Arc<RwLock<HashMap<Uuid, Comp>>>,
-
-    /// Order for all media (clips + comps) in UI (UUIDs)
-    pub comps_order: Vec<Uuid>,
-
-    /// Current selection (ordered UUIDs)
-    #[serde(default)]
-    pub selection: Vec<Uuid>,
-
-    /// Currently active item (UUID)
-    #[serde(default)]
-    pub active: Option<Uuid>,
 
     /// Runtime-only selection anchor for shift-click range
     #[serde(skip)]
@@ -80,17 +74,80 @@ impl Project {
             strategy,
         ));
 
+        // Initialize attrs with default values
+        let mut attrs = Attrs::new();
+        attrs.set_json("comps_order", &Vec::<Uuid>::new());
+        attrs.set_json("selection", &Vec::<Uuid>::new());
+        attrs.set_json("active", &None::<Uuid>);
+
         Self {
-            attrs: Attrs::new(),
+            attrs,
             media: Arc::new(RwLock::new(HashMap::new())),
-            comps_order: Vec::new(),
-            selection: Vec::new(),
-            active: None,
             selection_anchor: None,
             compositor: RefCell::new(CompositorType::default()), // CPU compositor by default
             cache_manager: Some(cache_manager),
             global_cache: Some(global_cache),
         }
+    }
+
+    // === Accessor methods for attrs fields ===
+
+    /// Get comps order (Vec<Uuid>)
+    pub fn comps_order(&self) -> Vec<Uuid> {
+        self.attrs.get_json("comps_order").unwrap_or_default()
+    }
+
+    /// Set comps order
+    pub fn set_comps_order(&mut self, order: Vec<Uuid>) {
+        self.attrs.set_json("comps_order", &order);
+    }
+
+    /// Push UUID to comps_order
+    pub fn push_comps_order(&mut self, uuid: Uuid) {
+        let mut order = self.comps_order();
+        order.push(uuid);
+        self.set_comps_order(order);
+    }
+
+    /// Retain comps_order by predicate
+    pub fn retain_comps_order<F>(&mut self, f: F) where F: FnMut(&Uuid) -> bool {
+        let mut order = self.comps_order();
+        order.retain(f);
+        self.set_comps_order(order);
+    }
+
+    /// Get selection (Vec<Uuid>)
+    pub fn selection(&self) -> Vec<Uuid> {
+        self.attrs.get_json("selection").unwrap_or_default()
+    }
+
+    /// Set selection
+    pub fn set_selection(&mut self, sel: Vec<Uuid>) {
+        self.attrs.set_json("selection", &sel);
+    }
+
+    /// Push UUID to selection
+    pub fn push_selection(&mut self, uuid: Uuid) {
+        let mut sel = self.selection();
+        sel.push(uuid);
+        self.set_selection(sel);
+    }
+
+    /// Retain selection by predicate
+    pub fn retain_selection<F>(&mut self, f: F) where F: FnMut(&Uuid) -> bool {
+        let mut sel = self.selection();
+        sel.retain(f);
+        self.set_selection(sel);
+    }
+
+    /// Get active comp UUID
+    pub fn active(&self) -> Option<Uuid> {
+        self.attrs.get_json("active").unwrap_or(None)
+    }
+
+    /// Set active comp UUID
+    pub fn set_active(&mut self, uuid: Option<Uuid>) {
+        self.attrs.set_json("active", &uuid);
     }
 
     /// Serialize project to JSON file.
@@ -128,23 +185,24 @@ impl Project {
     /// Returns UUID of the default/first comp.
     pub fn ensure_default_comp(&mut self) -> Uuid {
         // Check if we have any comps in media (Layer mode comps in comps_order)
-        let has_comps = !self.comps_order.is_empty();
+        let order = self.comps_order();
+        let has_comps = !order.is_empty();
 
         if !has_comps {
             let comp = Comp::new("Main", 0, 0, 24.0);
             let uuid = comp.uuid;
             self.media.write().unwrap().insert(uuid, comp);
-            self.comps_order.push(uuid);
+            self.push_comps_order(uuid);
             log::info!("Created default comp: {}", uuid);
             uuid
         } else {
             // Return first comp UUID from order
-            self.comps_order.first().copied().unwrap_or_else(|| {
+            order.first().copied().unwrap_or_else(|| {
                 // Fallback: create new if order is broken
                 let comp = Comp::new("Main", 0, 0, 24.0);
                 let uuid = comp.uuid;
                 self.media.write().unwrap().insert(uuid, comp);
-                self.comps_order.push(uuid);
+                self.push_comps_order(uuid);
                 uuid
             })
         }
@@ -254,7 +312,7 @@ impl Project {
 
         let uuid = comp.uuid;
         self.media.write().unwrap().insert(uuid, comp);
-        self.comps_order.push(uuid);
+        self.push_comps_order(uuid);
     }
 
     /// Set CacheManager for project and all existing comps (call after deserialization)
@@ -289,7 +347,7 @@ impl Project {
 
         // Remove from media pool and order
         self.media.write().unwrap().remove(&uuid);
-        self.comps_order.retain(|u| *u != uuid);
+        self.retain_comps_order(|u| *u != uuid);
     }
 
     /// Cascade invalidation: mark all parent comps as dirty
@@ -358,12 +416,12 @@ mod tests {
 
         let mut parent = Comp::new("Parent", 0, 100, 24.0);
         let parent_uuid = parent.uuid;
-        parent.children.push(child_uuid);
+        parent.children.push((child_uuid, crate::entities::Attrs::new()));
         child.parent = Some(parent_uuid);
 
         let mut grandparent = Comp::new("Grandparent", 0, 100, 24.0);
         let grandparent_uuid = grandparent.uuid;
-        grandparent.children.push(parent_uuid);
+        grandparent.children.push((parent_uuid, crate::entities::Attrs::new()));
         parent.parent = Some(grandparent_uuid);
 
         // Add comps to project

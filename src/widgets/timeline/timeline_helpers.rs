@@ -345,14 +345,9 @@ pub(super) fn compute_all_layer_rows(
 
     // Process layers in order (by child_idx)
     for &child_idx in child_order.iter() {
-        if let Some(child_uuid) = comp.children.get(child_idx) {
-            let attrs = comp.children_attrs.get(child_uuid);
-            let start = attrs
-                .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
-                .unwrap_or(0);
-            let end = attrs
-                .and_then(|a| Some(a.get_i32("end").unwrap_or(0)))
-                .unwrap_or(0);
+        if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
+            let start = attrs.get_i32("start").unwrap_or(0);
+            let end = attrs.get_i32("end").unwrap_or(0);
 
             // Find first free row for this layer
             let mut row = 0;
@@ -403,14 +398,9 @@ pub(super) fn find_free_row_for_new_layer(
         std::collections::HashMap::new();
     for &child_idx in child_order.iter() {
         if let Some(&row) = layer_rows.get(&child_idx) {
-            if let Some(child_uuid) = comp.children.get(child_idx) {
-                let attrs = comp.children_attrs.get(child_uuid);
-                let start = attrs
-                    .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
-                    .unwrap_or(0);
-                let end = attrs
-                    .and_then(|a| Some(a.get_i32("end").unwrap_or(0)))
-                    .unwrap_or(0);
+            if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
+                let start = attrs.get_i32("start").unwrap_or(0);
+                let end = attrs.get_i32("end").unwrap_or(0);
                 occupied_rows
                     .entry(row)
                     .or_insert_with(Vec::new)

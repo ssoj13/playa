@@ -67,7 +67,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
             ui.set_min_height(scroll_height);
 
             // Collect all comps to render (unified order)
-            let all_comps: Vec<Uuid> = project.comps_order.clone();
+            let all_comps: Vec<Uuid> = project.comps_order();
 
             if all_comps.is_empty() {
                 ui.add_space(20.0);
@@ -87,8 +87,8 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                     Some(c) => c,
                     None => continue,
                 };
-                let clicked_idx = match project
-                    .comps_order
+                let comps_order = project.comps_order();
+                let clicked_idx = match comps_order
                     .iter()
                     .position(|u| u == comp_uuid)
                 {
@@ -96,8 +96,8 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                     None => continue,
                 };
 
-                let is_active = project.active.as_ref() == Some(comp_uuid);
-                let is_selected = project.selection.iter().any(|u| u == comp_uuid);
+                let is_active = project.active().as_ref() == Some(comp_uuid);
+                let is_selected = project.selection().iter().any(|u| u == comp_uuid);
                 let bg_color = if is_selected {
                     ui.style().visuals.selection.bg_fill
                 } else {
@@ -239,10 +239,11 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
 
                 // Selection logic (click) and activation (double click) via events
                 let modifiers = ui.input(|i| i.modifiers);
+                let current_selection = project.selection();
                 if response.clicked() {
                     let (sel, anchor) = compute_selection(
-                        &project.comps_order,
-                        &project.selection,
+                        &comps_order,
+                        &current_selection,
                         project.selection_anchor,
                         clicked_idx,
                         modifiers,
@@ -254,8 +255,8 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                 }
                 if response.double_clicked() {
                     let (sel, anchor) = compute_selection(
-                        &project.comps_order,
-                        &project.selection,
+                        &comps_order,
+                        &current_selection,
                         project.selection_anchor,
                         clicked_idx,
                         modifiers,

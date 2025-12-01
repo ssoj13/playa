@@ -101,13 +101,14 @@ pub struct Comp {
     #[serde(default)]
     pub parent: Option<Uuid>,
 
-    /// Children composition UUIDs (for Layer mode) - ordered list
+    /// Children compositions with their attributes (for Layer mode) - ordered list
+    /// Each tuple: (instance_uuid, child_attrs) where child_attrs contains:
+    /// - "source_uuid" (Json<Uuid>): UUID of the source comp in project.media
+    /// - "start", "end" (Int): Local timeline bounds
+    /// - "play_start", "play_end" (Int): Work area bounds
+    /// - transform attrs: "position", "rotation", "scale", "pivot", "transparency", etc.
     #[serde(default)]
-    pub children: Vec<Uuid>,
-
-    /// Attributes for each child (start, end, play_start, play_end, opacity, etc.)
-    #[serde(default)]
-    pub children_attrs: HashMap<Uuid, Attrs>,
+    pub children: Vec<(Uuid, Attrs)>,
 
     // ===== File Mode Fields =====
     /// File pattern for image sequence (e.g. "/path/seq.*.exr")
@@ -179,7 +180,6 @@ impl Comp {
             attrs,
             parent: None,
             children: Vec::new(),
-            children_attrs: HashMap::new(),
             file_mask: None,
             file_start: None,
             file_end: None,
@@ -244,15 +244,80 @@ impl Comp {
         self.attrs.set("end", AttrValue::Int(end));
     }
 
+    // ===== Children accessor methods =====
+
+    /// Get immutable reference to child attrs by UUID
+    pub fn children_attrs_get(&self, uuid: &Uuid) -> Option<&Attrs> {
+        self.children.iter().find(|(u, _)| u == uuid).map(|(_, a)| a)
+    }
+
+    /// Get mutable reference to child attrs by UUID
+    pub fn children_attrs_get_mut(&mut self, uuid: &Uuid) -> Option<&mut Attrs> {
+        self.children.iter_mut().find(|(u, _)| u == uuid).map(|(_, a)| a)
+    }
+
+    /// Insert or update child attrs
+    pub fn children_attrs_insert(&mut self, uuid: Uuid, attrs: Attrs) {
+        if let Some(existing) = self.children.iter_mut().find(|(u, _)| *u == uuid) {
+            existing.1 = attrs;
+        } else {
+            self.children.push((uuid, attrs));
+        }
+    }
+
+    /// Remove child attrs and return it
+    pub fn children_attrs_remove(&mut self, uuid: &Uuid) -> Option<Attrs> {
+        if let Some(pos) = self.children.iter().position(|(u, _)| u == uuid) {
+            Some(self.children.remove(pos).1)
+        } else {
+            None
+        }
+    }
+
+    /// Get child UUIDs iterator
+    pub fn children_uuids(&self) -> impl Iterator<Item = &Uuid> {
+        self.children.iter().map(|(u, _)| u)
+    }
+
+    /// Get child UUIDs as vec (cloned)
+    pub fn children_uuids_vec(&self) -> Vec<Uuid> {
+        self.children.iter().map(|(u, _)| *u).collect()
+    }
+
+    /// Get number of children
+    pub fn children_len(&self) -> usize {
+        self.children.len()
+    }
+
+    /// Check if children is empty
+    pub fn children_is_empty(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    /// Check if contains child UUID
+    pub fn children_contains(&self, uuid: &Uuid) -> bool {
+        self.children.iter().any(|(u, _)| u == uuid)
+    }
+
+    /// Get child at index (uuid, attrs)
+    pub fn children_get(&self, idx: usize) -> Option<&(Uuid, Attrs)> {
+        self.children.get(idx)
+    }
+
+    /// Get child UUID at index
+    pub fn children_uuid_at(&self, idx: usize) -> Option<Uuid> {
+        self.children.get(idx).map(|(u, _)| *u)
+    }
+
     // Layer UUID <-> Index conversion helpers
     /// Convert layer UUID to index in children array
     pub fn uuid_to_idx(&self, uuid: Uuid) -> Option<usize> {
-        self.children.iter().position(|u| *u == uuid)
+        self.children.iter().position(|(u, _)| *u == uuid)
     }
 
     /// Convert index to layer UUID
     pub fn idx_to_uuid(&self, idx: usize) -> Option<Uuid> {
-        self.children.get(idx).copied()
+        self.children.get(idx).map(|(u, _)| *u)
     }
 
     /// Convert multiple UUIDs to indices
@@ -273,24 +338,21 @@ impl Comp {
 
     /// Get child layer's start position
     pub fn child_start(&self, child_uuid: Uuid) -> i32 {
-        self.children_attrs
-            .get(&child_uuid)
+        self.children_attrs_get(&child_uuid)
             .map(|a| a.get_i32_or_zero("start"))
             .unwrap_or(0)
     }
 
     /// Get child layer's end position
     pub fn child_end(&self, child_uuid: Uuid) -> i32 {
-        self.children_attrs
-            .get(&child_uuid)
+        self.children_attrs_get(&child_uuid)
             .map(|a| a.get_i32_or_zero("end"))
             .unwrap_or(0)
     }
 
     /// Get child layer's play_start (with fallback to start)
     pub fn child_play_start(&self, child_uuid: Uuid) -> i32 {
-        self.children_attrs
-            .get(&child_uuid)
+        self.children_attrs_get(&child_uuid)
             .map(|a| {
                 let start = a.get_i32_or_zero("start");
                 a.get_i32_or("play_start", start)
@@ -300,8 +362,7 @@ impl Comp {
 
     /// Get child layer's play_end (with fallback to end)
     pub fn child_play_end(&self, child_uuid: Uuid) -> i32 {
-        self.children_attrs
-            .get(&child_uuid)
+        self.children_attrs_get(&child_uuid)
             .map(|a| {
                 let end = a.get_i32_or_zero("end");
                 a.get_i32_or("play_end", end)
@@ -342,16 +403,14 @@ impl Comp {
             let mut min_frame = i32::MAX;
             let mut max_frame = i32::MIN;
 
-            for child_uuid in &self.children {
-                if let Some(attrs) = self.children_attrs.get(child_uuid) {
-                    let child_start = attrs.get_i32("start").unwrap_or(0);
-                    let child_end = attrs.get_i32("end").unwrap_or(child_start);
-                    let child_play_start = attrs.get_i32("play_start").unwrap_or(child_start);
-                    let child_play_end = attrs.get_i32("play_end").unwrap_or(child_end);
+            for (_child_uuid, attrs) in &self.children {
+                let child_start = attrs.get_i32("start").unwrap_or(0);
+                let child_end = attrs.get_i32("end").unwrap_or(child_start);
+                let child_play_start = attrs.get_i32("play_start").unwrap_or(child_start);
+                let child_play_end = attrs.get_i32("play_end").unwrap_or(child_end);
 
-                    min_frame = min_frame.min(child_play_start);
-                    max_frame = max_frame.max(child_play_end);
-                }
+                min_frame = min_frame.min(child_play_start);
+                max_frame = max_frame.max(child_play_end);
             }
 
             if min_frame != i32::MAX && max_frame != i32::MIN {
@@ -420,7 +479,7 @@ impl Comp {
 
     /// Child work area in parent timeline (absolute). Defaults to full bounds.
     pub fn child_work_area_abs(&self, child_uuid: Uuid) -> Option<(i32, i32)> {
-        let attrs = self.children_attrs.get(&child_uuid)?;
+        let attrs = self.children_attrs_get(&child_uuid)?;
         let (bounds_start, bounds_end) =
             Self::child_bounds_abs(attrs.get_i32("start"), attrs.get_i32("end"));
         let play_start = attrs.get_i32("play_start").unwrap_or(bounds_start);
@@ -458,7 +517,7 @@ impl Comp {
     /// # Returns
     /// Local frame number in child's coordinate system, or None if child not found
     pub fn comp2local(&self, child_uuid: Uuid, comp_frame: i32) -> Option<i32> {
-        let attrs = self.children_attrs.get(&child_uuid)?;
+        let attrs = self.children_attrs_get(&child_uuid)?;
         let child_start = attrs.get_i32("start").unwrap_or(0);
         let speed = attrs.get_float("speed").unwrap_or(1.0);
 
@@ -486,7 +545,7 @@ impl Comp {
     /// # Returns
     /// Frame number in parent comp timeline, or None if child not found
     pub fn local2comp(&self, child_uuid: Uuid, local_frame: i32) -> Option<i32> {
-        let attrs = self.children_attrs.get(&child_uuid)?;
+        let attrs = self.children_attrs_get(&child_uuid)?;
         let child_start = attrs.get_i32("start").unwrap_or(0);
         let speed = attrs.get_float("speed").unwrap_or(1.0);
 
@@ -509,7 +568,7 @@ impl Comp {
         comp_frame: i32,
         project: &super::Project,
     ) -> Option<(Uuid, i32)> {
-        let attrs = self.children_attrs.get(&child_uuid)?;
+        let attrs = self.children_attrs_get(&child_uuid)?;
 
         // Get source UUID
         let source_uuid_str = attrs.get_str("uuid")?;
@@ -1018,16 +1077,14 @@ impl Comp {
     /// Falls back to current comp dim if no children.
     pub fn first_child_dim(&self) -> (usize, usize) {
         let mut best: Option<(i32, usize, usize)> = None;
-        for child_uuid in &self.children {
-            if let Some(attrs) = self.children_attrs.get(child_uuid) {
-                let start = attrs.get_i32("start").unwrap_or(0);
-                let w = attrs.get_u32("width").unwrap_or(0) as usize;
-                let h = attrs.get_u32("height").unwrap_or(0) as usize;
-                match best {
-                    None => best = Some((start, w, h)),
-                    Some((best_start, _, _)) if start < best_start => best = Some((start, w, h)),
-                    _ => {}
-                }
+        for (_child_uuid, attrs) in &self.children {
+            let start = attrs.get_i32("start").unwrap_or(0);
+            let w = attrs.get_u32("width").unwrap_or(0) as usize;
+            let h = attrs.get_u32("height").unwrap_or(0) as usize;
+            match best {
+                None => best = Some((start, w, h)),
+                Some((best_start, _, _)) if start < best_start => best = Some((start, w, h)),
+                _ => {}
             }
         }
 
@@ -1074,10 +1131,7 @@ impl Comp {
         // Collect frames from all active children
         // IMPORTANT: Reverse iteration - last child (bottom layer) becomes base,
         // first child (top layer) composited last
-        for child_uuid in self.children.iter().rev() {
-            // Get child attributes
-            let attrs = self.children_attrs.get(child_uuid)?;
-
+        for (child_uuid, attrs) in self.children.iter().rev() {
             // Placement and bounds in parent timeline
             let child_start = attrs.get_i32("start").unwrap_or(0);
             let child_end = attrs.get_i32("end").unwrap_or(child_start);
@@ -1328,11 +1382,10 @@ impl Comp {
         // Add to children at appropriate position for target row
         if let Some(target_row) = target_row {
             let insert_pos = self.find_insert_position_for_row(target_row);
-            self.children.insert(insert_pos, instance_uuid);
+            self.children.insert(insert_pos, (instance_uuid, attrs));
         } else {
-            self.children.push(instance_uuid);
+            self.children.push((instance_uuid, attrs));
         }
-        self.children_attrs.insert(instance_uuid, attrs);
 
         self.rebound();
         self.update_dim_from_children();
@@ -1356,14 +1409,9 @@ impl Comp {
         let mut layer_rows: HashMap<usize, usize> = HashMap::new();
         let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new();
 
-        for (idx, child_uuid) in self.children.iter().enumerate() {
-            let attrs = self.children_attrs.get(child_uuid);
-            let start = attrs
-                .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
-                .unwrap_or(0);
-            let end = attrs
-                .and_then(|a| Some(a.get_i32("end").unwrap_or(0)))
-                .unwrap_or(0);
+        for (idx, (_child_uuid, attrs)) in self.children.iter().enumerate() {
+            let start = attrs.get_i32("start").unwrap_or(0);
+            let end = attrs.get_i32("end").unwrap_or(0);
 
             // Find first free row for this layer
             let mut row = 0;
@@ -1392,7 +1440,7 @@ impl Comp {
         }
 
         // Find insertion position: before first layer with row >= target_row
-        for (idx, _child_uuid) in self.children.iter().enumerate() {
+        for idx in 0..self.children.len() {
             if let Some(&row) = layer_rows.get(&idx) {
                 if row >= target_row {
                     return idx;
@@ -1407,16 +1455,10 @@ impl Comp {
     /// Move a child to a new start position, preserving duration.
     /// Supports negative start positions and automatically extends parent comp boundaries.
     pub fn move_child(&mut self, child_idx: usize, new_start: i32) -> anyhow::Result<()> {
-        let child_uuid = self
+        let (_child_uuid, attrs) = self
             .children
-            .get(child_idx)
-            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?
-            .clone();
-
-        let attrs = self
-            .children_attrs
-            .get_mut(&child_uuid)
-            .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
+            .get_mut(child_idx)
+            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
         let old_start = attrs.get_i32("start").unwrap_or(0);
         let old_end = attrs.get_i32("end").unwrap_or(0);
@@ -1473,8 +1515,8 @@ impl Comp {
         // layer_selection already stores UUIDs - just clone them
         let selected_uuids: Vec<Uuid> = self.layer_selection.clone();
 
-        // Build block of UUIDs
-        let mut block: Vec<Uuid> = Vec::new();
+        // Build block of (Uuid, Attrs) tuples
+        let mut block: Vec<(Uuid, Attrs)> = Vec::new();
         let mut reordered = self.children.clone();
         for idx in idxs.iter().rev() {
             if *idx < reordered.len() {
@@ -1490,8 +1532,8 @@ impl Comp {
         });
         let insert_at = insert_at.min(reordered.len());
         let mut cursor = insert_at;
-        for uuid in block.iter() {
-            reordered.insert(cursor, *uuid);
+        for item in block.iter() {
+            reordered.insert(cursor, item.clone());
             cursor += 1;
         }
         self.children = reordered;
@@ -1500,16 +1542,15 @@ impl Comp {
         // Just restore the UUIDs that still exist in children
         self.layer_selection = selected_uuids
             .into_iter()
-            .filter(|uuid| self.children.contains(uuid))
+            .filter(|uuid| self.children_contains(uuid))
             .collect();
 
         // Move each by delta (preserve relative offsets)
-        for uuid in block {
-            if let Some(idx) = self.children.iter().position(|u| *u == uuid) {
+        for (uuid, _) in block {
+            if let Some(idx) = self.children.iter().position(|(u, _)| *u == uuid) {
                 let current_start = self
-                    .children_attrs
-                    .get(&uuid)
-                    .and_then(|a| Some(a.get_i32("start").unwrap_or(0)))
+                    .children_attrs_get(&uuid)
+                    .map(|a| a.get_i32("start").unwrap_or(0))
                     .unwrap_or(0);
                 let _ = self.move_child(idx, current_start + delta);
             }
@@ -1533,29 +1574,27 @@ impl Comp {
             if idx >= self.children.len() {
                 continue;
             }
-            if let Some(child_uuid) = self.children.get(idx) {
-                let (bounds_start, bounds_end) = {
-                    let attrs = self.children_attrs.get(child_uuid);
-                    Self::child_bounds_abs(attrs.and_then(|a| a.get_i32("start")), attrs.and_then(|a| a.get_i32("end")))
-                };
-                if let Some(attrs) = self.children_attrs.get_mut(child_uuid) {
-                    if is_start {
-                        let current = attrs.get_i32("play_start").unwrap_or(bounds_start);
-                        let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
-                            (current + delta, attrs.get_i32("play_end").unwrap_or(bounds_end)),
-                            (bounds_start, bounds_end),
-                        );
-                        attrs.set("play_start", AttrValue::Int(clamped_start));
-                        attrs.set("play_end", AttrValue::Int(clamped_end));
-                    } else {
-                        let current = attrs.get_i32("play_end").unwrap_or(bounds_end);
-                        let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
-                            (attrs.get_i32("play_start").unwrap_or(bounds_start), current + delta),
-                            (bounds_start, bounds_end),
-                        );
-                        attrs.set("play_start", AttrValue::Int(clamped_start));
-                        attrs.set("play_end", AttrValue::Int(clamped_end));
-                    }
+            if let Some((_child_uuid, attrs)) = self.children.get_mut(idx) {
+                let bounds_start = attrs.get_i32("start").unwrap_or(0);
+                let bounds_end = attrs.get_i32("end").unwrap_or(0);
+                let (bounds_start, bounds_end) = Self::child_bounds_abs(Some(bounds_start), Some(bounds_end));
+
+                if is_start {
+                    let current = attrs.get_i32("play_start").unwrap_or(bounds_start);
+                    let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
+                        (current + delta, attrs.get_i32("play_end").unwrap_or(bounds_end)),
+                        (bounds_start, bounds_end),
+                    );
+                    attrs.set("play_start", AttrValue::Int(clamped_start));
+                    attrs.set("play_end", AttrValue::Int(clamped_end));
+                } else {
+                    let current = attrs.get_i32("play_end").unwrap_or(bounds_end);
+                    let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
+                        (attrs.get_i32("play_start").unwrap_or(bounds_start), current + delta),
+                        (bounds_start, bounds_end),
+                    );
+                    attrs.set("play_start", AttrValue::Int(clamped_start));
+                    attrs.set("play_end", AttrValue::Int(clamped_end));
                 }
             }
         }
@@ -1577,16 +1616,10 @@ impl Comp {
         child_idx: usize,
         new_play_start: i32,
     ) -> anyhow::Result<()> {
-        let child_uuid = self
+        let (_child_uuid, attrs) = self
             .children
-            .get(child_idx)
-            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?
-            .clone();
-
-        let attrs = self
-            .children_attrs
-            .get_mut(&child_uuid)
-            .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
+            .get_mut(child_idx)
+            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
         let (bounds_start, bounds_end) =
             Self::child_bounds_abs(attrs.get_i32("start"), attrs.get_i32("end"));
@@ -1614,16 +1647,10 @@ impl Comp {
         child_idx: usize,
         new_play_end: i32,
     ) -> anyhow::Result<()> {
-        let child_uuid = self
+        let (_child_uuid, attrs) = self
             .children
-            .get(child_idx)
-            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?
-            .clone();
-
-        let attrs = self
-            .children_attrs
-            .get_mut(&child_uuid)
-            .ok_or_else(|| anyhow::anyhow!("Child attrs not found"))?;
+            .get_mut(child_idx)
+            .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
         let (bounds_start, bounds_end) =
             Self::child_bounds_abs(attrs.get_i32("start"), attrs.get_i32("end"));
@@ -1664,21 +1691,19 @@ impl Comp {
     pub fn get_child_edges_near(&self, _from_frame: i32) -> Vec<(i32, bool)> {
         let mut edges = Vec::new();
 
-        for child_uuid in &self.children {
-            if let Some(attrs) = self.children_attrs.get(child_uuid) {
-                let start = attrs.get_i32("start").unwrap_or(0);
-                let end = attrs.get_i32("end").unwrap_or(0);
-                let play_start = attrs.get_i32("play_start").unwrap_or(start);
-                let play_end = attrs.get_i32("play_end").unwrap_or(end);
+        for (_child_uuid, attrs) in &self.children {
+            let start = attrs.get_i32("start").unwrap_or(0);
+            let end = attrs.get_i32("end").unwrap_or(0);
+            let play_start = attrs.get_i32("play_start").unwrap_or(start);
+            let play_end = attrs.get_i32("play_end").unwrap_or(end);
 
-                // Visible range accounting for play range offsets
-                let visible_start = play_start;
-                let visible_end = play_end;
+            // Visible range accounting for play range offsets
+            let visible_start = play_start;
+            let visible_end = play_end;
 
-                if visible_start <= visible_end {
-                    edges.push((visible_start, true)); // Start edge
-                    edges.push((visible_end, false)); // End edge
-                }
+            if visible_start <= visible_end {
+                edges.push((visible_start, true)); // Start edge
+                edges.push((visible_end, false)); // End edge
             }
         }
 
@@ -1693,8 +1718,7 @@ impl Comp {
 
     /// Remove child comp from this composition
     pub fn remove_child(&mut self, child_uuid: Uuid) {
-        self.children.retain(|uuid| *uuid != child_uuid);
-        self.children_attrs.remove(&child_uuid);
+        self.children.retain(|(uuid, _)| *uuid != child_uuid);
         self.rebound();
         self.update_dim_from_children();
         self.attrs.mark_dirty(); // Mark as dirty for cache invalidation
@@ -1728,7 +1752,7 @@ impl Comp {
         let mut min_start = i32::MAX;
         let mut max_end = i32::MIN;
 
-        for child_uuid in &self.children {
+        for (child_uuid, _attrs) in &self.children {
             if let Some((visible_start, visible_end)) = self.child_work_area_abs(*child_uuid) {
                 min_start = min_start.min(visible_start);
                 max_end = max_end.max(visible_end);
@@ -1779,25 +1803,24 @@ impl Comp {
     }
 
     /// Get children composition UUIDs
-    pub fn get_children(&self) -> &[Uuid] {
+    /// Get children with their attrs
+    pub fn get_children(&self) -> &[(Uuid, Attrs)] {
         &self.children
     }
 
     /// Check if this comp has a specific child
     pub fn has_child(&self, child_uuid: Uuid) -> bool {
-        self.children.iter().any(|uuid| *uuid == child_uuid)
+        self.children.iter().any(|(uuid, _)| *uuid == child_uuid)
     }
 
     /// Find all children (instance UUIDs) that reference a specific source UUID
     pub fn find_children_by_source(&self, source_uuid: Uuid) -> Vec<Uuid> {
         let source_str = source_uuid.to_string();
         let mut result = Vec::new();
-        for child_uuid in &self.children {
-            if let Some(attrs) = self.children_attrs.get(child_uuid) {
-                if let Some(uuid) = attrs.get_str("uuid") {
-                    if uuid == source_str {
-                        result.push(*child_uuid);
-                    }
+        for (child_uuid, attrs) in &self.children {
+            if let Some(uuid) = attrs.get_str("uuid") {
+                if uuid == source_str {
+                    result.push(*child_uuid);
                 }
             }
         }
@@ -2135,25 +2158,28 @@ mod tests {
 
         // Leaf: file-mode comp that yields placeholder frames
         let leaf = file_comp("Leaf", 0, 9, 24.0);
-        let leaf_uuid = leaf.uuid.clone();
-        project.comps_order.push(leaf_uuid.clone());
-        project.media.insert(leaf_uuid.clone(), leaf);
+        let leaf_uuid = leaf.uuid;
+        project.push_comps_order(leaf_uuid);
+        project.media.write().unwrap().insert(leaf_uuid, leaf);
 
         // Middle: layer comp that references leaf
         let mut inner = Comp::new("Inner", 0, 9, 24.0);
-        inner.add_child(leaf_uuid.clone(), 0, &project).unwrap();
-        let inner_uuid = inner.uuid.clone();
-        project.comps_order.push(inner_uuid.clone());
-        project.media.insert(inner_uuid.clone(), inner);
+        inner.add_child(leaf_uuid, 0, &project).unwrap();
+        let inner_uuid = inner.uuid;
+        project.push_comps_order(inner_uuid);
+        project.media.write().unwrap().insert(inner_uuid, inner);
 
         // Root: layer comp that references inner
         let mut root = Comp::new("Root", 0, 9, 24.0);
-        root.add_child(inner_uuid.clone(), 0, &project).unwrap();
-        let root_uuid = root.uuid.clone();
-        project.media.insert(root_uuid.clone(), root);
+        root.add_child(inner_uuid, 0, &project).unwrap();
+        let root_uuid = root.uuid;
+        project.media.write().unwrap().insert(root_uuid, root);
 
-        let root_ref = project.media.get(&root_uuid).unwrap();
-        let frame = root_ref.get_frame(5, &project);
+        let frame = {
+            let media = project.media.read().unwrap();
+            let root_ref = media.get(&root_uuid).unwrap();
+            root_ref.get_frame(5, &project, false)
+        };
         assert!(
             frame.is_some(),
             "Recursive composition should resolve a frame"
@@ -2163,32 +2189,34 @@ mod tests {
     #[test]
     fn test_dirty_tracking_on_attr_change() {
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
-        let mut project = Project::new(manager);
+        let project = Project::new(manager);
 
         // Source clip placeholder
         let clip = file_comp("Clip", 0, 4, 24.0);
-        let clip_uuid = clip.uuid.clone();
-        project.media.insert(clip_uuid.clone(), clip);
+        let clip_uuid = clip.uuid;
+        project.media.write().unwrap().insert(clip_uuid, clip);
 
         // Comp with single child
         let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
-        comp.add_child(clip_uuid.clone(), 0, &project).unwrap();
-        let comp_uuid = comp.uuid.clone();
-        project.media.insert(comp_uuid.clone(), comp);
+        comp.add_child(clip_uuid, 0, &project).unwrap();
+        let comp_uuid = comp.uuid;
+        project.media.write().unwrap().insert(comp_uuid, comp);
 
         // First render - attrs should be clean after caching
         {
-            let comp_ref = project.media.get(&comp_uuid).unwrap();
-            let _frame = comp_ref.get_frame(2, &project).unwrap();
+            let media = project.media.read().unwrap();
+            let comp_ref = media.get(&comp_uuid).unwrap();
+            let _frame = comp_ref.get_frame(2, &project, false).unwrap();
             // After first render, frame is cached
-            assert!(project.global_cache.as_ref().unwrap().contains(&comp_uuid, 2));
+            assert!(project.global_cache.as_ref().unwrap().contains(comp_uuid, 2));
         }
 
         // Change child opacity - should mark attrs as dirty
         {
-            let comp_mut = project.media.get_mut(&comp_uuid).unwrap();
-            let child_uuid = comp_mut.children.first().cloned().unwrap();
-            if let Some(attrs) = comp_mut.children_attrs.get_mut(&child_uuid) {
+            let mut media = project.media.write().unwrap();
+            let comp_mut = media.get_mut(&comp_uuid).unwrap();
+            let child_uuid = comp_mut.children.first().map(|(u, _)| *u).unwrap();
+            if let Some(attrs) = comp_mut.children_attrs_get_mut(&child_uuid) {
                 attrs.set("opacity", AttrValue::Float(0.5));
                 assert!(attrs.is_dirty(), "Attrs should be marked dirty after set()");
             }
@@ -2196,10 +2224,11 @@ mod tests {
 
         // Second render should recompose due to dirty flag
         {
-            let comp_ref = project.media.get(&comp_uuid).unwrap();
-            let _frame = comp_ref.get_frame(2, &project).unwrap();
+            let media = project.media.read().unwrap();
+            let comp_ref = media.get(&comp_uuid).unwrap();
+            let _frame = comp_ref.get_frame(2, &project, false).unwrap();
             // Frame should be in cache (updated)
-            assert!(project.global_cache.as_ref().unwrap().contains(&comp_uuid, 2));
+            assert!(project.global_cache.as_ref().unwrap().contains(comp_uuid, 2));
         }
     }
 
@@ -2230,35 +2259,38 @@ mod tests {
         let mut project = Project::new(manager);
 
         // Three placeholder sources
-        let mut sources: Vec<String> = Vec::new();
+        let mut sources: Vec<Uuid> = Vec::new();
         for i in 0..3 {
             let comp = file_comp(&format!("Src{}", i), 0, 4, 24.0);
-            let uuid = comp.uuid.clone();
-            project.media.insert(uuid.clone(), comp);
+            let uuid = comp.uuid;
+            project.media.write().unwrap().insert(uuid, comp);
             sources.push(uuid);
         }
 
         // Parent comp blending three children with different opacities
         let mut comp = Comp::new("Blend", 0, 4, 24.0);
         for (idx, uuid) in sources.iter().enumerate() {
-            comp.add_child(uuid.clone(), 0, &project).unwrap();
+            comp.add_child(*uuid, 0, &project).unwrap();
             // Set opacity based on order
-            let child_uuid = comp.children.last().unwrap().clone();
+            let child_uuid = comp.children.last().unwrap().0;
             let opacity = match idx {
                 0 => 1.0,
                 1 => 0.5,
                 _ => 0.3,
             };
-            if let Some(attrs) = comp.children_attrs.get_mut(&child_uuid) {
+            if let Some(attrs) = comp.children_attrs_get_mut(&child_uuid) {
                 attrs.set("opacity", AttrValue::Float(opacity));
             }
         }
 
-        let comp_uuid = comp.uuid.clone();
-        project.media.insert(comp_uuid.clone(), comp);
+        let comp_uuid = comp.uuid;
+        project.media.write().unwrap().insert(comp_uuid, comp);
 
-        let comp_ref = project.media.get(&comp_uuid).unwrap();
-        let frame = comp_ref.get_frame(2, &project);
+        let frame = {
+            let media = project.media.read().unwrap();
+            let comp_ref = media.get(&comp_uuid).unwrap();
+            comp_ref.get_frame(2, &project, false)
+        };
         assert!(
             frame.is_some(),
             "Multi-layer composition with placeholder sources should succeed"
@@ -2266,7 +2298,7 @@ mod tests {
 
         // Verify frame is cached in global cache
         assert!(
-            project.global_cache.as_ref().unwrap().contains(&comp_uuid, 2),
+            project.global_cache.as_ref().unwrap().contains(comp_uuid, 2),
             "Frame should be cached in global cache after composition"
         );
     }

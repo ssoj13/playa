@@ -99,22 +99,25 @@ impl StatusBar {
                 }
 
                 // Loop toggle
-                ui.checkbox(&mut player.loop_enabled, "Loop");
+                let mut loop_enabled = player.loop_enabled();
+                if ui.checkbox(&mut loop_enabled, "Loop").changed() {
+                    player.set_loop_enabled(loop_enabled);
+                }
 
                 ui.separator();
 
                 // FPS info (play vs base)
-                let fps = if player.is_playing {
-                    player.fps_play
+                let fps = if player.is_playing() {
+                    player.fps_play()
                 } else {
-                    player.fps_base
+                    player.fps_base()
                 };
                 ui.monospace(format!("FPS:{:.2}", fps));
 
                 // Comp/Clip range info: <start | play_start <current_frame> play_end | end>
-                if let Some(comp_uuid) = &player.active_comp {
+                if let Some(comp_uuid) = player.active_comp() {
                     let media = project.media.read().unwrap();
-                    if let Some(comp) = media.get(comp_uuid) {
+                    if let Some(comp) = media.get(&comp_uuid) {
                         ui.separator();
                         let start = comp.start();
                         let end = comp.end();

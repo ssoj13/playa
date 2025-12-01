@@ -139,8 +139,7 @@ pub fn render_outline(
                     &mut child_order,
                     |ui, child_idx, handle, _state| {
                         let idx = *child_idx;
-                        let child_uuid = &comp.children[idx];
-                        let attrs = comp.children_attrs.get(child_uuid);
+                        let (child_uuid, attrs) = &comp.children[idx];
 
                         // In Split mode, use full available width (outline is in separate panel)
                         let row_width = if matches!(view_mode, super::TimelineViewMode::Split) {
@@ -165,24 +164,22 @@ pub fn render_outline(
                             ui.label("≡");
                         });
 
-                        let mut visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
-                        let mut opacity = attrs.and_then(|a| a.get_float("opacity")).unwrap_or(1.0);
+                        let mut visible = attrs.get_bool("visible").unwrap_or(true);
+                        let mut opacity = attrs.get_float("opacity").unwrap_or(1.0);
                         let prev_blend = attrs
-                            .and_then(|a| a.get_str("blend_mode"))
+                            .get_str("blend_mode")
                             .unwrap_or("normal")
                             .to_string();
                         let mut blend = prev_blend.clone();
-                        let mut speed = attrs.and_then(|a| a.get_float("speed")).unwrap_or(1.0);
+                        let mut speed = attrs.get_float("speed").unwrap_or(1.0);
                         let mut dirty = false;
 
                         if row_ui.checkbox(&mut visible, "").changed() {
                             dirty = true;
                         }
 
-                        let child_name = comp
-                            .children_attrs
-                            .get(child_uuid)
-                            .and_then(|attrs| attrs.get_str("name"))
+                        let child_name = attrs
+                            .get_str("name")
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| child_uuid.to_string());
                         row_ui.label(child_name);
@@ -238,13 +235,14 @@ pub fn render_outline(
                         if response.clicked() {
                             let modifiers = ui.input(|i| i.modifiers);
                             let clicked_uuid = *child_uuid;
+                            let children_uuids = comp.children_uuids_vec();
                             let (selection, anchor) = compute_layer_selection(
                                 &comp.layer_selection,
                                 comp.layer_selection_anchor,
                                 clicked_uuid,
                                 idx,
                                 modifiers,
-                                &comp.children,
+                                &children_uuids,
                             );
                             dispatch(AppEvent::CompSelectionChanged {
                                 comp_uuid: comp_id,
@@ -449,12 +447,11 @@ pub fn render_canvas(
                         // Draw child bars using precomputed layout
                         for (_display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;
-                            let child_uuid = &comp.children[idx];
+                            let (child_uuid, attrs) = &comp.children[idx];
 
                             // Get child start/end from attrs (now supports negative values)
-                            let attrs = comp.children_attrs.get(child_uuid);
-                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
-                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
+                            let child_start = attrs.get_i32("start").unwrap_or(0);
+                            let child_end = attrs.get_i32("end").unwrap_or(0);
 
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);
@@ -472,13 +469,9 @@ pub fn render_canvas(
                               Color32::from_gray(35)
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
-                            let play_start = attrs
-                                .and_then(|a| Some(a.get_i32("play_start").unwrap_or(child_start)))
-                                .unwrap_or(child_start);
-                            let play_end = attrs
-                                .and_then(|a| Some(a.get_i32("play_end").unwrap_or(child_end)))
-                                .unwrap_or(child_end);
-                            let is_visible = attrs.and_then(|a| a.get_bool("visible")).unwrap_or(true);
+                            let play_start = attrs.get_i32("play_start").unwrap_or(child_start);
+                            let play_end = attrs.get_i32("play_end").unwrap_or(child_end);
+                            let is_visible = attrs.get_bool("visible").unwrap_or(true);
 
                             // Calculate layer geometry (deduplicated)
                             let geom = super::timeline::LayerGeom::calc(
@@ -526,18 +519,13 @@ pub fn render_canvas(
                         // We need to do this in a second pass after drawing to ensure responses are on top
                         for (_display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;
-                            let child_uuid = &comp.children[idx];
+                            let (child_uuid, attrs) = &comp.children[idx];
 
                             // Get child attrs (now supports negative values)
-                            let attrs = comp.children_attrs.get(child_uuid);
-                            let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
-                            let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
-                            let play_start = attrs
-                                .and_then(|a| Some(a.get_i32("play_start").unwrap_or(child_start)))
-                                .unwrap_or(child_start);
-                            let play_end = attrs
-                                .and_then(|a| Some(a.get_i32("play_end").unwrap_or(child_end)))
-                                .unwrap_or(child_end);
+                            let child_start = attrs.get_i32("start").unwrap_or(0);
+                            let child_end = attrs.get_i32("end").unwrap_or(0);
+                            let play_start = attrs.get_i32("play_start").unwrap_or(child_start);
+                            let play_end = attrs.get_i32("play_end").unwrap_or(child_end);
 
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);
@@ -568,20 +556,20 @@ pub fn render_canvas(
                                                     tool, idx
                                                 );
                                                 // Ensure selection switches to dragged layer if it wasn't selected
-                                                if let Some(clicked_uuid) = comp.children.get(idx) {
+                                                {
                                                     let modifiers = ui.ctx().input(|i| i.modifiers);
                                                     let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
-                                                    if !multi && !comp.layer_selection.contains(clicked_uuid) {
+                                                    if !multi && !comp.layer_selection.contains(child_uuid) {
                                                         dispatch(AppEvent::CompSelectionChanged {
                                                             comp_uuid: comp_id,
-                                                            selection: vec![clicked_uuid.clone()],
-                                                            anchor: Some(clicked_uuid.clone()),
+                                                            selection: vec![*child_uuid],
+                                                            anchor: Some(*child_uuid),
                                                         });
                                                     }
                                                 }
-                                                if let Some(child_attrs) = attrs {
+                                                {
                                                     state.drag_state =
-                                                        Some(tool.to_drag_state(idx, child_attrs, hover_pos));
+                                                        Some(tool.to_drag_state(idx, attrs, hover_pos));
                                                     log::debug!(
                                                         "[TIMELINE] Drag state created successfully"
                                                     );
@@ -629,15 +617,15 @@ pub fn render_canvas(
                                         let target_child = child_order.get(target_display_idx).copied().unwrap_or(*layer_idx);
 
                                         // Visual feedback: draw ghost bars for all selected (or just dragged) layers
-                                        let dragged_uuid = comp.children.get(*layer_idx).cloned().unwrap_or_default();
+                                        let dragged_uuid = comp.children.get(*layer_idx).map(|(u, _)| *u).unwrap_or_default();
                                         let selection = if comp.layer_selection.contains(&dragged_uuid) {
                                             comp.layer_selection.clone()
                                         } else {
-                                            vec![dragged_uuid.clone()]
+                                            vec![dragged_uuid]
                                         };
 
                                         for child_uuid in selection {
-                                            if let Some(attrs) = comp.children_attrs.get(&child_uuid) {
+                                            if let Some(attrs) = comp.children_attrs_get(&child_uuid) {
                                                 let idx_sel = comp.uuid_to_idx(child_uuid).unwrap_or(0);
                                                 let current_row = layer_rows.get(&idx_sel).copied().unwrap_or(idx_sel);
                                                 let target_row = (current_row as i32 + delta_children)
@@ -694,33 +682,30 @@ pub fn render_canvas(
                                         let new_play_start = *initial_play_start + delta_frames;
 
                                         // Visual feedback: draw ghost play range preview
-                                        if *layer_idx < comp.children.len() {
-                                            let child_uuid = &comp.children[*layer_idx];
-                                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                // Use actual row for Y positioning
-                                                let target_row = layer_rows
-                                                    .get(layer_idx)
-                                                    .copied()
-                                                    .unwrap_or_else(|| {
-                                                        physical_to_display(*layer_idx).unwrap_or(*layer_idx)
-                                                    });
-                                                let layer_y = row_to_y(target_row, config, timeline_rect);
-                                                let visual_start = new_play_start as f32;
-                                                let layer_end = attrs.get_i32("end").unwrap_or(0) as f32;
-                                                let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
-                                                let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
+                                        if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
+                                            // Use actual row for Y positioning
+                                            let target_row = layer_rows
+                                                .get(layer_idx)
+                                                .copied()
+                                                .unwrap_or_else(|| {
+                                                    physical_to_display(*layer_idx).unwrap_or(*layer_idx)
+                                                });
+                                            let layer_y = row_to_y(target_row, config, timeline_rect);
+                                            let visual_start = new_play_start as f32;
+                                            let layer_end = attrs.get_i32("end").unwrap_or(0) as f32;
+                                            let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
+                                            let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
 
-                                                let ghost_rect = Rect::from_min_max(
-                                                    Pos2::new(ghost_x_start, layer_y + 4.0),
-                                                    Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
-                                                );
-                                                painter.rect_stroke(
-                                                    ghost_rect,
-                                                    4.0,
-                                                    egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
-                                                    egui::epaint::StrokeKind::Middle,
-                                                );
-                                            }
+                                            let ghost_rect = Rect::from_min_max(
+                                                Pos2::new(ghost_x_start, layer_y + 4.0),
+                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
+                                            );
+                                            painter.rect_stroke(
+                                                ghost_rect,
+                                                4.0,
+                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
+                                                egui::epaint::StrokeKind::Middle,
+                                            );
                                         }
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -742,34 +727,31 @@ pub fn render_canvas(
                                         let new_play_end = *initial_play_end + delta_frames;
 
                                         // Visual feedback: draw ghost play range preview
-                                        if *layer_idx < comp.children.len() {
-                                            let child_uuid = &comp.children[*layer_idx];
-                                            if let Some(attrs) = comp.children_attrs.get(child_uuid) {
-                                                // Use actual row for Y positioning
-                                                let target_row = layer_rows
-                                                    .get(layer_idx)
-                                                    .copied()
-                                                    .unwrap_or_else(|| {
-                                                        physical_to_display(*layer_idx).unwrap_or(*layer_idx)
-                                                    });
-                                                let layer_y = row_to_y(target_row, config, timeline_rect);
-                                                let play_start = attrs.get_i32("play_start").unwrap_or(attrs.get_i32("start").unwrap_or(0));
-                                                let visual_start = play_start as f32;
-                                                let visual_end = new_play_end as f32;
-                                                let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
-                                                let ghost_x_end = frame_to_screen_x(visual_end, timeline_rect.min.x, config, state);
+                                        if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
+                                            // Use actual row for Y positioning
+                                            let target_row = layer_rows
+                                                .get(layer_idx)
+                                                .copied()
+                                                .unwrap_or_else(|| {
+                                                    physical_to_display(*layer_idx).unwrap_or(*layer_idx)
+                                                });
+                                            let layer_y = row_to_y(target_row, config, timeline_rect);
+                                            let play_start = attrs.get_i32("play_start").unwrap_or(attrs.get_i32("start").unwrap_or(0));
+                                            let visual_start = play_start as f32;
+                                            let visual_end = new_play_end as f32;
+                                            let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
+                                            let ghost_x_end = frame_to_screen_x(visual_end, timeline_rect.min.x, config, state);
 
-                                                let ghost_rect = Rect::from_min_max(
-                                                    Pos2::new(ghost_x_start, layer_y + 4.0),
-                                                    Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
-                                                );
-                                                painter.rect_stroke(
-                                                    ghost_rect,
-                                                    4.0,
-                                                    egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
-                                                    egui::epaint::StrokeKind::Middle,
-                                                );
-                                            }
+                                            let ghost_rect = Rect::from_min_max(
+                                                Pos2::new(ghost_x_start, layer_y + 4.0),
+                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
+                                            );
+                                            painter.rect_stroke(
+                                                ghost_rect,
+                                                4.0,
+                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
+                                                egui::epaint::StrokeKind::Middle,
+                                            );
                                         }
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -845,10 +827,9 @@ pub fn render_canvas(
                                     // Only check overlap if mouse is within timeline bounds
                                     if hover_pos.y >= timeline_rect.min.y {
                                         for &child_idx in child_order.iter() {
-                                            if let Some(child_uuid) = comp.children.get(child_idx) {
-                                                let attrs = comp.children_attrs.get(child_uuid);
-                                                let child_start = attrs.and_then(|a| Some(a.get_i32("start").unwrap_or(0))).unwrap_or(0);
-                                                let child_end = attrs.and_then(|a| Some(a.get_i32("end").unwrap_or(0))).unwrap_or(0);
+                                            if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
+                                                let child_start = attrs.get_i32("start").unwrap_or(0);
+                                                let child_end = attrs.get_i32("end").unwrap_or(0);
 
                                                 // Get precomputed row for this layer
                                                 let child_row = layer_rows.get(&child_idx).copied().unwrap_or(0);
@@ -931,14 +912,15 @@ pub fn render_canvas(
 
                         if let Some(idx) = clicked_layer {
                             let modifiers = ui.input(|i| i.modifiers);
-                            if let Some(clicked_uuid) = comp.children.get(idx).cloned() {
+                            if let Some((clicked_uuid, _attrs)) = comp.children.get(idx) {
+                                let children_uuids = comp.children_uuids_vec();
                                 let (selection, anchor) = compute_layer_selection(
                                     &comp.layer_selection,
                                     comp.layer_selection_anchor.clone(),
-                                    clicked_uuid,
+                                    *clicked_uuid,
                                     idx,
                                     modifiers,
-                                    &comp.children,
+                                    &children_uuids,
                                 );
                                 dispatch(AppEvent::CompSelectionChanged {
                                     comp_uuid: comp_id,
