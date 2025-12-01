@@ -122,7 +122,7 @@ IMPORTSNT: All attributes below we're moving to Comp.attr, Project.attr, etc, fo
 
 ```rust
 struct Comp {
-    attr: Attrs,
+    attr: Attrs {
       uuid: Uuid,                // uuid::Uuid - 16 bytes fixed, Copy trait
       name: String,
       comp_type: CompType,       // Normal (container) | File (image or video)
@@ -140,33 +140,32 @@ struct Comp {
       compose_blend_mode: BlendMode,
       // State:
       selection: Vec<Uuid>       // This comp's internal selection, just like in Project, but it's different selection. Each Comp can has it's own selection.
+    }
+
+    fn get_frame(&self, frame_num): calls either compose() or load()
+      - check for dirty flag
+        - if dirty: 
+          - match self.attr.mode:
+            - file_mode => Frame = loader(frame_num): loads frames from EXR or other formats or video.
+            - normal_mode => Frame = compose(frame_num): gets all the children layers using conversion function calling children comp.get_frame(frame).
+          - cache.set(keys=[uuid, frame], Frame)
+          - clear dirty flag
+      - Result = cache.get(keys=[uuid, frame])
+      - Result
+
+	fn comp2local(&self, layer_num, frame_num) -> i32 {
+      - convert this comp's time to children's local time to call it's .get_frame(frame_num)
+    }
+	fn local2comp(&self, layer_num, local_frame_num) -> i32 {
+      - convert children layer's local time to this comp's time (container time)
+    }
+
 }
 ```
 
 Children - это вложенные композиции.
 It should contain functions to map this Comp's frame to a nested Comp's local frame and back (accounting for it's in point and speed and such attributes).
-
-**Ключевые атрибуты Comp:**
-
-- `fps` (Float) - framerate
-- `padding` (UInt) - padding в filename
-- `name` (Str) - display name
-- `format` (Str) - source format description
-
-**Dirty Tracking:**
-- `set()` → marks dirty
-- `is_dirty()` → check flag
-- `clear_dirty()` → after cache update (thread-safe)
-
-**Hashing:**
-- `hash_all()` - полный hash для cache key
-- `hash_filtered(include, exclude)` - selective hash
-- Keys sorted для determinism
-- Floats hashed via `to_bits()`
-
-
-
-
+В режиме File 
 
 Нужно подумать, можно ли как-то сделать Comp трейтом? 
 Или загрузку media трейтом?
@@ -183,13 +182,15 @@ It should contain functions to map this Comp's frame to a nested Comp's local fr
 ```rust
 struct Project {
     // Все атрибуты также кочуют в Attrs: Project.attr.get()/set()
-    media: Arc<RwLock<HashMap<Uuid, Comp>>>,   // uuid -> Comp (Uuid as key)
-    order: Vec<Uuid>,                          // project list order (user can reorder clips and comps in the window with drag'n'drop, this is pure cosmetical action)
-    selection: Vec<Uuid>,                      // selected UUIDs
-    active: Option<Uuid>,                      // active comp UUID
-    cache_manager: Arc<CacheManager>,
-    global_cache: Arc<GlobalFrameCache>,       // Global Cache should be HashMap<UUID:[Frames]>, then removal is trivial.
-    compositor: RefCell<CompositorType>,
+    attr: Attrs {
+      media: Arc<RwLock<HashMap<Uuid, Comp>>>,   // uuid -> Comp (Uuid as key)
+      order: Vec<Uuid>,                          // project list order (user can reorder clips and comps in the window with drag'n'drop, this is pure cosmetical action)
+      selection: Vec<Uuid>,                      // selected UUIDs
+      active: Option<Uuid>,                      // active comp UUID
+      cache_manager: Arc<CacheManager>,
+      global_cache: Arc<GlobalFrameCache>,       // Global Cache should be HashMap<UUID:[Frames]>, then removal is trivial.
+      compositor: RefCell<CompositorType>,
+    }
 }
 ```
 
@@ -234,11 +235,12 @@ struct Player {
 
 ----------
 
-Project
-Timeline
-Viewport
-Encoder
-Preferences
+Project - содержит клипы
+Timeline - control layers with drag'n'drop, layer controls, playback controls. Это по сути дисплей и контроллер.
+Viewport - Отображает Frame с OpenGL.
+Attribute Editor - показывает атрибуты текущего выделенного обьекта в Timeline (только в timeline!)
+Encoder - принимает Frames, кодирует mp4/mov и другие
+Preferences - Окно с деревом настроек (tree view dialog)
 
 Все части изолированы друг от друга и общаются исключительно через EventBus.
 Они настолько изолированы что должны существовать вообще отдельно, как панель без основного приложения.
