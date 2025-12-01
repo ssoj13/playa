@@ -2,7 +2,7 @@
 
 ## Overview
 
-PLAYA - профессиональный VFX-плеер для просмотра и композитинга image sequences и видео.
+PLAYA - плеер для просмотра и композитинга image sequences и видео.
 Rust + egui + OpenGL. Cross-platform (Windows, macOS, Linux).
 
 ---
@@ -16,6 +16,7 @@ Rust + egui + OpenGL. Cross-platform (Windows, macOS, Linux).
 ├─────────────────────────────────────────────────────────────────┤
 │  Player          - playback engine (JKL, frame-accurate)        │
 │  EventBus        - async event distribution                     │
+│  Attrs           - serializable hashmap of variants             │
 │  Workers         - work-stealing thread pool                    │
 │  GlobalFrameCache- LRU cache с memory tracking                  │
 │  Shaders         - GPU shader manager (viewport)                │
@@ -24,6 +25,41 @@ Rust + egui + OpenGL. Cross-platform (Windows, macOS, Linux).
 │  AppSettings     - persistent user preferences                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+
+
+### Attrs (entities/attrs.rs)
+
+Generic key-value storage для entity metadata. Thread-safe dirty tracking.
+
+```rust
+struct Attrs {
+    get/set/del(String, Val): getter/setter triggering dirty flag
+    _hash() - hidden functions. Hash returns hash of all nested attributes.
+    _data: HashMap<String, AttrValue>,
+    dirty: AtomicBool,  // "Attrs changed" flag
+}
+
+enum AttrValue {
+    Bool(bool),
+    Str(String),
+    Int(i32),
+    UInt(u32),
+    Float(f32),
+    Vec3([f32; 3]),
+    Vec4([f32; 4]),
+    Mat3([[f32; 3]; 3]),
+    Mat4([[f32; 4]; 4]),
+    Arc<Atomic*> types (need an advice here)
+    Json(String),  // Type for JSON-encoded strings, nested JSON serializer for nested HashMaps, Lists and such. Special case in get/set?
+}
+```
+
+Attrs **Используется в:**:
+  - Frame, Comp, Layer, Project для всех их персистентных атрибутов, т.к. Attrs рекурсивно сериализуется в JSON:
+  - PlayaApp содержит по сути большой HashMap в котором в ветках <Project:HashMap>, <Timeline:HashMap> содержатся настройки всех частей приложения, которые PlayaApp сохраняет и восстанавливает при старте.
+
+
 
 ### Frame (entities/frame.rs)
 Единица изображения. Immutable pixel buffer + metadata.
@@ -48,127 +84,70 @@ struct Frame {
 - `crop_copy()` - resize с alignment
 - `resize()` - bilinear resample
 
+
+
+
+### Node (entities/node.rs)
+Node is basically a struct supporting Node trait:
+
+  - Node.attr.* is a persistent Attrs struct and some methods to work with them
+  - Node.data is another instance of Attrs, not-serializable, discardable transient data storage, can be safely discarded since it's refreshing every compute.
+  - new_node() constructor using init_node_schema() method to build initial attributes
+  - new_comp() constructor that creates default attributes for the Comp type
+  - new_project() does the same for project, etc, etc.
+  - specialized compute() method that processed input/output attributes in self.attr
+  - this struct is persistent with serialization to JSON and from JSON via Node.attr
+  - Examples:
+    - Node.attr.get("something");
+    - Node.attr.set("something", variant);
+    - Node.data.set("tmp_data", data);
+
+
 ### Comp (entities/comp.rs)
-Композиция = timeline + layers. Source of truth для play range и current frame.
+Comp is a specialized Node with a schema of Nested Comp: that's a container that can contain other Comps and Comp-compatible entities (actually UUIDs to them).
+It's schema may include:
+  - inputs: hashmap of <attr_name: (uuid, name), ..] referring to nodes and attributes in Project.data Hashmap
+  - outputs: HashMap of <name:data>
+  - internal variables (initialized with init_comp() for instance) like:
+    - frame_start, frame_end (original comp range, usually 0..num_frames, but can be different for file sequences that might start even from negative frames: -20..170) or for nested comps that can be moved to the negative domain for example.
+    - trim_start, trim_end: trim values for nested Comp (in local comp time)
+    - speed
+  - Customized compute() that collects inputs (children comps that recursively collect inputs too) and performs various functions over them, producing a Frame in the output attribute (do we have overrides in Rust?)
+  - We should be able to run compute(ctx) from multiple threads in different contexts simultaneously for true multithreading. We have Project::Workers thread pool for this.
+  - Customized set/get_cache(uuids, frame, &Frame) function that retrieves or puts resulting frame into the global project cache
+  - Comp keeps it's children in Attrs, in initialized Attrs.get("children") method and it's just a list of tuples.
+  - Tuples, because we keep Tuple(uuid, Attrs) - attributes of this "layer" inside of this Comp: in, speed, trim_in, trim_out
+
+IMPORTSNT: All attributes below we're moving to Comp.attr, Project.attr, etc, for ALL PANELS AND ENTITIES! Attrs is out new state serialization system!
 
 ```rust
 struct Comp {
-    uuid: Uuid,                // uuid::Uuid - 16 bytes fixed, Copy trait
-    name: String,
-    comp_type: CompType,       // SequenceDir | VideoFile | Nested
-    layers: Vec<Layer>,        // child compositions
-    current_frame: i32,        // current playhead position
-    attrs: AttrBag,            // width, height, fps, play_start, play_end, etc.
-    dirty: Arc<AtomicBool>,    // cache invalidation flag
-}
-
-struct Layer {
-    child_uuid: Uuid,          // reference to child Comp
-    start: i32,                // offset in parent timeline
-    play_start: i32,           // visible range start (trim)
-    play_end: i32,             // visible range end (trim)
-    solo: bool,
-    mute: bool,
-    opacity: f32,
-    blend_mode: BlendMode,
-}
-```
-
-**CompType:**
-- `SequenceDir` - image sequence (EXR, PNG, JPG, TIFF, ...)
-- `VideoFile` - video via FFmpeg
-- `Nested` - composition containing other comps
-
-
-
-
-
-
-
-
-
-
-### Project (entities/project.rs)
-Контейнер всех Comp + cache management.
-
-```rust
-struct Project {
-    media: Arc<RwLock<HashMap<Uuid, Comp>>>,  // uuid -> Comp (Uuid as key)
-    comps_order: Vec<Uuid>,                    // playlist order
-    selection: Vec<Uuid>,                      // selected UUIDs
-    active: Option<Uuid>,                      // active comp UUID
-    cache_manager: Arc<CacheManager>,
-    global_cache: Arc<GlobalFrameCache>,
-    compositor: RefCell<CompositorType>,
+    attr: Attrs,
+      uuid: Uuid,                // uuid::Uuid - 16 bytes fixed, Copy trait
+      name: String,
+      comp_type: CompType,       // Normal (container) | File (image or video)
+      frame: i32,                // current playhead position
+      width, height, fps
+      in, out                    // in and out of any Comp is positive or negative i32, constraint: in is ALWAYS lesser than out.
+      trim_in, trim_out          // this is basically a "play range" of this comp, time constraint. Nothing is played or cached outside these bounds, cache is getting freed when bounds are changing. in local frames, if in=0 and out=100, trim_in=20 and trim_out=80, it mean for the "outer world" the start of this comp is trim_in and end is trim_out. By default they're matching in and out and changing with in and out unless they're not matching, i.e. when you try to change in and out you see trim_in and trim_out are differ so we don't touch them.
+      dirty: Arc<AtomicBool>,    // cache invalidation flag, this flag is on when something been changed in attrs. Need a mechanism to update it from Comp.attr.set("some_attr", val) -> Comp.attr.dirty = true.
+      // DAG relations:
+      children: Vec<Tuple(src_uuid, children_attr)>  // nested child compositions: uuid of a source comp and it's children_attr: position, rotation, scale (Vec3), visibility, in (on what frame it starts in this Comp), speed=1.0, length = ? (calculated from internal src_uuid trim_out-trim_in * speed)
+      // Compositing:
+      compose_solo: bool,
+      compose_mute: bool,
+      compose_opacity: f32,
+      compose_blend_mode: BlendMode,
+      // State:
+      selection: Vec<Uuid>       // This comp's internal selection, just like in Project, but it's different selection. Each Comp can has it's own selection.
 }
 ```
 
-
-
-
-
-
-
-### Player (player.rs)
-Playback engine с frame-accurate timing.
-
-```rust
-struct Player {
-    project: Project,
-    active_comp: Option<Uuid>,  // Uuid is Copy, no clone needed
-    is_playing: bool,
-    fps_base: f32,              // persistent base FPS
-    fps_play: f32,              // current playback FPS (resets on stop)
-    loop_enabled: bool,
-    play_direction: f32,        // 1.0 forward, -1.0 backward
-    last_frame_time: Option<Instant>,
-}
-```
-
-**JKL Controls:**
-- `J` - jog backward (1x → 2x → 4x → 8x...)
-- `K` - stop
-- `L` - jog forward (1x → 2x → 4x → 8x...)
-- Direction change resets speed to 1x
-
-**FPS Presets:** 1, 2, 4, 8, 12, 24, 30, 60, 120, 240, 480, 960
-
-
-
-
-
-
-
-
-
-### Attrs (entities/attrs.rs)
-
-Generic key-value storage для entity metadata. Thread-safe dirty tracking.
-
-```rust
-struct Attrs {
-    map: HashMap<String, AttrValue>,
-    set/get(String): getter/setter triggering dirty flag
-    dirty: AtomicBool,  // cache invalidation flag
-}
-
-enum AttrValue {
-    Bool(bool),
-    Str(String),
-    Int(i32),
-    UInt(u32),
-    Float(f32),
-    Vec3([f32; 3]),
-    Vec4([f32; 4]),
-    Mat3([[f32; 3]; 3]),
-    Mat4([[f32; 4]; 4]),
-}
-```
-
-**Используется в:** Frame, Comp, Layer, Project.
+Children - это вложенные композиции.
+It should contain functions to map this Comp's frame to a nested Comp's local frame and back (accounting for it's in point and speed and such attributes).
 
 **Ключевые атрибуты Comp:**
-- `width`, `height` (UInt) - размеры
+
 - `fps` (Float) - framerate
 - `padding` (UInt) - padding в filename
 - `name` (Str) - display name
@@ -189,8 +168,81 @@ enum AttrValue {
 
 
 
+Нужно подумать, можно ли как-то сделать Comp трейтом? 
+Или загрузку media трейтом?
+По умолчанию Comp - просто контейнер, он не предполагает загрузки файлов.
+Но мне также нужны Comp которые читать media files.
+Как лучше сделать?
 
 
+
+
+### Project (entities/project.rs)
+Контейнер всех Comp, Clips + cache management.
+
+```rust
+struct Project {
+    // Все атрибуты также кочуют в Attrs: Project.attr.get()/set()
+    media: Arc<RwLock<HashMap<Uuid, Comp>>>,   // uuid -> Comp (Uuid as key)
+    order: Vec<Uuid>,                          // project list order (user can reorder clips and comps in the window with drag'n'drop, this is pure cosmetical action)
+    selection: Vec<Uuid>,                      // selected UUIDs
+    active: Option<Uuid>,                      // active comp UUID
+    cache_manager: Arc<CacheManager>,
+    global_cache: Arc<GlobalFrameCache>,       // Global Cache should be HashMap<UUID:[Frames]>, then removal is trivial.
+    compositor: RefCell<CompositorType>,
+}
+```
+
+
+
+
+
+
+
+### Player (player.rs)
+Playback engine с frame-accurate timing.
+
+```rust
+struct Player {
+    attr: Attrs {
+      project: &Project,
+      active_comp: Option<Uuid>,  // Uuid is Copy, no clone needed
+      is_playing: bool,
+      fps_base: f32,              // persistent base FPS
+      fps_play: f32,              // current playback FPS (resets on stop)
+      loop_enabled: bool,
+      play_direction: f32,        // 1.0 forward, -1.0 backward
+      last_frame_time: Option<Instant>,
+    }
+}
+```
+
+**JKL Controls:**
+- `J` - jog backward (1x → 2x → 4x → 8x...)
+- `K` - stop
+- `L` - jog forward (1x → 2x → 4x → 8x...)
+- Direction change resets speed to 1x
+
+**FPS Presets:** 1, 2, 4, 8, 12, 24, 30, 60, 120, 240, 480, 960
+
+
+
+### Attribute Editor (widgets/ar/ae_ui.rs)
+Редактор атрибутов. В зависимости от типа атрибута строит интерфейс для работы с атрибутами: текстовые поле, цифры, слайдер, color picker, combobox, ещё что-то.
+Изменения атрибутов сразу записываются в выбранные ноды.
+
+
+----------
+
+Project
+Timeline
+Viewport
+Encoder
+Preferences
+
+Все части изолированы друг от друга и общаются исключительно через EventBus.
+Они настолько изолированы что должны существовать вообще отдельно, как панель без основного приложения.
+У них есть стандартизированные интерфейсы для посылки/приёма сигнала и данных
 
 
 
