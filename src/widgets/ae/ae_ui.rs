@@ -231,6 +231,9 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
         (_, AttrValue::Mat4(_)) => {
             ui.label("(4x4 matrix - not editable)");
         }
+        (_, AttrValue::Json(s)) => {
+            ui.label(format!("JSON: {} chars", s.len()));
+        }
     }
     });
     changed |= scope_changed;

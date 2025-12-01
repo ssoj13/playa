@@ -1,4 +1,5 @@
 use crate::cache_man::CacheManager;
+use crate::entities::Project;
 use crate::entities::frame::{Frame, PixelFormat};
 use crate::player::Player;
 use crate::widgets::viewport::ViewportState;
@@ -28,6 +29,7 @@ impl StatusBar {
         ctx: &egui::Context,
         frame: Option<&Frame>,
         player: &mut Player,
+        project: &Project,
         viewport_state: &ViewportState,
         render_time_ms: f32,
         cache_manager: Option<&Arc<CacheManager>>,
@@ -111,7 +113,7 @@ impl StatusBar {
 
                 // Comp/Clip range info: <start | play_start <current_frame> play_end | end>
                 if let Some(comp_uuid) = &player.active_comp {
-                    let media = player.project.media.read().unwrap();
+                    let media = project.media.read().unwrap();
                     if let Some(comp) = media.get(comp_uuid) {
                         ui.separator();
                         let start = comp.start();

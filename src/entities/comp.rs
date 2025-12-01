@@ -443,6 +443,90 @@ impl Comp {
         (clamped_start, clamped_end)
     }
 
+    // ===== Time Conversion Methods =====
+
+    /// Convert parent comp frame to child's local frame.
+    ///
+    /// Takes into account:
+    /// - child's start position in parent timeline
+    /// - child's speed multiplier
+    ///
+    /// # Arguments
+    /// * `child_uuid` - UUID of child layer (instance UUID)
+    /// * `comp_frame` - Frame number in parent comp timeline
+    ///
+    /// # Returns
+    /// Local frame number in child's coordinate system, or None if child not found
+    pub fn comp2local(&self, child_uuid: Uuid, comp_frame: i32) -> Option<i32> {
+        let attrs = self.children_attrs.get(&child_uuid)?;
+        let child_start = attrs.get_i32("start").unwrap_or(0);
+        let speed = attrs.get_float("speed").unwrap_or(1.0);
+
+        // Offset from child's start position
+        let offset = comp_frame - child_start;
+
+        // Apply speed
+        let local_frame = if speed != 0.0 && speed != 1.0 {
+            (offset as f32 / speed).round() as i32
+        } else {
+            offset
+        };
+
+        Some(local_frame)
+    }
+
+    /// Convert child's local frame to parent comp frame.
+    ///
+    /// Inverse of comp2local().
+    ///
+    /// # Arguments
+    /// * `child_uuid` - UUID of child layer (instance UUID)
+    /// * `local_frame` - Frame number in child's local timeline
+    ///
+    /// # Returns
+    /// Frame number in parent comp timeline, or None if child not found
+    pub fn local2comp(&self, child_uuid: Uuid, local_frame: i32) -> Option<i32> {
+        let attrs = self.children_attrs.get(&child_uuid)?;
+        let child_start = attrs.get_i32("start").unwrap_or(0);
+        let speed = attrs.get_float("speed").unwrap_or(1.0);
+
+        // Apply speed and add offset
+        let comp_frame = child_start + (local_frame as f32 * speed).round() as i32;
+
+        Some(comp_frame)
+    }
+
+    /// Get source comp's frame for given parent frame.
+    ///
+    /// Combines comp2local with source comp lookup.
+    /// Used in compose() for recursive frame fetching.
+    ///
+    /// # Returns
+    /// (source_uuid, source_frame) or None if child not found
+    pub fn resolve_source_frame(
+        &self,
+        child_uuid: Uuid,
+        comp_frame: i32,
+        project: &super::Project,
+    ) -> Option<(Uuid, i32)> {
+        let attrs = self.children_attrs.get(&child_uuid)?;
+
+        // Get source UUID
+        let source_uuid_str = attrs.get_str("uuid")?;
+        let source_uuid = Uuid::parse_str(source_uuid_str).ok()?;
+
+        // Get source comp to find its start
+        let source = project.get_comp(source_uuid)?;
+
+        // Convert to local frame
+        let local_frame = self.comp2local(child_uuid, comp_frame)?;
+
+        // Map to source comp's timeline
+        let source_frame = source.start() + local_frame;
+
+        Some((source_uuid, source_frame))
+    }
+
     /// Number of frames in full composition (not limited by play_area)
     pub fn frame_count(&self) -> i32 {
         let start = self.start();
@@ -1036,12 +1120,12 @@ impl Comp {
                     continue;
                 }
 
-                // Map parent frame to source frame: anchor at source.start()
-                let offset = frame_idx - child_start;
-                if offset < 0 || offset >= duration {
+                // Convert parent comp frame to child's local frame using comp2local
+                let local_frame = self.comp2local(*child_uuid, frame_idx).unwrap_or(0);
+                if local_frame < 0 || local_frame >= duration {
                     continue;
                 }
-                let source_frame = source.start() + offset;
+                let source_frame = source.start() + local_frame;
 
                 // Recursively get frame from source (Clip or Comp)
                 if let Some(frame) = source.get_frame(source_frame, project, use_gpu) {

@@ -1,6 +1,7 @@
 use eframe::egui;
 use uuid::Uuid;
 
+use crate::entities::Project;
 use crate::events::AppEvent;
 use crate::player::Player;
 use crate::widgets::project::project::ProjectActions;
@@ -13,7 +14,7 @@ fn create_image_dialog(title: &str) -> rfd::FileDialog {
 }
 
 /// Render project window (dock tab): Unified list of Clips & Compositions
-pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
+pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> ProjectActions {
     let mut actions = ProjectActions::new();
 
     // Full-rect hover tracking
@@ -66,7 +67,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
             ui.set_min_height(scroll_height);
 
             // Collect all comps to render (unified order)
-            let all_comps: Vec<Uuid> = player.project.comps_order.clone();
+            let all_comps: Vec<Uuid> = project.comps_order.clone();
 
             if all_comps.is_empty() {
                 ui.add_space(20.0);
@@ -80,14 +81,13 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                 return;
             }
 
-            let media = player.project.media.read().unwrap();
+            let media = project.media.read().unwrap();
             for comp_uuid in &all_comps {
                 let comp = match media.get(comp_uuid) {
                     Some(c) => c,
                     None => continue,
                 };
-                let clicked_idx = match player
-                    .project
+                let clicked_idx = match project
                     .comps_order
                     .iter()
                     .position(|u| u == comp_uuid)
@@ -96,8 +96,8 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                     None => continue,
                 };
 
-                let is_active = player.project.active.as_ref() == Some(comp_uuid);
-                let is_selected = player.project.selection.iter().any(|u| u == comp_uuid);
+                let is_active = project.active.as_ref() == Some(comp_uuid);
+                let is_selected = project.selection.iter().any(|u| u == comp_uuid);
                 let bg_color = if is_selected {
                     ui.style().visuals.selection.bg_fill
                 } else {
@@ -241,9 +241,9 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                 let modifiers = ui.input(|i| i.modifiers);
                 if response.clicked() {
                     let (sel, anchor) = compute_selection(
-                        &player.project.comps_order,
-                        &player.project.selection,
-                        player.project.selection_anchor,
+                        &project.comps_order,
+                        &project.selection,
+                        project.selection_anchor,
                         clicked_idx,
                         modifiers,
                     );
@@ -254,9 +254,9 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player) -> ProjectActions {
                 }
                 if response.double_clicked() {
                     let (sel, anchor) = compute_selection(
-                        &player.project.comps_order,
-                        &player.project.selection,
-                        player.project.selection_anchor,
+                        &project.comps_order,
+                        &project.selection,
+                        project.selection_anchor,
                         clicked_idx,
                         modifiers,
                     );

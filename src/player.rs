@@ -1,5 +1,9 @@
 //! Playback engine with frame-accurate timing and JKL controls
 //!
+//! **Architecture**: Player does NOT own Project. It receives `&mut Project`
+//! when methods need to access project data. This eliminates duplication
+//! (PlayaApp.project is the single source of truth).
+//!
 //! **Why**: Professional playback requires:
 //! - Frame-accurate timing (not wall-clock)
 //! - JKL shuttle controls (J=reverse, K=pause, L=forward)
@@ -25,11 +29,9 @@
 //! `update()` called at 60Hz, advances frame index based on FPS.
 //! Handles sequence boundaries (loop or stop at end).
 
-use crate::entities::Comp;
 use crate::entities::Project;
 use crate::entities::frame::Frame;
 use log::{debug, info};
-use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -39,9 +41,11 @@ const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0,
 /// Frame step size for Shift+Arrow and Shift+PageUp/PageDown
 pub const FRAME_JUMP_STEP: i32 = 25;
 
-/// Playback state manager with new architecture
+/// Playback state manager (does NOT own Project)
+///
+/// Player manages playback state only. Project is passed by reference
+/// to methods that need it. PlayaApp owns the single Project instance.
 pub struct Player {
-    pub project: Project,
     pub active_comp: Option<Uuid>, // UUID of active comp
     pub is_playing: bool,
     pub fps_base: f32, // Base FPS (persistent setting)
@@ -54,12 +58,11 @@ pub struct Player {
 }
 
 impl Player {
-    /// Create new player with empty project and defaults
-    pub fn new(cache_manager: Arc<crate::cache_man::CacheManager>) -> Self {
-        info!("Player initialized with Comp-based architecture");
+    /// Create new player with defaults (no Project - that's in PlayaApp)
+    pub fn new() -> Self {
+        info!("Player initialized (project-less architecture)");
 
         Self {
-            project: crate::entities::Project::new(cache_manager),
             active_comp: None,
             is_playing: false,
             fps_base: 24.0,
@@ -71,38 +74,17 @@ impl Player {
         }
     }
 
-    /// Helper: get active comp cloned
-    fn active_comp(&self) -> Option<Comp> {
-        if let Some(uuid) = self.active_comp {
-            self.project.get_comp(uuid)
-        } else {
-            None
-        }
-    }
-
-    /// Helper: modify active comp with closure and update back to project
-    fn modify_active_comp<F>(&mut self, f: F)
-    where
-        F: FnOnce(&mut Comp),
-    {
-        if let Some(uuid) = self.active_comp {
-            if let Some(mut comp) = self.project.get_comp(uuid) {
-                f(&mut comp);
-                self.project.update_comp(comp);
-            }
-        }
-    }
-
     /// Get total frames of active comp (play_frame_count - work area)
-    pub fn total_frames(&self) -> i32 {
-        self.active_comp()
+    pub fn total_frames(&self, project: &Project) -> i32 {
+        self.active_comp
+            .and_then(|uuid| project.get_comp(uuid))
             .map(|c| c.play_frame_count())
             .unwrap_or(0)
     }
 
     /// Get current play range of active comp (start, end), or (0, 0) if none.
-    pub fn play_range(&self) -> (i32, i32) {
-        if let Some(comp) = self.active_comp() {
+    pub fn play_range(&self, project: &Project) -> (i32, i32) {
+        if let Some(comp) = self.active_comp.and_then(|uuid| project.get_comp(uuid)) {
             comp.play_range(true)
         } else {
             (0, 0)
@@ -110,59 +92,62 @@ impl Player {
     }
 
     /// Set play range of active comp in global comp frame indices (inclusive).
-    pub fn set_play_range(&mut self, start: i32, end: i32) {
-        self.modify_active_comp(|comp| {
-            if comp.end() < comp.start() {
-                return;
-            }
+    pub fn set_play_range(&mut self, start: i32, end: i32, project: &mut Project) {
+        if let Some(uuid) = self.active_comp {
+            project.modify_comp(uuid, |comp| {
+                if comp.end() < comp.start() {
+                    return;
+                }
 
-            let comp_start = comp.start();
-            let comp_end = comp.end();
+                let comp_start = comp.start();
+                let comp_end = comp.end();
 
-            // Clamp requested range to comp bounds
-            let clamped_start = start.clamp(comp_start, comp_end);
-            let clamped_end = end.clamp(comp_start, comp_end);
-            let (final_start, final_end) = if clamped_end < clamped_start {
-                (clamped_end, clamped_start)
-            } else {
-                (clamped_start, clamped_end)
-            };
+                // Clamp requested range to comp bounds
+                let clamped_start = start.clamp(comp_start, comp_end);
+                let clamped_end = end.clamp(comp_start, comp_end);
+                let (final_start, final_end) = if clamped_end < clamped_start {
+                    (clamped_end, clamped_start)
+                } else {
+                    (clamped_start, clamped_end)
+                };
 
-            comp.set_comp_play_start(final_start);
-            comp.set_comp_play_end(final_end);
+                comp.set_comp_play_start(final_start);
+                comp.set_comp_play_end(final_end);
 
-            // Ensure current_frame lies inside new play range
-            let (visible_start, visible_end) = comp.play_range(true);
-            let current = comp.current_frame;
-            if current < visible_start || current > visible_end {
-                comp.set_current_frame(visible_start);
-            }
-        });
+                // Ensure current_frame lies inside new play range
+                let (visible_start, visible_end) = comp.play_range(true);
+                let current = comp.current_frame;
+                if current < visible_start || current > visible_end {
+                    comp.set_current_frame(visible_start);
+                }
+            });
+        }
     }
 
-
-
     /// Get current frame index from active comp
-    pub fn current_frame(&self) -> i32 {
-        self.active_comp().map(|c| c.current_frame).unwrap_or(0)
+    pub fn current_frame(&self, project: &Project) -> i32 {
+        self.active_comp
+            .and_then(|uuid| project.get_comp(uuid))
+            .map(|c| c.current_frame)
+            .unwrap_or(0)
     }
 
     /// Get current frame as owned Frame (Composed)
     /// Uses GPU compositor (main thread only)
-    pub fn get_current_frame(&mut self) -> Option<Frame> {
-        let frame_idx = self.current_frame();
+    pub fn get_current_frame(&self, project: &Project) -> Option<Frame> {
         let comp_uuid = self.active_comp?;
-        let comp = self.project.get_comp(comp_uuid)?;
-        comp.get_frame(frame_idx, &self.project, true) // use_gpu=true for main thread display
+        let comp = project.get_comp(comp_uuid)?;
+        let frame_idx = comp.current_frame;
+        comp.get_frame(frame_idx, project, true) // use_gpu=true for main thread display
     }
 
     /// Switch to a different composition by UUID.
     ///
     /// Updates active_comp and emits CurrentFrameChanged event.
     /// Stops playback during transition.
-    pub fn set_active_comp(&mut self, comp_uuid: Uuid) {
+    pub fn set_active_comp(&mut self, comp_uuid: Uuid, project: &mut Project) {
         // Check if comp exists in media
-        if !self.project.contains_comp(comp_uuid) {
+        if !project.contains_comp(comp_uuid) {
             log::warn!("Comp {} not found, cannot activate", comp_uuid);
             return;
         }
@@ -172,10 +157,10 @@ impl Player {
 
         // Switch to new comp
         self.active_comp = Some(comp_uuid);
-        self.project.active = Some(comp_uuid);
+        project.active = Some(comp_uuid);
 
         // Recalculate bounds and emit CurrentFrameChanged event (triggers frame loading)
-        self.project.modify_comp(comp_uuid, |comp| {
+        project.modify_comp(comp_uuid, |comp| {
             comp.on_activate();
             let frame = comp.current_frame;
             comp.set_current_frame(frame);
@@ -183,15 +168,15 @@ impl Player {
         });
 
         // Keep selection in sync: ensure active is included and ordered
-        self.project.selection.retain(|u| *u != comp_uuid);
-        self.project.selection.push(comp_uuid);
+        project.selection.retain(|u| *u != comp_uuid);
+        project.selection.push(comp_uuid);
     }
 
 
 
     /// Update playback state
-    pub fn update(&mut self) {
-        if !self.is_playing || self.total_frames() == 0 {
+    pub fn update(&mut self, project: &mut Project) {
+        if !self.is_playing || self.total_frames(project) == 0 {
             return;
         }
 
@@ -208,7 +193,7 @@ impl Player {
             let frame_duration = 1.0 / self.fps_play;
 
             if elapsed >= frame_duration {
-                self.advance_frame();
+                self.advance_frame(project);
                 self.last_frame_time = Some(now);
             }
         } else {
@@ -217,13 +202,13 @@ impl Player {
     }
 
     /// Advance to next frame
-    fn advance_frame(&mut self) {
-        let total_frames = self.total_frames();
+    fn advance_frame(&mut self, project: &mut Project) {
+        let total_frames = self.total_frames(project);
         if total_frames == 0 {
             return;
         }
 
-        let (play_start, play_end) = self.play_range();
+        let (play_start, play_end) = self.play_range(project);
         if play_end < play_start {
             return;
         }
@@ -234,47 +219,49 @@ impl Player {
 
         // Closure returns whether playback should stop
         let mut should_stop = false;
-        self.modify_active_comp(|comp| {
-            let mut current = comp.current_frame;
-            if current < play_start || current > play_end {
-                current = if play_direction >= 0.0 {
-                    play_start
-                } else {
-                    play_end
-                };
-                comp.set_current_frame(current);
-            }
+        if let Some(uuid) = self.active_comp {
+            project.modify_comp(uuid, |comp| {
+                let mut current = comp.current_frame;
+                if current < play_start || current > play_end {
+                    current = if play_direction >= 0.0 {
+                        play_start
+                    } else {
+                        play_end
+                    };
+                    comp.set_current_frame(current);
+                }
 
-            if play_direction > 0.0 {
-                // Forward
-                let next = current + 1;
-                if next > play_end {
-                    if loop_enabled {
-                        debug!("Frame loop: {} -> {}", current, play_start);
-                        comp.set_current_frame(play_start);
+                if play_direction > 0.0 {
+                    // Forward
+                    let next = current + 1;
+                    if next > play_end {
+                        if loop_enabled {
+                            debug!("Frame loop: {} -> {}", current, play_start);
+                            comp.set_current_frame(play_start);
+                        } else {
+                            debug!("Reached play range end, stopping");
+                            comp.set_current_frame(play_end);
+                            should_stop = true;
+                        }
                     } else {
-                        debug!("Reached play range end, stopping");
-                        comp.set_current_frame(play_end);
-                        should_stop = true;
+                        comp.set_current_frame(next);
                     }
                 } else {
-                    comp.set_current_frame(next);
-                }
-            } else {
-                // Backward
-                if current <= play_start {
-                    if loop_enabled {
-                        debug!("Frame loop: {} -> {}", current, play_end);
-                        comp.set_current_frame(play_end);
+                    // Backward
+                    if current <= play_start {
+                        if loop_enabled {
+                            debug!("Frame loop: {} -> {}", current, play_end);
+                            comp.set_current_frame(play_end);
+                        } else {
+                            debug!("Reached play range start, stopping");
+                            should_stop = true;
+                        }
                     } else {
-                        debug!("Reached play range start, stopping");
-                        should_stop = true;
+                        comp.set_current_frame(current - 1);
                     }
-                } else {
-                    comp.set_current_frame(current - 1);
                 }
-            }
-        });
+            });
+        }
 
         if should_stop {
             self.is_playing = false;
@@ -285,7 +272,7 @@ impl Player {
     pub fn stop(&mut self) {
         if self.is_playing {
             self.is_playing = false;
-            debug!("Playback stopped at frame {}", self.current_frame());
+            debug!("Playback stopped");
             self.last_frame_time = None;
             // Reset fps_play to fps_base on stop
             self.fps_play = self.fps_base;
@@ -293,22 +280,26 @@ impl Player {
     }
 
     /// Rewind to start
-    pub fn to_start(&mut self) {
-        let (start, _) = self.play_range();
+    pub fn to_start(&mut self, project: &mut Project) {
+        let (start, _) = self.play_range(project);
         debug!("Rewinding to frame {}", start);
-        self.modify_active_comp(|comp| {
-            comp.set_current_frame(start);
-        });
+        if let Some(uuid) = self.active_comp {
+            project.modify_comp(uuid, |comp| {
+                comp.set_current_frame(start);
+            });
+        }
         self.last_frame_time = None;
     }
 
     /// Skip to end
-    pub fn to_end(&mut self) {
-        let (_, end) = self.play_range();
+    pub fn to_end(&mut self, project: &mut Project) {
+        let (_, end) = self.play_range(project);
         debug!("Skipping to end: frame {}", end);
-        self.modify_active_comp(|comp| {
-            comp.set_current_frame(end);
-        });
+        if let Some(uuid) = self.active_comp {
+            project.modify_comp(uuid, |comp| {
+                comp.set_current_frame(end);
+            });
+        }
         self.last_frame_time = None;
     }
 
@@ -317,29 +308,31 @@ impl Player {
     /// Clamps to full comp timeline [comp.start..=comp.end], not play_range,
     /// so scrubbing/timeline can move outside work area while playback still
     /// respects play_range.
-    pub fn set_frame(&mut self, frame: i32) {
-        self.modify_active_comp(|comp| {
-            let comp_start = comp.start();
-            let comp_end = comp.end();
-            if comp_end < comp_start {
-                return;
-            }
-            let clamped = frame.clamp(comp_start, comp_end);
-            comp.set_current_frame(clamped);
-        });
+    pub fn set_frame(&mut self, frame: i32, project: &mut Project) {
+        if let Some(uuid) = self.active_comp {
+            project.modify_comp(uuid, |comp| {
+                let comp_start = comp.start();
+                let comp_end = comp.end();
+                if comp_end < comp_start {
+                    return;
+                }
+                let clamped = frame.clamp(comp_start, comp_end);
+                comp.set_current_frame(clamped);
+            });
+        }
 
         self.last_frame_time = None;
     }
 
     /// Step by N frames (positive = forward, negative = backward)
     /// Respects play range and loop_enabled setting
-    pub fn step(&mut self, count: i32) {
+    pub fn step(&mut self, count: i32, project: &mut Project) {
         if count == 0 {
             return;
         }
 
-        let current = self.current_frame();
-        let (play_start, play_end) = self.play_range();
+        let current = self.current_frame(project);
+        let (play_start, play_end) = self.play_range(project);
 
         // Calculate target frame with saturating arithmetic
         let target = if count > 0 {
@@ -373,9 +366,11 @@ impl Player {
             target
         };
 
-        self.modify_active_comp(|comp| {
-            comp.set_current_frame(final_frame);
-        });
+        if let Some(uuid) = self.active_comp {
+            project.modify_comp(uuid, |comp| {
+                comp.set_current_frame(final_frame);
+            });
+        }
     }
 
     /// Internal helper to start jogging in the specified direction
@@ -457,8 +452,6 @@ impl Player {
 
 impl Default for Player {
     fn default() -> Self {
-        // Create temporary cache manager for default player
-        let cache_manager = Arc::new(crate::cache_man::CacheManager::new(0.75, 2.0));
-        Self::new(cache_manager)
+        Self::new()
     }
 }

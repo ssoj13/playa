@@ -25,6 +25,8 @@ pub enum AttrValue {
     Vec4([f32; 4]),
     Mat3([[f32; 3]; 3]),
     Mat4([[f32; 4]; 4]),
+    /// JSON-encoded nested data (HashMap, Vec, etc.)
+    Json(String),
 }
 
 impl std::hash::Hash for AttrValue {
@@ -41,6 +43,7 @@ impl std::hash::Hash for AttrValue {
             Vec4(arr) => arr.iter().for_each(|f| f.to_bits().hash(state)),
             Mat3(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
             Mat4(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
+            Json(v) => v.hash(state),
         }
     }
 }
@@ -232,6 +235,32 @@ impl Attrs {
     /// Thread-safe via AtomicBool, can be called with &self
     pub fn mark_dirty(&self) {
         self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    // === JSON helpers ===
+
+    /// Get JSON value and deserialize to type T
+    pub fn get_json<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
+        match self.map.get(key) {
+            Some(AttrValue::Json(s)) => serde_json::from_str(s).ok(),
+            _ => None,
+        }
+    }
+
+    /// Serialize value to JSON and store
+    pub fn set_json<T: serde::Serialize>(&mut self, key: impl Into<String>, value: &T) {
+        if let Ok(json) = serde_json::to_string(value) {
+            self.map.insert(key.into(), AttrValue::Json(json));
+            self.dirty.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Get raw JSON string
+    pub fn get_json_str(&self, key: &str) -> Option<&str> {
+        match self.map.get(key) {
+            Some(AttrValue::Json(s)) => Some(s),
+            _ => None,
+        }
     }
 }
 

@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use super::shaders::Shaders;
 use super::{ViewportRenderer, ViewportState};
+use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
 use crate::player::Player;
 
@@ -30,6 +31,7 @@ pub fn render(
     frame: Option<&Frame>,
     error_msg: Option<&String>,
     player: &mut Player,
+    project: &mut Project,
     viewport_state: &mut ViewportState,
     viewport_renderer: &Arc<Mutex<ViewportRenderer>>,
     shader_manager: &mut Shaders,
@@ -92,9 +94,9 @@ pub fn render(
         handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
         if let Some(frame_idx) =
-            viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames())
+            viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames(project))
         {
-            player.set_frame(frame_idx);
+            player.set_frame(frame_idx, project);
         }
 
         let render_start = std::time::Instant::now();
@@ -134,7 +136,7 @@ pub fn render(
                 ui.painter().text(
                     panel_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    format!("Loading frame {}...", player.current_frame()),
+                    format!("Loading frame {}...", player.current_frame(project)),
                     egui::FontId::proportional(24.0),
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
                 );
@@ -143,7 +145,7 @@ pub fn render(
                 ui.painter().text(
                     panel_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    format!("Failed to load frame {}", player.current_frame()),
+                    format!("Failed to load frame {}", player.current_frame(project)),
                     egui::FontId::proportional(24.0),
                     egui::Color32::from_rgb(255, 100, 100),
                 );

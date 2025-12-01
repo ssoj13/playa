@@ -4,6 +4,7 @@
 //! Data flow: UI interactions → EventBus → Player/Project/Comps → next UI frame/render.
 use eframe::egui;
 
+use crate::entities::Project;
 use crate::events::EventBus;
 use crate::player::Player;
 use crate::widgets::timeline::{
@@ -66,6 +67,7 @@ pub fn help_text() -> &'static str {
 pub fn render_timeline_panel(
     ui: &mut egui::Ui,
     player: &mut Player,
+    project: &Project,
     shader_manager: &mut Shaders,
     timeline_state: &mut TimelineState,
     event_bus: &EventBus,
@@ -91,7 +93,7 @@ pub fn render_timeline_panel(
                 timeline_state.last_comp_uuid = Some(comp_uuid);
             }
 
-            let media = player.project.media.read().unwrap();
+            let media = project.media.read().unwrap();
             if let Some(comp) = media.get(&comp_uuid) {
                 let config = TimelineConfig::default();
 
