@@ -5,6 +5,7 @@ mod dialogs;
 mod entities;
 mod event_bus;
 mod global_cache;
+mod main_events;
 mod player;
 mod player_events;
 mod project_events;
@@ -289,9 +290,15 @@ impl PlayaApp {
     fn handle_events(&mut self) {
         use entities::comp_events::*;
 
+        // Deferred actions to execute after event loop
+        let mut deferred_load_project: Option<std::path::PathBuf> = None;
+        let mut deferred_save_project: Option<std::path::PathBuf> = None;
+        let mut deferred_load_sequences: Option<Vec<std::path::PathBuf>> = None;
+        let mut deferred_enqueue_frames: Option<usize> = None;
+
         // Drain all events from the bus
         for event in self.event_bus.drain() {
-            // === Comp events ===
+            // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
                 debug!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
                 self.enqueue_frame_loads_around_playhead(10);
@@ -312,8 +319,52 @@ impl PlayaApp {
                 continue;
             }
 
-            // === App events - handle via dedicated method ===
-            self.handle_app_event(event);
+            // === App events - delegate to main_events module ===
+            if let Some(result) = main_events::handle_app_event(
+                &event,
+                &mut self.player,
+                &mut self.project,
+                &mut self.timeline_state,
+                &mut self.viewport_state,
+                &mut self.settings,
+                &mut self.show_help,
+                &mut self.show_playlist,
+                &mut self.show_settings,
+                &mut self.show_encode_dialog,
+                &mut self.show_attributes_editor,
+                &mut self.encode_dialog,
+                &mut self.is_fullscreen,
+                &mut self.fullscreen_dirty,
+                &mut self.reset_settings_pending,
+            ) {
+                // Process deferred actions from EventResult
+                if let Some(path) = result.load_project {
+                    deferred_load_project = Some(path);
+                }
+                if let Some(path) = result.save_project {
+                    deferred_save_project = Some(path);
+                }
+                if let Some(paths) = result.load_sequences {
+                    deferred_load_sequences = Some(paths);
+                }
+                if let Some(n) = result.enqueue_frames {
+                    deferred_enqueue_frames = Some(n);
+                }
+            }
+        }
+
+        // Execute deferred actions outside the event loop (to avoid borrow conflicts)
+        if let Some(path) = deferred_load_project {
+            self.load_project(path);
+        }
+        if let Some(path) = deferred_save_project {
+            self.save_project(path);
+        }
+        if let Some(paths) = deferred_load_sequences {
+            let _ = self.load_sequences(paths);
+        }
+        if let Some(n) = deferred_enqueue_frames {
+            self.enqueue_frame_loads_around_playhead(n);
         }
     }
 
@@ -367,669 +418,8 @@ impl PlayaApp {
         }
     }
 
-    /// Handle application events from the event bus
-    fn handle_event(&mut self, event: events::AppEvent) {
-        use events::AppEvent;
-
-        match event {
-            // ===== Helpers =====
-            // ===== Playback Control =====
-            AppEvent::Play => {
-                debug!("Play: starting playback at frame {}", self.player.current_frame(&self.project));
-                self.player.set_is_playing(true);
-                self.player.last_frame_time = Some(std::time::Instant::now());
-            }
-            AppEvent::Pause => {
-                debug!("Pause: stopping playback at frame {}", self.player.current_frame(&self.project));
-                self.player.set_is_playing(false);
-                self.player.last_frame_time = None;
-                self.player.set_fps_play(self.player.fps_base());
-            }
-            AppEvent::TogglePlayPause => {
-                let was_playing = self.player.is_playing();
-                self.player.set_is_playing(!was_playing);
-                if self.player.is_playing() {
-                    debug!("TogglePlayPause: starting playback at frame {}", self.player.current_frame(&self.project));
-                    self.player.last_frame_time = Some(std::time::Instant::now());
-                } else {
-                    debug!("TogglePlayPause: pausing at frame {}", self.player.current_frame(&self.project));
-                    self.player.last_frame_time = None;
-                    self.player.set_fps_play(self.player.fps_base());
-                }
-            }
-            AppEvent::Stop => {
-                self.player.stop();
-            }
-            AppEvent::SetFrame(frame) => {
-                debug!("SetFrame: moving to frame {}", frame);
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        comp.set_frame(frame);
-                    });
-                    // Manually trigger preload since event bus might not be set up
-                    self.enqueue_frame_loads_around_playhead(10);
-                }
-            }
-            AppEvent::StepForward => {
-                self.player.step(1, &mut self.project);
-            }
-            AppEvent::StepBackward => {
-                self.player.step(-1, &mut self.project);
-            }
-            AppEvent::StepForwardLarge => {
-                self.player.step(crate::player::FRAME_JUMP_STEP, &mut self.project);
-            }
-            AppEvent::StepBackwardLarge => {
-                self.player.step(-crate::player::FRAME_JUMP_STEP, &mut self.project);
-            }
-            AppEvent::PreviousClip => {
-                // TODO: implement previous clip
-            }
-            AppEvent::NextClip => {
-                // TODO: implement next clip
-            }
-            AppEvent::JumpToStart => {
-                self.player.to_start(&mut self.project);
-            }
-            AppEvent::JumpToEnd => {
-                self.player.to_end(&mut self.project);
-            }
-            AppEvent::JumpToPrevEdge => {
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.frame();
-                        let edges = comp.get_child_edges_near(current);
-                        if !edges.is_empty() {
-                            // Find last edge strictly before current, otherwise wrap to first
-                            if let Some((frame, _)) = edges.iter().rev().find(|(f, _)| *f < current) {
-                                comp.set_frame(*frame);
-                            } else if let Some((frame, _)) = edges.last() {
-                                // wrap to last edge
-                                comp.set_frame(*frame);
-                            }
-                        }
-                    });
-                }
-            }
-            AppEvent::JumpToNextEdge => {
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.frame();
-                        let edges = comp.get_child_edges_near(current);
-                        if !edges.is_empty() {
-                            // Find first edge strictly after current, otherwise wrap to last
-                            if let Some((frame, _)) = edges.iter().find(|(f, _)| *f > current) {
-                                comp.set_frame(*frame);
-                            } else if let Some((frame, _)) = edges.first() {
-                                // wrap to first edge
-                                comp.set_frame(*frame);
-                            }
-                        }
-                    });
-                }
-            }
-
-            // ===== Project Management =====
-            AppEvent::AddClip(path) => {
-                let _ = self.load_sequences(vec![path]);
-            }
-            AppEvent::AddClips(paths) => {
-                let _ = self.load_sequences(paths);
-            }
-            AppEvent::AddComp { name, fps } => {
-                let start = 0;
-                let end = 100;
-                let mut comp = crate::entities::comp::Comp::new(&name, start, end, fps);
-                comp.set_name(name);
-                comp.set_in(start);
-                comp.set_out(end);
-                comp.set_fps(fps);
-                self.project.add_comp(comp);
-            }
-            AppEvent::RemoveMedia(uuid) => {
-                self.remove_media_and_cleanup(uuid);
-                self.post_remove_fixups();
-            }
-            AppEvent::RemoveSelectedMedia => {
-                let selection: Vec<Uuid> = self.project.selection();
-                if selection.is_empty() {
-                    log::warn!("RemoveSelectedMedia: selection empty");
-                }
-                for uuid in selection {
-                    self.remove_media_and_cleanup(uuid);
-                }
-                self.post_remove_fixups();
-            }
-            AppEvent::SaveProject(path) => {
-                self.save_project(path);
-            }
-            AppEvent::LoadProject(path) => {
-                self.load_project(path);
-            }
-
-            // ===== Selection =====
-            AppEvent::SelectMedia(uuid) => {
-                // legacy single selection
-                self.project.set_selection(vec![uuid]);
-                self.project.selection_anchor = self
-                    .project
-                    .comps_order()
-                    .iter()
-                    .position(|u| *u == uuid);
-            }
-            AppEvent::ProjectSelectionChanged { selection, anchor } => {
-                self.project.set_selection(selection.clone());
-                self.project.selection_anchor =
-                    anchor.or_else(|| {
-                        let sel = self.project.selection();
-                        let order = self.project.comps_order();
-                        sel.last().and_then(|u| {
-                            order.iter().position(|x| x == u)
-                        })
-                    });
-            }
-            AppEvent::ProjectActiveChanged(uuid) => {
-                // set active via unified path
-                self.player.set_active_comp(uuid, &mut self.project);
-                // ensure selection contains active at end
-                self.project.retain_selection(|u| *u != uuid);
-                self.project.push_selection(uuid);
-                // update anchor to active
-                self.project.selection_anchor = self
-                    .project
-                    .comps_order()
-                    .iter()
-                    .position(|u| *u == uuid);
-            }
-            AppEvent::CompSelectionChanged {
-                comp_uuid,
-                selection,
-                anchor,
-            } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    comp.layer_selection = selection;
-                    comp.layer_selection_anchor = anchor;
-                });
-            }
-
-            // ===== UI State =====
-            AppEvent::TogglePlaylist => {
-                self.show_playlist = !self.show_playlist;
-            }
-            AppEvent::ToggleHelp => {
-                self.show_help = !self.show_help;
-            }
-            AppEvent::ToggleAttributeEditor => {
-                self.show_attributes_editor = !self.show_attributes_editor;
-            }
-            AppEvent::ToggleSettings => {
-                self.show_settings = !self.show_settings;
-            }
-            AppEvent::ToggleEncodeDialog => {
-                self.show_encode_dialog = !self.show_encode_dialog;
-                if self.show_encode_dialog && self.encode_dialog.is_none() {
-                    debug!("[ToggleEncodeDialog] Opening encode dialog, loading settings from AppSettings");
-                    self.encode_dialog =
-                        Some(EncodeDialog::load_from_settings(&self.settings.encode_dialog));
-                }
-            }
-            AppEvent::ToggleFullscreen => {
-                self.is_fullscreen = !self.is_fullscreen;
-                self.fullscreen_dirty = true;
-            }
-            AppEvent::ToggleLoop => {
-                self.settings.loop_enabled = !self.settings.loop_enabled;
-            }
-            AppEvent::ToggleFrameNumbers => {
-                self.settings.show_frame_numbers = !self.settings.show_frame_numbers;
-            }
-            AppEvent::TimelineZoomChanged(zoom) => {
-                self.timeline_state.zoom = zoom.clamp(0.1, 20.0);
-            }
-            AppEvent::TimelinePanChanged(pan) => {
-                self.timeline_state.pan_offset = pan;
-            }
-            AppEvent::TimelineSnapChanged(enabled) => {
-                self.timeline_state.snap_enabled = enabled;
-            }
-            AppEvent::TimelineLockWorkAreaChanged(locked) => {
-                self.timeline_state.lock_work_area = locked;
-            }
-            AppEvent::TimelineFitAll(canvas_width) => {
-                // Fit comp play_range to timeline view
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    let media = self.project.media.read().unwrap();
-                    if let Some(comp) = media.get(&comp_uuid) {
-                        let (min_frame, max_frame) = comp.play_range(true);
-                        let duration = (max_frame - min_frame + 1).max(1); // +1 for inclusive range
-
-                        // pixels_per_frame = canvas_width / duration
-                        // zoom = pixels_per_frame / default_pixels_per_frame (2.0)
-                        let pixels_per_frame = canvas_width / duration as f32;
-                        let default_pixels_per_frame = 2.0;
-                        let zoom = (pixels_per_frame / default_pixels_per_frame).clamp(0.1, 20.0); // Allow higher zoom
-
-                        self.timeline_state.zoom = zoom;
-                        self.timeline_state.pan_offset = min_frame as f32;
-                    }
-                }
-            }
-            AppEvent::TimelineFit => {
-                // Fit timeline using last known canvas width
-                let canvas_width = self.timeline_state.last_canvas_width;
-                self.handle_event(AppEvent::TimelineFitAll(canvas_width));
-            }
-            AppEvent::TimelineResetZoom => {
-                // Reset timeline zoom to 1.0 (default)
-                self.timeline_state.zoom = 1.0;
-            }
-            AppEvent::ZoomViewport(factor) => {
-                self.viewport_state.zoom *= factor;
-            }
-            AppEvent::ResetViewport => {
-                self.viewport_state.reset();
-            }
-            AppEvent::FitViewport => {
-                self.viewport_state.set_mode_fit();
-            }
-            AppEvent::Viewport100 => {
-                self.viewport_state.set_mode_100();
-            }
-
-            // ===== Play Range Control =====
-            AppEvent::SetPlayRangeStart => {
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.frame() as i32;
-                        comp.set_comp_play_start(current);
-                    });
-                }
-            }
-            AppEvent::SetPlayRangeEnd => {
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.frame() as i32;
-                        comp.set_comp_play_end(current);
-                    });
-                }
-            }
-            AppEvent::ResetPlayRange => {
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        let start = comp._in();
-                        let end = comp._out();
-                        comp.set_comp_play_start(start);
-                        comp.set_comp_play_end(end);
-                    });
-                }
-            }
-            AppEvent::SetCompPlayStart { comp_uuid, frame } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    comp.set_comp_play_start(frame);
-                });
-            }
-            AppEvent::SetCompPlayEnd { comp_uuid, frame } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    comp.set_comp_play_end(frame);
-                });
-            }
-            AppEvent::ResetCompPlayArea { comp_uuid } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let start = comp._in();
-                    let end = comp._out();
-                    comp.set_comp_play_start(start);
-                    comp.set_comp_play_end(end);
-                });
-            }
-
-            // ===== FPS Control =====
-            AppEvent::IncreaseFPSBase => {
-                self.player.increase_fps_base();
-                // Sync comp fps if active
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    let fps = self.player.fps_base();
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        comp.set_fps(fps);
-                    });
-                }
-            }
-            AppEvent::DecreaseFPSBase => {
-                self.player.decrease_fps_base();
-                // Sync comp fps if active
-                if let Some(comp_uuid) = self.player.active_comp() {
-                    let fps = self.player.fps_base();
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        comp.set_fps(fps);
-                    });
-                }
-            }
-
-            AppEvent::JogForward => {
-                self.player.jog_forward();
-            }
-            AppEvent::JogBackward => {
-                self.player.jog_backward();
-            }
-
-            // ===== Layer Operations =====
-            AppEvent::AddLayer {
-                comp_uuid,
-                source_uuid,
-                start_frame,
-                target_row,
-            } => {
-                // First, read source comp data if needed
-                let source_data = if target_row.is_some() {
-                    self.project.get_comp(source_uuid)
-                        .map(|s| (s.frame_count(), s.dim()))
-                } else {
-                    None
-                };
-
-                // Modify parent comp to add child
-                let add_result = {
-                    let mut media = self.project.media.write().unwrap();
-                    if let Some(comp) = media.get_mut(&comp_uuid) {
-                        if let Some(target_row) = target_row {
-                            let (duration, source_dim) = source_data.unwrap_or((1, (64, 64)));
-                            comp.add_child_with_duration(
-                                source_uuid,
-                                start_frame,
-                                duration,
-                                Some(target_row),
-                                source_dim,
-                            )
-                        } else {
-                            comp.add_child(source_uuid, start_frame, &self.project)
-                        }
-                    } else {
-                        Err(anyhow::anyhow!("Parent comp not found"))
-                    }
-                };
-
-                // Set parent reference in child comp
-                if let Ok(_) = add_result {
-                    self.project.modify_comp(source_uuid, |child_comp| {
-                        if child_comp.get_parent() != Some(comp_uuid) {
-                            child_comp.set_parent(Some(comp_uuid));
-                        }
-                    });
-                } else if let Err(e) = add_result {
-                    log::error!("Failed to add layer: {}", e);
-                }
-            }
-            AppEvent::RemoveLayer {
-                comp_uuid,
-                layer_idx,
-            } => {
-                // First, read child_uuid and source_uuid from parent comp
-                let child_data = self.project.get_comp(comp_uuid).and_then(|comp| {
-                    comp.get_children().get(layer_idx).map(|(child_uuid, attrs)| {
-                        let source_uuid = attrs.get_str("uuid").and_then(|s| Uuid::parse_str(s).ok());
-                        (*child_uuid, source_uuid)
-                    })
-                });
-
-                if let Some((child_uuid, source_uuid_opt)) = child_data {
-                    // Clear parent reference in child comp if it exists
-                    if let Some(source_uuid) = source_uuid_opt {
-                        self.project.modify_comp(source_uuid, |child_comp| {
-                            if child_comp.get_parent() == Some(comp_uuid) {
-                                child_comp.set_parent(None);
-                            }
-                        });
-                    }
-
-                    // Remove child from parent comp
-                    self.project.modify_comp(comp_uuid, |comp| {
-                        if comp.has_child(child_uuid) {
-                            comp.remove_child(child_uuid);
-                        } else {
-                            log::error!("Child {} not found in comp {}", child_uuid, comp_uuid);
-                        }
-                    });
-                } else {
-                    log::error!("Layer index {} out of bounds", layer_idx);
-                }
-            }
-            AppEvent::RemoveSelectedLayer => {
-                if let Some(active_uuid) = self.player.active_comp() {
-                    self.project.modify_comp(active_uuid, |comp| {
-                        if comp.layer_selection.is_empty() {
-                            log::warn!("RemoveSelectedLayer: no layer selected");
-                        }
-                        // layer_selection already contains UUIDs
-                        let to_remove: Vec<Uuid> = comp.layer_selection.clone();
-                        for child_uuid in to_remove {
-                            comp.remove_child(child_uuid);
-                        }
-                        comp.layer_selection.clear();
-                        comp.layer_selection_anchor = None;
-                    });
-                }
-            }
-            AppEvent::AlignLayersStart { comp_uuid } => {
-                // [ key: Slide layer so its play_start aligns to current frame
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.frame();
-                    let selected = comp.layer_selection.clone();
-
-                    for layer_uuid in selected {
-                        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                        // Use visible (trimmed) start so the trimmed edge lands on the cursor
-                        let (play_start, _) = comp
-                            .child_work_area_abs(layer_uuid)
-                            .unwrap_or_else(|| {
-                                let s = comp.child_start(layer_uuid);
-                                let e = comp.child_end(layer_uuid);
-                                (s, e)
-                            });
-                        let child_start = comp.child_start(layer_uuid);
-                        let delta = current_frame - play_start;
-                        let new_child_start = child_start + delta;
-                        let _ = comp.move_child(layer_idx, new_child_start);
-                    }
-                });
-            }
-            AppEvent::AlignLayersEnd { comp_uuid } => {
-                // ] key: Slide layer so its play_end aligns to current frame
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.frame();
-                    let selected = comp.layer_selection.clone();
-
-                    for layer_uuid in selected {
-                        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                        // Use visible (trimmed) end so the trimmed edge lands on the cursor
-                        let (_, play_end) = comp
-                            .child_work_area_abs(layer_uuid)
-                            .unwrap_or_else(|| {
-                                let s = comp.child_start(layer_uuid);
-                                let e = comp.child_end(layer_uuid);
-                                (s, e)
-                            });
-                        let child_start = comp.child_start(layer_uuid);
-                        let delta = current_frame - play_end;
-                        let new_child_start = child_start + delta;
-                        let _ = comp.move_child(layer_idx, new_child_start);
-                    }
-                });
-            }
-            AppEvent::TrimLayersStart { comp_uuid } => {
-                // Alt-[ key: Set play_start to current frame (convert parent frame to child frame)
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.frame();
-                    let selected = comp.layer_selection.clone();
-
-                    for layer_uuid in selected {
-                        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                        // Clamp inside layer bounds inside setter
-                        let _ = comp.set_child_play_start(layer_idx, current_frame);
-                    }
-                });
-            }
-            AppEvent::TrimLayersEnd { comp_uuid } => {
-                // Alt-] key: Set play_end to current frame (convert parent frame to child frame)
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.frame();
-                    let selected = comp.layer_selection.clone();
-
-                    for layer_uuid in selected {
-                        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                        // Clamp inside layer bounds inside setter
-                        let _ = comp.set_child_play_end(layer_idx, current_frame);
-                    }
-                });
-            }
-            AppEvent::LayerAttributesChanged {
-                comp_uuid,
-                layer_uuid,
-                visible,
-                opacity,
-                blend_mode,
-                speed,
-            } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    if let Some(attrs) = comp.children_attrs_get_mut(&layer_uuid) {
-                        attrs.set("visible", crate::entities::AttrValue::Bool(visible));
-                        attrs.set("opacity", crate::entities::AttrValue::Float(opacity));
-                        attrs.set("blend_mode", crate::entities::AttrValue::Str(blend_mode));
-                        attrs.set("speed", crate::entities::AttrValue::Float(speed));
-                    }
-                });
-            }
-            AppEvent::MoveLayer {
-                comp_uuid,
-                layer_idx,
-                new_start,
-            } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    if let Err(e) = comp.move_child(layer_idx, new_start as i32) {
-                        log::error!("Failed to move layer: {}", e);
-                    }
-                });
-            }
-            AppEvent::ReorderLayer {
-                comp_uuid,
-                from_idx,
-                to_idx,
-            } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let children = comp.get_children();
-                    if from_idx != to_idx && from_idx < children.len() && to_idx < children.len() {
-                        let mut reordered = comp.children.clone();
-                        let child_uuid = reordered.remove(from_idx);
-                        reordered.insert(to_idx, child_uuid);
-                        comp.children = reordered;
-                        comp.attrs.mark_dirty(); // Mark dirty after reordering children
-                    }
-                });
-            }
-            AppEvent::MoveAndReorderLayer {
-                comp_uuid,
-                layer_idx,
-                new_start,
-                new_idx,
-            } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let dragged_uuid = comp.idx_to_uuid(layer_idx).unwrap_or_default();
-
-                    if comp.is_multi_selected(dragged_uuid) {
-                        let dragged_start = comp.child_start(dragged_uuid);
-                        let delta = new_start as i32 - dragged_start;
-                        let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
-                        let _ = comp.move_layers(&selection_indices, delta, Some(new_idx));
-                    } else {
-                        let dragged_start = comp.child_start(dragged_uuid);
-                        let delta = new_start as i32 - dragged_start;
-                        let _ = comp.move_layers(&[layer_idx], delta, Some(new_idx));
-                    }
-                });
-            }
-            AppEvent::SetLayerPlayStart {
-                comp_uuid,
-                layer_idx,
-                new_play_start,
-            } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let dragged_uuid = comp.idx_to_uuid(layer_idx).unwrap_or_default();
-
-                    if comp.is_multi_selected(dragged_uuid) {
-                        let dragged_ps = comp.child_play_start(dragged_uuid);
-                        let delta = new_play_start - dragged_ps;
-                        let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
-                        let _ = comp.trim_layers(&selection_indices, delta, true);
-                    } else {
-                        let delta = {
-                            let current = comp
-                                .children
-                                .get(layer_idx)
-                                .map(|(_u, attrs)| attrs.get_i32("trim_in").unwrap_or(
-                                    attrs.get_i32("in").unwrap_or(0),
-                                ))
-                                .unwrap_or(0);
-                            new_play_start - current
-                        };
-                        let _ = comp.trim_layers(&[layer_idx], delta, true);
-                    }
-                });
-            }
-            AppEvent::SetLayerPlayEnd {
-                comp_uuid,
-                layer_idx,
-                new_play_end,
-            } => {
-                self.project.modify_comp(comp_uuid, |comp| {
-                    let dragged_uuid = comp.idx_to_uuid(layer_idx).unwrap_or_default();
-
-                    if comp.is_multi_selected(dragged_uuid) {
-                        let dragged_pe = comp.child_play_end(dragged_uuid);
-                        let delta = new_play_end - dragged_pe;
-                        let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
-                        let _ = comp.trim_layers(&selection_indices, delta, false);
-                    } else {
-                        let delta = {
-                            let current = comp
-                                .children
-                                .get(layer_idx)
-                                .map(|(_u, attrs)| attrs.get_i32("trim_out").unwrap_or(
-                                    attrs.get_i32("out").unwrap_or(0),
-                                ))
-                                .unwrap_or(0);
-                            new_play_end - current
-                        };
-                        let _ = comp.trim_layers(&[layer_idx], delta, false);
-                    }
-                });
-            }
-            // ===== Drag-and-Drop (not currently used) =====
-            // TODO: EventBus-based drag and drop events (alternative architecture)
-            // Current implementation uses GlobalDragState in egui temp storage (works well)
-            // These handlers are commented out because the events are not emitted anywhere.
-            // See src/events.rs for more details.
-            //
-            // AppEvent::DragStart { .. } => {
-            //     // TODO: implement drag start
-            // }
-            // AppEvent::DragMove { .. } => {
-            //     // TODO: implement drag move
-            // }
-            // AppEvent::DragDrop { .. } => {
-            //     // TODO: implement drag drop
-            // }
-            // AppEvent::DragCancel => {
-            //     // TODO: implement drag cancel
-            // }
-
-            // ===== Settings =====
-            AppEvent::ResetSettings => {
-                self.reset_settings_pending = true;
-            }
-        }
-    }
-
-    /// Determine which window has focus based on hover state and context
-    fn determine_focused_window(&self, ctx: &egui::Context) -> events::HotkeyWindow {
-        use events::HotkeyWindow;
+    fn determine_focused_window(&self, ctx: &egui::Context) -> dialogs::prefs::prefs_events::HotkeyWindow {
+        use dialogs::prefs::prefs_events::HotkeyWindow;
 
         // Priority 1: Modal dialogs (settings, encode) - always capture input
         if self.show_settings || self.show_encode_dialog {
@@ -1070,22 +460,31 @@ impl PlayaApp {
             .set_focused_window(focused_window.clone());
 
         // Try hotkey handler first (for context-aware hotkeys)
-        if let Some(mut event) = self.hotkey_handler.handle_input(&input) {
+        if let Some(event) = self.hotkey_handler.handle_input(&input) {
+            use crate::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent};
 
             // Fill comp_uuid for timeline-specific events
             if let Some(active_comp_uuid) = self.player.active_comp() {
-                match &mut event {
-                    AppEvent::AlignLayersStart { comp_uuid }
-                    | AppEvent::AlignLayersEnd { comp_uuid }
-                    | AppEvent::TrimLayersStart { comp_uuid }
-                    | AppEvent::TrimLayersEnd { comp_uuid } => {
-                        *comp_uuid = active_comp_uuid.clone();
-                    }
-                    _ => {}
+                // Check if event needs comp_uuid filled in
+                if downcast_event::<AlignLayersStartEvent>(&event).is_some() {
+                    self.event_bus.send(AlignLayersStartEvent(active_comp_uuid));
+                    return;
+                }
+                if downcast_event::<AlignLayersEndEvent>(&event).is_some() {
+                    self.event_bus.send(AlignLayersEndEvent(active_comp_uuid));
+                    return;
+                }
+                if downcast_event::<TrimLayersStartEvent>(&event).is_some() {
+                    self.event_bus.send(TrimLayersStartEvent(active_comp_uuid));
+                    return;
+                }
+                if downcast_event::<TrimLayersEndEvent>(&event).is_some() {
+                    self.event_bus.send(TrimLayersEndEvent(active_comp_uuid));
+                    return;
                 }
             }
 
-            self.event_bus.send(event);
+            self.event_bus.send_boxed(event);
             return; // Hotkey handled, don't process manual checks
         }
 
@@ -1247,7 +646,7 @@ impl PlayaApp {
     fn select_item(&mut self, uuid: Uuid) {
         self.selected_media_uuid = Some(uuid);
         self.event_bus
-            .send(events::AppEvent::ProjectActiveChanged(uuid));
+            .send(project_events::ProjectActiveChangedEvent(uuid));
     }
 
     /// Update compositor backend based on settings
@@ -1651,9 +1050,7 @@ impl eframe::App for PlayaApp {
         }
 
         // Process all events from the event bus
-        while let Some(event) = self.event_bus.try_recv() {
-            self.handle_event(event);
-        }
+        self.handle_events();
 
         // Periodic cache statistics logging (every 10 seconds)
         let current_time = ctx.input(|i| i.time);
@@ -1721,7 +1118,7 @@ impl eframe::App for PlayaApp {
         self.player.update(&mut self.project);
 
         // Handle composition events (CurrentFrameChanged → triggers frame loading)
-        self.handle_comp_events();
+        self.handle_events();
 
         // Handle drag-and-drop files/folders - queue for async loading
         ctx.input(|i| {

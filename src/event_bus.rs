@@ -84,6 +84,11 @@ impl EventBus {
         self.queue.lock().expect("lock").push(Box::new(event));
     }
 
+    /// Send already-boxed event to queue
+    pub fn send_boxed(&self, event: BoxedEvent) {
+        self.queue.lock().expect("lock").push(event);
+    }
+
     /// Drain all queued events
     pub fn drain(&self) -> Vec<BoxedEvent> {
         std::mem::take(&mut *self.queue.lock().expect("lock"))
@@ -120,6 +125,14 @@ pub struct EventSender {
     queue: Arc<Mutex<Vec<BoxedEvent>>>,
 }
 
+impl std::fmt::Debug for EventSender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventSender")
+            .field("queue_len", &self.queue.lock().map(|q| q.len()).unwrap_or(0))
+            .finish()
+    }
+}
+
 impl EventSender {
     pub fn send<E: Event>(&self, event: E) {
         self.queue.lock().expect("lock").push(Box::new(event));
@@ -127,7 +140,7 @@ impl EventSender {
 }
 
 /// Comp-specific event sender (wraps Option<EventSender>)
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct CompEventSender {
     inner: Option<EventSender>,
 }
