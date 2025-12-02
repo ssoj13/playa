@@ -123,7 +123,7 @@ pub(super) fn draw_frame_ruler(
         let painter = ui.painter();
         painter.rect_filled(rect, 0.0, Color32::from_gray(25));
 
-        let playhead_x = frame_to_screen_x(comp.current_frame as f32, rect.min.x, config, state);
+        let playhead_x = frame_to_screen_x(comp.frame() as f32, rect.min.x, config, state);
         if playhead_x >= rect.min.x && playhead_x <= rect.max.x {
             painter.line_segment(
                 [

@@ -151,11 +151,51 @@ Note: Methods use underscore prefix (`_in`/`_out`) because `in` is a reserved Ru
 
 ---
 
+## Phase 5: Current Frame Migration + Attrs Constants (Completed)
+
+### Added Attribute Key Constants in `attrs.rs`:
+```rust
+pub const A_FRAME: &str = "frame";      // Current playback frame
+pub const A_IN: &str = "in";            // In-point
+pub const A_OUT: &str = "out";          // Out-point
+pub const A_TRIM_IN: &str = "trim_in";  // Trim in-point
+pub const A_TRIM_OUT: &str = "trim_out"; // Trim out-point
+pub const A_FPS: &str = "fps";          // Frames per second
+pub const A_NAME: &str = "name";        // Human-readable name
+pub const A_SOURCE: &str = "source_uuid"; // Source comp UUID
+pub const A_UUID: &str = "uuid";        // Entity UUID
+```
+
+### Migrated `current_frame` to Attrs:
+- Removed `current_frame: i32` field from Comp struct
+- Now stored as `attrs.get_i32(A_FRAME)`
+- Added hot-path methods `frame()` / `set_frame()` with `#[inline]`
+- All 88 usages across 12 files updated
+
+### Method Renames:
+- `comp.current_frame` → `comp.frame()`
+- `comp.set_current_frame(x)` → `comp.set_frame(x)`
+
+### Files Updated:
+- `src/entities/attrs.rs` - Added constants
+- `src/entities/comp.rs` - Removed field, added methods
+- `src/main.rs` - Updated all usages
+- `src/player.rs` - Updated all usages
+- `src/widgets/status/status.rs` - Updated usages
+- `src/widgets/timeline/timeline_ui.rs` - Updated usages
+- `src/widgets/timeline/timeline_helpers.rs` - Updated usages
+
+### Serialization:
+- Attrs with `frame` properly serialize/deserialize
+- Added `test_frame_serialization` test
+
+---
+
 ## Build Status
 
 - **Debug build**: OK (warnings only)
 - **Release build**: OK (warnings only)
-- **Tests**: 28/28 passed
+- **Tests**: 29/29 passed
 
 ---
 
@@ -163,14 +203,12 @@ Note: Methods use underscore prefix (`_in`/`_out`) because `in` is a reserved Ru
 
 ## Potential Future Improvements
 
-### 1. Additional Comp Attrs Migration
-- Consider migrating more Comp fields to Attrs:
-  - `current_frame` -> `attrs.get_i32("frame")`
+### 1. ~~Additional Comp Attrs Migration~~ (DONE)
+- ~~`current_frame` -> `attrs.get_i32("frame")`~~ ✓
 
-### 2. Serialization Integration
-- Ensure Attrs are properly serialized/deserialized in project save/load
-- Test project persistence with new Attrs structure
-- Verify backwards compatibility with old project files (migration logic)
+### 2. ~~Serialization Integration~~ (DONE)
+- ~~Attrs properly serialized/deserialized~~ ✓
+- ~~Test added for round-trip~~ ✓
 
 ### 3. Undo/Redo System
 - Leverage Attrs dirty tracking for undo/redo

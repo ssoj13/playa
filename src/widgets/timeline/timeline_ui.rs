@@ -950,7 +950,7 @@ pub fn render_canvas(
     // Draw playhead once across ruler + bars
     if let (Some(ruler_rect), Some(timeline_rect)) = (ruler_rect, timeline_rect_global) {
         let painter = ui.painter();
-        let x = frame_to_screen_x(comp.current_frame as f32, ruler_rect.min.x, config, state);
+        let x = frame_to_screen_x(comp.frame() as f32, ruler_rect.min.x, config, state);
         painter.line_segment(
             [
                 Pos2::new(x, ruler_rect.min.y),

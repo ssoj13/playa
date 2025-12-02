@@ -410,7 +410,7 @@ impl PlayaApp {
                 debug!("SetFrame: moving to frame {}", frame);
                 if let Some(comp_uuid) = self.player.active_comp() {
                     self.project.modify_comp(comp_uuid, |comp| {
-                        comp.set_current_frame(frame);
+                        comp.set_frame(frame);
                     });
                     // Manually trigger preload since event bus might not be set up
                     self.enqueue_frame_loads_around_playhead(10);
@@ -443,15 +443,15 @@ impl PlayaApp {
             AppEvent::JumpToPrevEdge => {
                 if let Some(comp_uuid) = self.player.active_comp() {
                     self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.current_frame;
+                        let current = comp.frame();
                         let edges = comp.get_child_edges_near(current);
                         if !edges.is_empty() {
                             // Find last edge strictly before current, otherwise wrap to first
                             if let Some((frame, _)) = edges.iter().rev().find(|(f, _)| *f < current) {
-                                comp.set_current_frame(*frame);
+                                comp.set_frame(*frame);
                             } else if let Some((frame, _)) = edges.last() {
                                 // wrap to last edge
-                                comp.set_current_frame(*frame);
+                                comp.set_frame(*frame);
                             }
                         }
                     });
@@ -460,15 +460,15 @@ impl PlayaApp {
             AppEvent::JumpToNextEdge => {
                 if let Some(comp_uuid) = self.player.active_comp() {
                     self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.current_frame;
+                        let current = comp.frame();
                         let edges = comp.get_child_edges_near(current);
                         if !edges.is_empty() {
                             // Find first edge strictly after current, otherwise wrap to last
                             if let Some((frame, _)) = edges.iter().find(|(f, _)| *f > current) {
-                                comp.set_current_frame(*frame);
+                                comp.set_frame(*frame);
                             } else if let Some((frame, _)) = edges.first() {
                                 // wrap to first edge
-                                comp.set_current_frame(*frame);
+                                comp.set_frame(*frame);
                             }
                         }
                     });
@@ -646,7 +646,7 @@ impl PlayaApp {
             AppEvent::SetPlayRangeStart => {
                 if let Some(comp_uuid) = self.player.active_comp() {
                     self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.current_frame as i32;
+                        let current = comp.frame() as i32;
                         comp.set_comp_play_start(current);
                     });
                 }
@@ -654,7 +654,7 @@ impl PlayaApp {
             AppEvent::SetPlayRangeEnd => {
                 if let Some(comp_uuid) = self.player.active_comp() {
                     self.project.modify_comp(comp_uuid, |comp| {
-                        let current = comp.current_frame as i32;
+                        let current = comp.frame() as i32;
                         comp.set_comp_play_end(current);
                     });
                 }
@@ -817,7 +817,7 @@ impl PlayaApp {
             AppEvent::AlignLayersStart { comp_uuid } => {
                 // [ key: Slide layer so its play_start aligns to current frame
                 self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.current_frame;
+                    let current_frame = comp.frame();
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected {
@@ -840,7 +840,7 @@ impl PlayaApp {
             AppEvent::AlignLayersEnd { comp_uuid } => {
                 // ] key: Slide layer so its play_end aligns to current frame
                 self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.current_frame;
+                    let current_frame = comp.frame();
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected {
@@ -863,7 +863,7 @@ impl PlayaApp {
             AppEvent::TrimLayersStart { comp_uuid } => {
                 // Alt-[ key: Set play_start to current frame (convert parent frame to child frame)
                 self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.current_frame;
+                    let current_frame = comp.frame();
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected {
@@ -876,7 +876,7 @@ impl PlayaApp {
             AppEvent::TrimLayersEnd { comp_uuid } => {
                 // Alt-] key: Set play_end to current frame (convert parent frame to child frame)
                 self.project.modify_comp(comp_uuid, |comp| {
-                    let current_frame = comp.current_frame;
+                    let current_frame = comp.frame();
                     let selected = comp.layer_selection.clone();
 
                     for layer_uuid in selected {

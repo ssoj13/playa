@@ -33,6 +33,7 @@ use crate::workers::Workers;
 use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::loader::Loader;
 use super::{AttrValue, Attrs};
+use super::keys::A_FRAME;
 use super::compositor::BlendMode;
 use crate::entities::loader_video;
 use crate::events::{CompEvent, CompEventSender};
@@ -133,9 +134,9 @@ pub struct Comp {
     #[serde(default)]
     pub layer_selection_anchor: Option<Uuid>,
 
-    /// Current playback position within this comp (persisted)
-    #[serde(default)]
-    pub current_frame: i32,
+    // NOTE: current_frame is now stored in attrs as A_FRAME ("frame")
+    // Access via: self.attrs.get_i32(A_FRAME).unwrap_or(0)
+    // Set via: self.attrs.set(A_FRAME, AttrValue::Int(val))
 
     /// Event sender for emitting comp events (runtime-only, rebuilt after deserialization)
     #[serde(skip)]
@@ -173,6 +174,7 @@ impl Comp {
         attrs.set("transparency", AttrValue::Float(1.0)); // Fully opaque
         attrs.set("layer_mode", AttrValue::Str("normal".to_string()));
         attrs.set("speed", AttrValue::Float(1.0)); // Normal speed
+        attrs.set(A_FRAME, AttrValue::Int(start)); // Current playback frame
 
         Self {
             uuid: Uuid::new_v4(),
@@ -183,7 +185,6 @@ impl Comp {
             file_mask: None,
             file_start: None,
             file_end: None,
-            current_frame: start,
             layer_selection: Vec::new(),
             layer_selection_anchor: None,
             event_sender: CompEventSender::dummy(),
@@ -683,7 +684,7 @@ impl Comp {
             return;
         };
 
-        let center = center_override.unwrap_or(self.current_frame);
+        let center = center_override.unwrap_or(self.frame());
         let (play_start, play_end) = self.work_area_abs(true);
 
         // Debug: show coordinate spaces
@@ -919,17 +920,21 @@ impl Comp {
         self.event_sender = sender;
     }
 
-    /// Set current frame and emit CurrentFrameChanged event.
-    ///
-    /// This is the proper way to change frame position - emits event that triggers frame loading.
-    pub fn set_current_frame(&mut self, new_frame: i32) {
-        let old_frame = self.current_frame;
-        if old_frame != new_frame {
-            self.current_frame = new_frame;
+    /// Get current frame (hot path - called 60fps during playback)
+    #[inline]
+    pub fn frame(&self) -> i32 {
+        self.attrs.get_i32(A_FRAME).unwrap_or(0)
+    }
 
-            // Emit event
+    /// Set current frame and emit CurrentFrameChanged event.
+    /// This is the proper way to change frame position - emits event that triggers frame loading.
+    #[inline]
+    pub fn set_frame(&mut self, new_frame: i32) {
+        let old_frame = self.frame();
+        if old_frame != new_frame {
+            self.attrs.set(A_FRAME, AttrValue::Int(new_frame));
             self.event_sender.emit(CompEvent::CurrentFrameChanged {
-                comp_uuid: self.uuid.clone(),
+                comp_uuid: self.uuid,
                 old_frame,
                 new_frame,
             });
@@ -2302,5 +2307,22 @@ mod tests {
             project.global_cache.as_ref().unwrap().contains(comp_uuid, 2),
             "Frame should be cached in global cache after composition"
         );
+    }
+
+    #[test]
+    fn test_frame_serialization() {
+        // Create comp and set frame
+        let mut comp = Comp::new("Test", 0, 100, 24.0);
+        comp.set_frame(42);
+        assert_eq!(comp.frame(), 42);
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&comp).unwrap();
+        // Frame is stored inside attrs.map, so look for the pattern in nested structure
+        assert!(json.contains("\"frame\""), "JSON should contain frame key");
+
+        // Deserialize back
+        let restored: Comp = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.frame(), 42, "Frame should survive serialization round-trip");
     }
 }
