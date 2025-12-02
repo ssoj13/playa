@@ -18,7 +18,7 @@ pub mod project;
 
 pub use attrs::{AttrValue, Attrs};
 pub use comp::Comp;
-pub use node::{ComputeContext, Node, NodeCore};
+pub use node::{ComputeContext, Node};
 pub use compositor::CompositorType;
 pub use frame::Frame;
 pub use project::Project;

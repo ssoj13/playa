@@ -646,7 +646,8 @@ impl Comp {
             return None;
         }
 
-        log::debug!("cache_frame_statuses: mode={:?}, checking cache for {} frames", self.mode, duration);
+        log::debug!("cache_frame_statuses: mode={}, checking cache for {} frames",
+            if self.is_file_mode() { "File" } else { "Layer" }, duration);
 
         // Query GlobalFrameCache for each frame status
         if let Some(ref global_cache) = self.global_cache {
@@ -865,74 +866,71 @@ impl Comp {
             return; // No global_cache available
         }
 
-        match self.mode {
-            CompMode::File => {
-                // File mode: load from disk
-                let comp_start = self._in();
-                let local_idx = frame_idx - comp_start;
-                let seq_start = self.file_start.unwrap_or(comp_start);
-                let seq_frame = seq_start.saturating_add(local_idx);
+        if self.is_file_mode() {
+            // File mode: load from disk
+            let comp_start = self._in();
+            let local_idx = frame_idx - comp_start;
+            let seq_start = self.file_start.unwrap_or(comp_start);
+            let seq_frame = seq_start.saturating_add(local_idx);
 
-                // Get frame path
-                let frame_path = match self.resolve_frame_path(seq_frame) {
-                    Some(path) => path,
-                    None => return,
-                };
+            // Get frame path
+            let frame_path = match self.resolve_frame_path(seq_frame) {
+                Some(path) => path,
+                None => return,
+            };
 
-                // Clone data for move into closure
-                let uuid = self.uuid;
-                let global_cache = self.global_cache.as_ref().unwrap().clone();
-                let (w, h) = self.dim();
+            // Clone data for move into closure
+            let uuid = self.uuid;
+            let global_cache = self.global_cache.as_ref().unwrap().clone();
+            let (w, h) = self.dim();
 
-                // Enqueue background load
-                workers.execute_with_epoch(epoch, move || {
-                    if global_cache.contains(uuid, frame_idx) {
-                        return;
-                    }
+            // Enqueue background load
+            workers.execute_with_epoch(epoch, move || {
+                if global_cache.contains(uuid, frame_idx) {
+                    return;
+                }
 
-                    let frame = Frame::new_unloaded(frame_path);
-                    frame.crop(w, h, CropAlign::LeftTop);
+                let frame = Frame::new_unloaded(frame_path);
+                frame.crop(w, h, CropAlign::LeftTop);
 
-                    if let Err(e) = frame.load() {
-                        log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
-                        return;
-                    }
+                if let Err(e) = frame.load() {
+                    log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
+                    return;
+                }
 
+                global_cache.insert(uuid, frame_idx, frame);
+                log::debug!("Background preload completed: comp={}, frame={}", uuid, frame_idx);
+            });
+        } else {
+            // Layer mode: compose from children in background
+            // Clone data for move into closure
+            let uuid = self.uuid;
+            let global_cache = self.global_cache.as_ref().unwrap().clone();
+            let project_clone = project.clone(); // Cheap: Arc fields just increment refcount
+            let comp_clone = self.clone();
+
+            // Enqueue background composition
+            workers.execute_with_epoch(epoch, move || {
+                if global_cache.contains(uuid, frame_idx) {
+                    return;
+                }
+
+                // Compose frame using CPU compositor (use_gpu=false for thread safety)
+                if let Some(frame) = comp_clone.compose(frame_idx, &project_clone, false) {
                     global_cache.insert(uuid, frame_idx, frame);
-                    log::debug!("Background preload completed: comp={}, frame={}", uuid, frame_idx);
-                });
-            }
-            CompMode::Layer => {
-                // Layer mode: compose from children in background
-                // Clone data for move into closure
-                let uuid = self.uuid;
-                let global_cache = self.global_cache.as_ref().unwrap().clone();
-                let project_clone = project.clone(); // Cheap: Arc fields just increment refcount
-                let comp_clone = self.clone();
-
-                // Enqueue background composition
-                workers.execute_with_epoch(epoch, move || {
-                    if global_cache.contains(uuid, frame_idx) {
-                        return;
-                    }
-
-                    // Compose frame using CPU compositor (use_gpu=false for thread safety)
-                    if let Some(frame) = comp_clone.compose(frame_idx, &project_clone, false) {
-                        global_cache.insert(uuid, frame_idx, frame);
-                        log::debug!(
-                            "Background composition completed: comp={}, frame={}",
-                            uuid,
-                            frame_idx
-                        );
-                    } else {
-                        log::debug!(
-                            "Background composition returned None: comp={}, frame={}",
-                            uuid,
-                            frame_idx
-                        );
-                    }
-                });
-            }
+                    log::debug!(
+                        "Background composition completed: comp={}, frame={}",
+                        uuid,
+                        frame_idx
+                    );
+                } else {
+                    log::debug!(
+                        "Background composition returned None: comp={}, frame={}",
+                        uuid,
+                        frame_idx
+                    );
+                }
+            });
         }
     }
 
@@ -973,9 +971,10 @@ impl Comp {
     /// Layer mode:
     /// - Resolves children recursively and blends them.
     pub fn get_frame(&self, frame_idx: i32, project: &super::Project, use_gpu: bool) -> Option<Frame> {
-        match self.mode {
-            CompMode::File => self.get_file_frame(frame_idx, project),
-            CompMode::Layer => self.get_layer_frame(frame_idx, project, use_gpu),
+        if self.is_file_mode() {
+            self.get_file_frame(frame_idx, project)
+        } else {
+            self.get_layer_frame(frame_idx, project, use_gpu)
         }
     }
 
@@ -1738,7 +1737,7 @@ impl Comp {
     /// Recalculate comp start/end based on children (negative starts allowed).
     pub fn rebound(&mut self) {
         // File-mode comps have their own start/end; don't override them.
-        if self.mode == CompMode::File {
+        if self.is_file_mode() {
             return;
         }
         let old_bounds = (self._in(), self._out());

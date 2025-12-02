@@ -104,24 +104,21 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                     ui.style().visuals.faint_bg_color
                 };
 
-                let mode = comp.mode.clone();
+                let is_file = comp.is_file_mode();
                 let fps = comp.fps() as u32;
                 let frame_count = comp.frame_count();
-                let display_text = match mode {
-                    crate::entities::comp::CompMode::File => {
-                        if let Some(mask) = &comp.file_mask {
-                            let filename = std::path::Path::new(mask)
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or(mask);
-                            format!("{} • {}", comp.name(), filename)
-                        } else {
-                            comp.name().to_string()
-                        }
+                let display_text = if is_file {
+                    if let Some(mask) = &comp.file_mask {
+                        let filename = std::path::Path::new(mask)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(mask);
+                        format!("{} • {}", comp.name(), filename)
+                    } else {
+                        comp.name().to_string()
                     }
-                    crate::entities::comp::CompMode::Layer => {
-                        format!("{} (Layer)", comp.name())
-                    }
+                } else {
+                    format!("{} (Layer)", comp.name())
                 };
 
                 let available_width = ui.available_width();
@@ -153,13 +150,10 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                 let center_y = row_rect.center().y;
 
                 // Icon
-                let (icon, icon_color) = match mode {
-                    crate::entities::comp::CompMode::File => {
-                        ("[F]", egui::Color32::from_rgb(100, 150, 255))
-                    }
-                    crate::entities::comp::CompMode::Layer => {
-                        ("[C]", egui::Color32::from_rgb(255, 150, 100))
-                    }
+                let (icon, icon_color) = if is_file {
+                    ("[F]", egui::Color32::from_rgb(100, 150, 255))
+                } else {
+                    ("[C]", egui::Color32::from_rgb(255, 150, 100))
                 };
                 let icon_galley = ui.painter().layout_no_wrap(
                     icon.to_string(),
