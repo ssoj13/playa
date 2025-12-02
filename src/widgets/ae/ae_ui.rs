@@ -234,6 +234,19 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
         (_, AttrValue::Json(s)) => {
             ui.label(format!("JSON: {} chars", s.len()));
         }
+        (_, AttrValue::Int8(v)) => {
+            let mut temp = *v as i32;
+            if ui.add(egui::DragValue::new(&mut temp).speed(1.0).range(-128..=127)).changed() {
+                *v = temp.clamp(-128, 127) as i8;
+                scope_changed = true;
+            }
+        }
+        (_, AttrValue::Uuid(u)) => {
+            ui.label(format!("{}", u));
+        }
+        (_, AttrValue::List(items)) => {
+            ui.label(format!("List: {} items", items.len()));
+        }
     }
     });
     changed |= scope_changed;

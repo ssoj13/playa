@@ -2,7 +2,7 @@ use eframe::egui;
 use uuid::Uuid;
 
 use crate::entities::Project;
-use crate::events::AppEvent;
+use crate::project_events::{ProjectSelectionChangedEvent, ProjectActiveChangedEvent};
 use crate::player::Player;
 use crate::widgets::project::project::ProjectActions;
 
@@ -248,10 +248,10 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                         clicked_idx,
                         modifiers,
                     );
-                    actions.events.push(AppEvent::ProjectSelectionChanged {
+                    actions.events.push(Box::new(ProjectSelectionChangedEvent {
                         selection: sel,
                         anchor,
-                    });
+                    }));
                 }
                 if response.double_clicked() {
                     let (sel, anchor) = compute_selection(
@@ -261,13 +261,13 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                         clicked_idx,
                         modifiers,
                     );
-                    actions.events.push(AppEvent::ProjectSelectionChanged {
+                    actions.events.push(Box::new(ProjectSelectionChangedEvent {
                         selection: sel,
                         anchor,
-                    });
+                    }));
                     actions
                         .events
-                        .push(AppEvent::ProjectActiveChanged(*comp_uuid));
+                        .push(Box::new(ProjectActiveChangedEvent(*comp_uuid)));
                 }
 
                 // Drag handling

@@ -3,9 +3,11 @@ mod cli;
 mod config;
 mod dialogs;
 mod entities;
-mod events;
+mod event_bus;
 mod global_cache;
 mod player;
+mod player_events;
+mod project_events;
 mod ui;
 mod utils;
 mod widgets;
@@ -16,8 +18,9 @@ use clap::Parser;
 use cli::Args;
 use dialogs::encode::EncodeDialog;
 use dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
+use dialogs::prefs::prefs_events::HotkeyWindow;
 use eframe::{egui, glow};
-use events::AppEvent;
+use event_bus::{BoxedEvent, CompEventSender, EventBus, downcast_event};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use entities::Frame;
 use entities::Project;
@@ -99,15 +102,12 @@ struct PlayaApp {
     /// Global worker pool for background tasks (frame loading, encoding)
     #[serde(skip)]
     workers: Arc<Workers>,
-    /// Event receiver for composition events (frame changes, layer updates)
-    #[serde(skip)]
-    comp_event_receiver: crossbeam::channel::Receiver<events::CompEvent>,
     /// Event sender for compositions (shared across all comps)
     #[serde(skip)]
-    comp_event_sender: events::CompEventSender,
+    comp_event_sender: CompEventSender,
     /// Global event bus for application-wide events
     #[serde(skip)]
-    event_bus: events::EventBus,
+    event_bus: EventBus,
     #[serde(default = "PlayaApp::default_dock_state")]
     dock_state: DockState<DockTab>,
     /// Hotkey handler for context-aware keyboard shortcuts
@@ -115,7 +115,7 @@ struct PlayaApp {
     hotkey_handler: HotkeyHandler,
     /// Currently focused window for input routing
     #[serde(skip)]
-    focused_window: events::HotkeyWindow,
+    focused_window: HotkeyWindow,
     /// Hover states for input routing
     #[serde(skip)]
     viewport_hovered: bool,
@@ -139,9 +139,9 @@ impl Default for PlayaApp {
         let num_workers = (num_cpus::get() * 3 / 4).max(1);
         let workers = Arc::new(Workers::new(num_workers, cache_manager.epoch_ref()));
 
-        // Create event channel for composition events
-        let (event_tx, event_rx) = crossbeam::channel::unbounded();
-        let comp_event_sender = events::CompEventSender::new(event_tx);
+        // Create global event bus and comp event sender
+        let event_bus = EventBus::new();
+        let comp_event_sender = CompEventSender::from_sender(event_bus.sender());
 
         Self {
             frame: None,
@@ -175,16 +175,15 @@ impl Default for PlayaApp {
             path_config: config::PathConfig::from_env_and_cli(None),
             cache_manager,
             workers,
-            comp_event_receiver: event_rx,
             comp_event_sender,
-            event_bus: events::EventBus::new(),
+            event_bus,
             dock_state: PlayaApp::default_dock_state(),
             hotkey_handler: {
                 let mut handler = HotkeyHandler::new();
                 handler.setup_default_bindings();
                 handler
             },
-            focused_window: events::HotkeyWindow::Global,
+            focused_window: HotkeyWindow::Global,
             viewport_hovered: false,
             timeline_hovered: false,
             project_hovered: false,
@@ -286,40 +285,35 @@ impl PlayaApp {
         comp.signal_preload(&self.workers, &self.project, None);
     }
 
-    /// Handle composition events (frame changes, layer updates)
-    fn handle_comp_events(&mut self) {
-        // Process all pending events
-        while let Ok(event) = self.comp_event_receiver.try_recv() {
-            match event {
-                events::CompEvent::CurrentFrameChanged {
-                    comp_uuid,
-                    old_frame,
-                    new_frame,
-                } => {
-                    debug!(
-                        "Comp {} frame changed: {} → {}",
-                        comp_uuid, old_frame, new_frame
-                    );
+    /// Handle all events from the event bus (comp events, app events, etc.)
+    fn handle_events(&mut self) {
+        use entities::comp_events::*;
 
-                    // Trigger frame loading with spiral/forward strategy
-                    self.enqueue_frame_loads_around_playhead(10);
-                }
-                events::CompEvent::LayersChanged { comp_uuid } => {
-                    debug!("Comp {} layers changed", comp_uuid);
-                    // Force viewport texture re-upload since composition changed
-                    self.displayed_frame = None;
-                    // Future: invalidate timeline cache, rebuild layer UI
-                }
-                events::CompEvent::TimelineChanged { comp_uuid } => {
-                    debug!("Comp {} timeline changed", comp_uuid);
-                    // Future: update timeline bounds, recalculate durations
-                }
-                events::CompEvent::AttrsChanged { comp_uuid } => {
-                    debug!("Comp {} attrs changed - triggering cascade invalidation", comp_uuid);
-                    // Cascade invalidation: mark all parent comps as dirty
-                    self.project.invalidate_cascade(comp_uuid);
-                }
+        // Drain all events from the bus
+        for event in self.event_bus.drain() {
+            // === Comp events ===
+            if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
+                debug!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
+                self.enqueue_frame_loads_around_playhead(10);
+                continue;
             }
+            if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
+                debug!("Comp {} layers changed", e.0);
+                self.displayed_frame = None;
+                continue;
+            }
+            if let Some(e) = downcast_event::<TimelineChangedEvent>(&event) {
+                debug!("Comp {} timeline changed", e.0);
+                continue;
+            }
+            if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
+                debug!("Comp {} attrs changed - triggering cascade invalidation", e.0);
+                self.project.invalidate_cascade(e.0);
+                continue;
+            }
+
+            // === App events - handle via dedicated method ===
+            self.handle_app_event(event);
         }
     }
 

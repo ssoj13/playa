@@ -1,0 +1,44 @@
+//! Project management and selection events.
+
+use std::path::PathBuf;
+use uuid::Uuid;
+
+// === Project Management ===
+
+#[derive(Clone, Debug)]
+pub struct AddClipEvent(pub PathBuf);
+
+#[derive(Clone, Debug)]
+pub struct AddClipsEvent(pub Vec<PathBuf>);
+
+#[derive(Clone, Debug)]
+pub struct AddCompEvent {
+    pub name: String,
+    pub fps: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoveMediaEvent(pub Uuid);
+
+#[derive(Clone, Debug)]
+pub struct RemoveSelectedMediaEvent;
+
+#[derive(Clone, Debug)]
+pub struct SaveProjectEvent(pub PathBuf);
+
+#[derive(Clone, Debug)]
+pub struct LoadProjectEvent(pub PathBuf);
+
+// === Selection ===
+
+#[derive(Clone, Debug)]
+pub struct SelectMediaEvent(pub Uuid);
+
+#[derive(Clone, Debug)]
+pub struct ProjectSelectionChangedEvent {
+    pub selection: Vec<Uuid>,
+    pub anchor: Option<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProjectActiveChangedEvent(pub Uuid);

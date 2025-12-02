@@ -1,18 +1,28 @@
 //! Hotkey system - keyboard shortcuts management
 
-use crate::events::{AppEvent, HotkeyWindow};
+use crate::dialogs::prefs::prefs_events::HotkeyWindow;
+use crate::event_bus::BoxedEvent;
+use crate::player_events::*;
+use crate::project_events::*;
+use crate::entities::comp_events::*;
+use crate::widgets::timeline::timeline_events::*;
+use crate::widgets::viewport::viewport_events::*;
+use crate::dialogs::prefs::prefs_events::*;
 use eframe::egui;
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Factory function type for creating events
+type EventFactory = Box<dyn Fn() -> BoxedEvent + Send + Sync>;
+
 /// Hotkey handler for managing keyboard shortcuts
 pub struct HotkeyHandler {
-    bindings: HashMap<(HotkeyWindow, String), AppEvent>,
+    bindings: HashMap<(HotkeyWindow, String), EventFactory>,
     focused_window: HotkeyWindow,
 }
 
 impl HotkeyHandler {
-    /// Create new hotkey handler with default bindings
+    /// Create new hotkey handler
     pub fn new() -> Self {
         Self {
             bindings: HashMap::new(),
@@ -20,24 +30,18 @@ impl HotkeyHandler {
         }
     }
 
-    /// Handle key press
-    /// Priority: focused_window first, then Global as fallback
-    pub fn handle_key(&self, key: &str) -> Option<AppEvent> {
-        // Try current focused window first (panel-specific hotkeys have priority)
-        if let Some(event) = self
-            .bindings
-            .get(&(self.focused_window.clone(), key.to_string()))
-        {
-            return Some(event.clone());
+    /// Handle key press, returns cloned event
+    pub fn handle_key(&self, key: &str) -> Option<BoxedEvent> {
+        // Try current focused window first
+        if let Some(factory) = self.bindings.get(&(self.focused_window, key.to_string())) {
+            return Some(factory());
         }
-
-        // Fallback: try Global bindings (only if not found in focused window)
+        // Fallback: try Global
         if self.focused_window != HotkeyWindow::Global {
-            if let Some(event) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
-                return Some(event.clone());
+            if let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
+                return Some(factory());
             }
         }
-
         None
     }
 
@@ -48,19 +52,12 @@ impl HotkeyHandler {
         ctrl: bool,
         shift: bool,
         alt: bool,
-    ) -> Option<AppEvent> {
+    ) -> Option<BoxedEvent> {
         let mut key_combo = String::new();
-        if ctrl {
-            key_combo.push_str("Ctrl+");
-        }
-        if shift {
-            key_combo.push_str("Shift+");
-        }
-        if alt {
-            key_combo.push_str("Alt+");
-        }
+        if ctrl { key_combo.push_str("Ctrl+"); }
+        if shift { key_combo.push_str("Shift+"); }
+        if alt { key_combo.push_str("Alt+"); }
         key_combo.push_str(key);
-
         self.handle_key(&key_combo)
     }
 
@@ -69,115 +66,83 @@ impl HotkeyHandler {
         self.focused_window = window;
     }
 
-    /// Add hotkey binding
-    pub fn add_binding(&mut self, window: HotkeyWindow, key: String, event: AppEvent) {
-        self.bindings.insert((window, key), event);
-    }
-
-    /// Remove hotkey binding
-    pub fn remove_binding(&mut self, window: HotkeyWindow, key: &str) {
-        self.bindings.remove(&(window, key.to_string()));
+    /// Add hotkey binding with factory
+    fn bind<E: Clone + Send + Sync + 'static>(&mut self, window: HotkeyWindow, key: &str, event: E) {
+        let factory: EventFactory = Box::new(move || Box::new(event.clone()));
+        self.bindings.insert((window, key.to_string()), factory);
     }
 
     /// Setup default hotkey bindings
     pub fn setup_default_bindings(&mut self) {
-        use AppEvent::*;
         use HotkeyWindow::*;
 
-        // Global hotkeys (работают везде)
-        self.add_binding(Global, "F1".to_string(), ToggleHelp);
-        self.add_binding(Global, "F2".to_string(), TogglePlaylist);
-        self.add_binding(Global, "F3".to_string(), ToggleAttributeEditor);
-        self.add_binding(Global, "F4".to_string(), ToggleEncodeDialog);
-        self.add_binding(Global, "F5".to_string(), ToggleSettings);
-        self.add_binding(Global, "Space".to_string(), TogglePlayPause);
-        self.add_binding(Global, "ArrowUp".to_string(), TogglePlayPause);
-        self.add_binding(Global, "K".to_string(), Stop);
-        self.add_binding(Global, "Period".to_string(), Stop);
-        self.add_binding(Global, "Num1".to_string(), JumpToStart);
-        self.add_binding(Global, "Home".to_string(), JumpToStart);
-        self.add_binding(Global, "Num2".to_string(), JumpToEnd);
-        self.add_binding(Global, "End".to_string(), JumpToEnd);
-        self.add_binding(Global, "PageDown".to_string(), StepForward);
-        self.add_binding(Global, "Shift+PageDown".to_string(), StepForwardLarge);
-        self.add_binding(Global, "PageUp".to_string(), StepBackward);
-        self.add_binding(Global, "Shift+PageUp".to_string(), StepBackwardLarge);
-        self.add_binding(Global, "Ctrl+PageDown".to_string(), JumpToEnd);
-        self.add_binding(Global, "Ctrl+PageUp".to_string(), JumpToStart);
-        self.add_binding(Global, "-".to_string(), DecreaseFPSBase);
-        self.add_binding(Global, "Equals".to_string(), IncreaseFPSBase);
-        self.add_binding(Global, "Plus".to_string(), IncreaseFPSBase);
-        self.add_binding(Global, "Shift+ArrowLeft".to_string(), StepBackwardLarge);
-        self.add_binding(Global, "Shift+ArrowRight".to_string(), StepForwardLarge);
-        self.add_binding(Global, "ArrowLeft".to_string(), StepBackward);
-        self.add_binding(Global, "ArrowRight".to_string(), StepForward);
-        self.add_binding(Global, "ArrowDown".to_string(), Stop);
-        self.add_binding(Global, "J".to_string(), JogBackward);
-        self.add_binding(Global, "Comma".to_string(), JogBackward);
-        self.add_binding(Global, "L".to_string(), JogForward);
-        self.add_binding(Global, "Slash".to_string(), JogForward);
-        self.add_binding(Global, "Semicolon".to_string(), JumpToPrevEdge);
-        self.add_binding(Global, "Quote".to_string(), JumpToNextEdge);
-        self.add_binding(Global, "Backtick".to_string(), ToggleLoop);
-        self.add_binding(Global, "Backspace".to_string(), ToggleFrameNumbers);
-        self.add_binding(Global, "B".to_string(), SetPlayRangeStart);
-        self.add_binding(Global, "N".to_string(), SetPlayRangeEnd);
-        self.add_binding(Global, "Ctrl+B".to_string(), ResetPlayRange);
-        self.add_binding(Global, "Ctrl+ArrowLeft".to_string(), JumpToStart);
-        self.add_binding(Global, "Ctrl+ArrowRight".to_string(), JumpToEnd);
-        self.add_binding(Global, "Ctrl+R".to_string(), ResetSettings);
-        self.add_binding(Global, "Z".to_string(), ToggleFullscreen);
-        self.add_binding(Global, "F".to_string(), FitViewport);
-        self.add_binding(Global, "A".to_string(), Viewport100);
-        self.add_binding(Global, "H".to_string(), Viewport100);
+        // Global hotkeys
+        self.bind(Global, "F1", ToggleHelpEvent);
+        self.bind(Global, "F2", TogglePlaylistEvent);
+        self.bind(Global, "F3", ToggleAttributeEditorEvent);
+        self.bind(Global, "F4", ToggleEncodeDialogEvent);
+        self.bind(Global, "F5", ToggleSettingsEvent);
+        self.bind(Global, "Space", TogglePlayPauseEvent);
+        self.bind(Global, "ArrowUp", TogglePlayPauseEvent);
+        self.bind(Global, "K", StopEvent);
+        self.bind(Global, "Period", StopEvent);
+        self.bind(Global, "Num1", JumpToStartEvent);
+        self.bind(Global, "Home", JumpToStartEvent);
+        self.bind(Global, "Num2", JumpToEndEvent);
+        self.bind(Global, "End", JumpToEndEvent);
+        self.bind(Global, "PageDown", StepForwardEvent);
+        self.bind(Global, "Shift+PageDown", StepForwardLargeEvent);
+        self.bind(Global, "PageUp", StepBackwardEvent);
+        self.bind(Global, "Shift+PageUp", StepBackwardLargeEvent);
+        self.bind(Global, "Ctrl+PageDown", JumpToEndEvent);
+        self.bind(Global, "Ctrl+PageUp", JumpToStartEvent);
+        self.bind(Global, "-", DecreaseFPSBaseEvent);
+        self.bind(Global, "Equals", IncreaseFPSBaseEvent);
+        self.bind(Global, "Plus", IncreaseFPSBaseEvent);
+        self.bind(Global, "Shift+ArrowLeft", StepBackwardLargeEvent);
+        self.bind(Global, "Shift+ArrowRight", StepForwardLargeEvent);
+        self.bind(Global, "ArrowLeft", StepBackwardEvent);
+        self.bind(Global, "ArrowRight", StepForwardEvent);
+        self.bind(Global, "ArrowDown", StopEvent);
+        self.bind(Global, "J", JogBackwardEvent);
+        self.bind(Global, "Comma", JogBackwardEvent);
+        self.bind(Global, "L", JogForwardEvent);
+        self.bind(Global, "Slash", JogForwardEvent);
+        self.bind(Global, "Semicolon", JumpToPrevEdgeEvent);
+        self.bind(Global, "Quote", JumpToNextEdgeEvent);
+        self.bind(Global, "Backtick", ToggleLoopEvent);
+        self.bind(Global, "Backspace", ToggleFrameNumbersEvent);
+        self.bind(Global, "B", SetPlayRangeStartEvent);
+        self.bind(Global, "N", SetPlayRangeEndEvent);
+        self.bind(Global, "Ctrl+B", ResetPlayRangeEvent);
+        self.bind(Global, "Ctrl+ArrowLeft", JumpToStartEvent);
+        self.bind(Global, "Ctrl+ArrowRight", JumpToEndEvent);
+        self.bind(Global, "Ctrl+R", ResetSettingsEvent);
+        self.bind(Global, "Z", ToggleFullscreenEvent);
+        self.bind(Global, "F", FitViewportEvent);
+        self.bind(Global, "A", Viewport100Event);
+        self.bind(Global, "H", Viewport100Event);
 
-        // Timeline-specific hotkeys
-        self.add_binding(Timeline, "Delete".to_string(), RemoveSelectedLayer);
-        self.add_binding(Timeline, "F".to_string(), TimelineFit);
-        self.add_binding(Timeline, "A".to_string(), TimelineResetZoom);
-        self.add_binding(
-            Timeline,
-            "OpenBracket".to_string(),
-            AlignLayersStart {
-                comp_uuid: Uuid::nil(), // Will be filled at runtime
-            },
-        );
-        self.add_binding(
-            Timeline,
-            "CloseBracket".to_string(),
-            AlignLayersEnd {
-                comp_uuid: Uuid::nil(),
-            },
-        );
-        self.add_binding(
-            Timeline,
-            "Alt+OpenBracket".to_string(),
-            TrimLayersStart {
-                comp_uuid: Uuid::nil(),
-            },
-        );
-        self.add_binding(
-            Timeline,
-            "Alt+CloseBracket".to_string(),
-            TrimLayersEnd {
-                comp_uuid: Uuid::nil(),
-            },
-        );
+        // Timeline-specific
+        self.bind(Timeline, "Delete", RemoveSelectedLayerEvent);
+        self.bind(Timeline, "F", TimelineFitEvent);
+        self.bind(Timeline, "A", TimelineResetZoomEvent);
+        self.bind(Timeline, "OpenBracket", AlignLayersStartEvent(Uuid::nil()));
+        self.bind(Timeline, "CloseBracket", AlignLayersEndEvent(Uuid::nil()));
+        self.bind(Timeline, "Alt+OpenBracket", TrimLayersStartEvent(Uuid::nil()));
+        self.bind(Timeline, "Alt+CloseBracket", TrimLayersEndEvent(Uuid::nil()));
 
-        // Project-specific hotkeys
-        self.add_binding(Project, "Delete".to_string(), RemoveSelectedMedia);
+        // Project-specific
+        self.bind(Project, "Delete", RemoveSelectedMediaEvent);
 
-        // Viewport-specific hotkeys
-        self.add_binding(Viewport, "F".to_string(), FitViewport);
-        self.add_binding(Viewport, "A".to_string(), Viewport100);
-        self.add_binding(Viewport, "H".to_string(), Viewport100);
-
-        // TODO: добавить остальные hotkeys по мере необходимости
+        // Viewport-specific
+        self.bind(Viewport, "F", FitViewportEvent);
+        self.bind(Viewport, "A", Viewport100Event);
+        self.bind(Viewport, "H", Viewport100Event);
     }
 
-    /// Handle keyboard input from egui with current focused window
-    pub fn handle_input(&self, input: &egui::InputState) -> Option<AppEvent> {
-        // Check all events (key_pressed, not keys_down to avoid repeats)
+    /// Handle keyboard input
+    pub fn handle_input(&self, input: &egui::InputState) -> Option<BoxedEvent> {
         for event in &input.events {
             if let egui::Event::Key {
                 key,
@@ -187,26 +152,21 @@ impl HotkeyHandler {
             } = event
             {
                 let key_str = format!("{:?}", key);
-
-                // Check with modifiers
-                if let Some(event) = self.handle_key_with_modifiers(
+                if let Some(ev) = self.handle_key_with_modifiers(
                     &key_str,
                     modifiers.ctrl,
                     modifiers.shift,
                     modifiers.alt,
                 ) {
-                    return Some(event);
+                    return Some(ev);
                 }
-
-                // Check without modifiers
                 if !modifiers.any() {
-                    if let Some(event) = self.handle_key(&key_str) {
-                        return Some(event);
+                    if let Some(ev) = self.handle_key(&key_str) {
+                        return Some(ev);
                     }
                 }
             }
         }
-
         None
     }
 }

@@ -7,6 +7,7 @@
 mod timeline;
 mod timeline_helpers;
 mod timeline_ui;
+pub mod timeline_events;
 
 pub use timeline::{
     GlobalDragState, TimelineActions, TimelineConfig, TimelineState, TimelineViewMode,

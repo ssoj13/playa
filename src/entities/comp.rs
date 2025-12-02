@@ -33,10 +33,12 @@ use crate::workers::Workers;
 use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::loader::Loader;
 use super::{AttrValue, Attrs};
-use super::keys::A_FRAME;
+use super::keys::*;
+use super::node::{ComputeContext, Node};
 use super::compositor::BlendMode;
 use crate::entities::loader_video;
-use crate::events::{CompEvent, CompEventSender};
+use crate::event_bus::CompEventSender;
+use crate::entities::comp_events::{LayersChangedEvent, CurrentFrameChangedEvent, AttrsChangedEvent};
 use crate::utils::media;
 
 use std::cell::RefCell;
@@ -49,12 +51,10 @@ thread_local! {
     static THREAD_COMPOSITOR: RefCell<CpuCompositor> = RefCell::new(CpuCompositor);
 }
 
-/// Comp operating mode: Layer composition or File sequence loading
+// === Legacy CompMode enum (kept for backwards compatibility during migration) ===
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CompMode {
-    /// Layer mode: composes children comps (default)
     Layer,
-    /// File mode: loads image sequence from disk
     File,
 }
 
@@ -66,88 +66,60 @@ impl Default for CompMode {
 
 /// Unified composition descriptor with dual-mode operation.
 ///
-/// **Layer mode**: Composes children comps recursively
-/// **File mode**: Loads image sequence from disk
+/// **Mode stored in attrs as A_MODE (i8)**:
+/// - COMP_NORMAL (0): Composes children comps recursively
+/// - COMP_FILE (1): Loads image sequence from disk
 ///
-/// All editable properties are stored in `attrs`:
-/// - "name" (Str): Human-readable name
-/// - "in" (UInt): Global start frame
-/// - "out" (UInt): Global end frame
-/// - "fps" (Float): Timeline framerate
-/// - "trim_in" (Int): Work area start (absolute comp frame)
-/// - "trim_out" (Int): Work area end (absolute comp frame)
-///
-/// **Transform attributes** (Vec3 or Float):
-/// - "position" (Vec3): x, y, z position
-/// - "rotation" (Vec3): euler angles (degrees)
-/// - "scale" (Vec3): scale factors
-/// - "pivot" (Vec3): pivot point
-/// - "transparency" (Float): alpha (0.0 = transparent, 1.0 = opaque)
-/// - "layer_mode" (Str): blend mode ("normal", "screen", "add", "subtract", "multiply", "divide")
-/// - "speed" (Float): playback speed multiplier (1.0 = normal, 2.0 = double speed, 0.5 = half speed)
+/// All properties stored in `core.attrs`:
+/// - Identity: uuid, name, mode
+/// - Timeline: in, out, trim_in, trim_out, fps, frame
+/// - Compose: solo, mute, visible, opacity, blend_mode
+/// - Transform: position, rotation, scale, pivot
+/// - Playback: speed
+/// - Relationships: source_uuid, parent
+/// - File mode: file_mask, file_start, file_end
+/// - Dimensions: width, height
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Comp {
-    /// Stable identifier inside Project (16 bytes, Copy)
+    // === Legacy fields for backwards compatibility ===
+    // TODO: Remove after migration complete
+    #[serde(default)]
     pub uuid: Uuid,
-
-    /// Operating mode: Layer or File
     #[serde(default)]
     pub mode: CompMode,
-
-    /// Arbitrary attributes (all editable properties stored here)
-    pub attrs: Attrs,
-
-    // ===== Layer Mode Fields =====
-    /// Parent composition UUID (if nested in another comp)
     #[serde(default)]
     pub parent: Option<Uuid>,
-
-    /// Children compositions with their attributes (for Layer mode) - ordered list
-    /// Each tuple: (instance_uuid, child_attrs) where child_attrs contains:
-    /// - "source_uuid" (Json<Uuid>): UUID of the source comp in project.media
-    /// - "in", "out" (Int): Local timeline bounds
-    /// - "trim_in", "trim_out" (Int): Work area bounds
-    /// - transform attrs: "position", "rotation", "scale", "pivot", "transparency", etc.
-    #[serde(default)]
-    pub children: Vec<(Uuid, Attrs)>,
-
-    // ===== File Mode Fields =====
-    /// File pattern for image sequence (e.g. "/path/seq.*.exr")
-    /// Only used in File mode
     #[serde(default)]
     pub file_mask: Option<String>,
-
-    /// First frame number in sequence
-    /// Only used in File mode
     #[serde(default)]
     pub file_start: Option<i32>,
-
-    /// Last frame number in sequence
-    /// Only used in File mode
     #[serde(default)]
     pub file_end: Option<i32>,
 
-    // ===== Common Fields =====
-    /// Currently selected layers (layer_uuid from children_attrs)
+    /// Persistent attributes (all properties)
+    pub attrs: Attrs,
+
+    /// Transient runtime data (not serialized)
+    #[serde(skip, default)]
+    pub data: Attrs,
+
+    /// Children layers - each child is full Attrs with uuid, source_uuid, timing, etc.
+    /// Legacy format: Vec<(Uuid, Attrs)> - auto-converted on load
+    #[serde(default)]
+    pub children: Vec<(Uuid, Attrs)>,
+
+    // === Runtime-only fields ===
     #[serde(default)]
     pub layer_selection: Vec<Uuid>,
     #[serde(default)]
     pub layer_selection_anchor: Option<Uuid>,
 
-    // NOTE: current_frame is now stored in attrs as A_FRAME ("frame")
-    // Access via: self.attrs.get_i32(A_FRAME).unwrap_or(0)
-    // Set via: self.attrs.set(A_FRAME, AttrValue::Int(val))
-
-    /// Event sender for emitting comp events (runtime-only, rebuilt after deserialization)
-    #[serde(skip)]
-    #[serde(default)]
+    #[serde(skip, default)]
     event_sender: CompEventSender,
 
-    /// Global cache manager (memory tracking + epoch)
     #[serde(skip)]
     cache_manager: Option<Arc<CacheManager>>,
 
-    /// Global frame cache (shared across all comps in project)
     #[serde(skip)]
     global_cache: Option<Arc<crate::global_cache::GlobalFrameCache>>,
 }
@@ -159,32 +131,68 @@ impl Default for Comp {
 }
 
 impl Comp {
-    /// Create new composition in Layer mode (default)
-    pub fn new(name: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
+    /// Create comp with ALL attributes (unified schema).
+    /// Mode determines get_frame() behavior: COMP_NORMAL -> compose(), COMP_FILE -> load()
+    /// All attributes always present, unused ones have default/nil values.
+    pub fn new_comp(name: &str, start: i32, end: i32, fps: f32) -> Self {
         let mut attrs = Attrs::new();
-        attrs.set("name", AttrValue::Str(name.into()));
-        attrs.set("in", AttrValue::Int(start));
-        attrs.set("out", AttrValue::Int(end));
-        attrs.set("fps", AttrValue::Float(fps));
-        attrs.set("trim_in", AttrValue::Int(start)); // Full range by default (absolute)
-        attrs.set("trim_out", AttrValue::Int(end)); // Full range by default (absolute)
+        let uuid = Uuid::new_v4();
 
-        // Transform defaults
-        attrs.set("visible", AttrValue::Bool(true));
-        attrs.set("transparency", AttrValue::Float(1.0)); // Fully opaque
+        // === Identity ===
+        attrs.set_uuid(A_UUID, uuid);
+        attrs.set(A_NAME, AttrValue::Str(name.to_string()));
+        attrs.set_i8(A_MODE, COMP_NORMAL); // Default: layer composition
+
+        // === Timeline ===
+        attrs.set(A_IN, AttrValue::Int(start));
+        attrs.set(A_OUT, AttrValue::Int(end));
+        attrs.set(A_TRIM_IN, AttrValue::Int(start));
+        attrs.set(A_TRIM_OUT, AttrValue::Int(end));
+        attrs.set(A_FPS, AttrValue::Float(fps));
+        attrs.set(A_FRAME, AttrValue::Int(start));
+
+        // === Compose flags ===
+        attrs.set(A_SOLO, AttrValue::Bool(false));
+        attrs.set(A_MUTE, AttrValue::Bool(false));
+        attrs.set(A_VISIBLE, AttrValue::Bool(true));
+        attrs.set(A_OPACITY, AttrValue::Float(1.0));
+        attrs.set(A_BLEND_MODE, AttrValue::Str("normal".to_string()));
+        // Legacy alias
+        attrs.set("transparency", AttrValue::Float(1.0));
         attrs.set("layer_mode", AttrValue::Str("normal".to_string()));
-        attrs.set("speed", AttrValue::Float(1.0)); // Normal speed
-        attrs.set(A_FRAME, AttrValue::Int(start)); // Current playback frame
+
+        // === Transform ===
+        attrs.set(A_POSITION, AttrValue::Vec3([0.0, 0.0, 0.0]));
+        attrs.set(A_ROTATION, AttrValue::Vec3([0.0, 0.0, 0.0]));
+        attrs.set(A_SCALE, AttrValue::Vec3([1.0, 1.0, 1.0]));
+        attrs.set(A_PIVOT, AttrValue::Vec3([0.0, 0.0, 0.0]));
+
+        // === Playback ===
+        attrs.set(A_SPEED, AttrValue::Float(1.0));
+
+        // === Relationships (always present, nil when unused) ===
+        attrs.set_uuid(A_SOURCE_UUID, Uuid::nil()); // nil = no source
+        attrs.set_uuid(A_PARENT, Uuid::nil()); // nil = root level
+
+        // === File mode attrs (always present, empty when unused) ===
+        attrs.set(A_FILE_MASK, AttrValue::Str(String::new())); // empty = no file
+        attrs.set(A_FILE_START, AttrValue::Int(0));
+        attrs.set(A_FILE_END, AttrValue::Int(0));
+
+        // === Dimensions (0 = auto-detect from content) ===
+        attrs.set(A_WIDTH, AttrValue::Int(0));
+        attrs.set(A_HEIGHT, AttrValue::Int(0));
 
         Self {
-            uuid: Uuid::new_v4(),
+            uuid,
             mode: CompMode::Layer,
-            attrs,
             parent: None,
-            children: Vec::new(),
             file_mask: None,
             file_start: None,
             file_end: None,
+            attrs,
+            data: Attrs::new(),
+            children: Vec::new(),
             layer_selection: Vec::new(),
             layer_selection_anchor: None,
             event_sender: CompEventSender::dummy(),
@@ -193,13 +201,30 @@ impl Comp {
         }
     }
 
+    /// Legacy constructor - calls new_comp internally
+    pub fn new(name: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
+        Self::new_comp(&name.into(), start, end, fps)
+    }
+
     /// Create new composition in File mode for loading image sequences
     pub fn new_file_comp(pattern: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
-        let mut comp = Self::new("File Comp", start, end, fps);
-        comp.mode = CompMode::File;
-        comp.file_mask = Some(pattern.into());
+        let pattern_str = pattern.into();
+        let mut comp = Self::new_comp("File Comp", start, end, fps);
+
+        // Set mode to file
+        comp.attrs.set_i8(A_MODE, COMP_FILE);
+        comp.mode = CompMode::File; // Legacy
+
+        // Set file attrs
+        comp.attrs.set(A_FILE_MASK, AttrValue::Str(pattern_str.clone()));
+        comp.attrs.set(A_FILE_START, AttrValue::Int(start));
+        comp.attrs.set(A_FILE_END, AttrValue::Int(end));
+
+        // Legacy fields
+        comp.file_mask = Some(pattern_str);
         comp.file_start = Some(start);
         comp.file_end = Some(end);
+
         comp
     }
 
@@ -463,9 +488,7 @@ impl Comp {
         self.set_trim_out(hi);
         // Don't clear cache - already loaded frames remain valid
         // Preload will automatically load new frames in the updated work area
-        self.event_sender.emit(CompEvent::LayersChanged {
-            comp_uuid: self.uuid,
-        });
+        self.event_sender.send(LayersChangedEvent(self.uuid));
     }
 
     /// Child placement bounds (start/end) in parent timeline, ordered and clamped if needed.
@@ -933,7 +956,7 @@ impl Comp {
         let old_frame = self.frame();
         if old_frame != new_frame {
             self.attrs.set(A_FRAME, AttrValue::Int(new_frame));
-            self.event_sender.emit(CompEvent::CurrentFrameChanged {
+            self.event_sender.send(CurrentFrameChangedEvent {
                 comp_uuid: self.uuid,
                 old_frame,
                 new_frame,
@@ -1397,12 +1420,8 @@ impl Comp {
         self.update_dim_from_children();
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.emit(CompEvent::LayersChanged {
-            comp_uuid: self.uuid,
-        });
-        self.event_sender.emit(CompEvent::AttrsChanged {
-            comp_uuid: self.uuid,
-        });
+        self.event_sender.send(LayersChangedEvent(self.uuid));
+        self.event_sender.send(AttrsChangedEvent(self.uuid));
 
         Ok(())
     }
@@ -1491,12 +1510,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.emit(CompEvent::LayersChanged {
-            comp_uuid: self.uuid.clone(),
-        });
-        self.event_sender.emit(CompEvent::AttrsChanged {
-            comp_uuid: self.uuid.clone(),
-        });
+        self.event_sender.send(LayersChangedEvent(self.uuid));
+        self.event_sender.send(AttrsChangedEvent(self.uuid));
 
         Ok(())
     }
@@ -1607,12 +1622,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.emit(CompEvent::LayersChanged {
-            comp_uuid: self.uuid.clone(),
-        });
-        self.event_sender.emit(CompEvent::AttrsChanged {
-            comp_uuid: self.uuid.clone(),
-        });
+        self.event_sender.send(LayersChangedEvent(self.uuid));
+        self.event_sender.send(AttrsChangedEvent(self.uuid));
         Ok(())
     }
 
@@ -1637,12 +1648,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.emit(CompEvent::LayersChanged {
-            comp_uuid: self.uuid.clone(),
-        });
-        self.event_sender.emit(CompEvent::AttrsChanged {
-            comp_uuid: self.uuid.clone(),
-        });
+        self.event_sender.send(LayersChangedEvent(self.uuid));
+        self.event_sender.send(AttrsChangedEvent(self.uuid));
 
         Ok(())
     }
@@ -1668,12 +1675,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.emit(CompEvent::LayersChanged {
-            comp_uuid: self.uuid.clone(),
-        });
-        self.event_sender.emit(CompEvent::AttrsChanged {
-            comp_uuid: self.uuid.clone(),
-        });
+        self.event_sender.send(LayersChangedEvent(self.uuid));
+        self.event_sender.send(AttrsChangedEvent(self.uuid));
 
         Ok(())
     }
@@ -1728,12 +1731,8 @@ impl Comp {
         self.rebound();
         self.update_dim_from_children();
         self.attrs.mark_dirty(); // Mark as dirty for cache invalidation
-        self.event_sender.emit(CompEvent::LayersChanged {
-            comp_uuid: self.uuid,
-        });
-        self.event_sender.emit(CompEvent::AttrsChanged {
-            comp_uuid: self.uuid,
-        });
+        self.event_sender.send(LayersChangedEvent(self.uuid));
+        self.event_sender.send(AttrsChangedEvent(self.uuid));
     }
 
     /// Recalculate comp start/end based on children (negative starts allowed).
@@ -2144,6 +2143,65 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usi
     Ok(Some((prefix, number, ext, padding)))
 }
 
+// =============================================================================
+// Node trait implementation
+// =============================================================================
+
+impl Node for Comp {
+    fn attrs(&self) -> &Attrs {
+        &self.attrs
+    }
+
+    fn attrs_mut(&mut self) -> &mut Attrs {
+        &mut self.attrs
+    }
+
+    fn data(&self) -> &Attrs {
+        &self.data
+    }
+
+    fn data_mut(&mut self) -> &mut Attrs {
+        &mut self.data
+    }
+
+    fn compute(&self, _ctx: &ComputeContext) -> Option<Frame> {
+        // get_frame() handles the actual computation
+        None
+    }
+}
+
+// =============================================================================
+// Mode helpers (i8-based)
+// =============================================================================
+
+impl Comp {
+    /// Check if comp is in file mode (loads from disk)
+    #[inline]
+    pub fn is_file_mode(&self) -> bool {
+        self.attrs.get_i8(A_MODE).unwrap_or(COMP_NORMAL) == COMP_FILE
+    }
+
+    /// Check if comp is in normal/layer mode (composes children)
+    #[inline]
+    pub fn is_layer_mode(&self) -> bool {
+        self.attrs.get_i8(A_MODE).unwrap_or(COMP_NORMAL) == COMP_NORMAL
+    }
+
+    /// Get comp mode as i8
+    #[inline]
+    pub fn get_mode(&self) -> i8 {
+        self.attrs.get_i8(A_MODE).unwrap_or(COMP_NORMAL)
+    }
+
+    /// Set comp mode
+    #[inline]
+    pub fn set_mode(&mut self, mode: i8) {
+        self.attrs.set_i8(A_MODE, mode);
+        // Sync legacy field
+        self.mode = if mode == COMP_FILE { CompMode::File } else { CompMode::Layer };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2324,5 +2382,146 @@ mod tests {
         // Deserialize back
         let restored: Comp = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.frame(), 42, "Frame should survive serialization round-trip");
+    }
+
+    // ==========================================================================
+    // Time conversion tests (use existing UUID-based methods)
+    // ==========================================================================
+
+    fn make_child_attrs_with_uuid(start: i32, end: i32) -> (Uuid, Attrs) {
+        let mut attrs = Attrs::new();
+        let uuid = Uuid::new_v4();
+        attrs.set(A_IN, AttrValue::Int(start));
+        attrs.set(A_OUT, AttrValue::Int(end));
+        attrs.set(A_SPEED, AttrValue::Float(1.0));
+        (uuid, attrs)
+    }
+
+    #[test]
+    fn test_comp2local_basic() {
+        let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
+        let (child_uuid, child_attrs) = make_child_attrs_with_uuid(20, 80);
+        comp.children.push((child_uuid, child_attrs));
+
+        // comp_frame=50, child.in=20, speed=1.0
+        // local = (50 - 20) / 1.0 = 30
+        assert_eq!(comp.comp2local(child_uuid, 50), Some(30));
+        assert_eq!(comp.comp2local(child_uuid, 20), Some(0));
+        assert_eq!(comp.comp2local(child_uuid, 80), Some(60));
+    }
+
+    #[test]
+    fn test_comp2local_with_speed() {
+        let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
+        let (child_uuid, mut child_attrs) = make_child_attrs_with_uuid(20, 80);
+        child_attrs.set(A_SPEED, AttrValue::Float(2.0));
+        comp.children.push((child_uuid, child_attrs));
+
+        // comp_frame=50, child.in=20, speed=2.0
+        // local = (50 - 20) / 2.0 = 15
+        assert_eq!(comp.comp2local(child_uuid, 50), Some(15));
+    }
+
+    #[test]
+    fn test_local2comp_basic() {
+        let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
+        let (child_uuid, child_attrs) = make_child_attrs_with_uuid(20, 80);
+        comp.children.push((child_uuid, child_attrs));
+
+        // local_frame=30, child.in=20, speed=1.0
+        // comp = 20 + 30 * 1.0 = 50
+        assert_eq!(comp.local2comp(child_uuid, 30), Some(50));
+    }
+
+    #[test]
+    fn test_local2comp_with_speed() {
+        let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
+        let (child_uuid, mut child_attrs) = make_child_attrs_with_uuid(20, 80);
+        child_attrs.set(A_SPEED, AttrValue::Float(2.0));
+        comp.children.push((child_uuid, child_attrs));
+
+        // local_frame=15, child.in=20, speed=2.0
+        // comp = 20 + 15 * 2.0 = 50
+        assert_eq!(comp.local2comp(child_uuid, 15), Some(50));
+    }
+
+    #[test]
+    fn test_time_roundtrip() {
+        let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
+        let (child_uuid, child_attrs) = make_child_attrs_with_uuid(10, 90);
+        // Use speed=1.0 for exact roundtrip (non-integer speeds have rounding errors)
+        comp.children.push((child_uuid, child_attrs));
+
+        for comp_frame in [10, 25, 50, 75, 90] {
+            let local = comp.comp2local(child_uuid, comp_frame).unwrap();
+            let back = comp.local2comp(child_uuid, local).unwrap();
+            assert_eq!(back, comp_frame, "Roundtrip failed for frame {}", comp_frame);
+        }
+    }
+
+    #[test]
+    fn test_invalid_child_uuid() {
+        let comp = Comp::new_comp("Test", 0, 100, 24.0);
+        let fake_uuid = Uuid::new_v4();
+        assert_eq!(comp.comp2local(fake_uuid, 50), None);
+        assert_eq!(comp.local2comp(fake_uuid, 50), None);
+    }
+
+    #[test]
+    fn test_negative_frames() {
+        let mut comp = Comp::new_comp("Test", -50, 50, 24.0);
+        let (child_uuid, child_attrs) = make_child_attrs_with_uuid(-20, 30);
+        comp.children.push((child_uuid, child_attrs));
+
+        // child.in=-20, comp_frame=0 => local = (0 - (-20)) / 1.0 = 20
+        assert_eq!(comp.comp2local(child_uuid, 0), Some(20));
+        assert_eq!(comp.comp2local(child_uuid, -20), Some(0));
+    }
+
+    #[test]
+    fn test_mode_dispatch() {
+        let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
+        assert_eq!(comp.attrs.get_i8(A_MODE), Some(COMP_NORMAL));
+        assert!(comp.is_layer_mode());
+        assert!(!comp.is_file_mode());
+
+        comp.set_mode(COMP_FILE);
+        comp.attrs.set(A_FILE_MASK, AttrValue::Str("/path/seq.*.exr".into()));
+        assert_eq!(comp.attrs.get_i8(A_MODE), Some(COMP_FILE));
+        assert!(comp.is_file_mode());
+        assert!(!comp.is_layer_mode());
+    }
+
+    #[test]
+    fn test_new_comp_all_attrs() {
+        let comp = Comp::new_comp("TestComp", 10, 200, 30.0);
+
+        // Identity
+        assert!(comp.attrs.get_uuid(A_UUID).is_some());
+        assert_eq!(comp.attrs.get_str(A_NAME), Some("TestComp"));
+        assert_eq!(comp.attrs.get_i8(A_MODE), Some(COMP_NORMAL));
+
+        // Timeline
+        assert_eq!(comp.attrs.get_i32(A_IN), Some(10));
+        assert_eq!(comp.attrs.get_i32(A_OUT), Some(200));
+        assert_eq!(comp.attrs.get_float(A_FPS), Some(30.0));
+
+        // Compose flags
+        assert_eq!(comp.attrs.get_bool(A_SOLO), Some(false));
+        assert_eq!(comp.attrs.get_bool(A_MUTE), Some(false));
+        assert_eq!(comp.attrs.get_bool(A_VISIBLE), Some(true));
+
+        // Transform
+        assert!(comp.attrs.get(A_POSITION).is_some());
+
+        // Playback
+        assert_eq!(comp.attrs.get_float(A_SPEED), Some(1.0));
+
+        // Relationships
+        assert_eq!(comp.attrs.get_uuid(A_SOURCE_UUID), Some(Uuid::nil()));
+        assert_eq!(comp.attrs.get_uuid(A_PARENT), Some(Uuid::nil()));
+
+        // File mode (empty by default)
+        assert_eq!(comp.attrs.get_str(A_FILE_MASK), Some(""));
     }
 }

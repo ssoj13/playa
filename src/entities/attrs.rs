@@ -12,12 +12,14 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
+use uuid::Uuid;
 
 /// Generic attribute value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum AttrValue {
     Bool(bool),
     Str(String),
+    Int8(i8),
     Int(i32),
     UInt(u32),
     Float(f32),
@@ -25,6 +27,10 @@ pub enum AttrValue {
     Vec4([f32; 4]),
     Mat3([[f32; 3]; 3]),
     Mat4([[f32; 4]; 4]),
+    /// UUID for entity identification
+    Uuid(Uuid),
+    /// Nested list of values (for children, etc.)
+    List(Vec<AttrValue>),
     /// JSON-encoded nested data (HashMap, Vec, etc.)
     Json(String),
 }
@@ -36,6 +42,7 @@ impl std::hash::Hash for AttrValue {
         match self {
             Bool(v) => v.hash(state),
             Str(v) => v.hash(state),
+            Int8(v) => v.hash(state),
             Int(v) => v.hash(state),
             UInt(v) => v.hash(state),
             Float(v) => v.to_bits().hash(state),
@@ -43,6 +50,8 @@ impl std::hash::Hash for AttrValue {
             Vec4(arr) => arr.iter().for_each(|f| f.to_bits().hash(state)),
             Mat3(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
             Mat4(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
+            Uuid(v) => v.hash(state),
+            List(v) => v.hash(state),
             Json(v) => v.hash(state),
         }
     }
@@ -125,6 +134,49 @@ impl Attrs {
             Some(AttrValue::Bool(v)) => Some(*v),
             _ => None,
         }
+    }
+
+    pub fn get_i8(&self, key: &str) -> Option<i8> {
+        match self.map.get(key) {
+            Some(AttrValue::Int8(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn set_i8(&mut self, key: impl Into<String>, value: i8) {
+        self.map.insert(key.into(), AttrValue::Int8(value));
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    pub fn get_uuid(&self, key: &str) -> Option<Uuid> {
+        match self.map.get(key) {
+            Some(AttrValue::Uuid(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn set_uuid(&mut self, key: impl Into<String>, value: Uuid) {
+        self.map.insert(key.into(), AttrValue::Uuid(value));
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    pub fn get_list(&self, key: &str) -> Option<&Vec<AttrValue>> {
+        match self.map.get(key) {
+            Some(AttrValue::List(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn get_list_mut(&mut self, key: &str) -> Option<&mut Vec<AttrValue>> {
+        match self.map.get_mut(key) {
+            Some(AttrValue::List(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn set_list(&mut self, key: impl Into<String>, value: Vec<AttrValue>) {
+        self.map.insert(key.into(), AttrValue::List(value));
+        self.dirty.store(true, Ordering::Relaxed);
     }
 
     // Generic helpers with defaults (to reduce boilerplate)

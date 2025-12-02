@@ -5,7 +5,7 @@
 use eframe::egui;
 
 use crate::entities::Project;
-use crate::events::EventBus;
+use crate::event_bus::EventBus;
 use crate::player::Player;
 use crate::widgets::timeline::{
     TimelineConfig, TimelineState, render_canvas, render_outline, render_toolbar,

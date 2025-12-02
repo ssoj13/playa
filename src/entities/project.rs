@@ -212,7 +212,7 @@ impl Project {
     ///
     /// - Reinitializes compositor to default (CPU).
     /// - Sets event sender and global_cache for all comps.
-    pub fn rebuild_runtime(&mut self, event_sender: Option<crate::events::CompEventSender>) {
+    pub fn rebuild_runtime(&mut self, event_sender: Option<crate::event_bus::CompEventSender>) {
         // Reinitialize compositor (not serialized)
         *self.compositor.borrow_mut() = CompositorType::default();
 
@@ -241,7 +241,7 @@ impl Project {
     pub fn rebuild_with_manager(
         &mut self,
         manager: Arc<CacheManager>,
-        event_sender: Option<crate::events::CompEventSender>,
+        event_sender: Option<crate::event_bus::CompEventSender>,
     ) {
         log::info!("Project::rebuild_with_manager() - unified rebuild");
         self.set_cache_manager(manager.clone());

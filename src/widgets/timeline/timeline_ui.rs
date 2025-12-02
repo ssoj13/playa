@@ -4,10 +4,10 @@
 //! - Layer name / clip name
 //! - Start..End range as horizontal bar
 //! - Visual indication of current_frame (playhead)
-//! Consumed by: `ui::render_timeline_panel`. Emits `AppEvent` through
+//! Consumed by: `ui::render_timeline_panel`. Emits events through
 //! dispatch closures to EventBus, driven by shared `TimelineState` from
 //! `timeline.rs` and helper routines in `timeline_helpers.rs`. Data flow:
-//! egui input → dispatch(AppEvent) → EventBus → Project/Comp mutations.
+//! egui input → dispatch(BoxedEvent) → EventBus → Project/Comp mutations.
 
 use super::timeline_helpers::{
     compute_all_layer_rows, detect_layer_tool, draw_drop_preview, draw_frame_ruler,
@@ -15,7 +15,16 @@ use super::timeline_helpers::{
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
-use crate::events::AppEvent;
+use crate::event_bus::BoxedEvent;
+use crate::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent};
+use crate::entities::comp_events::{
+    AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
+    MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,
+};
+use super::timeline_events::{
+    TimelineFitAllEvent, TimelineLockWorkAreaChangedEvent, TimelinePanChangedEvent,
+    TimelineSnapChangedEvent, TimelineZoomChangedEvent,
+};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 use uuid::Uuid;
@@ -52,23 +61,23 @@ fn compute_layer_selection(
 }
 
 /// Render timeline toolbar (transport controls, zoom, snap)
-pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl FnMut(AppEvent)) {
+pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl FnMut(BoxedEvent)) {
     ui.horizontal(|ui| {
         if ui.button("↞").on_hover_text("To Start").clicked() {
-            dispatch(AppEvent::JumpToStart);
+            dispatch(Box::new(JumpToStartEvent));
         }
 
         let play_icon = "▶"; // Placeholder - real icon controlled by playback status
         if ui.button(play_icon).on_hover_text("Play/Pause").clicked() {
-            dispatch(AppEvent::TogglePlayPause);
+            dispatch(Box::new(TogglePlayPauseEvent));
         }
 
         if ui.button("■").on_hover_text("Stop").clicked() {
-            dispatch(AppEvent::Stop);
+            dispatch(Box::new(StopEvent));
         }
 
         if ui.button("↠").on_hover_text("To End").clicked() {
-            dispatch(AppEvent::JumpToEnd);
+            dispatch(Box::new(JumpToEndEvent));
         }
 
         ui.separator();
@@ -80,7 +89,7 @@ pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl
             egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2),
         );
         if zoom_response.changed() {
-            dispatch(AppEvent::TimelineZoomChanged(state.zoom));
+            dispatch(Box::new(TimelineZoomChangedEvent(state.zoom)));
         }
         if ui
             .button("Reset")
@@ -88,21 +97,21 @@ pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl
             .clicked()
         {
             state.zoom = 1.0;
-            dispatch(AppEvent::TimelineZoomChanged(1.0));
+            dispatch(Box::new(TimelineZoomChangedEvent(1.0)));
         }
         if ui
             .button("Fit")
             .on_hover_text("Fit all clips to view")
             .clicked()
         {
-            dispatch(AppEvent::TimelineFitAll(state.last_canvas_width));
+            dispatch(Box::new(TimelineFitAllEvent(state.last_canvas_width)));
         }
 
         if ui.checkbox(&mut state.snap_enabled, "Snap").changed() {
-            dispatch(AppEvent::TimelineSnapChanged(state.snap_enabled));
+            dispatch(Box::new(TimelineSnapChangedEvent(state.snap_enabled)));
         }
         if ui.checkbox(&mut state.lock_work_area, "Lock").changed() {
-            dispatch(AppEvent::TimelineLockWorkAreaChanged(state.lock_work_area));
+            dispatch(Box::new(TimelineLockWorkAreaChangedEvent(state.lock_work_area)));
         }
     });
 }
@@ -115,7 +124,7 @@ pub fn render_outline(
     config: &TimelineConfig,
     _state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
-    mut dispatch: impl FnMut(AppEvent),
+    mut dispatch: impl FnMut(BoxedEvent),
 ) {
     let comp_id = comp_uuid;
 
@@ -222,14 +231,14 @@ pub fn render_outline(
                         }
 
                         if dirty {
-                            dispatch(crate::events::AppEvent::LayerAttributesChanged {
+                            dispatch(Box::new(LayerAttributesChangedEvent {
                                 comp_uuid: comp_id,
                                 layer_uuid: *child_uuid,
                                 visible,
                                 opacity,
                                 blend_mode: blend,
                                 speed,
-                            });
+                            }));
                         }
 
                         if response.clicked() {
@@ -244,11 +253,11 @@ pub fn render_outline(
                                 modifiers,
                                 &children_uuids,
                             );
-                            dispatch(AppEvent::CompSelectionChanged {
+                            dispatch(Box::new(CompSelectionChangedEvent {
                                 comp_uuid: comp_id,
                                 selection,
                                 anchor,
-                            });
+                            }));
                         }
                     },
                 )
@@ -258,11 +267,11 @@ pub fn render_outline(
         .inner;
 
     if let Some(update) = dnd_response.final_update() {
-        dispatch(AppEvent::ReorderLayer {
+        dispatch(Box::new(ReorderLayerEvent {
             comp_uuid: comp_id,
             from_idx: update.from,
             to_idx: update.to,
-        });
+        }));
     }
 }
 
@@ -274,7 +283,7 @@ pub fn render_canvas(
     config: &TimelineConfig,
     state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
-    mut dispatch: impl FnMut(AppEvent),
+    mut dispatch: impl FnMut(BoxedEvent),
 ) -> super::timeline::TimelineActions {
     // Save canvas width for Fit button calculation
     state.last_canvas_width = ui.available_width();
@@ -339,7 +348,7 @@ pub fn render_canvas(
             draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
         ruler_rect = Some(rect);
         if let Some(frame) = frame_opt {
-            dispatch(AppEvent::SetFrame(frame));
+            dispatch(Box::new(SetFrameEvent(frame)));
         }
 
         // Load indicator - shows cache status for each frame
@@ -440,7 +449,7 @@ pub fn render_canvas(
         let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
         if scroll_delta.x.abs() > 0.0 {
             let delta_frames = scroll_delta.x / (config.pixels_per_frame * state.zoom);
-            dispatch(AppEvent::TimelinePanChanged(state.pan_offset - delta_frames));
+            dispatch(Box::new(TimelinePanChangedEvent(state.pan_offset - delta_frames)));
         }
 
         // Draw layers (egui automatically clips to visible area inside ScrollArea)
@@ -560,11 +569,11 @@ pub fn render_canvas(
                                                     let modifiers = ui.ctx().input(|i| i.modifiers);
                                                     let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
                                                     if !multi && !comp.layer_selection.contains(child_uuid) {
-                                                        dispatch(AppEvent::CompSelectionChanged {
+                                                        dispatch(Box::new(CompSelectionChangedEvent {
                                                             comp_uuid: comp_id,
                                                             selection: vec![*child_uuid],
                                                             anchor: Some(*child_uuid),
-                                                        });
+                                                        }));
                                                     }
                                                 }
                                                 {
@@ -597,7 +606,7 @@ pub fn render_canvas(
 
                                         // Update state directly to avoid frame delay
                                         state.pan_offset = new_pan;
-                                        dispatch(AppEvent::TimelinePanChanged(new_pan));
+                                        dispatch(Box::new(TimelinePanChangedEvent(new_pan)));
 
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
                                             state.drag_state = None;
@@ -665,12 +674,12 @@ pub fn render_canvas(
                                                 has_horizontal_move, has_vertical_move, layer_idx, new_start, target_child);
 
                                             if has_horizontal_move || has_vertical_move {
-                                                dispatch(AppEvent::MoveAndReorderLayer {
+                                                dispatch(Box::new(MoveAndReorderLayerEvent {
                                                     comp_uuid: comp_id,
                                                     layer_idx: *layer_idx,
                                                     new_start,
                                                     new_idx: target_child,
-                                                });
+                                                }));
                                                 log::debug!("[TIMELINE] Emitting MoveAndReorderLayer action");
                                             }
                                             state.drag_state = None;
@@ -712,11 +721,11 @@ pub fn render_canvas(
 
                                         // On release, commit the play start adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            dispatch(AppEvent::SetLayerPlayStart {
+                                            dispatch(Box::new(SetLayerPlayStartEvent {
                                                 comp_uuid: comp_id,
                                                 layer_idx: *layer_idx,
                                                 new_play_start,
-                                            });
+                                            }));
                                             state.drag_state = None;
                                         }
                                     }
@@ -758,11 +767,11 @@ pub fn render_canvas(
 
                                         // On release, commit the play end adjustment
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            dispatch(AppEvent::SetLayerPlayEnd {
+                                            dispatch(Box::new(SetLayerPlayEndEvent {
                                                 comp_uuid: comp_id,
                                                 layer_idx: *layer_idx,
                                                 new_play_end,
-                                            });
+                                            }));
                                             state.drag_state = None;
                                         }
                                     }
@@ -872,12 +881,12 @@ pub fn render_canvas(
                                             Some(0) // Above timeline -> insert at top
                                         };
 
-                                        dispatch(AppEvent::AddLayer {
+                                        dispatch(Box::new(AddLayerEvent {
                                             comp_uuid: comp_id,
                                             source_uuid: source_uuid.clone(),
                                             start_frame: drop_frame,
                                             target_row,
-                                        });
+                                        }));
                                         ui.ctx().data_mut(|data| {
                                             data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));
                                         });
@@ -922,11 +931,11 @@ pub fn render_canvas(
                                     modifiers,
                                     &children_uuids,
                                 );
-                                dispatch(AppEvent::CompSelectionChanged {
+                                dispatch(Box::new(CompSelectionChangedEvent {
                                     comp_uuid: comp_id,
                                     selection,
                                     anchor,
-                                });
+                                }));
                             }
                         } else {
                             // Click on empty space: scrub timeline without clearing selection
@@ -937,9 +946,9 @@ pub fn render_canvas(
                                 state,
                             )
                             .round() as i32;
-                            dispatch(AppEvent::SetFrame(
+                            dispatch(Box::new(SetFrameEvent(
                                 frame.min(total_frames.saturating_sub(1)),
-                            ));
+                            )));
                         }
                     }
                 }
