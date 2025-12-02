@@ -180,12 +180,12 @@ impl Player {
     pub fn set_play_range(&mut self, start: i32, end: i32, project: &mut Project) {
         if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
-                if comp.end() < comp.start() {
+                if comp._out() < comp._in() {
                     return;
                 }
 
-                let comp_start = comp.start();
-                let comp_end = comp.end();
+                let comp_start = comp._in();
+                let comp_end = comp._out();
 
                 // Clamp requested range to comp bounds
                 let clamped_start = start.clamp(comp_start, comp_end);
@@ -398,8 +398,8 @@ impl Player {
     pub fn set_frame(&mut self, frame: i32, project: &mut Project) {
         if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
-                let comp_start = comp.start();
-                let comp_end = comp.end();
+                let comp_start = comp._in();
+                let comp_end = comp._out();
                 if comp_end < comp_start {
                     return;
                 }

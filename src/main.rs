@@ -487,8 +487,8 @@ impl PlayaApp {
                 let end = 100;
                 let mut comp = crate::entities::comp::Comp::new(&name, start, end, fps);
                 comp.set_name(name);
-                comp.set_start(start);
-                comp.set_end(end);
+                comp.set_in(start);
+                comp.set_out(end);
                 comp.set_fps(fps);
                 self.project.add_comp(comp);
             }
@@ -662,8 +662,8 @@ impl PlayaApp {
             AppEvent::ResetPlayRange => {
                 if let Some(comp_uuid) = self.player.active_comp() {
                     self.project.modify_comp(comp_uuid, |comp| {
-                        let start = comp.start();
-                        let end = comp.end();
+                        let start = comp._in();
+                        let end = comp._out();
                         comp.set_comp_play_start(start);
                         comp.set_comp_play_end(end);
                     });
@@ -681,8 +681,8 @@ impl PlayaApp {
             }
             AppEvent::ResetCompPlayArea { comp_uuid } => {
                 self.project.modify_comp(comp_uuid, |comp| {
-                    let start = comp.start();
-                    let end = comp.end();
+                    let start = comp._in();
+                    let end = comp._out();
                     comp.set_comp_play_start(start);
                     comp.set_comp_play_end(end);
                 });
@@ -969,8 +969,8 @@ impl PlayaApp {
                             let current = comp
                                 .children
                                 .get(layer_idx)
-                                .map(|(_u, attrs)| attrs.get_i32("play_start").unwrap_or(
-                                    attrs.get_i32("start").unwrap_or(0),
+                                .map(|(_u, attrs)| attrs.get_i32("trim_in").unwrap_or(
+                                    attrs.get_i32("in").unwrap_or(0),
                                 ))
                                 .unwrap_or(0);
                             new_play_start - current
@@ -997,8 +997,8 @@ impl PlayaApp {
                             let current = comp
                                 .children
                                 .get(layer_idx)
-                                .map(|(_u, attrs)| attrs.get_i32("play_end").unwrap_or(
-                                    attrs.get_i32("end").unwrap_or(0),
+                                .map(|(_u, attrs)| attrs.get_i32("trim_out").unwrap_or(
+                                    attrs.get_i32("out").unwrap_or(0),
                                 ))
                                 .unwrap_or(0);
                             new_play_end - current

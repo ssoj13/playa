@@ -119,8 +119,8 @@ impl StatusBar {
                     let media = project.media.read().unwrap();
                     if let Some(comp) = media.get(&comp_uuid) {
                         ui.separator();
-                        let start = comp.start();
-                        let end = comp.end();
+                        let start = comp._in();
+                        let end = comp._out();
                         let (play_start, play_end) = comp.play_range(true);
                         let current = comp.current_frame;
                         ui.monospace(format!(

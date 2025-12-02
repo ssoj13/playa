@@ -119,6 +119,38 @@ pub fn children_attrs_remove(&mut self, uuid: &Uuid) -> Option<Attrs>
 
 ---
 
+## Phase 4: Attribute Key Renaming (Completed)
+
+### Renamed Attribute Keys:
+Following NLE conventions, attribute keys were renamed for clarity:
+
+| Old Key | New Key | Description |
+|---------|---------|-------------|
+| `"start"` | `"in"` | Layer/comp in-point (start frame) |
+| `"end"` | `"out"` | Layer/comp out-point (end frame) |
+| `"play_start"` | `"trim_in"` | Work area / trim start |
+| `"play_end"` | `"trim_out"` | Work area / trim end |
+
+### Method Renames:
+- `play_start()` → `trim_in()`
+- `play_end()` → `trim_out()`
+- `set_play_start()` → `set_trim_in()`
+- `set_play_end()` → `set_trim_out()`
+- `start()` → `_in()` (underscore prefix because `in` is a Rust keyword)
+- `end()` → `_out()` (underscore prefix for consistency)
+- `set_start()` → `set_in()`
+- `set_end()` → `set_out()`
+
+Note: Methods use underscore prefix (`_in`/`_out`) because `in` is a reserved Rust keyword. Attribute keys remain `"in"`/`"out"`.
+
+### Files Updated:
+- `src/entities/comp.rs` - All attribute access/set operations
+- `src/widgets/timeline/timeline_ui.rs` - Layer rendering and interaction
+- `src/widgets/timeline/timeline_helpers.rs` - Layout computation
+- `src/main.rs` - Event handlers
+
+---
+
 ## Build Status
 
 - **Debug build**: OK (warnings only)
@@ -131,13 +163,9 @@ pub fn children_attrs_remove(&mut self, uuid: &Uuid) -> Option<Attrs>
 
 ## Potential Future Improvements
 
-### 1. Comp Attrs Migration
-- Migrate remaining Comp fields to Attrs system:
-  - `name` -> `attrs.get_str("name")`
-  - `start`, `end` -> `attrs.get_i32("start")`, `attrs.get_i32("end")`
-  - `fps` -> `attrs.get_float("fps")`
-  - `current_frame` -> `attrs.get_i32("current_frame")`
-  - `play_start`, `play_end` -> `attrs.get_i32("play_start")`, `attrs.get_i32("play_end")`
+### 1. Additional Comp Attrs Migration
+- Consider migrating more Comp fields to Attrs:
+  - `current_frame` -> `attrs.get_i32("frame")`
 
 ### 2. Serialization Integration
 - Ensure Attrs are properly serialized/deserialized in project save/load

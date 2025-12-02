@@ -30,8 +30,8 @@ impl LayerTool {
     ) -> GlobalDragState {
         match self {
             LayerTool::AdjustPlayStart => {
-                let default_start = attrs.get_i32_or_zero("start");
-                let initial_play_start = attrs.get_i32_or("play_start", default_start);
+                let default_start = attrs.get_i32_or_zero("in");
+                let initial_play_start = attrs.get_i32_or("trim_in", default_start);
                 GlobalDragState::AdjustPlayStart {
                     layer_idx,
                     initial_play_start,
@@ -39,8 +39,8 @@ impl LayerTool {
                 }
             }
             LayerTool::AdjustPlayEnd => {
-                let default_end = attrs.get_i32_or_zero("end");
-                let initial_play_end = attrs.get_i32_or("play_end", default_end);
+                let default_end = attrs.get_i32_or_zero("out");
+                let initial_play_end = attrs.get_i32_or("trim_out", default_end);
                 GlobalDragState::AdjustPlayEnd {
                     layer_idx,
                     initial_play_end,
@@ -48,7 +48,7 @@ impl LayerTool {
                 }
             }
             LayerTool::Move => {
-                let initial_start = attrs.get_i32_or_zero("start");
+                let initial_start = attrs.get_i32_or_zero("in");
                 GlobalDragState::MovingLayer {
                     layer_idx,
                     initial_start,
@@ -263,8 +263,8 @@ pub(super) fn draw_load_indicator(
 
         // Get frame statuses from comp cache (uses global_cache internally)
         if let Some(statuses) = comp.cache_frame_statuses() {
-            let comp_start = comp.start();
-            let comp_end = comp.end();
+            let comp_start = comp._in();
+            let comp_end = comp._out();
             let duration = comp.frame_count();
 
             // Sanity check: statuses.len() should match frame_count()
@@ -346,8 +346,8 @@ pub(super) fn compute_all_layer_rows(
     // Process layers in order (by child_idx)
     for &child_idx in child_order.iter() {
         if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
-            let start = attrs.get_i32("start").unwrap_or(0);
-            let end = attrs.get_i32("end").unwrap_or(0);
+            let start = attrs.get_i32("in").unwrap_or(0);
+            let end = attrs.get_i32("out").unwrap_or(0);
 
             // Find first free row for this layer
             let mut row = 0;
@@ -399,8 +399,8 @@ pub(super) fn find_free_row_for_new_layer(
     for &child_idx in child_order.iter() {
         if let Some(&row) = layer_rows.get(&child_idx) {
             if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
-                let start = attrs.get_i32("start").unwrap_or(0);
-                let end = attrs.get_i32("end").unwrap_or(0);
+                let start = attrs.get_i32("in").unwrap_or(0);
+                let end = attrs.get_i32("out").unwrap_or(0);
                 occupied_rows
                     .entry(row)
                     .or_insert_with(Vec::new)

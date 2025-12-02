@@ -282,8 +282,8 @@ pub fn render_canvas(
     let comp_id = comp_uuid;
     // Calculate dimensions - timeline should show from 0 to end (not start to end)
     // This allows negative starts and ensures ruler shows full range
-    let comp_start = comp.start();
-    let comp_end = comp.end();
+    let comp_start = comp._in();
+    let comp_end = comp._out();
     let total_frames = (comp_end + 1).max(100); // From frame 0 to end (inclusive), minimum 100
 
     log::debug!(
@@ -450,8 +450,8 @@ pub fn render_canvas(
                             let (child_uuid, attrs) = &comp.children[idx];
 
                             // Get child start/end from attrs (now supports negative values)
-                            let child_start = attrs.get_i32("start").unwrap_or(0);
-                            let child_end = attrs.get_i32("end").unwrap_or(0);
+                            let child_start = attrs.get_i32("in").unwrap_or(0);
+                            let child_end = attrs.get_i32("out").unwrap_or(0);
 
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);
@@ -469,8 +469,8 @@ pub fn render_canvas(
                               Color32::from_gray(35)
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
-                            let play_start = attrs.get_i32("play_start").unwrap_or(child_start);
-                            let play_end = attrs.get_i32("play_end").unwrap_or(child_end);
+                            let play_start = attrs.get_i32("trim_in").unwrap_or(child_start);
+                            let play_end = attrs.get_i32("trim_out").unwrap_or(child_end);
                             let is_visible = attrs.get_bool("visible").unwrap_or(true);
 
                             // Calculate layer geometry (deduplicated)
@@ -522,10 +522,10 @@ pub fn render_canvas(
                             let (child_uuid, attrs) = &comp.children[idx];
 
                             // Get child attrs (now supports negative values)
-                            let child_start = attrs.get_i32("start").unwrap_or(0);
-                            let child_end = attrs.get_i32("end").unwrap_or(0);
-                            let play_start = attrs.get_i32("play_start").unwrap_or(child_start);
-                            let play_end = attrs.get_i32("play_end").unwrap_or(child_end);
+                            let child_start = attrs.get_i32("in").unwrap_or(0);
+                            let child_end = attrs.get_i32("out").unwrap_or(0);
+                            let play_start = attrs.get_i32("trim_in").unwrap_or(child_start);
+                            let play_end = attrs.get_i32("trim_out").unwrap_or(child_end);
 
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);
@@ -633,13 +633,13 @@ pub fn render_canvas(
                                                     as usize;
 
                                                 let ghost_child_y = row_to_y(target_row, config, timeline_rect);
-                                                let duration = (attrs.get_i32("end").unwrap_or(0)
-                                                    - attrs.get_i32("start").unwrap_or(0)
+                                                let duration = (attrs.get_i32("out").unwrap_or(0)
+                                                    - attrs.get_i32("in").unwrap_or(0)
                                                     + 1)
                                                     .max(1);
 
                                                 // Apply same delta to maintain relative offsets
-                                                let child_start = attrs.get_i32("start").unwrap_or(0);
+                                                let child_start = attrs.get_i32("in").unwrap_or(0);
                                                 let ghost_start = child_start + delta_frames;
 
                                                 draw_drop_preview(
@@ -692,7 +692,7 @@ pub fn render_canvas(
                                                 });
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let visual_start = new_play_start as f32;
-                                            let layer_end = attrs.get_i32("end").unwrap_or(0) as f32;
+                                            let layer_end = attrs.get_i32("out").unwrap_or(0) as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
 
@@ -736,7 +736,7 @@ pub fn render_canvas(
                                                     physical_to_display(*layer_idx).unwrap_or(*layer_idx)
                                                 });
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let play_start = attrs.get_i32("play_start").unwrap_or(attrs.get_i32("start").unwrap_or(0));
+                                            let play_start = attrs.get_i32("trim_in").unwrap_or(attrs.get_i32("in").unwrap_or(0));
                                             let visual_start = play_start as f32;
                                             let visual_end = new_play_end as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
@@ -779,8 +779,8 @@ pub fn render_canvas(
 
                         // Draw work area overlay (darken regions outside play_range)
                         let (play_start, play_end) = comp.play_range(true);
-                        let comp_start = comp.start();
-                        let comp_end = comp.end();
+                        let comp_start = comp._in();
+                        let comp_end = comp._out();
 
                         // Darken region before work area start
                         if play_start > comp_start {
@@ -828,8 +828,8 @@ pub fn render_canvas(
                                     if hover_pos.y >= timeline_rect.min.y {
                                         for &child_idx in child_order.iter() {
                                             if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
-                                                let child_start = attrs.get_i32("start").unwrap_or(0);
-                                                let child_end = attrs.get_i32("end").unwrap_or(0);
+                                                let child_start = attrs.get_i32("in").unwrap_or(0);
+                                                let child_end = attrs.get_i32("out").unwrap_or(0);
 
                                                 // Get precomputed row for this layer
                                                 let child_row = layer_rows.get(&child_idx).copied().unwrap_or(0);

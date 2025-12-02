@@ -70,11 +70,11 @@ impl Default for CompMode {
 ///
 /// All editable properties are stored in `attrs`:
 /// - "name" (Str): Human-readable name
-/// - "start" (UInt): Global start frame
-/// - "end" (UInt): Global end frame
+/// - "in" (UInt): Global start frame
+/// - "out" (UInt): Global end frame
 /// - "fps" (Float): Timeline framerate
-/// - "play_start" (Int): Work area start (absolute comp frame)
-/// - "play_end" (Int): Work area end (absolute comp frame)
+/// - "trim_in" (Int): Work area start (absolute comp frame)
+/// - "trim_out" (Int): Work area end (absolute comp frame)
 ///
 /// **Transform attributes** (Vec3 or Float):
 /// - "position" (Vec3): x, y, z position
@@ -104,8 +104,8 @@ pub struct Comp {
     /// Children compositions with their attributes (for Layer mode) - ordered list
     /// Each tuple: (instance_uuid, child_attrs) where child_attrs contains:
     /// - "source_uuid" (Json<Uuid>): UUID of the source comp in project.media
-    /// - "start", "end" (Int): Local timeline bounds
-    /// - "play_start", "play_end" (Int): Work area bounds
+    /// - "in", "out" (Int): Local timeline bounds
+    /// - "trim_in", "trim_out" (Int): Work area bounds
     /// - transform attrs: "position", "rotation", "scale", "pivot", "transparency", etc.
     #[serde(default)]
     pub children: Vec<(Uuid, Attrs)>,
@@ -162,11 +162,11 @@ impl Comp {
     pub fn new(name: impl Into<String>, start: i32, end: i32, fps: f32) -> Self {
         let mut attrs = Attrs::new();
         attrs.set("name", AttrValue::Str(name.into()));
-        attrs.set("start", AttrValue::Int(start));
-        attrs.set("end", AttrValue::Int(end));
+        attrs.set("in", AttrValue::Int(start));
+        attrs.set("out", AttrValue::Int(end));
         attrs.set("fps", AttrValue::Float(fps));
-        attrs.set("play_start", AttrValue::Int(start)); // Full range by default (absolute)
-        attrs.set("play_end", AttrValue::Int(end)); // Full range by default (absolute)
+        attrs.set("trim_in", AttrValue::Int(start)); // Full range by default (absolute)
+        attrs.set("trim_out", AttrValue::Int(end)); // Full range by default (absolute)
 
         // Transform defaults
         attrs.set("visible", AttrValue::Bool(true));
@@ -211,24 +211,25 @@ impl Comp {
         self.uuid
     }
 
-    pub fn start(&self) -> i32 {
-        self.attrs.get_i32("start").unwrap_or(0)
+    // NOTE: Methods use underscore prefix (_in/_out) because `in` is a Rust keyword
+    pub fn _in(&self) -> i32 {
+        self.attrs.get_i32("in").unwrap_or(0)
     }
 
-    pub fn end(&self) -> i32 {
-        self.attrs.get_i32("end").unwrap_or(100)
+    pub fn _out(&self) -> i32 {
+        self.attrs.get_i32("out").unwrap_or(100)
     }
 
     pub fn fps(&self) -> f32 {
         self.attrs.get_float("fps").unwrap_or(24.0)
     }
 
-    pub fn play_start(&self) -> i32 {
-        self.attrs.get_i32("play_start").unwrap_or_else(|| self.start())
+    pub fn trim_in(&self) -> i32 {
+        self.attrs.get_i32("trim_in").unwrap_or_else(|| self._in())
     }
 
-    pub fn play_end(&self) -> i32 {
-        self.attrs.get_i32("play_end").unwrap_or_else(|| self.end())
+    pub fn trim_out(&self) -> i32 {
+        self.attrs.get_i32("trim_out").unwrap_or_else(|| self._out())
     }
 
     // Setters for attrs-based properties
@@ -236,12 +237,12 @@ impl Comp {
         self.attrs.set("name", AttrValue::Str(name.into()));
     }
 
-    pub fn set_start(&mut self, start: i32) {
-        self.attrs.set("start", AttrValue::Int(start));
+    pub fn set_in(&mut self, val: i32) {
+        self.attrs.set("in", AttrValue::Int(val));
     }
 
-    pub fn set_end(&mut self, end: i32) {
-        self.attrs.set("end", AttrValue::Int(end));
+    pub fn set_out(&mut self, val: i32) {
+        self.attrs.set("out", AttrValue::Int(val));
     }
 
     // ===== Children accessor methods =====
@@ -339,14 +340,14 @@ impl Comp {
     /// Get child layer's start position
     pub fn child_start(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
-            .map(|a| a.get_i32_or_zero("start"))
+            .map(|a| a.get_i32_or_zero("in"))
             .unwrap_or(0)
     }
 
     /// Get child layer's end position
     pub fn child_end(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
-            .map(|a| a.get_i32_or_zero("end"))
+            .map(|a| a.get_i32_or_zero("out"))
             .unwrap_or(0)
     }
 
@@ -354,8 +355,8 @@ impl Comp {
     pub fn child_play_start(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
             .map(|a| {
-                let start = a.get_i32_or_zero("start");
-                a.get_i32_or("play_start", start)
+                let start = a.get_i32_or_zero("in");
+                a.get_i32_or("trim_in", start)
             })
             .unwrap_or(0)
     }
@@ -364,8 +365,8 @@ impl Comp {
     pub fn child_play_end(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
             .map(|a| {
-                let end = a.get_i32_or_zero("end");
-                a.get_i32_or("play_end", end)
+                let end = a.get_i32_or_zero("out");
+                a.get_i32_or("trim_out", end)
             })
             .unwrap_or(0)
     }
@@ -386,12 +387,12 @@ impl Comp {
         self.attrs.set("fps", AttrValue::Float(fps));
     }
 
-    pub fn set_play_start(&mut self, play_start: i32) {
-        self.attrs.set("play_start", AttrValue::Int(play_start));
+    pub fn set_trim_in(&mut self, play_start: i32) {
+        self.attrs.set("trim_in", AttrValue::Int(play_start));
     }
 
-    pub fn set_play_end(&mut self, play_end: i32) {
-        self.attrs.set("play_end", AttrValue::Int(play_end));
+    pub fn set_trim_out(&mut self, play_end: i32) {
+        self.attrs.set("trim_out", AttrValue::Int(play_end));
     }
 
     /// Inclusive play range (work area) in absolute comp frames.
@@ -404,10 +405,10 @@ impl Comp {
             let mut max_frame = i32::MIN;
 
             for (_child_uuid, attrs) in &self.children {
-                let child_start = attrs.get_i32("start").unwrap_or(0);
-                let child_end = attrs.get_i32("end").unwrap_or(child_start);
-                let child_play_start = attrs.get_i32("play_start").unwrap_or(child_start);
-                let child_play_end = attrs.get_i32("play_end").unwrap_or(child_end);
+                let child_start = attrs.get_i32("in").unwrap_or(0);
+                let child_end = attrs.get_i32("out").unwrap_or(child_start);
+                let child_play_start = attrs.get_i32("trim_in").unwrap_or(child_start);
+                let child_play_end = attrs.get_i32("trim_out").unwrap_or(child_end);
 
                 min_frame = min_frame.min(child_play_start);
                 max_frame = max_frame.max(child_play_end);
@@ -418,12 +419,12 @@ impl Comp {
                 if use_work_area {
                     let work_start = self
                         .attrs
-                        .get_i32("play_start")
+                        .get_i32("trim_in")
                         .unwrap_or(base_start)
                         .clamp(base_start, base_end);
                     let work_end = self
                         .attrs
-                        .get_i32("play_end")
+                        .get_i32("trim_out")
                         .unwrap_or(base_end)
                         .clamp(work_start, base_end);
                     return (work_start, work_end);
@@ -439,14 +440,14 @@ impl Comp {
     /// Comp-level work area in absolute frames, clamped to comp bounds.
     /// If `use_work_area` is false, returns full comp bounds.
     pub fn work_area_abs(&self, use_work_area: bool) -> (i32, i32) {
-        let start = self.start();
-        let end = self.end();
+        let start = self._in();
+        let end = self._out();
         if !use_work_area {
             return (start, end);
         }
 
-        let work_start = self.attrs.get_i32("play_start").unwrap_or(start);
-        let work_end = self.attrs.get_i32("play_end").unwrap_or(end);
+        let work_start = self.attrs.get_i32("trim_in").unwrap_or(start);
+        let work_end = self.attrs.get_i32("trim_out").unwrap_or(end);
         let clamped_start = work_start.clamp(start, end);
         let clamped_end = work_end.clamp(clamped_start, end);
         (clamped_start, clamped_end)
@@ -454,11 +455,11 @@ impl Comp {
 
     /// Set comp work area in absolute frames. Automatically clamps/order-fixes.
     pub fn set_work_area_abs(&mut self, start: i32, end: i32) {
-        let (comp_start, comp_end) = (self.start(), self.end());
+        let (comp_start, comp_end) = (self._in(), self._out());
         let lo = start.min(end).clamp(comp_start, comp_end);
         let hi = end.max(start).clamp(lo, comp_end);
-        self.set_play_start(lo);
-        self.set_play_end(hi);
+        self.set_trim_in(lo);
+        self.set_trim_out(hi);
         // Don't clear cache - already loaded frames remain valid
         // Preload will automatically load new frames in the updated work area
         self.event_sender.emit(CompEvent::LayersChanged {
@@ -481,9 +482,9 @@ impl Comp {
     pub fn child_work_area_abs(&self, child_uuid: Uuid) -> Option<(i32, i32)> {
         let attrs = self.children_attrs_get(&child_uuid)?;
         let (bounds_start, bounds_end) =
-            Self::child_bounds_abs(attrs.get_i32("start"), attrs.get_i32("end"));
-        let play_start = attrs.get_i32("play_start").unwrap_or(bounds_start);
-        let play_end = attrs.get_i32("play_end").unwrap_or(bounds_end);
+            Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
+        let play_start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
+        let play_end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
         Some(Self::clamp_range_to_bounds(
             (play_start, play_end),
             (bounds_start, bounds_end),
@@ -518,7 +519,7 @@ impl Comp {
     /// Local frame number in child's coordinate system, or None if child not found
     pub fn comp2local(&self, child_uuid: Uuid, comp_frame: i32) -> Option<i32> {
         let attrs = self.children_attrs_get(&child_uuid)?;
-        let child_start = attrs.get_i32("start").unwrap_or(0);
+        let child_start = attrs.get_i32("in").unwrap_or(0);
         let speed = attrs.get_float("speed").unwrap_or(1.0);
 
         // Offset from child's start position
@@ -546,7 +547,7 @@ impl Comp {
     /// Frame number in parent comp timeline, or None if child not found
     pub fn local2comp(&self, child_uuid: Uuid, local_frame: i32) -> Option<i32> {
         let attrs = self.children_attrs_get(&child_uuid)?;
-        let child_start = attrs.get_i32("start").unwrap_or(0);
+        let child_start = attrs.get_i32("in").unwrap_or(0);
         let speed = attrs.get_float("speed").unwrap_or(1.0);
 
         // Apply speed and add offset
@@ -581,15 +582,15 @@ impl Comp {
         let local_frame = self.comp2local(child_uuid, comp_frame)?;
 
         // Map to source comp's timeline
-        let source_frame = source.start() + local_frame;
+        let source_frame = source._in() + local_frame;
 
         Some((source_uuid, source_frame))
     }
 
     /// Number of frames in full composition (not limited by play_area)
     pub fn frame_count(&self) -> i32 {
-        let start = self.start();
-        let end = self.end();
+        let start = self._in();
+        let end = self._out();
         if end >= start { end - start + 1 } else { 0 }
     }
 
@@ -625,7 +626,7 @@ impl Comp {
 
         // Query GlobalFrameCache for each frame status
         if let Some(ref global_cache) = self.global_cache {
-            let comp_start = self.start();
+            let comp_start = self._in();
             let mut statuses = Vec::with_capacity(duration as usize);
 
             for frame_offset in 0..duration {
@@ -689,8 +690,8 @@ impl Comp {
         debug!(
             "signal_preload: current_frame={}, comp[{}..{}], file_start={:?}, work_area[{}..{}]",
             center,
-            self.start(),
-            self.end(),
+            self._in(),
+            self._out(),
             self.file_start,
             play_start,
             play_end
@@ -702,7 +703,7 @@ impl Comp {
 
         // Smart check: Skip preload if entire work area is already cached
         if let Some(ref global_cache) = self.global_cache {
-            let comp_start = self.start();
+            let comp_start = self._in();
             let seq_start = self.file_start.unwrap_or(comp_start);
 
             let mut all_cached = true;
@@ -843,7 +844,7 @@ impl Comp {
         match self.mode {
             CompMode::File => {
                 // File mode: load from disk
-                let comp_start = self.start();
+                let comp_start = self._in();
                 let local_idx = frame_idx - comp_start;
                 let seq_start = self.file_start.unwrap_or(comp_start);
                 let seq_frame = seq_start.saturating_add(local_idx);
@@ -966,8 +967,8 @@ impl Comp {
             return Some(self.placeholder_frame());
         }
 
-        let comp_start = self.start();
-        let comp_end = self.end();
+        let comp_start = self._in();
+        let comp_end = self._out();
         if comp_end < comp_start {
             return None;
         }
@@ -980,8 +981,8 @@ impl Comp {
         }
 
         // Map local frame_idx to absolute sequence number (preserve original numbering)
-        let seq_start = self.file_start.unwrap_or(self.start());
-        let seq_end = self.file_end.unwrap_or(self.end());
+        let seq_start = self.file_start.unwrap_or(self._in());
+        let seq_end = self.file_end.unwrap_or(self._out());
         let seq_frame = seq_start.saturating_add(local_idx);
         if seq_frame < seq_start || seq_frame > seq_end {
             return Some(self.placeholder_frame());
@@ -1078,7 +1079,7 @@ impl Comp {
     pub fn first_child_dim(&self) -> (usize, usize) {
         let mut best: Option<(i32, usize, usize)> = None;
         for (_child_uuid, attrs) in &self.children {
-            let start = attrs.get_i32("start").unwrap_or(0);
+            let start = attrs.get_i32("in").unwrap_or(0);
             let w = attrs.get_u32("width").unwrap_or(0) as usize;
             let h = attrs.get_u32("height").unwrap_or(0) as usize;
             match best {
@@ -1133,8 +1134,8 @@ impl Comp {
         // first child (top layer) composited last
         for (child_uuid, attrs) in self.children.iter().rev() {
             // Placement and bounds in parent timeline
-            let child_start = attrs.get_i32("start").unwrap_or(0);
-            let child_end = attrs.get_i32("end").unwrap_or(child_start);
+            let child_start = attrs.get_i32("in").unwrap_or(0);
+            let child_end = attrs.get_i32("out").unwrap_or(child_start);
             let duration = (child_end - child_start + 1).max(0);
             let (play_start, play_end) = self
                 .child_work_area_abs(*child_uuid)
@@ -1179,7 +1180,7 @@ impl Comp {
                 if local_frame < 0 || local_frame >= duration {
                     continue;
                 }
-                let source_frame = source.start() + local_frame;
+                let source_frame = source._in() + local_frame;
 
                 // Recursively get frame from source (Clip or Comp)
                 if let Some(frame) = source.get_frame(source_frame, project, use_gpu) {
@@ -1367,11 +1368,11 @@ impl Comp {
         let mut attrs = Attrs::new();
         attrs.set("uuid", AttrValue::Str(source_uuid.to_string())); // Reference to source comp (stored as string)
         attrs.set("name", AttrValue::Str("Child".to_string()));
-        attrs.set("start", AttrValue::Int(start_frame));
-        attrs.set("end", AttrValue::Int(end_frame));
+        attrs.set("in", AttrValue::Int(start_frame));
+        attrs.set("out", AttrValue::Int(end_frame));
         // Work area defaults to full placement range in parent timeline
-        attrs.set("play_start", AttrValue::Int(start_frame));
-        attrs.set("play_end", AttrValue::Int(end_frame));
+        attrs.set("trim_in", AttrValue::Int(start_frame));
+        attrs.set("trim_out", AttrValue::Int(end_frame));
         attrs.set("opacity", AttrValue::Float(1.0));
         attrs.set("visible", AttrValue::Bool(true));
         attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
@@ -1410,8 +1411,8 @@ impl Comp {
         let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new();
 
         for (idx, (_child_uuid, attrs)) in self.children.iter().enumerate() {
-            let start = attrs.get_i32("start").unwrap_or(0);
-            let end = attrs.get_i32("end").unwrap_or(0);
+            let start = attrs.get_i32("in").unwrap_or(0);
+            let end = attrs.get_i32("out").unwrap_or(0);
 
             // Find first free row for this layer
             let mut row = 0;
@@ -1460,25 +1461,25 @@ impl Comp {
             .get_mut(child_idx)
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
-        let old_start = attrs.get_i32("start").unwrap_or(0);
-        let old_end = attrs.get_i32("end").unwrap_or(0);
+        let old_start = attrs.get_i32("in").unwrap_or(0);
+        let old_end = attrs.get_i32("out").unwrap_or(0);
         let duration = (old_end - old_start).max(0);
         let new_end = new_start + duration;
         let delta = new_start - old_start;
 
-        let play_start_old = attrs.get_i32("play_start").unwrap_or(old_start);
-        let play_end_old = attrs.get_i32("play_end").unwrap_or(old_end);
+        let play_start_old = attrs.get_i32("trim_in").unwrap_or(old_start);
+        let play_end_old = attrs.get_i32("trim_out").unwrap_or(old_end);
 
-        attrs.set("start", AttrValue::Int(new_start));
-        attrs.set("end", AttrValue::Int(new_end));
+        attrs.set("in", AttrValue::Int(new_start));
+        attrs.set("out", AttrValue::Int(new_end));
 
         // Shift work area by the same delta, clamped to new bounds
         let shifted_start = play_start_old + delta;
         let shifted_end = play_end_old + delta;
         let (clamped_start, clamped_end) =
             Self::clamp_range_to_bounds((shifted_start, shifted_end), (new_start, new_end));
-        attrs.set("play_start", AttrValue::Int(clamped_start));
-        attrs.set("play_end", AttrValue::Int(clamped_end));
+        attrs.set("trim_in", AttrValue::Int(clamped_start));
+        attrs.set("trim_out", AttrValue::Int(clamped_end));
 
         self.rebound();
         self.update_dim_from_children();
@@ -1550,7 +1551,7 @@ impl Comp {
             if let Some(idx) = self.children.iter().position(|(u, _)| *u == uuid) {
                 let current_start = self
                     .children_attrs_get(&uuid)
-                    .map(|a| a.get_i32("start").unwrap_or(0))
+                    .map(|a| a.get_i32("in").unwrap_or(0))
                     .unwrap_or(0);
                 let _ = self.move_child(idx, current_start + delta);
             }
@@ -1575,26 +1576,26 @@ impl Comp {
                 continue;
             }
             if let Some((_child_uuid, attrs)) = self.children.get_mut(idx) {
-                let bounds_start = attrs.get_i32("start").unwrap_or(0);
-                let bounds_end = attrs.get_i32("end").unwrap_or(0);
+                let bounds_start = attrs.get_i32("in").unwrap_or(0);
+                let bounds_end = attrs.get_i32("out").unwrap_or(0);
                 let (bounds_start, bounds_end) = Self::child_bounds_abs(Some(bounds_start), Some(bounds_end));
 
                 if is_start {
-                    let current = attrs.get_i32("play_start").unwrap_or(bounds_start);
+                    let current = attrs.get_i32("trim_in").unwrap_or(bounds_start);
                     let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
-                        (current + delta, attrs.get_i32("play_end").unwrap_or(bounds_end)),
+                        (current + delta, attrs.get_i32("trim_out").unwrap_or(bounds_end)),
                         (bounds_start, bounds_end),
                     );
-                    attrs.set("play_start", AttrValue::Int(clamped_start));
-                    attrs.set("play_end", AttrValue::Int(clamped_end));
+                    attrs.set("trim_in", AttrValue::Int(clamped_start));
+                    attrs.set("trim_out", AttrValue::Int(clamped_end));
                 } else {
-                    let current = attrs.get_i32("play_end").unwrap_or(bounds_end);
+                    let current = attrs.get_i32("trim_out").unwrap_or(bounds_end);
                     let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
-                        (attrs.get_i32("play_start").unwrap_or(bounds_start), current + delta),
+                        (attrs.get_i32("trim_in").unwrap_or(bounds_start), current + delta),
                         (bounds_start, bounds_end),
                     );
-                    attrs.set("play_start", AttrValue::Int(clamped_start));
-                    attrs.set("play_end", AttrValue::Int(clamped_end));
+                    attrs.set("trim_in", AttrValue::Int(clamped_start));
+                    attrs.set("trim_out", AttrValue::Int(clamped_end));
                 }
             }
         }
@@ -1622,12 +1623,12 @@ impl Comp {
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
         let (bounds_start, bounds_end) =
-            Self::child_bounds_abs(attrs.get_i32("start"), attrs.get_i32("end"));
-        let current_end = attrs.get_i32("play_end").unwrap_or(bounds_end);
+            Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
+        let current_end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
         let (clamped_start, clamped_end) =
             Self::clamp_range_to_bounds((new_play_start, current_end), (bounds_start, bounds_end));
-        attrs.set("play_start", AttrValue::Int(clamped_start));
-        attrs.set("play_end", AttrValue::Int(clamped_end));
+        attrs.set("trim_in", AttrValue::Int(clamped_start));
+        attrs.set("trim_out", AttrValue::Int(clamped_end));
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
@@ -1653,12 +1654,12 @@ impl Comp {
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
         let (bounds_start, bounds_end) =
-            Self::child_bounds_abs(attrs.get_i32("start"), attrs.get_i32("end"));
-        let current_start = attrs.get_i32("play_start").unwrap_or(bounds_start);
+            Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
+        let current_start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
         let (clamped_start, clamped_end) =
             Self::clamp_range_to_bounds((current_start, new_play_end), (bounds_start, bounds_end));
-        attrs.set("play_start", AttrValue::Int(clamped_start));
-        attrs.set("play_end", AttrValue::Int(clamped_end));
+        attrs.set("trim_in", AttrValue::Int(clamped_start));
+        attrs.set("trim_out", AttrValue::Int(clamped_end));
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
@@ -1675,14 +1676,14 @@ impl Comp {
     /// Set comp play start in absolute comp frames (inclusive).
     /// Ensures `play_end` remains >= start and clamps to comp bounds.
     pub fn set_comp_play_start(&mut self, new_play_start: i32) {
-        let current_end = self.play_end();
+        let current_end = self.trim_out();
         self.set_work_area_abs(new_play_start, current_end);
     }
 
     /// Set comp play end in absolute comp frames (inclusive).
     /// Ensures `play_start` remains <= end and clamps to comp bounds.
     pub fn set_comp_play_end(&mut self, new_play_end: i32) {
-        let current_start = self.play_start();
+        let current_start = self.trim_in();
         self.set_work_area_abs(current_start, new_play_end);
     }
 
@@ -1692,10 +1693,10 @@ impl Comp {
         let mut edges = Vec::new();
 
         for (_child_uuid, attrs) in &self.children {
-            let start = attrs.get_i32("start").unwrap_or(0);
-            let end = attrs.get_i32("end").unwrap_or(0);
-            let play_start = attrs.get_i32("play_start").unwrap_or(start);
-            let play_end = attrs.get_i32("play_end").unwrap_or(end);
+            let start = attrs.get_i32("in").unwrap_or(0);
+            let end = attrs.get_i32("out").unwrap_or(0);
+            let play_start = attrs.get_i32("trim_in").unwrap_or(start);
+            let play_end = attrs.get_i32("trim_out").unwrap_or(end);
 
             // Visible range accounting for play range offsets
             let visible_start = play_start;
@@ -1736,15 +1737,15 @@ impl Comp {
         if self.mode == CompMode::File {
             return;
         }
-        let old_bounds = (self.start(), self.end());
+        let old_bounds = (self._in(), self._out());
         let old_work = self.play_range(true);
         if self.children.is_empty() {
             // Default span when no children: 0..100 for a visible timeline
-            self.attrs.set("start", AttrValue::Int(0));
-            self.attrs.set("end", AttrValue::Int(100));
+            self.attrs.set("in", AttrValue::Int(0));
+            self.attrs.set("out", AttrValue::Int(100));
             if old_work == old_bounds {
-                self.attrs.set("play_start", AttrValue::Int(0));
-                self.attrs.set("play_end", AttrValue::Int(100));
+                self.attrs.set("trim_in", AttrValue::Int(0));
+                self.attrs.set("trim_out", AttrValue::Int(100));
             }
             return;
         }
@@ -1765,13 +1766,13 @@ impl Comp {
             (min_start, max_end)
         };
 
-        self.attrs.set("start", AttrValue::Int(new_start));
-        self.attrs.set("end", AttrValue::Int(new_end));
+        self.attrs.set("in", AttrValue::Int(new_start));
+        self.attrs.set("out", AttrValue::Int(new_end));
 
         // Keep work area in sync only if it used to match full bounds
         if old_work == old_bounds {
-            self.attrs.set("play_start", AttrValue::Int(new_start));
-            self.attrs.set("play_end", AttrValue::Int(new_end));
+            self.attrs.set("trim_in", AttrValue::Int(new_start));
+            self.attrs.set("trim_out", AttrValue::Int(new_end));
         }
     }
 
@@ -1842,7 +1843,7 @@ impl crate::entities::ProjectUI for Comp {
 
             // Metadata
             ui.label(format!("{}fps", self.fps()));
-            ui.label(format!("{}-{}", self.start(), self.end()));
+            ui.label(format!("{}-{}", self._in(), self._out()));
             ui.label(format!("{} children", self.children.len()));
         })
         .response
@@ -1871,8 +1872,8 @@ impl crate::entities::TimelineUI for Comp {
         );
 
         // Highlight current frame if within range
-        let start = self.start();
-        let end = self.end();
+        let start = self._in();
+        let end = self._out();
         if current_frame >= start && current_frame <= end {
             let total_frames = (end - start + 1) as f32;
             let frame_width = bar_rect.width() / total_frames;
