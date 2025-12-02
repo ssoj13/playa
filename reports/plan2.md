@@ -722,10 +722,11 @@ impl Event for EncodeCompleteEvent {}
 
 ### 6.1 Remove old code
 
-- [ ] Remove `AppEvent` enum from `events.rs`
-- [ ] Remove old accessors from `Comp`, `Player`, `Project`
-- [ ] Remove `CompMode` enum (use constants)
-- [ ] Update all `match event` handlers to EventBus subscribers
+- [x] Remove `AppEvent` enum from `events.rs` ✅ (file deleted)
+- [x] Remove old accessors from `Comp` (is_layer_mode, get_mode, set_mode) ✅
+- [ ] Remove `CompMode` enum (kept for serde backwards compat)
+- [x] Update all `match event` handlers to EventBus subscribers ✅
+- [x] Fix self.mode → is_file_mode() everywhere ✅
 
 ### 6.2 Update imports
 
@@ -737,21 +738,32 @@ use crate::events::AppEvent;
 use crate::event_bus::EventBus;
 use crate::player_events::{PlayEvent, StopEvent, ...};
 ```
+✅ Done
+
+### 6.3 Cleanup (TODO)
+
+57 warnings remaining:
+- Unused events (EncodeStartEvent, MoveLayerEvent, etc.) - created but not sent yet
+- Unused traits (ProjectUI, TimelineUI, etc.) - future UI infrastructure
+- Unused methods (remove_media_and_cleanup, select_item, etc.)
+- Unused fields (data in Comp, texture_cache, subscribers)
+
+**Decision needed:** Remove unused code or add `#[allow(unused)]` for future-use
 
 ---
 
 ## Implementation Order
 
-| # | Phase | Files | Effort |
-|---|-------|-------|--------|
-| 1 | AttrValue extensions | `attrs.rs` | Small |
-| 2 | Keys & constants | `keys.rs` | Small |
-| 3 | Node trait | `node.rs` (new) | Medium |
-| 4 | Comp refactor | `comp.rs` | Large |
-| 5 | EventBus | `event_bus.rs` (new) | Medium |
-| 6 | Event definitions | `*_events.rs` | Medium |
-| 7 | Migration | `main.rs`, all widgets | Large |
-| 8 | Tests | Throughout | Medium |
+| # | Phase | Files | Effort | Status |
+|---|-------|-------|--------|--------|
+| 1 | AttrValue extensions | `attrs.rs` | Small | ✅ Done |
+| 2 | Keys & constants | `keys.rs` | Small | ✅ Done |
+| 3 | Node trait | `node.rs` (new) | Medium | ✅ Done (simplified, no NodeCore) |
+| 4 | Comp refactor | `comp.rs` | Large | ✅ Done |
+| 5 | EventBus | `event_bus.rs` (new) | Medium | ✅ Done |
+| 6 | Event definitions | `*_events.rs` | Medium | ✅ Done |
+| 7 | Migration | `main.rs`, all widgets | Large | ✅ Done |
+| 8 | Tests | Throughout | Medium | ⏳ TODO |
 
 **Total estimate:** ~2000 lines changed/added
 

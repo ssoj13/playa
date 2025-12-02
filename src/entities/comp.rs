@@ -2180,25 +2180,6 @@ impl Comp {
         self.attrs.get_i8(A_MODE).unwrap_or(COMP_NORMAL) == COMP_FILE
     }
 
-    /// Check if comp is in normal/layer mode (composes children)
-    #[inline]
-    pub fn is_layer_mode(&self) -> bool {
-        self.attrs.get_i8(A_MODE).unwrap_or(COMP_NORMAL) == COMP_NORMAL
-    }
-
-    /// Get comp mode as i8
-    #[inline]
-    pub fn get_mode(&self) -> i8 {
-        self.attrs.get_i8(A_MODE).unwrap_or(COMP_NORMAL)
-    }
-
-    /// Set comp mode
-    #[inline]
-    pub fn set_mode(&mut self, mode: i8) {
-        self.attrs.set_i8(A_MODE, mode);
-        // Sync legacy field
-        self.mode = if mode == COMP_FILE { CompMode::File } else { CompMode::Layer };
-    }
 }
 
 #[cfg(test)]
@@ -2481,14 +2462,14 @@ mod tests {
     fn test_mode_dispatch() {
         let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
         assert_eq!(comp.attrs.get_i8(A_MODE), Some(COMP_NORMAL));
-        assert!(comp.is_layer_mode());
-        assert!(!comp.is_file_mode());
+        assert!(!comp.is_file_mode()); // Layer mode by default
 
-        comp.set_mode(COMP_FILE);
+        // Set file mode directly via attrs
+        comp.attrs.set_i8(A_MODE, COMP_FILE);
+        comp.mode = CompMode::File; // Sync legacy field
         comp.attrs.set(A_FILE_MASK, AttrValue::Str("/path/seq.*.exr".into()));
         assert_eq!(comp.attrs.get_i8(A_MODE), Some(COMP_FILE));
         assert!(comp.is_file_mode());
-        assert!(!comp.is_layer_mode());
     }
 
     #[test]
