@@ -999,7 +999,7 @@ fn draw_status_strip(
     rect: Rect,
     statuses: &[FrameStatus],
     comp_start: i32,
-    total_frames: i32,
+    _total_frames: i32,
     ruler_rect: Rect,
     config: &super::TimelineConfig,
     state: &super::TimelineState,

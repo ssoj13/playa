@@ -1,7 +1,5 @@
 //! Player and playback events.
 
-use std::path::PathBuf;
-use uuid::Uuid;
 
 // === Playback Control ===
 

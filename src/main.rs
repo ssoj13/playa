@@ -21,7 +21,7 @@ use dialogs::encode::EncodeDialog;
 use dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
 use dialogs::prefs::prefs_events::HotkeyWindow;
 use eframe::{egui, glow};
-use event_bus::{BoxedEvent, CompEventSender, EventBus, downcast_event};
+use event_bus::{CompEventSender, EventBus, downcast_event};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use entities::Frame;
 use entities::Project;

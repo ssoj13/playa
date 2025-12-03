@@ -549,12 +549,9 @@ impl Comp {
         // Offset from child's start position
         let offset = comp_frame - child_start;
 
-        // Apply speed
-        let local_frame = if speed != 0.0 && speed != 1.0 {
-            (offset as f32 / speed).round() as i32
-        } else {
-            offset
-        };
+        // Apply speed (AE-style: speed=2 means clip plays 2x faster)
+        // local = offset * speed
+        let local_frame = (offset as f32 * speed).round() as i32;
 
         Some(local_frame)
     }
@@ -574,8 +571,12 @@ impl Comp {
         let child_start = attrs.get_i32("in").unwrap_or(0);
         let speed = attrs.get_float("speed").unwrap_or(1.0);
 
-        // Apply speed and add offset
-        let comp_frame = child_start + (local_frame as f32 * speed).round() as i32;
+        // Inverse of comp2local (AE-style)
+        // comp = in + local / speed
+        if speed.abs() < 0.0001 {
+            return Some(child_start); // Avoid division by zero
+        }
+        let comp_frame = child_start + (local_frame as f32 / speed).round() as i32;
 
         Some(comp_frame)
     }
@@ -2384,7 +2385,7 @@ mod tests {
         comp.children.push((child_uuid, child_attrs));
 
         // comp_frame=50, child.in=20, speed=1.0
-        // local = (50 - 20) / 1.0 = 30
+        // local = (50 - 20) * 1.0 = 30
         assert_eq!(comp.comp2local(child_uuid, 50), Some(30));
         assert_eq!(comp.comp2local(child_uuid, 20), Some(0));
         assert_eq!(comp.comp2local(child_uuid, 80), Some(60));
@@ -2397,9 +2398,9 @@ mod tests {
         child_attrs.set(A_SPEED, AttrValue::Float(2.0));
         comp.children.push((child_uuid, child_attrs));
 
-        // comp_frame=50, child.in=20, speed=2.0
-        // local = (50 - 20) / 2.0 = 15
-        assert_eq!(comp.comp2local(child_uuid, 50), Some(15));
+        // comp_frame=50, child.in=20, speed=2.0 (plays 2x faster)
+        // local = (50 - 20) * 2.0 = 60
+        assert_eq!(comp.comp2local(child_uuid, 50), Some(60));
     }
 
     #[test]
@@ -2409,7 +2410,7 @@ mod tests {
         comp.children.push((child_uuid, child_attrs));
 
         // local_frame=30, child.in=20, speed=1.0
-        // comp = 20 + 30 * 1.0 = 50
+        // comp = 20 + 30 / 1.0 = 50
         assert_eq!(comp.local2comp(child_uuid, 30), Some(50));
     }
 
@@ -2420,9 +2421,9 @@ mod tests {
         child_attrs.set(A_SPEED, AttrValue::Float(2.0));
         comp.children.push((child_uuid, child_attrs));
 
-        // local_frame=15, child.in=20, speed=2.0
-        // comp = 20 + 15 * 2.0 = 50
-        assert_eq!(comp.local2comp(child_uuid, 15), Some(50));
+        // local_frame=60, child.in=20, speed=2.0
+        // comp = 20 + 60 / 2.0 = 50
+        assert_eq!(comp.local2comp(child_uuid, 60), Some(50));
     }
 
     #[test]
@@ -2453,7 +2454,7 @@ mod tests {
         let (child_uuid, child_attrs) = make_child_attrs_with_uuid(-20, 30);
         comp.children.push((child_uuid, child_attrs));
 
-        // child.in=-20, comp_frame=0 => local = (0 - (-20)) / 1.0 = 20
+        // child.in=-20, comp_frame=0 => local = (0 - (-20)) * 1.0 = 20
         assert_eq!(comp.comp2local(child_uuid, 0), Some(20));
         assert_eq!(comp.comp2local(child_uuid, -20), Some(0));
     }
