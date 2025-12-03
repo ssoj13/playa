@@ -237,11 +237,7 @@ pub fn handle_app_event(
         project.remove_media_with_cleanup(uuid);
         if was_active {
             let first = project.comps_order().first().cloned();
-            if let Some(new_active) = first {
-                player.set_active_comp(new_active, project);
-            } else {
-                player.set_active_comp_uuid(None);
-            }
+            player.set_active_comp(first, project);
         }
         return Some(result);
     }
@@ -255,11 +251,7 @@ pub fn handle_app_event(
         if let Some(a) = active {
             if !project.media.read().unwrap().contains_key(&a) {
                 let first = project.comps_order().first().cloned();
-                if let Some(new_active) = first {
-                    player.set_active_comp(new_active, project);
-                } else {
-                    player.set_active_comp_uuid(None);
-                }
+                player.set_active_comp(first, project);
             }
         }
         return Some(result);
@@ -268,11 +260,11 @@ pub fn handle_app_event(
         project.media.write().unwrap().clear();
         project.set_comps_order(Vec::new());
         project.set_selection(Vec::new());
-        player.set_active_comp(Uuid::nil(), project);
+        player.set_active_comp(None, project);
         return Some(result);
     }
     if let Some(e) = downcast_event::<SelectMediaEvent>(&event) {
-        player.set_active_comp(e.0, project);
+        player.set_active_comp(Some(e.0), project);
         project.retain_selection(|u| *u != e.0);
         project.push_selection(e.0);
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
@@ -290,7 +282,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(&event) {
-        player.set_active_comp(e.0, project);
+        player.set_active_comp(Some(e.0), project);
         project.retain_selection(|u| *u != e.0);
         project.push_selection(e.0);
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);

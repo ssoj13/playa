@@ -249,7 +249,7 @@ impl PlayaApp {
 
                 // Activate first sequence and trigger frame loading
                 if let Some(uuid) = first_uuid {
-                    self.player.set_active_comp_uuid(Some(uuid));
+                    self.player.set_active_comp(Some(uuid), &mut self.project);
                     self.enqueue_frame_loads_around_playhead(10);
                 }
 
@@ -299,6 +299,8 @@ impl PlayaApp {
 
         // Drain all events from the bus
         for event in self.event_bus.drain() {
+            log::debug!("Event received: {:?}", event.type_name());
+
             // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
                 debug!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
@@ -369,7 +371,7 @@ impl PlayaApp {
         }
         if let Some((name, fps)) = deferred_new_comp {
             let uuid = self.project.create_comp(&name, fps, self.comp_event_sender.clone());
-            self.player.set_active_comp(uuid, &mut self.project);
+            self.player.set_active_comp(Some(uuid), &mut self.project);
             info!("Created new comp: {}", uuid);
         }
         if let Some(n) = deferred_enqueue_frames {
@@ -411,11 +413,11 @@ impl PlayaApp {
                 self.project = project;
                 // Restore active comp from project (also sync selection)
                 if let Some(active) = self.project.active() {
-                    self.player.set_active_comp(active, &mut self.project);
+                    self.player.set_active_comp(Some(active), &mut self.project);
                 } else {
                     // Ensure default if none
                     let uuid = self.project.ensure_default_comp();
-                    self.player.set_active_comp(uuid, &mut self.project);
+                    self.player.set_active_comp(Some(uuid), &mut self.project);
                 }
                 self.selected_media_uuid = self.project.selection().last().cloned();
                 self.error_msg = None;
@@ -1277,10 +1279,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let uuid = app.project.ensure_default_comp();
                 Some(uuid)
             });
-            if let Some(active) = active_uuid {
-                player.set_active_comp_uuid(Some(active.clone()));
-                app.project.set_active(Some(active));
-            }
+            player.set_active_comp(active_uuid, &mut app.project);
 
             app.player = player;
             app.status_bar = StatusBar::new();

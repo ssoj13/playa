@@ -95,7 +95,7 @@ impl Player {
 
     /// Set active comp UUID (low-level, does NOT update project state)
     /// Use `set_active_comp()` for full activation with project sync
-    pub fn set_active_comp_uuid(&mut self, uuid: Option<Uuid>) {
+    fn set_active_comp_uuid(&mut self, uuid: Option<Uuid>) {
         self.attrs.set_json("active_comp", &uuid);
     }
 
@@ -230,10 +230,17 @@ impl Player {
     ///
     /// Updates active_comp and emits CurrentFrameChanged event.
     /// Stops playback during transition.
-    pub fn set_active_comp(&mut self, comp_uuid: Uuid, project: &mut Project) {
+    pub fn set_active_comp(&mut self, comp_uuid: Option<Uuid>, project: &mut Project) {
+        // Handle None case - clear active
+        let Some(uuid) = comp_uuid else {
+            self.set_active_comp_uuid(None);
+            project.set_active(None);
+            return;
+        };
+
         // Check if comp exists in media
-        if !project.contains_comp(comp_uuid) {
-            log::warn!("Comp {} not found, cannot activate", comp_uuid);
+        if !project.contains_comp(uuid) {
+            log::warn!("Comp {} not found, cannot activate", uuid);
             return;
         }
 
@@ -241,20 +248,20 @@ impl Player {
         self.set_is_playing(false);
 
         // Switch to new comp
-        self.set_active_comp_uuid(Some(comp_uuid));
-        project.set_active(Some(comp_uuid));
+        self.set_active_comp_uuid(Some(uuid));
+        project.set_active(Some(uuid));
 
         // Recalculate bounds and emit CurrentFrameChanged event (triggers frame loading)
-        project.modify_comp(comp_uuid, |comp| {
+        project.modify_comp(uuid, |comp| {
             comp.on_activate();
             let frame = comp.frame();
             comp.set_frame(frame);
-            log::info!("Activated comp {} at frame {}", comp_uuid, frame);
+            log::info!("Activated comp {} at frame {}", uuid, frame);
         });
 
         // Keep selection in sync: ensure active is included and ordered
-        project.retain_selection(|u| *u != comp_uuid);
-        project.push_selection(comp_uuid);
+        project.retain_selection(|u| *u != uuid);
+        project.push_selection(uuid);
     }
 
 
