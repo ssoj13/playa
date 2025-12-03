@@ -21,6 +21,7 @@ pub struct EventResult {
     pub load_project: Option<PathBuf>,
     pub save_project: Option<PathBuf>,
     pub load_sequences: Option<Vec<PathBuf>>,
+    pub new_comp: Option<(String, f32)>,
     pub enqueue_frames: Option<usize>,
 }
 
@@ -200,6 +201,12 @@ pub fn handle_app_event(
     }
     if downcast_event::<ToggleLoopEvent>(&event).is_some() {
         settings.loop_enabled = !settings.loop_enabled;
+        player.set_loop_enabled(settings.loop_enabled);
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<SetLoopEvent>(&event) {
+        settings.loop_enabled = e.0;
+        player.set_loop_enabled(e.0);
         return Some(result);
     }
 
@@ -208,16 +215,67 @@ pub fn handle_app_event(
         result.load_sequences = Some(vec![e.0.clone()]);
         return Some(result);
     }
+    if let Some(e) = downcast_event::<AddClipsEvent>(&event) {
+        result.load_sequences = Some(e.0.clone());
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<AddCompEvent>(&event) {
+        result.new_comp = Some((e.name.clone(), e.fps));
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<SaveProjectEvent>(&event) {
+        result.save_project = Some(e.0.clone());
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<LoadProjectEvent>(&event) {
+        result.load_project = Some(e.0.clone());
+        return Some(result);
+    }
     if let Some(e) = downcast_event::<RemoveMediaEvent>(&event) {
-        // Remove media logic handled in main.rs via closure
-        project.remove_media(e.0);
+        let uuid = e.0;
+        let was_active = player.active_comp() == Some(uuid);
+        project.remove_media_with_cleanup(uuid);
+        if was_active {
+            let first = project.comps_order().first().cloned();
+            if let Some(new_active) = first {
+                player.set_active_comp(new_active, project);
+            } else {
+                player.set_active_comp_uuid(None);
+            }
+        }
         return Some(result);
     }
     if downcast_event::<RemoveSelectedMediaEvent>(&event).is_some() {
         let selection: Vec<Uuid> = project.selection();
+        let active = player.active_comp();
         for uuid in selection {
-            project.remove_media(uuid);
+            project.remove_media_with_cleanup(uuid);
         }
+        // Fix active if deleted
+        if let Some(a) = active {
+            if !project.media.read().unwrap().contains_key(&a) {
+                let first = project.comps_order().first().cloned();
+                if let Some(new_active) = first {
+                    player.set_active_comp(new_active, project);
+                } else {
+                    player.set_active_comp_uuid(None);
+                }
+            }
+        }
+        return Some(result);
+    }
+    if downcast_event::<ClearAllMediaEvent>(&event).is_some() {
+        project.media.write().unwrap().clear();
+        project.set_comps_order(Vec::new());
+        project.set_selection(Vec::new());
+        player.set_active_comp(Uuid::nil(), project);
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<SelectMediaEvent>(&event) {
+        player.set_active_comp(e.0, project);
+        project.retain_selection(|u| *u != e.0);
+        project.push_selection(e.0);
+        project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
         return Some(result);
     }
 
@@ -558,6 +616,35 @@ pub fn handle_app_event(
                 let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
                 let _ = comp.set_child_play_end(layer_idx, current_frame);
             }
+        });
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<MoveLayerEvent>(&event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            let _ = comp.move_child(e.layer_idx, e.new_start);
+        });
+        return Some(result);
+    }
+
+    // === Comp Play Area ===
+    if let Some(e) = downcast_event::<SetCompPlayStartEvent>(&event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            comp.set_comp_play_start(e.frame);
+        });
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<SetCompPlayEndEvent>(&event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            comp.set_comp_play_end(e.frame);
+        });
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<ResetCompPlayAreaEvent>(&event) {
+        project.modify_comp(e.0, |comp| {
+            let start = comp._in();
+            let end = comp._out();
+            comp.set_comp_play_start(start);
+            comp.set_comp_play_end(end);
         });
         return Some(result);
     }

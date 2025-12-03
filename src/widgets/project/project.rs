@@ -1,16 +1,10 @@
-use std::path::PathBuf;
-use uuid::Uuid;
+//! Project panel actions and state.
+
 use crate::event_bus::BoxedEvent;
 
-/// Project window actions result
+/// Project panel result - all actions via events
 #[derive(Default)]
 pub struct ProjectActions {
-    pub load_sequence: Option<PathBuf>,
-    pub save_project: Option<PathBuf>,
-    pub load_project: Option<PathBuf>,
-    pub new_comp: bool,
-    pub remove_comp: Option<Uuid>,
-    pub clear_all_comps: bool,
     pub hovered: bool,
     pub events: Vec<BoxedEvent>,
 }
@@ -18,5 +12,10 @@ pub struct ProjectActions {
 impl ProjectActions {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Push event to be dispatched
+    pub fn send<E: crate::event_bus::Event>(&mut self, event: E) {
+        self.events.push(Box::new(event));
     }
 }

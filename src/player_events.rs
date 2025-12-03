@@ -77,3 +77,6 @@ pub struct ResetPlayRangeEvent;
 
 #[derive(Clone, Debug)]
 pub struct ToggleLoopEvent;
+
+#[derive(Clone, Debug)]
+pub struct SetLoopEvent(pub bool);

@@ -1,6 +1,7 @@
 use crate::cache_man::CacheManager;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, PixelFormat};
+use crate::event_bus::BoxedEvent;
 use crate::player::Player;
 use crate::widgets::viewport::ViewportState;
 use eframe::egui;
@@ -28,11 +29,12 @@ impl StatusBar {
         &self,
         ctx: &egui::Context,
         frame: Option<&Frame>,
-        player: &mut Player,
+        player: &Player,
         project: &Project,
         viewport_state: &ViewportState,
         render_time_ms: f32,
         cache_manager: Option<&Arc<CacheManager>>,
+        mut dispatch: impl FnMut(BoxedEvent),
     ) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -101,7 +103,7 @@ impl StatusBar {
                 // Loop toggle
                 let mut loop_enabled = player.loop_enabled();
                 if ui.checkbox(&mut loop_enabled, "Loop").changed() {
-                    player.set_loop_enabled(loop_enabled);
+                    dispatch(Box::new(crate::player_events::SetLoopEvent(loop_enabled)));
                 }
 
                 ui.separator();

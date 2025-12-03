@@ -24,6 +24,9 @@ pub struct RemoveMediaEvent(pub Uuid);
 pub struct RemoveSelectedMediaEvent;
 
 #[derive(Clone, Debug)]
+pub struct ClearAllMediaEvent;
+
+#[derive(Clone, Debug)]
 pub struct SaveProjectEvent(pub PathBuf);
 
 #[derive(Clone, Debug)]

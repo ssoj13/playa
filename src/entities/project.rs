@@ -315,6 +315,39 @@ impl Project {
         self.push_comps_order(uuid);
     }
 
+    /// Create and add a new composition, returns its UUID
+    pub fn create_comp(
+        &mut self,
+        name: &str,
+        fps: f32,
+        event_sender: crate::event_bus::CompEventSender,
+    ) -> Uuid {
+        let end = (fps * 5.0) as i32; // 5 seconds default duration
+        let mut comp = Comp::new(name, 0, end, fps);
+        comp.set_event_sender(event_sender);
+        let uuid = comp.uuid;
+        self.add_comp(comp);
+        uuid
+    }
+
+    /// Remove media and clean up all references to it in other comps
+    pub fn remove_media_with_cleanup(&mut self, uuid: Uuid) {
+        // Remove references from other comps (layers using this media as source)
+        {
+            let mut media = self.media.write().unwrap();
+            for (_comp_uuid, comp) in media.iter_mut() {
+                let children_to_remove = comp.find_children_by_source(uuid);
+                for child_uuid in children_to_remove {
+                    comp.remove_child(child_uuid);
+                }
+            }
+        }
+        // Remove the media itself
+        self.remove_media(uuid);
+        // Fix selection
+        self.retain_selection(|u| *u != uuid);
+    }
+
     /// Set CacheManager for project and all existing comps (call after deserialization)
     pub fn set_cache_manager(&mut self, manager: Arc<CacheManager>) {
         let media = self.media.read().unwrap();

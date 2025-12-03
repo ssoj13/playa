@@ -294,6 +294,7 @@ impl PlayaApp {
         let mut deferred_load_project: Option<std::path::PathBuf> = None;
         let mut deferred_save_project: Option<std::path::PathBuf> = None;
         let mut deferred_load_sequences: Option<Vec<std::path::PathBuf>> = None;
+        let mut deferred_new_comp: Option<(String, f32)> = None;
         let mut deferred_enqueue_frames: Option<usize> = None;
 
         // Drain all events from the bus
@@ -347,6 +348,9 @@ impl PlayaApp {
                 if let Some(paths) = result.load_sequences {
                     deferred_load_sequences = Some(paths);
                 }
+                if let Some(comp_data) = result.new_comp {
+                    deferred_new_comp = Some(comp_data);
+                }
                 if let Some(n) = result.enqueue_frames {
                     deferred_enqueue_frames = Some(n);
                 }
@@ -362,6 +366,11 @@ impl PlayaApp {
         }
         if let Some(paths) = deferred_load_sequences {
             let _ = self.load_sequences(paths);
+        }
+        if let Some((name, fps)) = deferred_new_comp {
+            let uuid = self.project.create_comp(&name, fps, self.comp_event_sender.clone());
+            self.player.set_active_comp(uuid, &mut self.project);
+            info!("Created new comp: {}", uuid);
         }
         if let Some(n) = deferred_enqueue_frames {
             self.enqueue_frame_loads_around_playhead(n);
@@ -546,109 +555,6 @@ impl PlayaApp {
         }
     }
 
-    /// Remove media by UUID and clean up references in other comps.
-    fn remove_media_and_cleanup(&mut self, uuid: Uuid) {
-        if !self.project.media.read().unwrap().contains_key(&uuid) {
-            log::warn!("remove_media_and_cleanup: uuid {} not found", uuid);
-            return;
-        }
-
-        // Remove references from other comps (layers using this media as source)
-        let mut removed_refs = 0usize;
-        {
-            let mut media = self.project.media.write().unwrap();
-            for (comp_uuid, comp) in media.iter_mut() {
-                // Find all child instances that use this source_uuid
-                let children_to_remove = comp.find_children_by_source(uuid);
-                for child_uuid in children_to_remove {
-                    comp.remove_child(child_uuid);
-                    removed_refs += 1;
-                    log::info!(
-                        "Removed child instance {} (source {}) from comp {} while deleting media",
-                        child_uuid,
-                        uuid,
-                        comp_uuid
-                    );
-                }
-            }
-        } // Release write lock
-        if removed_refs == 0 {
-            log::debug!(
-                "remove_media_and_cleanup: no layer references to {} found",
-                uuid
-            );
-        }
-
-        // Drop the media itself
-        self.project.remove_media(uuid);
-
-        // Clear selection/active pointers to this media
-        if self.player.active_comp() == Some(uuid) {
-            self.player.set_active_comp_uuid(None);
-        }
-        if self.selected_media_uuid == Some(uuid) {
-            self.selected_media_uuid = None;
-        }
-        self.project.retain_selection(|u| *u != uuid);
-        // Anchor may no longer be valid; recompute later
-        self.project.selection_anchor = None;
-    }
-
-    /// After deletions, ensure active/selection are valid and not empty.
-    fn post_remove_fixups(&mut self) {
-        // Ensure active comp exists
-        if self.player.active_comp().is_none() {
-            if self.project.media.read().unwrap().is_empty() {
-                let uuid = self.project.ensure_default_comp();
-                self.player.set_active_comp(uuid, &mut self.project);
-            } else {
-                // Pick last in order or any available
-                let order = self.project.comps_order();
-                let fallback = order
-                    .last()
-                    .cloned()
-                    .or_else(|| self.project.media.read().unwrap().keys().next().cloned());
-                if let Some(uuid) = fallback {
-                    self.player.set_active_comp(uuid, &mut self.project);
-                }
-            }
-        }
-
-        // Ensure selection exists and points to valid items
-        {
-            let valid_uuids: Vec<Uuid> = {
-                let media = self.project.media.read().unwrap();
-                self.project.selection().into_iter().filter(|u| media.contains_key(u)).collect()
-            };
-            self.project.set_selection(valid_uuids);
-        }
-        if self.project.selection().is_empty() {
-            if let Some(active) = self.player.active_comp() {
-                self.project.push_selection(active);
-                self.project.selection_anchor = self
-                    .project
-                    .comps_order()
-                    .iter()
-                    .position(|u| *u == active);
-                self.selected_media_uuid = Some(active);
-            }
-        } else {
-            let sel = self.project.selection();
-            let order = self.project.comps_order();
-            self.selected_media_uuid = sel.last().copied();
-            self.project.selection_anchor = sel.last().and_then(
-                |u| order.iter().position(|c| c == u),
-            );
-        }
-    }
-
-    /// Select and activate media item (comp/clip) by UUID
-    fn select_item(&mut self, uuid: Uuid) {
-        self.selected_media_uuid = Some(uuid);
-        self.event_bus
-            .send(project_events::ProjectActiveChangedEvent(uuid));
-    }
-
     /// Update compositor backend based on settings
     fn update_compositor_backend(&mut self, gl: &std::sync::Arc<glow::Context>) {
         use entities::compositor::{CompositorType, CpuCompositor};
@@ -683,69 +589,9 @@ impl PlayaApp {
         // Store hover state for input routing
         self.project_hovered = project_actions.hovered;
 
-        // Load media files
-        if let Some(path) = project_actions.load_sequence {
-            let _ = self.load_sequences(vec![path]);
-        }
-
-        // Save/Load project
-        if let Some(path) = project_actions.save_project {
-            self.save_project(path);
-        }
-        if let Some(path) = project_actions.load_project {
-            self.load_project(path);
-        }
-
-        // Dispatch queued events from Project UI
+        // Dispatch all events from Project UI - handling is in main_events.rs
         for evt in project_actions.events {
-            self.event_bus.send(evt);
-        }
-
-        // Create new composition
-        if project_actions.new_comp {
-            use crate::entities::Comp;
-            let fps = 30.0;
-            let end = (fps * 5.0) as i32; // 5 seconds
-            let mut comp = Comp::new("New Comp", 0, end, fps);
-            let uuid = comp.uuid.clone();
-
-            // Set event sender for the new comp
-            comp.set_event_sender(self.comp_event_sender.clone());
-
-            // add_comp() injects global_cache + cache_manager AND adds to comps_order
-            self.project.add_comp(comp);
-
-            // Activate the new comp
-            self.player.set_active_comp(uuid.clone(), &mut self.project);
-
-            info!("Created new comp: {}", uuid);
-        }
-
-        // Remove composition
-        if let Some(comp_uuid) = project_actions.remove_comp {
-            self.project.media.write().unwrap().remove(&comp_uuid);
-            self.project.retain_comps_order(|uuid| uuid != &comp_uuid);
-
-            // If removed comp was active, switch to first available or None
-            if self.player.active_comp().as_ref() == Some(&comp_uuid) {
-                let first_comp = self.project.comps_order().first().cloned();
-                if let Some(new_active) = first_comp {
-                    self.player.set_active_comp(new_active, &mut self.project);
-                } else {
-                    self.player.set_active_comp_uuid(None);
-                }
-            }
-
-            info!("Removed comp {}", comp_uuid);
-        }
-
-        // Clear all compositions
-        if project_actions.clear_all_comps {
-            // Remove all media (clips and comps are unified now)
-            self.project.media.write().unwrap().clear();
-            self.project.set_comps_order(Vec::new());
-            self.player.set_active_comp_uuid(None);
-            info!("All media cleared");
+            self.event_bus.send_boxed(evt);
         }
     }
 
@@ -802,8 +648,9 @@ impl PlayaApp {
         // Store hover state for input routing
         self.viewport_hovered = viewport_actions.hovered;
 
-        if let Some(path) = viewport_actions.load_sequence {
-            let _ = self.load_sequences(vec![path]);
+        // Dispatch all events from Viewport UI
+        for evt in viewport_actions.events {
+            self.event_bus.send_boxed(evt);
         }
 
         // Persist timeline options back to settings
@@ -1147,11 +994,12 @@ impl eframe::App for PlayaApp {
             self.status_bar.render(
                 ctx,
                 self.frame.as_ref(),
-                &mut self.player,
+                &self.player,
                 &self.project,
                 &self.viewport_state,
                 self.last_render_time_ms,
                 cache_mgr.as_ref(),
+                |evt| self.event_bus.send(evt),
             );
         }
 

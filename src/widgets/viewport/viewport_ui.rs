@@ -2,20 +2,26 @@
 
 use eframe::egui;
 use log::info;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::shaders::Shaders;
 use super::{ViewportRenderer, ViewportState};
 use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
+use crate::event_bus::BoxedEvent;
 use crate::player::Player;
 
-/// Viewport actions result
+/// Viewport actions result - all actions via events
 #[derive(Default)]
 pub struct ViewportActions {
-    pub load_sequence: Option<PathBuf>,
     pub hovered: bool,
+    pub events: Vec<BoxedEvent>,
+}
+
+impl ViewportActions {
+    pub fn send<E: crate::event_bus::Event>(&mut self, event: E) {
+        self.events.push(Box::new(event));
+    }
 }
 
 /// Create configured file dialog for image/video selection
@@ -39,10 +45,7 @@ pub fn render(
     is_fullscreen: bool,
     texture_needs_upload: bool,
 ) -> (ViewportActions, f32) {
-    let mut actions = ViewportActions {
-        load_sequence: None,
-        hovered: false,
-    };
+    let mut actions = ViewportActions::default();
     let mut render_time_ms = 0.0;
     let old_shader = shader_manager.current_shader.clone();
 
@@ -67,9 +70,11 @@ pub fn render(
 
     if double_clicked {
         info!("Double-click detected, opening file dialog");
-        if let Some(path) = create_image_dialog("Select Image File").pick_file() {
-            info!("File selected: {}", path.display());
-            actions.load_sequence = Some(path);
+        if let Some(paths) = create_image_dialog("Select Media Files").pick_files() {
+            if !paths.is_empty() {
+                info!("Files selected: {:?}", paths);
+                actions.send(crate::project_events::AddClipsEvent(paths));
+            }
         }
     }
 
@@ -96,7 +101,7 @@ pub fn render(
         if let Some(frame_idx) =
             viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames(project))
         {
-            player.set_frame(frame_idx, project);
+            actions.send(crate::player_events::SetFrameEvent(frame_idx));
         }
 
         let render_start = std::time::Instant::now();

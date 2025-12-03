@@ -2,7 +2,7 @@ use eframe::egui;
 use uuid::Uuid;
 
 use crate::entities::Project;
-use crate::project_events::{ProjectSelectionChangedEvent, ProjectActiveChangedEvent};
+use crate::project_events::*;
 use crate::player::Player;
 use crate::widgets::project::project::ProjectActions;
 
@@ -33,7 +33,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                 .set_title("Save Project")
                 .save_file()
         {
-            actions.save_project = Some(path);
+            actions.send(SaveProjectEvent(path));
         }
         if ui.button("Load").clicked()
             && let Some(path) = rfd::FileDialog::new()
@@ -41,19 +41,22 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                 .set_title("Load Project")
                 .pick_file()
         {
-            actions.load_project = Some(path);
+            actions.send(LoadProjectEvent(path));
         }
         if ui.button("Add Clip").clicked()
             && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
             && !paths.is_empty()
         {
-            actions.load_sequence = Some(paths[0].clone());
+            actions.send(AddClipsEvent(paths));
         }
         if ui.button("Add Comp").clicked() {
-            actions.new_comp = true;
+            actions.send(AddCompEvent {
+                name: "New Comp".to_string(),
+                fps: 30.0,
+            });
         }
         if ui.button("Clear All").clicked() {
-            actions.clear_all_comps = true;
+            actions.send(ClearAllMediaEvent);
         }
     });
 
@@ -228,7 +231,7 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                     );
                 }
                 if delete_resp.clicked() {
-                    actions.remove_comp = Some(*comp_uuid);
+                    actions.send(RemoveMediaEvent(*comp_uuid));
                 }
 
                 // Selection logic (click) and activation (double click) via events
