@@ -86,7 +86,9 @@ name = "prefs"
 path = "src/bin/prefs.rs"
 
 [profile.release]
-strip = false
+strip = true
+lto = true
+codegen-units = 1
 
 [package.metadata.packager]
 product-name = "Playa"
