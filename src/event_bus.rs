@@ -118,9 +118,11 @@ impl EventBus {
         let type_id = (*event).type_id();
 
         // Invoke immediate callbacks
+        // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable,
+        // not Box<dyn Event>'s blanket impl (see downcast_event docs)
         if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
             for cb in cbs {
-                cb(event.as_any());
+                cb((*event).as_any());
             }
         }
 
@@ -218,9 +220,10 @@ impl EventEmitter {
         let type_id = (*event).type_id();
 
         // Invoke immediate callbacks
+        // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable
         if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
             for cb in cbs {
-                cb(event.as_any());
+                cb((*event).as_any());
             }
         }
 
@@ -255,9 +258,14 @@ impl CompEventEmitter {
 }
 
 /// Helper: downcast BoxedEvent to concrete type
+///
+/// IMPORTANT: Must explicitly deref to `dyn Event` before calling `as_any()`.
+/// Without explicit deref, the blanket impl `Event for Box<dyn Event>` intercepts
+/// the call and returns `&dyn Any` containing `Box<dyn Event>` instead of the
+/// original type, causing downcast to always fail.
 #[inline]
 pub fn downcast_event<E: Event>(event: &BoxedEvent) -> Option<&E> {
-    event.as_any().downcast_ref::<E>()
+    (**event).as_any().downcast_ref::<E>()
 }
 
 #[cfg(test)]

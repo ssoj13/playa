@@ -1,4 +1,21 @@
 //! Application event handling - extracted from main.rs for clarity.
+//!
+//! # Important: Event Downcasting Bug (Fixed 2025-12-05)
+//!
+//! When using `downcast_event<E>(&event)` where `event: &BoxedEvent` (i.e., `&Box<dyn Event>`),
+//! be aware of Rust's method resolution with blanket implementations.
+//!
+//! The blanket impl `impl<T: Any + Send + Sync + 'static> Event for T` means that
+//! `Box<dyn Event>` ALSO implements `Event`. When calling `event.as_any()`, Rust's
+//! method resolution may pick the `Box`'s blanket impl instead of the inner type's impl.
+//!
+//! This causes `as_any()` to return `&dyn Any` containing `Box<dyn Event>`'s TypeId,
+//! not the original event type's TypeId, making all downcasts fail!
+//!
+//! **Fix**: In `downcast_event`, use explicit deref: `(**event).as_any()` to force
+//! the call through `dyn Event`'s vtable, which correctly returns the original type's TypeId.
+//!
+//! See `event_bus.rs::downcast_event()` for the corrected implementation.
 
 use log::debug;
 use std::path::PathBuf;

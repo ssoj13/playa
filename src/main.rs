@@ -291,8 +291,8 @@ impl PlayaApp {
         let mut deferred_show_open = false;
 
         // Poll all events from the bus
-        for event in self.event_bus.poll() {
-            log::debug!("Event received: {:?}", event.type_name());
+        let events = self.event_bus.poll();
+        for event in events {
 
             // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
