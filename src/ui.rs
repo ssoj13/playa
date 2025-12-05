@@ -104,7 +104,7 @@ pub fn render_timeline_panel(
                 // returns the correct remaining space for panels.
 
                 // Toolbar first (before view selector) - takes ~30px
-                render_toolbar(ui, timeline_state, |evt| event_bus.send(evt));
+                render_toolbar(ui, timeline_state, |evt| event_bus.emit_boxed(evt));
                 ui.add_space(4.0);
 
                 // View selector (Split/Canvas/Outline buttons) - takes ~20px
@@ -154,7 +154,7 @@ pub fn render_timeline_panel(
                                     &config,
                                     timeline_state,
                                     timeline_state.view_mode,
-                                    |evt| event_bus.send(evt),
+                                    |evt| event_bus.emit_boxed(evt),
                                 );
                             });
 
@@ -187,7 +187,7 @@ pub fn render_timeline_panel(
                                 &config,
                                 timeline_state,
                                 timeline_state.view_mode,
-                                |evt| event_bus.send(evt),
+                                |evt| event_bus.emit_boxed(evt),
                             );
                         });
                     }
@@ -202,7 +202,7 @@ pub fn render_timeline_panel(
                                 &config,
                                 timeline_state,
                                 timeline_state.view_mode,
-                                |evt| event_bus.send(evt),
+                                |evt| event_bus.emit_boxed(evt),
                             );
                         });
                     }
@@ -217,7 +217,7 @@ pub fn render_timeline_panel(
                                 &config,
                                 timeline_state,
                                 timeline_state.view_mode,
-                                |evt| event_bus.send(evt),
+                                |evt| event_bus.emit_boxed(evt),
                             );
                         });
                     }

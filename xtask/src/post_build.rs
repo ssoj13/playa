@@ -34,6 +34,7 @@ pub fn copy_dependencies(profile: &str) -> Result<()> {
     // Step 2: Copy libraries
     println!("Copying libraries to {}...", target_dir.display());
     let mut copied_count = 0;
+    let mut failed_count = 0;
 
     for lib_path in &libraries {
         if let Some(file_name) = lib_path.file_name() {
@@ -50,6 +51,7 @@ pub fn copy_dependencies(profile: &str) -> Result<()> {
                 }
                 Err(e) => {
                     println!("  ✗ Failed to copy {}: {}", file_name.to_string_lossy(), e);
+                    failed_count += 1;
                 }
             }
         }
@@ -57,6 +59,10 @@ pub fn copy_dependencies(profile: &str) -> Result<()> {
 
     println!();
     println!("Copied {} libraries", copied_count);
+
+    if failed_count > 0 {
+        anyhow::bail!("Failed to copy {} libraries", failed_count);
+    }
 
     // Step 3: Create soname symlinks on Linux/macOS
     #[cfg(target_os = "linux")]

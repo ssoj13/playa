@@ -13,3 +13,7 @@ Check all hotkeys, all controls, all functionality and spot problems. Create com
 MANDATORY: Use filesystem and memory MCP to work with files and memory and github MCP when needed.
 Use sub-agents and work in parallel!
 Always create a comprehensive plan and write it to planN.md where N is the next available number, and wait for approval!
+
+
+В каталоге C:\projects\projects.rust\playa.old находится старый код в котором всё работало. Консультируйся с ним, но учти что там старая ненужная логика.
+Мы используем новую: complete module separation, ONLY Pub/Sub EventBus and such.

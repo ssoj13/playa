@@ -105,8 +105,9 @@ impl Workers {
                             break;
                         }
 
-                        // 5. No work - yield and retry
-                        thread::yield_now();
+                        // 5. No work - short sleep to avoid CPU spin
+                        // Using 1ms sleep instead of pure yield to reduce CPU usage
+                        thread::sleep(std::time::Duration::from_millis(1));
                     }
 
                     debug!("Worker {} stopped", worker_id);

@@ -1,8 +1,11 @@
-//! Hybrid event bus: pub/sub callbacks + event queue for deferred processing.
+//! Pub/Sub Event Bus for decoupled component communication.
 //!
-//! Supports two patterns:
-//! 1. Pub/sub: subscribe() + emit() for immediate callback invocation
-//! 2. Queue: send() + drain() for deferred batch processing (egui-friendly)
+//! Architecture:
+//! - Components subscribe to event types with callbacks (immediate invocation)
+//! - emit() invokes callbacks immediately AND queues for deferred processing
+//! - poll() returns queued events for batch processing in main loop
+//!
+//! This provides true pub/sub with egui-friendly deferred processing.
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -30,11 +33,24 @@ type Callback = Arc<dyn Fn(&dyn Any) + Send + Sync>;
 /// Boxed event for queue storage
 pub type BoxedEvent = Box<dyn Event>;
 
-/// Hybrid event bus: pub/sub + queue.
+/// Pub/Sub Event Bus with deferred processing support.
+///
+/// Two modes of operation:
+/// 1. Immediate: subscribe() + emit() triggers callbacks instantly
+/// 2. Deferred: emit() also queues events for poll() in main loop
+///
+/// Both modes work together - callbacks fire immediately, and events
+/// are also available for batch processing via poll().
 #[derive(Clone)]
 pub struct EventBus {
     subscribers: Arc<RwLock<HashMap<TypeId, Vec<Callback>>>>,
     queue: Arc<Mutex<Vec<BoxedEvent>>>,
+}
+
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventBus {
@@ -45,9 +61,21 @@ impl EventBus {
         }
     }
 
-    // ========== Pub/Sub ==========
+    // ========== Pub/Sub (immediate) ==========
 
-    /// Subscribe to events of type E
+    /// Subscribe to events of type E.
+    ///
+    /// Callback is invoked immediately when emit() is called.
+    /// Use Arc<Mutex<State>> in the callback for state mutations.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let state = Arc::new(Mutex::new(MyState::default()));
+    /// let state_clone = Arc::clone(&state);
+    /// event_bus.subscribe::<MyEvent, _>(move |e| {
+    ///     state_clone.lock().unwrap().handle(e);
+    /// });
+    /// ```
     pub fn subscribe<E, F>(&self, callback: F)
     where
         E: Event,
@@ -67,99 +95,161 @@ impl EventBus {
             .push(wrapped);
     }
 
-    /// Emit event: invoke subscribers immediately
-    pub fn emit<E: Event>(&self, event: E) {
+    /// Emit event: invoke callbacks immediately AND queue for deferred processing.
+    ///
+    /// Callbacks are called synchronously, then event is added to queue
+    /// for retrieval via poll().
+    pub fn emit<E: Event + Clone>(&self, event: E) {
         let type_id = TypeId::of::<E>();
+
+        // Invoke immediate callbacks
         if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
             for cb in cbs {
                 cb(&event);
             }
         }
-    }
 
-    // ========== Queue ==========
-
-    /// Send event to queue
-    pub fn send<E: Event>(&self, event: E) {
+        // Queue for deferred processing
         self.queue.lock().expect("lock").push(Box::new(event));
     }
 
-    /// Send already-boxed event to queue
-    pub fn send_boxed(&self, event: BoxedEvent) {
+    /// Emit boxed event (for dynamic dispatch).
+    pub fn emit_boxed(&self, event: BoxedEvent) {
+        let type_id = (*event).type_id();
+
+        // Invoke immediate callbacks
+        if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
+            for cb in cbs {
+                cb(event.as_any());
+            }
+        }
+
+        // Queue for deferred processing
         self.queue.lock().expect("lock").push(event);
     }
 
-    /// Drain all queued events
-    pub fn drain(&self) -> Vec<BoxedEvent> {
+    // ========== Deferred Processing ==========
+
+    /// Poll all queued events for batch processing.
+    ///
+    /// Returns all events emitted since last poll. Use in main loop:
+    /// ```ignore
+    /// for event in event_bus.poll() {
+    ///     // Process event...
+    /// }
+    /// ```
+    pub fn poll(&self) -> Vec<BoxedEvent> {
         std::mem::take(&mut *self.queue.lock().expect("lock"))
     }
 
-    /// Get sender handle
-    pub fn sender(&self) -> EventSender {
-        EventSender {
+    // ========== Handle & Utilities ==========
+
+    /// Get an emitter handle for passing to UI components.
+    pub fn emitter(&self) -> EventEmitter {
+        EventEmitter {
+            subscribers: Arc::clone(&self.subscribers),
             queue: Arc::clone(&self.queue),
         }
     }
 
     /// Clear subscribers for type E
-    pub fn clear<E: Event>(&self) {
+    pub fn unsubscribe_all<E: Event>(&self) {
         self.subscribers.write().expect("lock").remove(&TypeId::of::<E>());
     }
 
-    /// Clear all
-    pub fn clear_all(&self) {
+    /// Clear all subscribers and queue
+    pub fn clear(&self) {
         self.subscribers.write().expect("lock").clear();
         self.queue.lock().expect("lock").clear();
     }
-}
 
-impl Default for EventBus {
-    fn default() -> Self {
-        Self::new()
+    /// Check if there are subscribers for event type E
+    pub fn has_subscribers<E: Event>(&self) -> bool {
+        self.subscribers
+            .read()
+            .expect("lock")
+            .get(&TypeId::of::<E>())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// Check queue length
+    pub fn queue_len(&self) -> usize {
+        self.queue.lock().expect("lock").len()
     }
 }
 
-/// Sender handle for UI components
+/// Lightweight emitter handle for UI components.
+///
+/// Can be cloned and passed to widgets for emitting events.
 #[derive(Clone)]
-pub struct EventSender {
+pub struct EventEmitter {
+    subscribers: Arc<RwLock<HashMap<TypeId, Vec<Callback>>>>,
     queue: Arc<Mutex<Vec<BoxedEvent>>>,
 }
 
-impl std::fmt::Debug for EventSender {
+impl std::fmt::Debug for EventEmitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventSender")
+        f.debug_struct("EventEmitter")
+            .field("subscriber_types", &self.subscribers.read().map(|s| s.len()).unwrap_or(0))
             .field("queue_len", &self.queue.lock().map(|q| q.len()).unwrap_or(0))
             .finish()
     }
 }
 
-impl EventSender {
-    pub fn send<E: Event>(&self, event: E) {
+impl EventEmitter {
+    /// Emit event: invoke callbacks and queue for deferred processing
+    pub fn emit<E: Event + Clone>(&self, event: E) {
+        let type_id = TypeId::of::<E>();
+
+        // Invoke immediate callbacks
+        if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
+            for cb in cbs {
+                cb(&event);
+            }
+        }
+
+        // Queue for deferred processing
         self.queue.lock().expect("lock").push(Box::new(event));
+    }
+
+    /// Emit boxed event
+    pub fn emit_boxed(&self, event: BoxedEvent) {
+        let type_id = (*event).type_id();
+
+        // Invoke immediate callbacks
+        if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
+            for cb in cbs {
+                cb(event.as_any());
+            }
+        }
+
+        // Queue for deferred processing
+        self.queue.lock().expect("lock").push(event);
     }
 }
 
-/// Comp-specific event sender (wraps Option<EventSender>)
+/// Comp-specific event emitter (wraps Option<EventEmitter>)
 #[derive(Clone, Default, Debug)]
-pub struct CompEventSender {
-    inner: Option<EventSender>,
+pub struct CompEventEmitter {
+    inner: Option<EventEmitter>,
 }
 
-impl CompEventSender {
-    /// Create a no-op sender
+impl CompEventEmitter {
+    /// Create a no-op emitter (for initialization before event system is ready)
     pub fn dummy() -> Self {
         Self { inner: None }
     }
 
-    /// Create from EventSender
-    pub fn from_sender(sender: EventSender) -> Self {
-        Self { inner: Some(sender) }
+    /// Create from EventEmitter
+    pub fn from_emitter(emitter: EventEmitter) -> Self {
+        Self { inner: Some(emitter) }
     }
 
-    /// Send any event
-    pub fn send<E: Event>(&self, event: E) {
-        if let Some(ref sender) = self.inner {
-            sender.send(event);
+    /// Emit event (no-op if dummy)
+    pub fn emit<E: Event + Clone>(&self, event: E) {
+        if let Some(ref emitter) = self.inner {
+            emitter.emit(event);
         }
     }
 }
@@ -168,20 +258,6 @@ impl CompEventSender {
 #[inline]
 pub fn downcast_event<E: Event>(event: &BoxedEvent) -> Option<&E> {
     event.as_any().downcast_ref::<E>()
-}
-
-/// Macro for matching events in drain loop
-#[macro_export]
-macro_rules! match_event {
-    ($event:expr, $($type:ty => $handler:expr),+ $(,)?) => {{
-        let ev = &$event;
-        $(
-            if let Some(e) = $crate::event_bus::downcast_event::<$type>(ev) {
-                $handler(e);
-            } else
-        )+
-        {}
-    }};
 }
 
 #[cfg(test)]
@@ -193,33 +269,110 @@ mod tests {
     struct TestEvent { value: i32 }
 
     #[derive(Clone, Debug)]
-    struct OtherEvent;
+    struct OtherEvent { msg: String }
 
     #[test]
-    fn test_pub_sub() {
+    fn test_subscribe_emit_immediate() {
         let bus = EventBus::new();
         let counter = Arc::new(AtomicI32::new(0));
-        let c = counter.clone();
-        bus.subscribe(move |e: &TestEvent| {
+        let c = Arc::clone(&counter);
+
+        bus.subscribe::<TestEvent, _>(move |e| {
             c.fetch_add(e.value, Ordering::SeqCst);
         });
+
         bus.emit(TestEvent { value: 10 });
+        // Callback was invoked immediately
         assert_eq!(counter.load(Ordering::SeqCst), 10);
+
+        bus.emit(TestEvent { value: 5 });
+        assert_eq!(counter.load(Ordering::SeqCst), 15);
     }
 
     #[test]
-    fn test_queue() {
+    fn test_emit_queues_for_poll() {
         let bus = EventBus::new();
-        bus.send(TestEvent { value: 1 });
-        bus.send(OtherEvent);
-        assert_eq!(bus.drain().len(), 2);
+
+        bus.emit(TestEvent { value: 1 });
+        bus.emit(TestEvent { value: 2 });
+        bus.emit(OtherEvent { msg: "hello".into() });
+
+        let events = bus.poll();
+        assert_eq!(events.len(), 3);
+
+        // Queue is empty after poll
+        assert_eq!(bus.poll().len(), 0);
+    }
+
+    #[test]
+    fn test_multiple_subscribers() {
+        let bus = EventBus::new();
+        let counter1 = Arc::new(AtomicI32::new(0));
+        let counter2 = Arc::new(AtomicI32::new(0));
+
+        let c1 = Arc::clone(&counter1);
+        bus.subscribe::<TestEvent, _>(move |e| {
+            c1.fetch_add(e.value, Ordering::SeqCst);
+        });
+
+        let c2 = Arc::clone(&counter2);
+        bus.subscribe::<TestEvent, _>(move |e| {
+            c2.fetch_add(e.value * 2, Ordering::SeqCst);
+        });
+
+        bus.emit(TestEvent { value: 10 });
+        assert_eq!(counter1.load(Ordering::SeqCst), 10);
+        assert_eq!(counter2.load(Ordering::SeqCst), 20);
+    }
+
+    #[test]
+    fn test_emitter_handle() {
+        let bus = EventBus::new();
+        let counter = Arc::new(AtomicI32::new(0));
+        let c = Arc::clone(&counter);
+
+        bus.subscribe::<TestEvent, _>(move |e| {
+            c.fetch_add(e.value, Ordering::SeqCst);
+        });
+
+        let emitter = bus.emitter();
+        emitter.emit(TestEvent { value: 42 });
+
+        // Immediate callback was invoked
+        assert_eq!(counter.load(Ordering::SeqCst), 42);
+
+        // Event was also queued
+        assert_eq!(bus.poll().len(), 1);
+    }
+
+    #[test]
+    fn test_unsubscribe() {
+        let bus = EventBus::new();
+        let counter = Arc::new(AtomicI32::new(0));
+        let c = Arc::clone(&counter);
+
+        bus.subscribe::<TestEvent, _>(move |e| {
+            c.fetch_add(e.value, Ordering::SeqCst);
+        });
+
+        bus.emit(TestEvent { value: 10 });
+        assert_eq!(counter.load(Ordering::SeqCst), 10);
+
+        bus.unsubscribe_all::<TestEvent>();
+
+        bus.emit(TestEvent { value: 10 });
+        // Counter unchanged - no subscriber
+        assert_eq!(counter.load(Ordering::SeqCst), 10);
+        // But event still queued
+        assert_eq!(bus.poll().len(), 2);
     }
 
     #[test]
     fn test_downcast() {
         let bus = EventBus::new();
-        bus.send(TestEvent { value: 42 });
-        for ev in bus.drain() {
+        bus.emit(TestEvent { value: 42 });
+
+        for ev in bus.poll() {
             if let Some(e) = downcast_event::<TestEvent>(&ev) {
                 assert_eq!(e.value, 42);
             }

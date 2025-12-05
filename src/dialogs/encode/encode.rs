@@ -1188,10 +1188,7 @@ pub fn encode_sequence_from_comp(
         })?;
     }
 
-    info!(
-        "Flushed {} remaining packets",
-        total_frames - (play_range.1 - play_range.0 + 1)
-    );
+    info!("Flushed remaining packets");
 
     // Write container trailer (CRITICAL: without this, no moov atom = no timeline)
     info!("Writing trailer...");
@@ -1460,8 +1457,8 @@ mod tests {
                 progress.current_frame, progress.total_frames, play_start, play_end
             );
             assert_eq!(
-                progress.total_frames, 40,
-                "Should encode exactly 40 frames from play range"
+                progress.total_frames, 10,
+                "Should encode exactly 10 frames from play range 0..9"
             );
         }
 

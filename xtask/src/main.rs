@@ -913,10 +913,9 @@ fn cmd_test(is_release: bool, nocapture: bool) -> Result<()> {
     cmd.arg("--show-output");
 
     println!(
-        "Running: cargo test {}{} -- {}--show-output",
+        "Running: cargo test {}-- {}--show-output",
         if is_release { "--release " } else { "" },
-        if nocapture { "--nocapture " } else { "" },
-        if nocapture { "" } else { "" }
+        if nocapture { "--nocapture " } else { "" }
     );
     println!();
 

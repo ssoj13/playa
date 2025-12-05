@@ -226,8 +226,8 @@ impl Project {
     /// Rebuild runtime-only state after deserialization.
     ///
     /// - Reinitializes compositor to default (CPU).
-    /// - Sets event sender and global_cache for all comps.
-    pub fn rebuild_runtime(&mut self, event_sender: Option<crate::event_bus::CompEventSender>) {
+    /// - Sets event emitter and global_cache for all comps.
+    pub fn rebuild_runtime(&mut self, event_emitter: Option<crate::event_bus::CompEventEmitter>) {
         // Reinitialize compositor (not serialized)
         *self.compositor.borrow_mut() = CompositorType::default();
 
@@ -237,9 +237,9 @@ impl Project {
             // NOTE: No need to clear cache - GlobalFrameCache is project-level
             // Cache will be naturally invalidated via dirty tracking
 
-            // Set event sender for comps if provided
-            if let Some(ref sender) = event_sender {
-                comp.set_event_sender(sender.clone());
+            // Set event emitter for comps if provided
+            if let Some(ref emitter) = event_emitter {
+                comp.set_event_emitter(emitter.clone());
             }
 
             // Set global_cache reference for each comp
@@ -256,7 +256,7 @@ impl Project {
     pub fn rebuild_with_manager(
         &mut self,
         manager: Arc<CacheManager>,
-        event_sender: Option<crate::event_bus::CompEventSender>,
+        event_emitter: Option<crate::event_bus::CompEventEmitter>,
     ) {
         log::info!("Project::rebuild_with_manager() - unified rebuild");
         self.set_cache_manager(manager.clone());
@@ -269,7 +269,7 @@ impl Project {
         ));
         self.global_cache = Some(global_cache);
 
-        self.rebuild_runtime(event_sender);
+        self.rebuild_runtime(event_emitter);
     }
 
     /// Set compositor type (CPU or GPU).
@@ -335,11 +335,11 @@ impl Project {
         &mut self,
         name: &str,
         fps: f32,
-        event_sender: crate::event_bus::CompEventSender,
+        event_emitter: crate::event_bus::CompEventEmitter,
     ) -> Uuid {
         let end = (fps * 5.0) as i32; // 5 seconds default duration
         let mut comp = Comp::new(name, 0, end, fps);
-        comp.set_event_sender(event_sender);
+        comp.set_event_emitter(event_emitter);
         let uuid = comp.get_uuid();
         self.add_comp(comp);
         uuid
@@ -526,7 +526,7 @@ mod tests {
 
         // Create orphan comp (no parents)
         let mut comp = Comp::new("Orphan", 0, 100, 24.0);
-        let comp_uuid = comp.uuid;
+        let comp_uuid = comp.get_uuid();
         comp.attrs.mark_dirty();
 
         project.media.write().unwrap().insert(comp_uuid, comp);

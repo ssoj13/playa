@@ -21,7 +21,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use half::f16;
-use eframe::egui;
 use glob::glob;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -36,7 +35,7 @@ use super::{AttrValue, Attrs};
 use super::keys::*;
 use super::compositor::BlendMode;
 use crate::entities::loader_video;
-use crate::event_bus::CompEventSender;
+use crate::event_bus::CompEventEmitter;
 use crate::entities::comp_events::{LayersChangedEvent, CurrentFrameChangedEvent, AttrsChangedEvent};
 use crate::utils::media;
 
@@ -86,7 +85,7 @@ pub struct Comp {
     pub layer_selection_anchor: Option<Uuid>,
 
     #[serde(skip, default)]
-    event_sender: CompEventSender,
+    event_emitter: CompEventEmitter,
 
     #[serde(skip)]
     cache_manager: Option<Arc<CacheManager>>,
@@ -160,7 +159,7 @@ impl Comp {
             children: Vec::new(),
             layer_selection: Vec::new(),
             layer_selection_anchor: None,
-            event_sender: CompEventSender::dummy(),
+            event_emitter: CompEventEmitter::dummy(),
             cache_manager: None,
             global_cache: None,
         }
@@ -197,11 +196,11 @@ impl Comp {
     }
 
     pub fn file_start(&self) -> Option<i32> {
-        self.attrs.get_i32(A_FILE_START).map(Some).unwrap_or(None)
+        self.attrs.get_i32(A_FILE_START)
     }
 
     pub fn file_end(&self) -> Option<i32> {
-        self.attrs.get_i32(A_FILE_END).map(Some).unwrap_or(None)
+        self.attrs.get_i32(A_FILE_END)
     }
 
     pub fn file_mask(&self) -> Option<String> {
@@ -471,7 +470,7 @@ impl Comp {
         self.set_trim_out(hi);
         // Don't clear cache - already loaded frames remain valid
         // Preload will automatically load new frames in the updated work area
-        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
     }
 
     /// Child placement bounds (start/end) in parent timeline, ordered and clamped if needed.
@@ -920,9 +919,9 @@ impl Comp {
 
 
 
-    /// Set event sender (called after deserialization or when creating new comp in app)
-    pub fn set_event_sender(&mut self, sender: CompEventSender) {
-        self.event_sender = sender;
+    /// Set event emitter (called after deserialization or when creating new comp in app)
+    pub fn set_event_emitter(&mut self, emitter: CompEventEmitter) {
+        self.event_emitter = emitter;
     }
 
     /// Get current frame (hot path - called 60fps during playback)
@@ -938,7 +937,7 @@ impl Comp {
         let old_frame = self.frame();
         if old_frame != new_frame {
             self.attrs.set(A_FRAME, AttrValue::Int(new_frame));
-            self.event_sender.send(CurrentFrameChangedEvent {
+            self.event_emitter.emit(CurrentFrameChangedEvent {
                 comp_uuid: self.get_uuid(),
                 old_frame,
                 new_frame,
@@ -1284,9 +1283,8 @@ impl Comp {
             }
         }
 
-        for (frame, opacity, _mode) in source_frames.iter_mut() {
+        for (frame, _opacity, _mode) in source_frames.iter_mut() {
             *frame = promote_frame(frame, target_format);
-            *opacity = *opacity;
         }
 
         // Always add a solid black base underneath so fully transparent layers show black.
@@ -1403,8 +1401,8 @@ impl Comp {
         self.update_dim_from_children();
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
-        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1493,8 +1491,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
-        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1605,8 +1603,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
-        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
         Ok(())
     }
 
@@ -1631,8 +1629,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
-        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1658,8 +1656,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
-        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1714,8 +1712,8 @@ impl Comp {
         self.rebound();
         self.update_dim_from_children();
         self.attrs.mark_dirty(); // Mark as dirty for cache invalidation
-        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
-        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
     }
 
     /// Recalculate comp start/end based on children (negative starts allowed).
@@ -2075,21 +2073,21 @@ mod tests {
 
         // Leaf: file-mode comp that yields placeholder frames
         let leaf = file_comp("Leaf", 0, 9, 24.0);
-        let leaf_uuid = leaf.uuid;
+        let leaf_uuid = leaf.get_uuid();
         project.push_comps_order(leaf_uuid);
         project.media.write().unwrap().insert(leaf_uuid, leaf);
 
         // Middle: layer comp that references leaf
         let mut inner = Comp::new("Inner", 0, 9, 24.0);
         inner.add_child(leaf_uuid, 0, &project).unwrap();
-        let inner_uuid = inner.uuid;
+        let inner_uuid = inner.get_uuid();
         project.push_comps_order(inner_uuid);
         project.media.write().unwrap().insert(inner_uuid, inner);
 
         // Root: layer comp that references inner
         let mut root = Comp::new("Root", 0, 9, 24.0);
         root.add_child(inner_uuid, 0, &project).unwrap();
-        let root_uuid = root.uuid;
+        let root_uuid = root.get_uuid();
         project.media.write().unwrap().insert(root_uuid, root);
 
         let frame = {
@@ -2110,7 +2108,7 @@ mod tests {
 
         // Source clip placeholder
         let clip = file_comp("Clip", 0, 4, 24.0);
-        let clip_uuid = clip.uuid;
+        let clip_uuid = clip.get_uuid();
         project.media.write().unwrap().insert(clip_uuid, clip);
 
         // Comp with single child
@@ -2179,7 +2177,7 @@ mod tests {
         let mut sources: Vec<Uuid> = Vec::new();
         for i in 0..3 {
             let comp = file_comp(&format!("Src{}", i), 0, 4, 24.0);
-            let uuid = comp.uuid;
+            let uuid = comp.get_uuid();
             project.media.write().unwrap().insert(uuid, comp);
             sources.push(uuid);
         }
@@ -2200,7 +2198,7 @@ mod tests {
             }
         }
 
-        let comp_uuid = comp.uuid;
+        let comp_uuid = comp.get_uuid();
         project.media.write().unwrap().insert(comp_uuid, comp);
 
         let frame = {

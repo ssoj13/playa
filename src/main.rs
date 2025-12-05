@@ -21,7 +21,7 @@ use dialogs::encode::EncodeDialog;
 use dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
 use dialogs::prefs::prefs_events::HotkeyWindow;
 use eframe::{egui, glow};
-use event_bus::{CompEventSender, EventBus, downcast_event};
+use event_bus::{CompEventEmitter, EventBus, downcast_event};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
 use entities::Frame;
 use entities::Project;
@@ -103,9 +103,9 @@ struct PlayaApp {
     /// Global worker pool for background tasks (frame loading, encoding)
     #[serde(skip)]
     workers: Arc<Workers>,
-    /// Event sender for compositions (shared across all comps)
+    /// Event emitter for compositions (shared across all comps)
     #[serde(skip)]
-    comp_event_sender: CompEventSender,
+    comp_event_emitter: CompEventEmitter,
     /// Global event bus for application-wide events
     #[serde(skip)]
     event_bus: EventBus,
@@ -140,9 +140,9 @@ impl Default for PlayaApp {
         let num_workers = (num_cpus::get() * 3 / 4).max(1);
         let workers = Arc::new(Workers::new(num_workers, cache_manager.epoch_ref()));
 
-        // Create global event bus and comp event sender
+        // Create global event bus and comp event emitter
         let event_bus = EventBus::new();
-        let comp_event_sender = CompEventSender::from_sender(event_bus.sender());
+        let comp_event_emitter = CompEventEmitter::from_emitter(event_bus.emitter());
 
         Self {
             frame: None,
@@ -176,7 +176,7 @@ impl Default for PlayaApp {
             path_config: config::PathConfig::from_env_and_cli(None),
             cache_manager,
             workers,
-            comp_event_sender,
+            comp_event_emitter,
             event_bus,
             dock_state: PlayaApp::default_dock_state(),
             hotkey_handler: {
@@ -199,11 +199,11 @@ impl PlayaApp {
         Self::build_dock_state(true, true, 0.6)
     }
 
-    /// Attach composition event sender to all comps in the current project.
-    fn attach_comp_event_sender(&mut self) {
-        let sender = self.comp_event_sender.clone();
+    /// Attach composition event emitter to all comps in the current project.
+    fn attach_comp_event_emitter(&mut self) {
+        let emitter = self.comp_event_emitter.clone();
         for comp in self.project.media.write().unwrap().values_mut() {
-            comp.set_event_sender(sender.clone());
+            comp.set_event_emitter(emitter.clone());
         }
     }
 
@@ -245,7 +245,7 @@ impl PlayaApp {
                     }
                 }
 
-                self.attach_comp_event_sender();
+                self.attach_comp_event_emitter();
 
                 // Activate first sequence and trigger frame loading
                 if let Some(uuid) = first_uuid {
@@ -299,8 +299,8 @@ impl PlayaApp {
         let mut deferred_quick_save = false;
         let mut deferred_show_open = false;
 
-        // Drain all events from the bus
-        for event in self.event_bus.drain() {
+        // Poll all events from the bus
+        for event in self.event_bus.poll() {
             log::debug!("Event received: {:?}", event.type_name());
 
             // === Comp events (high priority, internal) ===
@@ -374,7 +374,7 @@ impl PlayaApp {
             let _ = self.load_sequences(paths);
         }
         if let Some((name, fps)) = deferred_new_comp {
-            let uuid = self.project.create_comp(&name, fps, self.comp_event_sender.clone());
+            let uuid = self.project.create_comp(&name, fps, self.comp_event_emitter.clone());
             self.player.set_active_comp(Some(uuid), &mut self.project);
             info!("Created new comp: {}", uuid);
         }
@@ -446,7 +446,7 @@ impl PlayaApp {
                 // Rebuild runtime + set cache manager (unified)
                 project.rebuild_with_manager(
                     Arc::clone(&self.cache_manager),
-                    Some(self.comp_event_sender.clone()),
+                    Some(self.comp_event_emitter.clone()),
                 );
 
                 self.project = project;
@@ -522,24 +522,24 @@ impl PlayaApp {
             if let Some(active_comp_uuid) = self.player.active_comp() {
                 // Check if event needs comp_uuid filled in
                 if downcast_event::<AlignLayersStartEvent>(&event).is_some() {
-                    self.event_bus.send(AlignLayersStartEvent(active_comp_uuid));
+                    self.event_bus.emit(AlignLayersStartEvent(active_comp_uuid));
                     return;
                 }
                 if downcast_event::<AlignLayersEndEvent>(&event).is_some() {
-                    self.event_bus.send(AlignLayersEndEvent(active_comp_uuid));
+                    self.event_bus.emit(AlignLayersEndEvent(active_comp_uuid));
                     return;
                 }
                 if downcast_event::<TrimLayersStartEvent>(&event).is_some() {
-                    self.event_bus.send(TrimLayersStartEvent(active_comp_uuid));
+                    self.event_bus.emit(TrimLayersStartEvent(active_comp_uuid));
                     return;
                 }
                 if downcast_event::<TrimLayersEndEvent>(&event).is_some() {
-                    self.event_bus.send(TrimLayersEndEvent(active_comp_uuid));
+                    self.event_bus.emit(TrimLayersEndEvent(active_comp_uuid));
                     return;
                 }
             }
 
-            self.event_bus.send_boxed(event);
+            self.event_bus.emit_boxed(event);
             return; // Hotkey handled, don't process manual checks
         }
 
@@ -637,7 +637,7 @@ impl PlayaApp {
 
         // Dispatch all events from Project UI - handling is in main_events.rs
         for evt in project_actions.events {
-            self.event_bus.send_boxed(evt);
+            self.event_bus.emit_boxed(evt);
         }
     }
 
@@ -696,7 +696,7 @@ impl PlayaApp {
 
         // Dispatch all events from Viewport UI
         for evt in viewport_actions.events {
-            self.event_bus.send_boxed(evt);
+            self.event_bus.emit_boxed(evt);
         }
 
         // Persist timeline options back to settings
@@ -1043,7 +1043,7 @@ impl eframe::App for PlayaApp {
                 &self.viewport_state,
                 self.last_render_time_ms,
                 cache_mgr.as_ref(),
-                |evt| self.event_bus.send(evt),
+                |evt| self.event_bus.emit_boxed(evt),
             );
         }
 
@@ -1116,10 +1116,7 @@ impl eframe::App for PlayaApp {
         self.settings.show_help = self.show_help;
         self.settings.show_playlist = self.show_playlist;
         self.settings.show_attributes_editor = self.show_attributes_editor;
-        // Snapshot current project from runtime player into persisted field
-        self.project = self.project.clone();
-
-        // Save cache state separately (sequences + current frame)
+        // Project is already synced - no need for self-assignment
         // Serialize and save app settings
         if let Ok(json) = serde_json::to_string(self) {
             storage.set_string(eframe::APP_KEY, json);
@@ -1310,7 +1307,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Rebuild runtime + set cache manager (unified, lost during clone)
             app.project.rebuild_with_manager(
                 Arc::clone(&app.cache_manager),
-                Some(app.comp_event_sender.clone()),
+                Some(app.comp_event_emitter.clone()),
             );
 
             // Restore active from project or ensure default
@@ -1382,7 +1379,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // Rebuild runtime + set cache manager (unified)
                             project.rebuild_with_manager(
                                 Arc::clone(&app.cache_manager),
-                                Some(app.comp_event_sender.clone()),
+                                Some(app.comp_event_emitter.clone()),
                             );
 
                             app.project = project;
