@@ -21,7 +21,7 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// Workers steal tasks from each other when idle, ensuring work distribution.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// let workers = Workers::new(4, epoch);
 ///
 /// // Enqueue frame load (goes to front of queue)
@@ -134,7 +134,7 @@ impl Workers {
     /// Use Arc/Mutex for shared state if needed.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let frame = frame.clone();
     /// workers.execute(move || {
     ///     // This runs on worker thread

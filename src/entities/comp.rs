@@ -900,12 +900,8 @@ impl Comp {
 
                 // Compose frame using CPU compositor (use_gpu=false for thread safety)
                 if let Some(frame) = comp_clone.compose(frame_idx, &project_clone, false) {
+                    // GlobalFrameCache::insert() rejects non-Loaded frames automatically
                     global_cache.insert(uuid, frame_idx, frame);
-                    log::debug!(
-                        "Background composition completed: comp={}, frame={}",
-                        uuid,
-                        frame_idx
-                    );
                 } else {
                     log::debug!(
                         "Background composition returned None: comp={}, frame={}",
@@ -1046,13 +1042,14 @@ impl Comp {
         // Compose frame recursively
         let composed = self.compose(frame_idx, project, use_gpu)?;
 
-        // Insert into global cache
+        // GlobalFrameCache::insert() rejects non-Loaded frames automatically
+        // Only clear dirty flag if frame is Loaded (complete)
         if let Some(ref global_cache) = project.global_cache {
             global_cache.insert(self.get_uuid(), frame_idx, composed.clone());
         }
-
-        // Clear dirty flag after caching (uses interior mutability)
-        self.attrs.clear_dirty();
+        if composed.status() == FrameStatus::Loaded {
+            self.attrs.clear_dirty();
+        }
 
         Some(composed)
     }
@@ -1127,11 +1124,15 @@ impl Comp {
     /// - Blends multiple children with CPU or GPU compositor
     /// - use_gpu=true: uses Project.compositor (main thread only)
     /// - use_gpu=false: uses thread_local CPU compositor (safe for background threads)
+    /// Compose frame from children.
+    /// If any child is not fully loaded, the result Frame will have status=Loading
+    /// (not Loaded), so GlobalFrameCache will reject it - preventing green frame caching.
     fn compose(&self, frame_idx: i32, project: &super::Project, use_gpu: bool) -> Option<Frame> {
         use log::debug;
         let mut source_frames: Vec<(Frame, f32, BlendMode)> = Vec::new();
         let mut earliest: Option<(i32, usize)> = None; // (start_frame, index in source_frames)
         let mut target_format: PixelFormat = PixelFormat::Rgba8;
+        let mut all_children_loaded = true; // Track if all source frames are fully loaded
 
         debug!(
             "compose() called: frame_idx={}, children.len()={}",
@@ -1194,6 +1195,16 @@ impl Comp {
 
                 // Recursively get frame from source (Clip or Comp)
                 if let Some(frame) = source.get_frame(source_frame, project, use_gpu) {
+                    // Check if this child frame is fully loaded
+                    let frame_status = frame.status();
+                    if frame_status != FrameStatus::Loaded {
+                        all_children_loaded = false;
+                        debug!(
+                            "  child {} frame {} NOT LOADED (status={:?}), marking composite as incomplete",
+                            child_uuid, source_frame, frame_status
+                        );
+                    }
+
                     let opacity = attrs.get_float("opacity").unwrap_or(1.0);
                     let blend_mode = attrs
                         .get_str("blend_mode")
@@ -1315,21 +1326,33 @@ impl Comp {
         };
         source_frames.insert(0, (base, 1.0, BlendMode::Normal));
         debug!(
-            "compose() collected {} frames, calling compositor.blend_with_dim({}, {}) [use_gpu={}]",
+            "compose() collected {} frames, calling compositor.blend_with_dim({}, {}) [use_gpu={}, all_loaded={}]",
             source_frames.len(),
             dim.0,
             dim.1,
-            use_gpu
+            use_gpu,
+            all_children_loaded
         );
 
         // Use GPU compositor (main thread) or CPU compositor (background threads)
-        if use_gpu {
+        let result = if use_gpu {
             project.compositor.borrow_mut().blend_with_dim(source_frames, dim)
         } else {
             THREAD_COMPOSITOR.with(|comp| {
                 comp.borrow_mut().blend_with_dim(source_frames, dim)
             })
-        }
+        };
+
+        // If not all children loaded, mark frame as Loading so cache rejects it
+        result.map(|frame| {
+            if !all_children_loaded {
+                debug!(
+                    "compose() returning INCOMPLETE frame (some children not loaded), setting status=Loading"
+                );
+                let _ = frame.set_status(FrameStatus::Loading);
+            }
+            frame
+        })
     }
 
     /// Add a new child to the composition at specified start frame.
@@ -2117,13 +2140,14 @@ mod tests {
         let comp_uuid = comp.get_uuid();
         project.media.write().unwrap().insert(comp_uuid, comp);
 
-        // First render - attrs should be clean after caching
+        // First render - should return a frame (composition works)
+        // Note: With placeholder sources (not Loaded), frame is NOT cached
         {
             let media = project.media.read().unwrap();
             let comp_ref = media.get(&comp_uuid).unwrap();
-            let _frame = comp_ref.get_frame(2, &project, false).unwrap();
-            // After first render, frame is cached
-            assert!(project.global_cache.as_ref().unwrap().contains(comp_uuid, 2));
+            let frame = comp_ref.get_frame(2, &project, false);
+            assert!(frame.is_some(), "Composition should return a frame");
+            // With placeholder sources, frame is NOT cached (by design - prevents caching incomplete frames)
         }
 
         // Change child opacity - should mark attrs as dirty
@@ -2137,13 +2161,12 @@ mod tests {
             }
         }
 
-        // Second render should recompose due to dirty flag
+        // Second render should still work (composition recomputes)
         {
             let media = project.media.read().unwrap();
             let comp_ref = media.get(&comp_uuid).unwrap();
-            let _frame = comp_ref.get_frame(2, &project, false).unwrap();
-            // Frame should be in cache (updated)
-            assert!(project.global_cache.as_ref().unwrap().contains(comp_uuid, 2));
+            let frame = comp_ref.get_frame(2, &project, false);
+            assert!(frame.is_some(), "Recomposition should return a frame");
         }
     }
 
@@ -2211,10 +2234,11 @@ mod tests {
             "Multi-layer composition with placeholder sources should succeed"
         );
 
-        // Verify frame is cached in global cache
+        // With placeholder sources, the frame should NOT be cached (incomplete result)
+        // GlobalFrameCache rejects frames that aren't fully Loaded
         assert!(
-            project.global_cache.as_ref().unwrap().contains(comp_uuid, 2),
-            "Frame should be cached in global cache after composition"
+            !project.global_cache.as_ref().unwrap().contains(comp_uuid, 2),
+            "Frame with placeholder sources should NOT be cached"
         );
     }
 

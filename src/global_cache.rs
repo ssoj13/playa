@@ -168,7 +168,23 @@ impl GlobalFrameCache {
     ///
     /// Automatically evicts oldest frames if memory limit exceeded.
     /// Tracks memory usage via CacheManager.
+    ///
+    /// IMPORTANT: Only caches frames with FrameStatus::Loaded.
+    /// Placeholder/Header/Loading/Error frames are rejected to prevent
+    /// caching incomplete composition results.
     pub fn insert(&self, comp_uuid: Uuid, frame_idx: i32, frame: Frame) {
+        use crate::entities::FrameStatus;
+
+        // Defense in depth: reject frames that aren't fully loaded
+        let status = frame.status();
+        if status != FrameStatus::Loaded {
+            log::debug!(
+                "GlobalFrameCache::insert REJECTED frame {}:{} (status={:?}, not Loaded)",
+                comp_uuid, frame_idx, status
+            );
+            return;
+        }
+
         let frame_size = frame.mem();
 
         // Apply strategy: LastOnly clears previous frames for this comp
@@ -354,12 +370,19 @@ mod tests {
     use super::*;
     use crate::entities::frame::PixelDepth;
 
+    /// Create a test frame with Loaded status (required for cache insert)
+    fn make_loaded_frame(width: usize, height: usize) -> Frame {
+        // Use from_u8_buffer which creates Loaded frames
+        let buf = vec![0u8; width * height * 4];
+        Frame::from_u8_buffer(buf, width, height)
+    }
+
     #[test]
     fn test_cache_basic_operations() {
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
 
-        let frame = Frame::new(64, 64, PixelDepth::U8);
+        let frame = make_loaded_frame(64, 64);
         let comp_uuid = Uuid::new_v4();
 
         // Insert and retrieve
@@ -380,8 +403,8 @@ mod tests {
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let cache = GlobalFrameCache::new(100, manager, CacheStrategy::LastOnly);
 
-        let frame1 = Frame::new(64, 64, PixelDepth::U8);
-        let frame2 = Frame::new(64, 64, PixelDepth::U8);
+        let frame1 = make_loaded_frame(64, 64);
+        let frame2 = make_loaded_frame(64, 64);
         let comp_uuid = Uuid::new_v4();
 
         // Insert frame 0
@@ -399,7 +422,7 @@ mod tests {
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
 
-        let frame = Frame::new(64, 64, PixelDepth::U8);
+        let frame = make_loaded_frame(64, 64);
         let comp1 = Uuid::new_v4();
         let comp2 = Uuid::new_v4();
 
@@ -426,7 +449,7 @@ mod tests {
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
 
-        let frame = Frame::new(64, 64, PixelDepth::U8);
+        let frame = make_loaded_frame(64, 64);
         let comp_uuid = Uuid::new_v4();
 
         let stats = cache.stats();
@@ -452,7 +475,7 @@ mod tests {
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
 
-        let frame = Frame::new(64, 64, PixelDepth::U8);
+        let frame = make_loaded_frame(64, 64);
 
         // Insert frames for 5 comps
         let mut comps = Vec::new();

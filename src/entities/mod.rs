@@ -16,5 +16,5 @@ pub mod project;
 pub use attrs::{AttrValue, Attrs};
 pub use comp::Comp;
 pub use compositor::CompositorType;
-pub use frame::Frame;
+pub use frame::{Frame, FrameStatus};
 pub use project::Project;

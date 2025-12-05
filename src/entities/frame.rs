@@ -462,9 +462,9 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::frame::Frame;
-    /// # use std::path::Path;
-    /// let frame = Frame::new_with_file(Path::new("render.0001.exr"), 1920, 1080);
+    /// # use playa::entities::Frame;
+    /// # use std::path::PathBuf;
+    /// let frame = Frame::new_unloaded(PathBuf::from("render.0001.exr"));
     /// match frame.load() {
     ///     Ok(bytes) => println!("Loaded: {}x{}, {} bytes", frame.width(), frame.height(), bytes),
     ///     Err(e) => eprintln!("Load failed: {:?}", e),
@@ -810,8 +810,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::frame::{Frame, CropAlign};
-    /// let frame = Frame::new(1920, 1080);
+    /// # use playa::entities::frame::{Frame, CropAlign, PixelDepth};
+    /// let frame = Frame::new(1920, 1080, PixelDepth::U8);
     /// let cropped = frame.crop_copy(640, 480, CropAlign::Center);
     /// // Original frame unchanged, cropped is 640x480
     /// ```
@@ -845,8 +845,8 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::frame::{Frame, CropAlign};
-    /// let mut frame = Frame::new(1920, 1080);
+    /// # use playa::entities::frame::{Frame, CropAlign, PixelDepth};
+    /// let frame = Frame::new(1920, 1080, PixelDepth::U8);
     /// frame.crop(640, 480, CropAlign::Center); // Mutates frame to 640x480
     /// ```
     pub fn crop(&self, new_w: usize, new_h: usize, align: CropAlign) {
@@ -901,22 +901,13 @@ impl Frame {
                     px[3] = 255; // A channel
                 }
 
-                // Copy pixel data
+                // Copy pixel data (row-based for performance)
+                let row_bytes = copy_w * 4;
                 for y in 0..copy_h {
-                    let src_y = src_offset_y + y;
-                    let dst_y = dst_offset_y + y;
-
-                    for x in 0..copy_w {
-                        let src_x = src_offset_x + x;
-                        let dst_x = dst_offset_x + x;
-
-                        let src_idx = (src_y * old_w + src_x) * 4;
-                        let dst_idx = (dst_y * new_w + dst_x) * 4;
-
-                        // Copy RGBA
-                        new_buf[dst_idx..dst_idx + 4]
-                            .copy_from_slice(&old_buf[src_idx..src_idx + 4]);
-                    }
+                    let src_start = ((src_offset_y + y) * old_w + src_offset_x) * 4;
+                    let dst_start = ((dst_offset_y + y) * new_w + dst_offset_x) * 4;
+                    new_buf[dst_start..dst_start + row_bytes]
+                        .copy_from_slice(&old_buf[src_start..src_start + row_bytes]);
                 }
 
                 data.buffer = Arc::new(PixelBuffer::U8(new_buf));
@@ -933,22 +924,13 @@ impl Frame {
                     px[3] = one; // A channel
                 }
 
-                // Copy pixel data
+                // Copy pixel data (row-based for performance)
+                let row_elems = copy_w * 4;
                 for y in 0..copy_h {
-                    let src_y = src_offset_y + y;
-                    let dst_y = dst_offset_y + y;
-
-                    for x in 0..copy_w {
-                        let src_x = src_offset_x + x;
-                        let dst_x = dst_offset_x + x;
-
-                        let src_idx = (src_y * old_w + src_x) * 4;
-                        let dst_idx = (dst_y * new_w + dst_x) * 4;
-
-                        // Copy RGBA
-                        new_buf[dst_idx..dst_idx + 4]
-                            .copy_from_slice(&old_buf[src_idx..src_idx + 4]);
-                    }
+                    let src_start = ((src_offset_y + y) * old_w + src_offset_x) * 4;
+                    let dst_start = ((dst_offset_y + y) * new_w + dst_offset_x) * 4;
+                    new_buf[dst_start..dst_start + row_elems]
+                        .copy_from_slice(&old_buf[src_start..src_start + row_elems]);
                 }
 
                 data.buffer = Arc::new(PixelBuffer::F16(new_buf));
@@ -963,22 +945,13 @@ impl Frame {
                     px[3] = 1.0; // A channel
                 }
 
-                // Copy pixel data
+                // Copy pixel data (row-based for performance)
+                let row_elems = copy_w * 4;
                 for y in 0..copy_h {
-                    let src_y = src_offset_y + y;
-                    let dst_y = dst_offset_y + y;
-
-                    for x in 0..copy_w {
-                        let src_x = src_offset_x + x;
-                        let dst_x = dst_offset_x + x;
-
-                        let src_idx = (src_y * old_w + src_x) * 4;
-                        let dst_idx = (dst_y * new_w + dst_x) * 4;
-
-                        // Copy RGBA
-                        new_buf[dst_idx..dst_idx + 4]
-                            .copy_from_slice(&old_buf[src_idx..src_idx + 4]);
-                    }
+                    let src_start = ((src_offset_y + y) * old_w + src_offset_x) * 4;
+                    let dst_start = ((dst_offset_y + y) * new_w + dst_offset_x) * 4;
+                    new_buf[dst_start..dst_start + row_elems]
+                        .copy_from_slice(&old_buf[src_start..src_start + row_elems]);
                 }
 
                 data.buffer = Arc::new(PixelBuffer::F32(new_buf));
@@ -1006,10 +979,10 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::frame::{Frame, TonemapMode, PixelDepth};
+    /// # use playa::entities::frame::{Frame, TonemapMode, PixelFormat};
     /// let hdr_frame = Frame::new_f16(1920, 1080);
     /// let ldr_frame = hdr_frame.tonemap(TonemapMode::ACES).unwrap();
-    /// assert_eq!(ldr_frame.pixel_format(), playa::frame::PixelFormat::Rgba8);
+    /// assert_eq!(ldr_frame.pixel_format(), PixelFormat::Rgba8);
     /// ```
     pub fn tonemap(&self, mode: TonemapMode) -> Result<Frame, FrameError> {
         let data = self.data.lock().unwrap();
