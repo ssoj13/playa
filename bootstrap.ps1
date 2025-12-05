@@ -33,30 +33,59 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# Setup Visual Studio environment
+# Setup Visual Studio environment using vcv-rs (fast) or vcvars64.bat (fallback)
 Write-Host 'Setting up build environment...'
-$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-if (Test-Path $vswhere) {
-    $installPath = & $vswhere -latest -property installationPath
-    if ($installPath) {
-        $vcvars = Join-Path $installPath 'VC\Auxiliary\Build\vcvars64.bat'
-        if (Test-Path $vcvars) {
-            # Import VS environment variables
-            $output = cmd /c "`"$vcvars`" && set" 2>&1
-            $output | ForEach-Object {
-                if ($_ -match '^([^=]+)=(.*)$') {
-                    Set-Item -Path "env:$($matches[1])" -Value $matches[2]
+
+# Try vcv-rs first (~50x faster than vcvars64.bat)
+$vcvFound = $false
+if (Get-Command vcv-rs -ErrorAction SilentlyContinue) {
+    try {
+        vcv-rs -q -f ps | Invoke-Expression
+        $vcvFound = $true
+        Write-Host '[OK] Visual Studio environment configured (vcv-rs)' -ForegroundColor Green
+    } catch {
+        Write-Host '  vcv-rs failed, falling back to vcvars64.bat...' -ForegroundColor Yellow
+    }
+} else {
+    # vcv-rs not found - try to install it
+    Write-Host '  vcv-rs not found, installing...'
+    cargo install vcv-rs --quiet 2>$null
+    if ($LASTEXITCODE -eq 0 -and (Get-Command vcv-rs -ErrorAction SilentlyContinue)) {
+        try {
+            vcv-rs -q -f ps | Invoke-Expression
+            $vcvFound = $true
+            Write-Host '[OK] Visual Studio environment configured (vcv-rs)' -ForegroundColor Green
+        } catch {
+            Write-Host '  vcv-rs failed after install, falling back...' -ForegroundColor Yellow
+        }
+    }
+}
+
+# Fallback to vcvars64.bat if vcv-rs didn't work
+if (-not $vcvFound) {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (Test-Path $vswhere) {
+        $installPath = & $vswhere -latest -property installationPath
+        if ($installPath) {
+            $vcvars = Join-Path $installPath 'VC\Auxiliary\Build\vcvars64.bat'
+            if (Test-Path $vcvars) {
+                # Import VS environment variables
+                $output = cmd /c "`"$vcvars`" && set" 2>&1
+                $output | ForEach-Object {
+                    if ($_ -match '^([^=]+)=(.*)$') {
+                        Set-Item -Path "env:$($matches[1])" -Value $matches[2]
+                    }
                 }
+                Write-Host '[OK] Visual Studio environment configured (vcvars64.bat)' -ForegroundColor Green
             }
-            Write-Host '✓ Visual Studio environment configured' -ForegroundColor Green
         }
     }
 }
 
 # Verify vcpkg configuration
 if ($env:VCPKG_ROOT) {
-    Write-Host "✓ vcpkg configured: $env:VCPKG_ROOT" -ForegroundColor Green
-    Write-Host "✓ triplet: $env:VCPKGRS_TRIPLET" -ForegroundColor Green
+    Write-Host "[OK] vcpkg configured: $env:VCPKG_ROOT" -ForegroundColor Green
+    Write-Host "[OK] triplet: $env:VCPKGRS_TRIPLET" -ForegroundColor Green
 }
 Write-Host ''
 
@@ -71,9 +100,9 @@ if (-not (cargo binstall --version 2>$null)) {
         Write-Host 'Error: Failed to install cargo-binstall' -ForegroundColor Red
         exit 1
     }
-    Write-Host '  ✓ cargo-binstall installed' -ForegroundColor Green
+    Write-Host '  [OK] cargo-binstall installed' -ForegroundColor Green
 } else {
-    Write-Host '[1/3] ✓ cargo-binstall already installed' -ForegroundColor Green
+    Write-Host '[1/3] [OK] cargo-binstall already installed' -ForegroundColor Green
 }
 
 # Check if cargo-release is installed
@@ -88,9 +117,9 @@ if (-not (cargo release --version 2>$null)) {
             exit 1
         }
     }
-    Write-Host '  ✓ cargo-release installed' -ForegroundColor Green
+    Write-Host '  [OK] cargo-release installed' -ForegroundColor Green
 } else {
-    Write-Host '[2/3] ✓ cargo-release already installed' -ForegroundColor Green
+    Write-Host '[2/3] [OK] cargo-release already installed' -ForegroundColor Green
 }
 
 # Check if cargo-packager is installed
@@ -105,9 +134,9 @@ if (-not (cargo packager --version 2>$null)) {
             exit 1
         }
     }
-    Write-Host '  ✓ cargo-packager installed' -ForegroundColor Green
+    Write-Host '  [OK] cargo-packager installed' -ForegroundColor Green
 } else {
-    Write-Host '[3/3] ✓ cargo-packager already installed' -ForegroundColor Green
+    Write-Host '[3/3] [OK] cargo-packager already installed' -ForegroundColor Green
 }
 
 Write-Host ''
@@ -122,7 +151,7 @@ if (-not (Test-Path 'target\debug\xtask.exe')) {
         Write-Host 'Error: Failed to build xtask' -ForegroundColor Red
         exit 1
     }
-    Write-Host '✓ xtask built' -ForegroundColor Green
+    Write-Host '[OK] xtask built' -ForegroundColor Green
     Write-Host ''
 }
 
@@ -153,13 +182,13 @@ if ($args[0] -eq 'install') {
             Write-Host 'Installing vcpkg...'
             git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
             & "$vcpkgRoot\bootstrap-vcpkg.bat"
-            Write-Host '✓ vcpkg installed' -ForegroundColor Green
+            Write-Host '[OK] vcpkg installed' -ForegroundColor Green
         } else {
             Write-Host 'Installation cancelled.'
             exit 1
         }
     } else {
-        Write-Host '✓ vcpkg found' -ForegroundColor Green
+        Write-Host '[OK] vcpkg found' -ForegroundColor Green
     }
 
     # Check FFmpeg
@@ -177,13 +206,13 @@ if ($args[0] -eq 'install') {
             Write-Host 'Installing FFmpeg with hardware acceleration support...'
             $vcpkgExe = Join-Path $vcpkgRoot 'vcpkg.exe'
             & $vcpkgExe install "ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:$triplet"
-            Write-Host '✓ FFmpeg installed' -ForegroundColor Green
+            Write-Host '[OK] FFmpeg installed' -ForegroundColor Green
         } else {
             Write-Host 'Installation cancelled.'
             exit 1
         }
     } else {
-        Write-Host '✓ FFmpeg found' -ForegroundColor Green
+        Write-Host '[OK] FFmpeg found' -ForegroundColor Green
     }
 
     # Check pkg-config
@@ -196,13 +225,13 @@ if ($args[0] -eq 'install') {
             Write-Host 'Installing pkg-config...'
             $vcpkgExe = Join-Path $vcpkgRoot 'vcpkg.exe'
             & $vcpkgExe install "pkgconf:$triplet"
-            Write-Host '✓ pkg-config installed' -ForegroundColor Green
+            Write-Host '[OK] pkg-config installed' -ForegroundColor Green
         } else {
             Write-Host 'Installation cancelled.'
             exit 1
         }
     } else {
-        Write-Host '✓ pkg-config found' -ForegroundColor Green
+        Write-Host '[OK] pkg-config found' -ForegroundColor Green
     }
 
     Write-Host ''
