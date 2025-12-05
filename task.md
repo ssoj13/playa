@@ -15,8 +15,6 @@
   - Create comprehensive report so you could "survive" after context compactification, re-read it and continue without losing details. Offer pro-grade solutions.
 
 ## Specifics: 
-  - We will work with Project entity and it's UI today.
-  - We need to create another binary called "project.exe" that will display us just the Project window, and then we will fine tune it.
   - В каталоге C:\projects\projects.rust\playa.old находится старый код в котором всё работало. Консультируйся с ним, но учти что там старая ненужная логика, а мы используем новую
   - Наша новая логика в reports/arch.md: complete module separation with EventBus and such.
 

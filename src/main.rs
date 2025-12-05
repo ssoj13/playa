@@ -1,39 +1,30 @@
-mod cache_man;
-mod cli;
-mod config;
-mod dialogs;
-mod entities;
-mod event_bus;
-mod global_cache;
-mod main_events;
-mod player;
-mod player_events;
-mod project_events;
-mod ui;
-mod utils;
-mod widgets;
-mod workers;
+use playa::cache_man::CacheManager;
+use playa::cli::Args;
+use playa::config;
+use playa::dialogs;
+use playa::dialogs::encode::EncodeDialog;
+use playa::dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
+use playa::dialogs::prefs::prefs_events::HotkeyWindow;
+use playa::entities;
+use playa::entities::Frame;
+use playa::entities::Project;
+use playa::event_bus::{CompEventEmitter, EventBus, downcast_event};
+use playa::main_events;
+use playa::player::Player;
+use playa::ui;
+use playa::widgets;
+use playa::widgets::ae::AttributesState;
+use playa::widgets::status::StatusBar;
+use playa::widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
+use playa::workers::Workers;
 
-use cache_man::CacheManager;
 use clap::Parser;
-use cli::Args;
-use dialogs::encode::EncodeDialog;
-use dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
-use dialogs::prefs::prefs_events::HotkeyWindow;
 use eframe::{egui, glow};
-use event_bus::{CompEventEmitter, EventBus, downcast_event};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
-use entities::Frame;
-use entities::Project;
 use log::{debug, error, info, warn};
-use player::Player;
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
-use widgets::ae::AttributesState;
-use widgets::status::StatusBar;
-use widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
-use workers::Workers;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 enum DockTab {
@@ -60,7 +51,7 @@ struct PlayaApp {
     #[serde(skip)]
     viewport_renderer: std::sync::Arc<std::sync::Mutex<ViewportRenderer>>,
     viewport_state: ViewportState,
-    timeline_state: crate::widgets::timeline::TimelineState,
+    timeline_state: playa::widgets::timeline::TimelineState,
     #[serde(skip)]
     shader_manager: Shaders,
     /// Selected media item UUID in Project panel (persistent)
@@ -152,7 +143,7 @@ impl Default for PlayaApp {
             status_bar,
             viewport_renderer: std::sync::Arc::new(std::sync::Mutex::new(ViewportRenderer::new())),
             viewport_state: ViewportState::new(),
-            timeline_state: crate::widgets::timeline::TimelineState::default(),
+            timeline_state: playa::widgets::timeline::TimelineState::default(),
             shader_manager: Shaders::new(),
             selected_media_uuid: None,
             last_render_time_ms: 0.0,
@@ -219,7 +210,7 @@ impl PlayaApp {
     /// * `Ok(())` - Sequences loaded successfully
     /// * `Err(String)` - Detection or loading failed with error message
     fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
-        match crate::entities::comp::Comp::detect_from_paths(paths) {
+        match playa::entities::comp::Comp::detect_from_paths(paths) {
             Ok(comps) => {
                 if comps.is_empty() {
                     let error_msg = "No valid sequences detected".to_string();
@@ -439,7 +430,7 @@ impl PlayaApp {
 
     /// Load project from JSON file
     fn load_project(&mut self, path: PathBuf) {
-        match crate::entities::Project::from_json(&path) {
+        match playa::entities::Project::from_json(&path) {
             Ok(mut project) => {
                 info!("Loaded project from {}", path.display());
 
@@ -516,7 +507,7 @@ impl PlayaApp {
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
-            use crate::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent};
+            use playa::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent};
 
             // Fill comp_uuid for timeline-specific events
             if let Some(active_comp_uuid) = self.player.active_comp() {
@@ -829,7 +820,7 @@ impl PlayaApp {
                     }
 
                     // Build merged view: take values from first selected; mark mixed when others differ
-                    let mut merged: crate::entities::Attrs = crate::entities::Attrs::new();
+                    let mut merged: playa::entities::Attrs = playa::entities::Attrs::new();
                     let mut mixed_keys: HashSet<String> = HashSet::new();
 
                     if let Some(first_uuid) = selection.first() {
@@ -858,8 +849,8 @@ impl PlayaApp {
                     }
 
                     // Render merged attrs; collect changes and apply to all selected layers
-                    let mut changed: Vec<(String, crate::entities::AttrValue)> = Vec::new();
-                    crate::widgets::ae::render_with_mixed(
+                    let mut changed: Vec<(String, playa::entities::AttrValue)> = Vec::new();
+                    playa::widgets::ae::render_with_mixed(
                         ui,
                         &mut merged,
                         &mut self.attributes_state,
@@ -885,7 +876,7 @@ impl PlayaApp {
                             .get_str("name")
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| format!("Layer {}", layer_idx));
-                        crate::widgets::ae::render(
+                        playa::widgets::ae::render(
                             ui,
                             attrs,
                             &mut self.attributes_state,
@@ -897,7 +888,7 @@ impl PlayaApp {
                 } else {
                     // No layer selected - show comp attributes
                     let comp_name = comp.name().to_string();
-                    crate::widgets::ae::render(
+                    playa::widgets::ae::render(
                         ui,
                         &mut comp.attrs,
                         &mut self.attributes_state,
@@ -1374,7 +1365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Load playlist as Project
                 if let Some(ref playlist_path) = args.playlist {
                     info!("Loading playlist: {}", playlist_path.display());
-                    match crate::entities::Project::from_json(playlist_path) {
+                    match playa::entities::Project::from_json(playlist_path) {
                         Ok(mut project) => {
                             // Rebuild runtime + set cache manager (unified)
                             project.rebuild_with_manager(

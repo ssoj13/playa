@@ -56,6 +56,35 @@ taffy = "0.9.2"
 
 # Set RPATH on Linux to search for .so files in executable directory
 # (configured in .cargo/config.toml)
+# Binary targets
+[[bin]]
+name = "playa"
+path = "src/main.rs"
+
+[[bin]]
+name = "project"
+path = "src/bin/project.rs"
+
+[[bin]]
+name = "viewport"
+path = "src/bin/viewport.rs"
+
+[[bin]]
+name = "timeline"
+path = "src/bin/timeline.rs"
+
+[[bin]]
+name = "attributes"
+path = "src/bin/attributes.rs"
+
+[[bin]]
+name = "encoder"
+path = "src/bin/encoder.rs"
+
+[[bin]]
+name = "prefs"
+path = "src/bin/prefs.rs"
+
 [profile.release]
 strip = false
 
