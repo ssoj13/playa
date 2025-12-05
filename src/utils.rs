@@ -51,4 +51,23 @@ pub mod media {
             .map(|s| IMAGE_EXTS.contains(&s.to_lowercase().as_str()))
             .unwrap_or(false)
     }
+
+    /// Parse video path with optional frame suffix.
+    /// "video.mp4@17" -> (PathBuf("video.mp4"), Some(17))
+    /// "video.mp4" -> (PathBuf("video.mp4"), None)
+    pub fn parse_video_path(path: &Path) -> (std::path::PathBuf, Option<usize>) {
+        let path_str = path.to_string_lossy();
+
+        if let Some(at_pos) = path_str.rfind('@') {
+            // Ensure suffix after @ is numeric
+            let suffix = &path_str[at_pos + 1..];
+            if suffix.chars().all(|c| c.is_ascii_digit()) && !suffix.is_empty() {
+                let base = &path_str[..at_pos];
+                let frame_num = suffix.parse().ok();
+                return (std::path::PathBuf::from(base), frame_num);
+            }
+        }
+
+        (path.to_path_buf(), None)
+    }
 }

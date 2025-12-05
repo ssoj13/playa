@@ -27,8 +27,8 @@ pub enum PreloadStrategy {
 pub struct CacheManager {
     /// Atomically tracked memory usage (bytes)
     memory_usage: Arc<AtomicUsize>,
-    /// Maximum allowed memory (bytes)
-    max_memory_bytes: usize,
+    /// Maximum allowed memory (bytes) - atomic for lock-free updates
+    max_memory_bytes: AtomicUsize,
     /// Epoch counter for cancelling stale requests
     current_epoch: Arc<AtomicU64>,
 }
@@ -65,7 +65,7 @@ impl CacheManager {
 
         Self {
             memory_usage: Arc::new(AtomicUsize::new(0)),
-            max_memory_bytes,
+            max_memory_bytes: AtomicUsize::new(max_memory_bytes),
             current_epoch: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -91,13 +91,14 @@ impl CacheManager {
 
     /// Check if memory limit exceeded
     pub fn check_memory_limit(&self) -> bool {
-        self.memory_usage.load(Ordering::Relaxed) > self.max_memory_bytes
+        self.memory_usage.load(Ordering::Relaxed) > self.max_memory_bytes.load(Ordering::Relaxed)
     }
 
     /// Get memory statistics (usage, limit)
     pub fn mem(&self) -> (usize, usize) {
         let usage = self.memory_usage.load(Ordering::Relaxed);
-        (usage, self.max_memory_bytes)
+        let limit = self.max_memory_bytes.load(Ordering::Relaxed);
+        (usage, limit)
     }
 
     /// Get memory usage percentage (0.0-1.0)
@@ -113,11 +114,12 @@ impl CacheManager {
     /// Add memory usage
     pub fn add_memory(&self, bytes: usize) {
         let new_usage = self.memory_usage.fetch_add(bytes, Ordering::Relaxed) + bytes;
-        if new_usage > self.max_memory_bytes {
+        let limit = self.max_memory_bytes.load(Ordering::Relaxed);
+        if new_usage > limit {
             debug!(
                 "Memory limit exceeded: {} MB / {} MB",
                 new_usage / 1024 / 1024,
-                self.max_memory_bytes / 1024 / 1024
+                limit / 1024 / 1024
             );
         }
     }
@@ -128,18 +130,20 @@ impl CacheManager {
     }
 
     /// Update memory limit (e.g. from settings)
-    pub fn set_memory_limit(&mut self, mem_fraction: f64, reserve_gb: f64) {
+    /// Now takes &self instead of &mut self thanks to atomic max_memory_bytes
+    pub fn set_memory_limit(&self, mem_fraction: f64, reserve_gb: f64) {
         let mut sys = System::new_all();
         sys.refresh_memory();
 
         let available = sys.available_memory() as usize;
         let reserve = (reserve_gb * 1024.0 * 1024.0 * 1024.0) as usize;
         let usable = available.saturating_sub(reserve);
-        self.max_memory_bytes = (usable as f64 * mem_fraction) as usize;
+        let new_limit = (usable as f64 * mem_fraction) as usize;
+        self.max_memory_bytes.store(new_limit, Ordering::Relaxed);
 
         info!(
             "Memory limit updated: {} MB ({}%)",
-            self.max_memory_bytes / 1024 / 1024,
+            new_limit / 1024 / 1024,
             (mem_fraction * 100.0) as u32
         );
     }

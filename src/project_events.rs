@@ -32,6 +32,14 @@ pub struct SaveProjectEvent(pub PathBuf);
 #[derive(Clone, Debug)]
 pub struct LoadProjectEvent(pub PathBuf);
 
+/// Quick save event - saves to last known path or shows dialog
+#[derive(Clone, Debug)]
+pub struct QuickSaveEvent;
+
+/// Open project dialog event - shows file picker
+#[derive(Clone, Debug)]
+pub struct OpenProjectDialogEvent;
+
 // === Selection ===
 
 #[derive(Clone, Debug)]

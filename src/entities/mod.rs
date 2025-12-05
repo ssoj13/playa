@@ -1,8 +1,6 @@
 //! Entities module - core types with separation of business logic and GUI.
 //! Data flow: UI/EventBus drives mutations on `Project`/`Comp`/`Attrs`; loaders
 //! and compositor produce `Frame` data that UI/encoding consume.
-//! Each entity may render itself in various contexts (project list, timeline,
-//! attribute editor) via the optional UI traits below.
 
 pub mod attrs;
 pub mod comp;
@@ -13,38 +11,10 @@ pub mod frame;
 pub mod keys;
 pub mod loader;
 pub mod loader_video;
-pub mod node;
 pub mod project;
 
 pub use attrs::{AttrValue, Attrs};
 pub use comp::Comp;
-pub use node::{ComputeContext, Node};
 pub use compositor::CompositorType;
 pub use frame::Frame;
 pub use project::Project;
-
-use eframe::egui::{Rect, Response, Ui};
-
-/// Widget for project panel - shows entity in the project list
-pub trait ProjectUI {
-    /// Render entity in project panel
-    fn project_ui(&self, ui: &mut Ui) -> Response;
-}
-
-/// Widget for timeline - shows entity as a bar/clip
-pub trait TimelineUI {
-    /// Render entity in timeline
-    fn timeline_ui(&self, ui: &mut Ui, bar_rect: Rect, current_frame: i32) -> Response;
-}
-
-/// Widget for Attribute Editor - shows all entity properties
-pub trait AttributeEditorUI {
-    /// Render entity attributes in attribute editor panel
-    fn ae_ui(&mut self, ui: &mut Ui);
-}
-
-/// Optional: Node editor representation (for future node-based workflow)
-pub trait NodeUI {
-    /// Render entity as a node in node editor
-    fn node_ui(&self, ui: &mut Ui, node_rect: Rect) -> Response;
-}

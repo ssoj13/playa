@@ -24,12 +24,11 @@ pub struct ToggleFullscreenEvent;
 #[derive(Clone, Debug)]
 pub struct ToggleFrameNumbersEvent;
 
-/// Hotkey window context
+/// Hotkey window context for context-aware shortcuts
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HotkeyWindow {
     Global,
     Viewport,
     Timeline,
     Project,
-    AttributeEditor,
 }

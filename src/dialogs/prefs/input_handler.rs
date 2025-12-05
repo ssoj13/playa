@@ -118,6 +118,8 @@ impl HotkeyHandler {
         self.bind(Global, "Ctrl+ArrowLeft", JumpToStartEvent);
         self.bind(Global, "Ctrl+ArrowRight", JumpToEndEvent);
         self.bind(Global, "Ctrl+R", ResetSettingsEvent);
+        self.bind(Global, "Ctrl+S", QuickSaveEvent);
+        self.bind(Global, "Ctrl+O", OpenProjectDialogEvent);
         self.bind(Global, "Z", ToggleFullscreenEvent);
         self.bind(Global, "F", FitViewportEvent);
         self.bind(Global, "A", Viewport100Event);

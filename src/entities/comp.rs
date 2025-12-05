@@ -34,7 +34,6 @@ use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, Pixel
 use super::loader::Loader;
 use super::{AttrValue, Attrs};
 use super::keys::*;
-use super::node::{ComputeContext, Node};
 use super::compositor::BlendMode;
 use crate::entities::loader_video;
 use crate::event_bus::CompEventSender;
@@ -49,19 +48,6 @@ use super::compositor::CpuCompositor;
 // GPU compositor remains in Project.compositor (main thread only)
 thread_local! {
     static THREAD_COMPOSITOR: RefCell<CpuCompositor> = RefCell::new(CpuCompositor);
-}
-
-// === Legacy CompMode enum (kept for backwards compatibility during migration) ===
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum CompMode {
-    Layer,
-    File,
-}
-
-impl Default for CompMode {
-    fn default() -> Self {
-        CompMode::Layer
-    }
 }
 
 /// Unified composition descriptor with dual-mode operation.
@@ -81,21 +67,6 @@ impl Default for CompMode {
 /// - Dimensions: width, height
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Comp {
-    // === Legacy fields for backwards compatibility ===
-    // TODO: Remove after migration complete
-    #[serde(default)]
-    pub uuid: Uuid,
-    #[serde(default)]
-    pub mode: CompMode,
-    #[serde(default)]
-    pub parent: Option<Uuid>,
-    #[serde(default)]
-    pub file_mask: Option<String>,
-    #[serde(default)]
-    pub file_start: Option<i32>,
-    #[serde(default)]
-    pub file_end: Option<i32>,
-
     /// Persistent attributes (all properties)
     pub attrs: Attrs,
 
@@ -184,12 +155,6 @@ impl Comp {
         attrs.set(A_HEIGHT, AttrValue::Int(0));
 
         Self {
-            uuid,
-            mode: CompMode::Layer,
-            parent: None,
-            file_mask: None,
-            file_start: None,
-            file_end: None,
             attrs,
             data: Attrs::new(),
             children: Vec::new(),
@@ -213,17 +178,11 @@ impl Comp {
 
         // Set mode to file
         comp.attrs.set_i8(A_MODE, COMP_FILE);
-        comp.mode = CompMode::File; // Legacy
 
         // Set file attrs
-        comp.attrs.set(A_FILE_MASK, AttrValue::Str(pattern_str.clone()));
+        comp.attrs.set(A_FILE_MASK, AttrValue::Str(pattern_str));
         comp.attrs.set(A_FILE_START, AttrValue::Int(start));
         comp.attrs.set(A_FILE_END, AttrValue::Int(end));
-
-        // Legacy fields
-        comp.file_mask = Some(pattern_str);
-        comp.file_start = Some(start);
-        comp.file_end = Some(end);
 
         comp
     }
@@ -234,7 +193,31 @@ impl Comp {
     }
 
     pub fn get_uuid(&self) -> Uuid {
-        self.uuid
+        self.attrs.get_uuid(A_UUID).unwrap_or(Uuid::nil())
+    }
+
+    pub fn file_start(&self) -> Option<i32> {
+        self.attrs.get_i32(A_FILE_START).map(Some).unwrap_or(None)
+    }
+
+    pub fn file_end(&self) -> Option<i32> {
+        self.attrs.get_i32(A_FILE_END).map(Some).unwrap_or(None)
+    }
+
+    pub fn file_mask(&self) -> Option<String> {
+        self.attrs.get_str(A_FILE_MASK).map(|s| s.to_string())
+    }
+
+    pub fn get_parent(&self) -> Option<Uuid> {
+        self.attrs.get_uuid(A_PARENT)
+    }
+
+    pub fn set_parent(&mut self, parent_uuid: Option<Uuid>) {
+        if let Some(uuid) = parent_uuid {
+            self.attrs.set_uuid(A_PARENT, uuid);
+        } else {
+            self.attrs.remove(A_PARENT);
+        }
     }
 
     // NOTE: Methods use underscore prefix (_in/_out) because `in` is a Rust keyword
@@ -488,7 +471,7 @@ impl Comp {
         self.set_trim_out(hi);
         // Don't clear cache - already loaded frames remain valid
         // Preload will automatically load new frames in the updated work area
-        self.event_sender.send(LayersChangedEvent(self.uuid));
+        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
     }
 
     /// Child placement bounds (start/end) in parent timeline, ordered and clamped if needed.
@@ -659,7 +642,7 @@ impl Comp {
                 let frame_idx = comp_start + frame_offset;
 
                 // Unified cache key: frame_idx for both File and Layer modes
-                let status = if global_cache.contains(self.uuid, frame_idx) {
+                let status = if global_cache.contains(self.get_uuid(), frame_idx) {
                     FrameStatus::Loaded  // Green bar in UI
                 } else {
                     FrameStatus::Header  // Gray bar in UI
@@ -670,7 +653,7 @@ impl Comp {
             Some(statuses)
         } else {
             // Fallback if global_cache not available yet
-            log::warn!("cache_frame_statuses: global_cache not available for comp {}", self.uuid);
+            log::warn!("cache_frame_statuses: global_cache not available for comp {}", self.get_uuid());
             Some(vec![FrameStatus::Header; duration as usize])
         }
     }
@@ -718,7 +701,7 @@ impl Comp {
             center,
             self._in(),
             self._out(),
-            self.file_start,
+            self.file_start(),
             play_start,
             play_end
         );
@@ -730,14 +713,14 @@ impl Comp {
         // Smart check: Skip preload if entire work area is already cached
         if let Some(ref global_cache) = self.global_cache {
             let comp_start = self._in();
-            let seq_start = self.file_start.unwrap_or(comp_start);
+            let seq_start = self.file_start().unwrap_or(comp_start);
 
             let mut all_cached = true;
             for frame_idx in play_start..=play_end {
                 let local_idx = frame_idx - comp_start;
                 let seq_frame = seq_start.saturating_add(local_idx);
 
-                if !global_cache.contains(self.uuid, seq_frame) {
+                if !global_cache.contains(self.get_uuid(), seq_frame) {
                     all_cached = false;
                     break;
                 }
@@ -860,7 +843,7 @@ impl Comp {
     ) {
         // Skip if already in global cache (unified key: uuid + frame_idx)
         if let Some(ref global_cache) = self.global_cache {
-            if global_cache.contains(self.uuid, frame_idx) {
+            if global_cache.contains(self.get_uuid(), frame_idx) {
                 return;
             }
         } else {
@@ -871,7 +854,7 @@ impl Comp {
             // File mode: load from disk
             let comp_start = self._in();
             let local_idx = frame_idx - comp_start;
-            let seq_start = self.file_start.unwrap_or(comp_start);
+            let seq_start = self.file_start().unwrap_or(comp_start);
             let seq_frame = seq_start.saturating_add(local_idx);
 
             // Get frame path
@@ -881,7 +864,7 @@ impl Comp {
             };
 
             // Clone data for move into closure
-            let uuid = self.uuid;
+            let uuid = self.get_uuid();
             let global_cache = self.global_cache.as_ref().unwrap().clone();
             let (w, h) = self.dim();
 
@@ -905,7 +888,7 @@ impl Comp {
         } else {
             // Layer mode: compose from children in background
             // Clone data for move into closure
-            let uuid = self.uuid;
+            let uuid = self.get_uuid();
             let global_cache = self.global_cache.as_ref().unwrap().clone();
             let project_clone = project.clone(); // Cheap: Arc fields just increment refcount
             let comp_clone = self.clone();
@@ -956,7 +939,7 @@ impl Comp {
         if old_frame != new_frame {
             self.attrs.set(A_FRAME, AttrValue::Int(new_frame));
             self.event_sender.send(CurrentFrameChangedEvent {
-                comp_uuid: self.uuid,
+                comp_uuid: self.get_uuid(),
                 old_frame,
                 new_frame,
             });
@@ -1009,8 +992,8 @@ impl Comp {
         }
 
         // Map local frame_idx to absolute sequence number (preserve original numbering)
-        let seq_start = self.file_start.unwrap_or(self._in());
-        let seq_end = self.file_end.unwrap_or(self._out());
+        let seq_start = self.file_start().unwrap_or(self._in());
+        let seq_end = self.file_end().unwrap_or(self._out());
         let seq_frame = seq_start.saturating_add(local_idx);
         if seq_frame < seq_start || seq_frame > seq_end {
             return Some(self.placeholder_frame());
@@ -1018,7 +1001,7 @@ impl Comp {
 
         // Check global cache (using comp UUID + frame_idx as key - unified with Layer mode)
         if let Some(ref global_cache) = project.global_cache {
-            if let Some(frame) = global_cache.get(self.uuid, frame_idx) {
+            if let Some(frame) = global_cache.get(self.get_uuid(), frame_idx) {
                 return Some(frame);
             }
         }
@@ -1033,7 +1016,7 @@ impl Comp {
 
         // Insert into global cache with frame_idx as key (unified with Layer mode)
         if let Some(ref global_cache) = project.global_cache {
-            global_cache.insert(self.uuid, frame_idx, frame.clone());
+            global_cache.insert(self.get_uuid(), frame_idx, frame.clone());
         }
 
         Some(frame)
@@ -1049,13 +1032,13 @@ impl Comp {
         // Check dirty flag OR cache miss
         let needs_recompose = self.attrs.is_dirty()
             || project.global_cache.as_ref()
-                .map(|cache| !cache.contains(self.uuid, frame_idx))
+                .map(|cache| !cache.contains(self.get_uuid(), frame_idx))
                 .unwrap_or(true);
 
         if !needs_recompose {
             // Frame is cached and clean - return from cache
             if let Some(ref global_cache) = project.global_cache {
-                if let Some(frame) = global_cache.get(self.uuid, frame_idx) {
+                if let Some(frame) = global_cache.get(self.get_uuid(), frame_idx) {
                     return Some(frame);
                 }
             }
@@ -1066,7 +1049,7 @@ impl Comp {
 
         // Insert into global cache
         if let Some(ref global_cache) = project.global_cache {
-            global_cache.insert(self.uuid, frame_idx, composed.clone());
+            global_cache.insert(self.get_uuid(), frame_idx, composed.clone());
         }
 
         // Clear dirty flag after caching (uses interior mutability)
@@ -1076,8 +1059,8 @@ impl Comp {
     }
 
     fn resolve_frame_path(&self, frame_number: i32) -> Option<PathBuf> {
-        let mask = self.file_mask.as_ref()?;
-        if media::is_video(Path::new(mask)) {
+        let mask = self.file_mask()?;
+        if media::is_video(Path::new(&mask)) {
             // Video files use @frame suffix to target specific frame
             return Some(PathBuf::from(format!("{}@{}", mask, frame_number)));
         }
@@ -1420,8 +1403,8 @@ impl Comp {
         self.update_dim_from_children();
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.uuid));
-        self.event_sender.send(AttrsChangedEvent(self.uuid));
+        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
+        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1510,8 +1493,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.uuid));
-        self.event_sender.send(AttrsChangedEvent(self.uuid));
+        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
+        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1622,8 +1605,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.uuid));
-        self.event_sender.send(AttrsChangedEvent(self.uuid));
+        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
+        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
         Ok(())
     }
 
@@ -1648,8 +1631,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.uuid));
-        self.event_sender.send(AttrsChangedEvent(self.uuid));
+        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
+        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1675,8 +1658,8 @@ impl Comp {
 
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_sender.send(LayersChangedEvent(self.uuid));
-        self.event_sender.send(AttrsChangedEvent(self.uuid));
+        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
+        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
     }
@@ -1731,8 +1714,8 @@ impl Comp {
         self.rebound();
         self.update_dim_from_children();
         self.attrs.mark_dirty(); // Mark as dirty for cache invalidation
-        self.event_sender.send(LayersChangedEvent(self.uuid));
-        self.event_sender.send(AttrsChangedEvent(self.uuid));
+        self.event_sender.send(LayersChangedEvent(self.get_uuid()));
+        self.event_sender.send(AttrsChangedEvent(self.get_uuid()));
     }
 
     /// Recalculate comp start/end based on children (negative starts allowed).
@@ -1797,16 +1780,6 @@ impl Comp {
         self.attrs.set("height", AttrValue::UInt(h as u32));
     }
 
-    /// Set parent composition UUID
-    pub fn set_parent(&mut self, parent_uuid: Option<Uuid>) {
-        self.parent = parent_uuid;
-    }
-
-    /// Get parent composition UUID
-    pub fn get_parent(&self) -> Option<Uuid> {
-        self.parent
-    }
-
     /// Get children composition UUIDs
     /// Get children with their attrs
     pub fn get_children(&self) -> &[(Uuid, Attrs)] {
@@ -1832,78 +1805,6 @@ impl Comp {
         result
     }
 
-}
-
-// ===== GUI Trait Implementations =====
-
-impl crate::entities::ProjectUI for Comp {
-    fn project_ui(&self, ui: &mut egui::Ui) -> egui::Response {
-        ui.horizontal(|ui| {
-            // Icon/type indicator
-            ui.label("📁");
-
-            // Comp name
-            ui.label(self.name());
-
-            // Metadata
-            ui.label(format!("{}fps", self.fps()));
-            ui.label(format!("{}-{}", self._in(), self._out()));
-            ui.label(format!("{} children", self.children.len()));
-        })
-        .response
-    }
-}
-
-impl crate::entities::TimelineUI for Comp {
-    fn timeline_ui(
-        &self,
-        ui: &mut egui::Ui,
-        bar_rect: egui::Rect,
-        current_frame: i32,
-    ) -> egui::Response {
-        let painter = ui.painter();
-
-        // Draw bar background (different color for comp)
-        let bar_color = egui::Color32::from_rgb(100, 60, 140);
-        painter.rect_filled(bar_rect, 2.0, bar_color);
-
-        // Draw border
-        painter.rect_stroke(
-            bar_rect,
-            2.0,
-            egui::Stroke::new(1.0, egui::Color32::WHITE),
-            egui::epaint::StrokeKind::Middle,
-        );
-
-        // Highlight current frame if within range
-        let start = self._in();
-        let end = self._out();
-        if current_frame >= start && current_frame <= end {
-            let total_frames = (end - start + 1) as f32;
-            let frame_width = bar_rect.width() / total_frames;
-            let offset = (current_frame - start) as f32 * frame_width;
-            let playhead_rect = egui::Rect::from_min_size(
-                egui::pos2(bar_rect.min.x + offset, bar_rect.min.y),
-                egui::vec2(2.0, bar_rect.height()),
-            );
-            painter.rect_filled(playhead_rect, 0.0, egui::Color32::RED);
-        }
-
-        // Draw label
-        painter.text(
-            bar_rect.left_center() + egui::vec2(5.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            self.name(),
-            egui::FontId::default(),
-            egui::Color32::WHITE,
-        );
-
-        ui.interact(
-            bar_rect,
-            ui.id().with(&self.uuid),
-            egui::Sense::click_and_drag(),
-        )
-    }
 }
 
 impl Comp {
@@ -1939,8 +1840,8 @@ impl Comp {
         // Deduplicate comps by pattern/mask
         let mut unique: HashMap<String, Comp> = HashMap::new();
         for comp in comps {
-            if let Some(mask) = &comp.file_mask {
-                unique.entry(mask.clone()).or_insert(comp);
+            if let Some(mask) = comp.file_mask() {
+                unique.entry(mask).or_insert(comp);
             }
         }
 
@@ -2051,8 +1952,6 @@ fn create_video_comp(path: &Path) -> Result<Comp, FrameError> {
         meta.fps as f32,
     );
 
-    comp.file_start = Some(0);
-    comp.file_end = Some(last_frame);
     comp.attrs.set("width", AttrValue::UInt(meta.width));
     comp.attrs.set("height", AttrValue::UInt(meta.height));
     comp.attrs.set("padding", AttrValue::UInt(0));
@@ -2144,33 +2043,6 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usi
 }
 
 // =============================================================================
-// Node trait implementation
-// =============================================================================
-
-impl Node for Comp {
-    fn attrs(&self) -> &Attrs {
-        &self.attrs
-    }
-
-    fn attrs_mut(&mut self) -> &mut Attrs {
-        &mut self.attrs
-    }
-
-    fn data(&self) -> &Attrs {
-        &self.data
-    }
-
-    fn data_mut(&mut self) -> &mut Attrs {
-        &mut self.data
-    }
-
-    fn compute(&self, _ctx: &ComputeContext) -> Option<Frame> {
-        // get_frame() handles the actual computation
-        None
-    }
-}
-
-// =============================================================================
 // Mode helpers (i8-based)
 // =============================================================================
 
@@ -2244,7 +2116,7 @@ mod tests {
         // Comp with single child
         let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
         comp.add_child(clip_uuid, 0, &project).unwrap();
-        let comp_uuid = comp.uuid;
+        let comp_uuid = comp.get_uuid();
         project.media.write().unwrap().insert(comp_uuid, comp);
 
         // First render - attrs should be clean after caching
@@ -2467,7 +2339,6 @@ mod tests {
 
         // Set file mode directly via attrs
         comp.attrs.set_i8(A_MODE, COMP_FILE);
-        comp.mode = CompMode::File; // Sync legacy field
         comp.attrs.set(A_FILE_MASK, AttrValue::Str("/path/seq.*.exr".into()));
         assert_eq!(comp.attrs.get_i8(A_MODE), Some(COMP_FILE));
         assert!(comp.is_file_mode());

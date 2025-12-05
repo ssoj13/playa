@@ -232,7 +232,7 @@ impl PlayaApp {
                 let comps_count = comps.len();
                 let mut first_uuid: Option<Uuid> = None;
                 for comp in comps {
-                    let uuid = comp.uuid;
+                    let uuid = comp.get_uuid();
                     let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
                     info!("Adding clip (File mode): {} ({})", name, uuid);
 
@@ -296,6 +296,8 @@ impl PlayaApp {
         let mut deferred_load_sequences: Option<Vec<std::path::PathBuf>> = None;
         let mut deferred_new_comp: Option<(String, f32)> = None;
         let mut deferred_enqueue_frames: Option<usize> = None;
+        let mut deferred_quick_save = false;
+        let mut deferred_show_open = false;
 
         // Drain all events from the bus
         for event in self.event_bus.drain() {
@@ -310,10 +312,6 @@ impl PlayaApp {
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
                 debug!("Comp {} layers changed", e.0);
                 self.displayed_frame = None;
-                continue;
-            }
-            if let Some(e) = downcast_event::<TimelineChangedEvent>(&event) {
-                debug!("Comp {} timeline changed", e.0);
                 continue;
             }
             if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
@@ -356,6 +354,12 @@ impl PlayaApp {
                 if let Some(n) = result.enqueue_frames {
                     deferred_enqueue_frames = Some(n);
                 }
+                if result.quick_save {
+                    deferred_quick_save = true;
+                }
+                if result.show_open_dialog {
+                    deferred_show_open = true;
+                }
             }
         }
 
@@ -377,6 +381,12 @@ impl PlayaApp {
         if let Some(n) = deferred_enqueue_frames {
             self.enqueue_frame_loads_around_playhead(n);
         }
+        if deferred_quick_save {
+            self.quick_save();
+        }
+        if deferred_show_open {
+            self.show_open_project_dialog();
+        }
     }
 
     /// Enable or disable "cinema mode": borderless fullscreen, hidden UI, black background.
@@ -394,7 +404,36 @@ impl PlayaApp {
             error!("{}", e);
             self.error_msg = Some(e);
         } else {
+            self.project.set_last_save_path(Some(path.clone()));
             info!("Saved project to {}", path.display());
+        }
+    }
+
+    /// Quick save - saves to last path or shows dialog
+    fn quick_save(&mut self) {
+        if let Some(path) = self.project.last_save_path() {
+            info!("Quick save to {}", path.display());
+            self.save_project(path);
+        } else {
+            // No previous save path - show file dialog
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Playa Project", &["playa"])
+                .add_filter("JSON", &["json"])
+                .set_file_name("project.playa")
+                .save_file()
+            {
+                self.save_project(path);
+            }
+        }
+    }
+
+    /// Show open project dialog
+    fn show_open_project_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Playa Project", &["playa", "json"])
+            .pick_file()
+        {
+            self.load_project(path);
         }
     }
 
@@ -462,6 +501,11 @@ impl PlayaApp {
     }
 
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
+        // Don't process hotkeys when text input is active (typing in fields)
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+
         let input = ctx.input(|i| i.clone());
 
         // Determine focused window and update hotkey handler
@@ -957,11 +1001,9 @@ impl eframe::App for PlayaApp {
         let reserve_gb = self.settings.reserve_system_memory_gb as f64;
 
         if (mem_fraction - self.applied_mem_fraction).abs() > f64::EPSILON {
-            // Update cache manager with new limits
-            Arc::get_mut(&mut self.cache_manager)
-                .map(|cm| cm.set_memory_limit(mem_fraction, reserve_gb));
+            // Update cache manager with new limits (now lock-free via atomic)
+            self.cache_manager.set_memory_limit(mem_fraction, reserve_gb);
             self.applied_mem_fraction = mem_fraction;
-            info!("Memory limit updated: {}% (reserve {} GB)", mem_fraction * 100.0, reserve_gb);
         }
 
         self.player.update(&mut self.project);
@@ -1039,9 +1081,6 @@ impl eframe::App for PlayaApp {
             // Apply cache strategy changes immediately
             if self.settings.cache_strategy != old_strategy {
                 log::info!("Cache strategy changed to: {:?}", self.settings.cache_strategy);
-                if let Some(ref global_cache) = self.project.global_cache {
-                    global_cache.set_strategy(self.settings.cache_strategy);
-                }
                 if let Some(ref global_cache) = self.project.global_cache {
                     global_cache.set_strategy(self.settings.cache_strategy);
                 }

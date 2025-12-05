@@ -25,12 +25,21 @@ pub enum BlendMode {
 }
 
 /// Compositor type enum - allows switching between CPU/GPU backends.
-#[derive(Clone, Debug)]
+/// Note: Clone creates CPU compositor (GPU resources can't be cloned)
+#[derive(Debug)]
 pub enum CompositorType {
     /// CPU compositor - works everywhere, slower
     Cpu(CpuCompositor),
     /// GPU compositor - requires OpenGL context, 10-50x faster
     Gpu(GpuCompositor),
+}
+
+impl Clone for CompositorType {
+    fn clone(&self) -> Self {
+        // GPU compositor can't be cloned (OpenGL resources)
+        // Return default CPU compositor instead
+        CompositorType::Cpu(CpuCompositor)
+    }
 }
 
 impl CompositorType {

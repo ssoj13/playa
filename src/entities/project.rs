@@ -52,6 +52,10 @@ pub struct Project {
     /// Global frame cache (runtime-only, replaces per-Comp local caches)
     #[serde(skip)]
     pub global_cache: Option<Arc<GlobalFrameCache>>,
+
+    /// Last save path for quick save (runtime-only)
+    #[serde(skip)]
+    last_save_path: Option<std::path::PathBuf>,
 }
 
 impl Project {
@@ -87,6 +91,7 @@ impl Project {
             compositor: RefCell::new(CompositorType::default()), // CPU compositor by default
             cache_manager: Some(cache_manager),
             global_cache: Some(global_cache),
+            last_save_path: None,
         }
     }
 
@@ -150,6 +155,16 @@ impl Project {
         self.attrs.set_json("active", &uuid);
     }
 
+    /// Get last save path for quick save
+    pub fn last_save_path(&self) -> Option<std::path::PathBuf> {
+        self.last_save_path.clone()
+    }
+
+    /// Set last save path
+    pub fn set_last_save_path(&mut self, path: Option<std::path::PathBuf>) {
+        self.last_save_path = path;
+    }
+
     /// Serialize project to JSON file.
     pub fn to_json<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         let json = serde_json::to_string_pretty(self)
@@ -190,7 +205,7 @@ impl Project {
 
         if !has_comps {
             let comp = Comp::new("Main", 0, 0, 24.0);
-            let uuid = comp.uuid;
+            let uuid = comp.get_uuid();
             self.media.write().unwrap().insert(uuid, comp);
             self.push_comps_order(uuid);
             log::info!("Created default comp: {}", uuid);
@@ -200,7 +215,7 @@ impl Project {
             order.first().copied().unwrap_or_else(|| {
                 // Fallback: create new if order is broken
                 let comp = Comp::new("Main", 0, 0, 24.0);
-                let uuid = comp.uuid;
+                let uuid = comp.get_uuid();
                 self.media.write().unwrap().insert(uuid, comp);
                 self.push_comps_order(uuid);
                 uuid
@@ -275,7 +290,7 @@ impl Project {
     /// Update composition in media pool.
     /// Replaces existing comp with same UUID.
     pub fn update_comp(&self, comp: Comp) {
-        self.media.write().unwrap().insert(comp.uuid, comp);
+        self.media.write().unwrap().insert(comp.get_uuid(), comp);
     }
 
     /// Check if composition exists in media pool.
@@ -310,7 +325,7 @@ impl Project {
             comp.set_global_cache(Arc::clone(cache));
         }
 
-        let uuid = comp.uuid;
+        let uuid = comp.get_uuid();
         self.media.write().unwrap().insert(uuid, comp);
         self.push_comps_order(uuid);
     }
@@ -325,7 +340,7 @@ impl Project {
         let end = (fps * 5.0) as i32; // 5 seconds default duration
         let mut comp = Comp::new(name, 0, end, fps);
         comp.set_event_sender(event_sender);
-        let uuid = comp.uuid;
+        let uuid = comp.get_uuid();
         self.add_comp(comp);
         uuid
     }
@@ -400,7 +415,7 @@ impl Project {
             loop {
                 // Find parent of current comp
                 let parent_uuid = media.get(&current_uuid)
-                    .and_then(|comp| comp.parent);
+                    .and_then(|comp| comp.get_parent());
 
                 match parent_uuid {
                     Some(parent) => {
@@ -445,17 +460,17 @@ mod tests {
 
         // Create hierarchy: grandparent -> parent -> child
         let mut child = Comp::new("Child", 0, 100, 24.0);
-        let child_uuid = child.uuid;
+        let child_uuid = child.get_uuid();
 
         let mut parent = Comp::new("Parent", 0, 100, 24.0);
-        let parent_uuid = parent.uuid;
+        let parent_uuid = parent.get_uuid();
         parent.children.push((child_uuid, crate::entities::Attrs::new()));
-        child.parent = Some(parent_uuid);
+        child.set_parent(Some(parent_uuid));
 
         let mut grandparent = Comp::new("Grandparent", 0, 100, 24.0);
-        let grandparent_uuid = grandparent.uuid;
+        let grandparent_uuid = grandparent.get_uuid();
         grandparent.children.push((parent_uuid, crate::entities::Attrs::new()));
-        parent.parent = Some(grandparent_uuid);
+        parent.set_parent(Some(grandparent_uuid));
 
         // Add comps to project
         {

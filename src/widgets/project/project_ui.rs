@@ -111,11 +111,11 @@ pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> Proj
                 let fps = comp.fps() as u32;
                 let frame_count = comp.frame_count();
                 let display_text = if is_file {
-                    if let Some(mask) = &comp.file_mask {
-                        let filename = std::path::Path::new(mask)
+                    if let Some(mask) = comp.file_mask() {
+                        let filename = std::path::Path::new(&mask)
                             .file_name()
                             .and_then(|s| s.to_str())
-                            .unwrap_or(mask);
+                            .unwrap_or(&mask);
                         format!("{} • {}", comp.name(), filename)
                     } else {
                         comp.name().to_string()

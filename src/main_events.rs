@@ -23,6 +23,8 @@ pub struct EventResult {
     pub load_sequences: Option<Vec<PathBuf>>,
     pub new_comp: Option<(String, f32)>,
     pub enqueue_frames: Option<usize>,
+    pub quick_save: bool,
+    pub show_open_dialog: bool,
 }
 
 /// Handle a single app event (called from main event loop).
@@ -46,19 +48,6 @@ pub fn handle_app_event(
 ) -> Option<EventResult> {
     let mut result = EventResult::default();
     // === Playback Control ===
-    if downcast_event::<PlayEvent>(&event).is_some() {
-        debug!("Play: starting playback at frame {}", player.current_frame(project));
-        player.set_is_playing(true);
-        player.last_frame_time = Some(std::time::Instant::now());
-        return Some(result);
-    }
-    if downcast_event::<PauseEvent>(&event).is_some() {
-        debug!("Pause: stopping playback at frame {}", player.current_frame(project));
-        player.set_is_playing(false);
-        player.last_frame_time = None;
-        player.set_fps_play(player.fps_base());
-        return Some(result);
-    }
     if downcast_event::<TogglePlayPauseEvent>(&event).is_some() {
         let was_playing = player.is_playing();
         player.set_is_playing(!was_playing);
@@ -229,6 +218,14 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<LoadProjectEvent>(&event) {
         result.load_project = Some(e.0.clone());
+        return Some(result);
+    }
+    if downcast_event::<QuickSaveEvent>(&event).is_some() {
+        result.quick_save = true;
+        return Some(result);
+    }
+    if downcast_event::<OpenProjectDialogEvent>(&event).is_some() {
+        result.show_open_dialog = true;
         return Some(result);
     }
     if let Some(e) = downcast_event::<RemoveMediaEvent>(&event) {

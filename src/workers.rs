@@ -186,10 +186,11 @@ impl Workers {
     }
 }
 
-// Drop implementation: channels close automatically, threads exit gracefully
 impl Drop for Workers {
     fn drop(&mut self) {
         debug!("Workers shutting down ({} threads)...", self._handles.len());
-        // Sender drops → channel closes → workers exit recv() loop
+        // Signal all workers to stop
+        self.shutdown.store(true, Ordering::SeqCst);
+        // Workers will exit on next iteration when they see shutdown flag
     }
 }

@@ -36,24 +36,6 @@ use half::f16 as F16;
 use crate::entities::Attrs;
 use crate::utils::media;
 
-/// Parse video path with frame suffix
-/// "video.mp4@17" -> (PathBuf("video.mp4"), Some(17))
-/// "video.mp4" -> (PathBuf("video.mp4"), None)
-fn parse_video_path(path: &Path) -> (PathBuf, Option<usize>) {
-    let path_str = path.to_string_lossy();
-
-    if let Some(at_pos) = path_str.rfind('@') {
-        let base = &path_str[..at_pos];
-        let frame_num = &path_str[at_pos + 1..];
-
-        if let Ok(num) = frame_num.parse::<usize>() {
-            return (PathBuf::from(base), Some(num));
-        }
-    }
-
-    (path.to_path_buf(), None)
-}
-
 /// Pixel buffer format - stores different precision levels
 #[derive(Debug, Clone)]
 pub enum PixelBuffer {
@@ -425,7 +407,7 @@ impl Frame {
             .clone();
 
         // Parse video path: "video.mp4@17" -> ("video.mp4", Some(17))
-        let (actual_path, _frame_num) = parse_video_path(&path);
+        let (actual_path, _frame_num) = media::parse_video_path(&path);
 
         // For video files, get dimensions from video metadata
         if media::is_video(&actual_path) {
@@ -498,7 +480,7 @@ impl Frame {
             .clone();
 
         // Parse video path: "video.mp4@17" -> ("video.mp4", Some(17))
-        let (actual_path, frame_num) = parse_video_path(&path);
+        let (actual_path, frame_num) = media::parse_video_path(&path);
 
         // Atomically claim frame for loading (prevents duplicate loads)
         if !self.try_claim_for_loading() {

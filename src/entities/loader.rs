@@ -13,7 +13,6 @@ use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
 use crate::entities::loader_video;
 use crate::entities::{AttrValue, Attrs};
 use crate::utils::media;
-use std::path::PathBuf;
 
 /// Image loader with metadata support
 pub struct Loader;
@@ -59,7 +58,7 @@ impl Loader {
 
     /// Read video metadata into Attrs (width, height, fps, frames)
     fn header_video(path: &Path) -> Result<Attrs, FrameError> {
-        let (actual_path, _) = parse_video_path(path);
+        let (actual_path, _) = media::parse_video_path(path);
         let meta = loader_video::VideoMetadata::from_file(&actual_path)?;
 
         let mut meta_attrs = Attrs::new();
@@ -78,7 +77,7 @@ impl Loader {
 
     /// Load a single video frame into Frame (defaults to frame 0 if not specified)
     fn load_video(path: &Path) -> Result<Frame, FrameError> {
-        let (actual_path, frame_idx) = parse_video_path(path);
+        let (actual_path, frame_idx) = media::parse_video_path(path);
         let frame_num = frame_idx.unwrap_or(0);
         let (buffer, pixel_format, width, height) =
             loader_video::decode_frame(&actual_path, frame_num)?;
@@ -300,21 +299,3 @@ impl Loader {
     }
 }
 
-/// Parse video path with optional frame suffix.
-/// "video.mp4@17" -> (PathBuf("video.mp4"), Some(17))
-/// "video.mp4" -> (PathBuf("video.mp4"), None)
-fn parse_video_path(path: &Path) -> (PathBuf, Option<usize>) {
-    let path_str = path.to_string_lossy();
-
-    if let Some(at_pos) = path_str.rfind('@') {
-        // Ensure suffix after @ is numeric
-        let suffix = &path_str[at_pos + 1..];
-        if suffix.chars().all(|c| c.is_ascii_digit()) {
-            let base = &path_str[..at_pos];
-            let frame_num = suffix.parse().ok();
-            return (PathBuf::from(base), frame_num);
-        }
-    }
-
-    (path.to_path_buf(), None)
-}

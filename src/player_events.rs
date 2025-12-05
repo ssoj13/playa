@@ -1,13 +1,6 @@
 //! Player and playback events.
 
-
 // === Playback Control ===
-
-#[derive(Clone, Debug)]
-pub struct PlayEvent;
-
-#[derive(Clone, Debug)]
-pub struct PauseEvent;
 
 #[derive(Clone, Debug)]
 pub struct StopEvent;
@@ -47,12 +40,6 @@ pub struct JogForwardEvent;
 
 #[derive(Clone, Debug)]
 pub struct JogBackwardEvent;
-
-#[derive(Clone, Debug)]
-pub struct PreviousClipEvent;
-
-#[derive(Clone, Debug)]
-pub struct NextClipEvent;
 
 // === FPS Control ===
 

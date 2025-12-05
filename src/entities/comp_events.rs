@@ -15,9 +15,6 @@ pub struct CurrentFrameChangedEvent {
 pub struct LayersChangedEvent(pub Uuid);
 
 #[derive(Clone, Debug)]
-pub struct TimelineChangedEvent(pub Uuid);
-
-#[derive(Clone, Debug)]
 pub struct AttrsChangedEvent(pub Uuid);
 
 // === Layer Operations ===

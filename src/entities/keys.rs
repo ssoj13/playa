@@ -52,16 +52,8 @@ pub const A_SCALE: &str = "scale";
 pub const A_PIVOT: &str = "pivot";
 /// Opacity (0.0-1.0)
 pub const A_OPACITY: &str = "opacity";
-/// X offset in pixels (deprecated, use A_POSITION)
-pub const A_OFFSET_X: &str = "offset_x";
-/// Y offset in pixels (deprecated, use A_POSITION)
-pub const A_OFFSET_Y: &str = "offset_y";
 
 // === Playback ===
-/// Loop playback
-pub const A_LOOP: &str = "loop";
-/// Ping-pong playback
-pub const A_PING_PONG: &str = "ping_pong";
 /// Playback speed multiplier
 pub const A_SPEED: &str = "speed";
 
@@ -89,5 +81,3 @@ pub const A_WIDTH: &str = "width";
 /// Height in pixels (0 = auto-detect)
 pub const A_HEIGHT: &str = "height";
 
-// === Deprecated aliases (for migration) ===
-pub const A_SOURCE: &str = "source_uuid";

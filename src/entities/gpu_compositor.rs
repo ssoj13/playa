@@ -198,7 +198,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// GPU compositor using OpenGL for hardware-accelerated blending
-#[derive(Clone)]
+///
+/// Note: Does NOT implement Clone - OpenGL resources (FBO, VAO, VBO, Program)
+/// are handles that cannot be safely cloned. Use Arc<GpuCompositor> for sharing.
 pub struct GpuCompositor {
     gl: Arc<glow::Context>,
     // Runtime OpenGL resources (recreated as needed)
