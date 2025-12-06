@@ -1,13 +1,32 @@
 //! Composition-level types (timeline unit for playback/encoding).
 //!
-//! `Comp` is now a unified entity that can work in two modes:
-//! - Layer mode: composes children comps
-//! - File mode: loads image sequence from disk (ex-Clip functionality)
+//! # Overview
+//! `Comp` is a unified entity that can work in two modes:
+//! - **Layer mode**: composes children comps with transforms, blend modes, opacity
+//! - **File mode**: loads image sequence from disk (ex-Clip functionality)
+//!
 //! Used by: timeline rendering (`widgets::timeline`), encoding (`dialogs::encode`),
-//! playback (`player.rs`), and project serialization. Data flow: UI emits events →
-//! `Comp` mutates attrs/children → cached frames/computed hashes drive compositor
-//! work and encoding output.
-//! Cache & hash notes:
+//! playback (`player.rs`), and project serialization.
+//!
+//! # Attribute Change Architecture
+//! All child layer attribute modifications MUST go through unified methods:
+//! - [`Comp::set_child_attr`] - set single attribute
+//! - [`Comp::set_child_attrs`] - set multiple attributes in one call
+//!
+//! These methods automatically:
+//! 1. Update the attribute value
+//! 2. Mark comp as dirty (`attrs.mark_dirty()`)
+//! 3. Emit [`AttrsChangedEvent`] to trigger cache invalidation
+//!
+//! This ensures consistent behavior whether changes come from:
+//! - Timeline outline (via `LayerAttributesChangedEvent`)
+//! - Attribute Editor panel
+//! - Programmatic changes
+//!
+//! **DO NOT** use `children_attrs_get_mut()` for modifications that should
+//! trigger recomposition - use `set_child_attr`/`set_child_attrs` instead.
+//!
+//! # Cache & Hash Notes
 //! - `compute_comp_hash` hashes mode, file params, child order, and full child Attrs
 //!   (`Attrs::hash_all`), plus select transform attrs. Any child attr change produces
 //!   a new hash, forcing cache miss and recomposition on next `get_frame`/`compose`.
@@ -15,6 +34,16 @@
 //!   include sequence frame number in the key for stability when numbering shifts.
 //! - Layer comps recurse into children via `get_frame`; child Layer comps compose
 //!   their children the same way, so attr changes propagate through hashes.
+//!
+//! # Event Flow
+//! ```text
+//! UI change → set_child_attr[s]() → emit AttrsChangedEvent
+//!                                         ↓
+//!                              main.rs handler:
+//!                              - increment_epoch() (cancel workers)
+//!                              - cache.clear_comp() (invalidate frames)
+//!                              - invalidate_cascade() (parent comps)
+//! ```
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -260,13 +289,31 @@ impl Comp {
         self.children.iter().find(|(u, _)| u == uuid).map(|(_, a)| a)
     }
 
-    /// Get mutable reference to child attrs by UUID
+    /// Get mutable reference to child attrs by UUID.
+    ///
+    /// **Warning**: Direct mutations via this method do NOT emit change events.
+    /// For modifications that should trigger recomposition (opacity, blend_mode,
+    /// transforms, etc.), use [`set_child_attr`] or [`set_child_attrs`] instead.
+    ///
+    /// Safe to use for read-modify-write patterns where you call `emit_attrs_changed()`
+    /// manually afterward, or for non-visual attributes.
     pub fn children_attrs_get_mut(&mut self, uuid: &Uuid) -> Option<&mut Attrs> {
         self.children.iter_mut().find(|(u, _)| u == uuid).map(|(_, a)| a)
     }
 
-    /// Set a single attribute on a child layer and emit change event.
-    /// This is the unified way to modify layer attributes.
+    /// Set a single attribute on a child layer with automatic cache invalidation.
+    ///
+    /// This is the **preferred method** for modifying layer attributes. It:
+    /// 1. Sets the attribute value
+    /// 2. Marks the comp dirty
+    /// 3. Emits `AttrsChangedEvent` to invalidate cached frames
+    ///
+    /// Used by: Attribute Editor, programmatic attribute changes.
+    ///
+    /// # Example
+    /// ```ignore
+    /// comp.set_child_attr(&layer_uuid, "opacity", AttrValue::Float(0.5));
+    /// ```
     pub fn set_child_attr(&mut self, uuid: &Uuid, key: &str, value: AttrValue) {
         if let Some(attrs) = self.children_attrs_get_mut(uuid) {
             attrs.set(key, value);
@@ -275,7 +322,20 @@ impl Comp {
         self.emit_attrs_changed();
     }
 
-    /// Set multiple attributes on a child layer and emit change event once.
+    /// Set multiple attributes on a child layer with single cache invalidation.
+    ///
+    /// More efficient than multiple `set_child_attr` calls - emits only one event.
+    ///
+    /// Used by: `LayerAttributesChangedEvent` handler (timeline outline changes),
+    /// Attribute Editor batch updates.
+    ///
+    /// # Example
+    /// ```ignore
+    /// comp.set_child_attrs(&layer_uuid, &[
+    ///     ("opacity", AttrValue::Float(0.5)),
+    ///     ("blend_mode", AttrValue::Str("multiply".into())),
+    /// ]);
+    /// ```
     pub fn set_child_attrs(&mut self, uuid: &Uuid, values: &[(&str, AttrValue)]) {
         if let Some(attrs) = self.children_attrs_get_mut(uuid) {
             for (key, value) in values {
@@ -1038,7 +1098,15 @@ impl Comp {
         self.event_emitter = emitter;
     }
 
-    /// Emit AttrsChangedEvent to trigger cache invalidation
+    /// Emit AttrsChangedEvent to trigger cache invalidation cascade.
+    ///
+    /// This is called automatically by [`set_child_attr`] and [`set_child_attrs`].
+    /// The event handler in `main.rs` will:
+    /// - Increment cache epoch (cancels pending worker tasks)
+    /// - Clear all cached frames for this comp
+    /// - Trigger `invalidate_cascade()` for parent comps
+    ///
+    /// Only call directly when modifying `comp.attrs` (not child attrs).
     pub fn emit_attrs_changed(&self) {
         self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
     }

@@ -1,9 +1,35 @@
-//! Composition events.
+//! Composition events for cache invalidation and UI updates.
+//!
+//! # Event Hierarchy for Cache Invalidation
+//!
+//! There are two events that trigger frame cache invalidation:
+//!
+//! ## [`LayersChangedEvent`]
+//! Emitted when layer **structure** changes (add/remove/move/reorder).
+//! Has optional `affected_range` to limit cache clearing to specific frames.
+//!
+//! ## [`AttrsChangedEvent`]
+//! Emitted when layer **attributes** change (opacity, blend_mode, transforms, etc.).
+//! Clears entire comp cache since any attribute could affect all frames.
+//!
+//! Both events trigger the same handler in `main.rs` that:
+//! 1. Increments cache epoch (cancels pending worker tasks)
+//! 2. Clears cached frames
+//! 3. Calls `invalidate_cascade()` for parent comps
+//!
+//! # Emitting Events
+//!
+//! Use [`Comp::set_child_attr`] or [`Comp::set_child_attrs`] to modify layer
+//! attributes - they automatically emit `AttrsChangedEvent`.
+//!
+//! For structural changes, emit `LayersChangedEvent` directly after modifying
+//! the children list.
 
 use uuid::Uuid;
 
 // === Comp State Events ===
 
+/// Emitted when the playhead moves to a different frame.
 #[derive(Clone, Debug)]
 pub struct CurrentFrameChangedEvent {
     pub comp_uuid: Uuid,
@@ -11,9 +37,10 @@ pub struct CurrentFrameChangedEvent {
     pub new_frame: i32,
 }
 
-/// Emitted when layers in a comp change (add/remove/move/reorder)
-/// If `affected_range` is Some, only that frame range needs recomposition.
-/// If None, entire comp cache should be cleared.
+/// Emitted when layer structure changes (add/remove/move/reorder).
+///
+/// Handler in `main.rs` clears affected frame range from cache.
+/// If `affected_range` is None, entire comp cache is cleared.
 #[derive(Clone, Debug)]
 pub struct LayersChangedEvent {
     pub comp_uuid: Uuid,
@@ -21,6 +48,16 @@ pub struct LayersChangedEvent {
     pub affected_range: Option<(i32, i32)>,
 }
 
+/// Emitted when layer or comp attributes change (opacity, blend_mode, etc.).
+///
+/// Triggers full cache invalidation for the comp since attribute changes
+/// can affect any frame. Emitted automatically by [`Comp::set_child_attr`]
+/// and [`Comp::set_child_attrs`].
+///
+/// Handler in `main.rs`:
+/// - Increments cache epoch to cancel pending worker tasks
+/// - Clears all cached frames for this comp
+/// - Triggers `invalidate_cascade()` for parent comps
 #[derive(Clone, Debug)]
 pub struct AttrsChangedEvent(pub Uuid);
 

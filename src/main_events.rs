@@ -1,5 +1,18 @@
 //! Application event handling - extracted from main.rs for clarity.
 //!
+//! # Layer Attribute Changes
+//!
+//! The [`LayerAttributesChangedEvent`] is emitted by the timeline outline panel
+//! when the user modifies visibility, opacity, blend_mode, or speed via the UI.
+//!
+//! The handler uses [`Comp::set_child_attrs`] which automatically:
+//! 1. Updates the attribute values
+//! 2. Marks the comp dirty
+//! 3. Emits [`AttrsChangedEvent`] to invalidate frame cache
+//!
+//! This ensures consistent behavior with the Attribute Editor panel, which also
+//! uses `set_child_attrs` for modifications.
+//!
 //! # Important: Event Downcasting Bug (Fixed 2025-12-05)
 //!
 //! When using `downcast_event<E>(&event)` where `event: &BoxedEvent` (i.e., `&Box<dyn Event>`),

@@ -145,11 +145,11 @@ pub fn render_outline(
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 // Match the top padding of the timeline canvas (ruler + optional status bar + spacing)
-                // Ruler: 20.0, Status strip: 6.0 if present, spacer: 4.0
+                // Ruler: 20.0, Status strip: 2.0 if present, spacer: 4.0
                 let status_bar_height = comp
                     .cache_frame_statuses()
                     .as_ref()
-                    .map(|_| 6.0)
+                    .map(|_| 2.0)
                     .unwrap_or(0.0);
                 ui.add_space(20.0 + status_bar_height + 4.0);
 
@@ -342,7 +342,7 @@ pub fn render_canvas(
         ui.available_width()
     );
     let status_strip = comp.cache_frame_statuses();
-    let status_bar_height = status_strip.as_ref().map(|_| 4.0).unwrap_or(0.0);
+    let status_bar_height = status_strip.as_ref().map(|_| 2.0).unwrap_or(0.0);
 
     // Options + time ruler row (always visible)
     let mut ruler_rect: Option<Rect> = None;
@@ -353,8 +353,9 @@ pub fn render_canvas(
 
     // Draw ruler with proper layout sync
     ui.horizontal(|ui| {
-        // Add left spacer only in non-Split modes (outline column alignment)
-        if !matches!(view_mode, super::TimelineViewMode::Split) {
+        // Add left spacer only in OutlineOnly mode (to align ruler with outline column)
+        // In CanvasOnly mode there's no outline, in Split mode outline is separate panel
+        if matches!(view_mode, super::TimelineViewMode::OutlineOnly) {
             ui.allocate_exact_size(
                 Vec2::new(config.name_column_width, ruler_height),
                 Sense::hover(),
@@ -390,8 +391,8 @@ pub fn render_canvas(
     if let Some(statuses) = &status_strip {
         if let Some(ruler) = ruler_rect {
             ui.horizontal(|ui| {
-                // Add left spacer only in non-Split modes (same as ruler)
-                if !matches!(view_mode, super::TimelineViewMode::Split) {
+                // Add left spacer only in OutlineOnly mode (same as ruler)
+                if matches!(view_mode, super::TimelineViewMode::OutlineOnly) {
                     ui.allocate_exact_size(
                         Vec2::new(config.name_column_width, status_bar_height),
                         Sense::hover(),

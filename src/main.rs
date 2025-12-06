@@ -317,15 +317,20 @@ impl PlayaApp {
                 }
                 continue;
             }
+            // AttrsChangedEvent - emitted by Comp::set_child_attr[s]() and emit_attrs_changed()
+            // Handles attribute changes from: timeline outline, Attribute Editor, programmatic
+            // See comp_events.rs and comp.rs for event architecture documentation
             if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
                 debug!("Comp {} attrs changed - triggering cascade invalidation", e.0);
-                // Clear cache for this comp (attributes like opacity/blend_mode affect rendered frames)
+                // 1. Increment epoch to cancel pending worker tasks (stale data prevention)
                 if let Some(manager) = self.project.cache_manager() {
                     manager.increment_epoch();
                 }
+                // 2. Clear all cached frames - any attribute could affect rendering
                 if let Some(ref cache) = self.project.global_cache {
                     cache.clear_comp(e.0);
                 }
+                // 3. Invalidate parent comps that reference this one
                 self.project.invalidate_cascade(e.0);
                 continue;
             }

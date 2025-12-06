@@ -1,4 +1,31 @@
 //! Attribute Editor widget - UI rendering
+//!
+//! Provides a generic property editor for [`Attrs`] objects. Used in:
+//! - Attribute Editor panel (right dock) for layer and comp attributes
+//! - Potentially other places that need to edit key-value attribute sets
+//!
+//! # Change Tracking
+//! The editor tracks which attributes were modified during the frame:
+//! - [`render`] returns `bool` - true if any attribute changed
+//! - [`render_with_mixed`] populates `changed_out` vec with (key, value) pairs
+//!
+//! The caller is responsible for propagating changes via [`Comp::set_child_attrs`]
+//! or [`Comp::emit_attrs_changed`] to trigger cache invalidation.
+//!
+//! # Usage in main.rs
+//! ```ignore
+//! // Single layer: render_with_mixed tracks changes, apply via set_child_attrs
+//! let mut changed = Vec::new();
+//! render_with_mixed(ui, &mut temp_attrs, state, name, &HashSet::new(), &mut changed);
+//! if !changed.is_empty() {
+//!     comp.set_child_attrs(&layer_uuid, &values);  // auto-emits event
+//! }
+//!
+//! // Comp attrs: render returns bool, emit manually if changed
+//! if render(ui, &mut comp.attrs, state, name) {
+//!     comp.emit_attrs_changed();
+//! }
+//! ```
 
 use crate::entities::{AttrValue, Attrs};
 use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui};
@@ -27,20 +54,28 @@ impl Default for AttributesState {
     }
 }
 
-/// Render generic attributes editor
+/// Render generic attributes editor for a single object.
 ///
 /// Displays all attributes with appropriate UI widgets for editing.
 /// Supports: Str, Int, UInt, Float, Vec3, Vec4, Mat3, Mat4
-/// Returns true if any attribute was changed.
+///
+/// Returns `true` if any attribute was modified by user interaction.
+/// The caller should emit change events when this returns true.
 pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) -> bool {
     let mut changed = Vec::new();
     render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut changed, true);
     !changed.is_empty()
 }
 
-/// Render attribute editor with support for mixed values (multiple selection).
-/// `mixed_keys` — keys that have differing values across selected objects (rendered dimmed).
-/// `changed_out` collects (key, value) pairs that were modified by the user.
+/// Render attribute editor with support for mixed values (multi-selection).
+///
+/// # Arguments
+/// - `mixed_keys` - attribute keys that have differing values across selected objects
+///   (rendered with dimmed values to indicate mixed state)
+/// - `changed_out` - populated with `(key, value)` pairs for attributes modified by user
+///
+/// Use this for multi-layer selection where you need to know exactly which
+/// attributes changed to apply them to all selected layers.
 pub fn render_with_mixed(
     ui: &mut Ui,
     attrs: &mut Attrs,
