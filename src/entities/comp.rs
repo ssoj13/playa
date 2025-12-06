@@ -462,43 +462,31 @@ impl Comp {
 
     // Domain-specific helpers for layer attributes
 
-    /// Get child layer's start position
-    pub fn child_start(&self, child_uuid: Uuid) -> i32 {
+    /// Get child layer's placement start (in attr)
+    pub fn child_in(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
             .map(|a| a.get_i32_or_zero("in"))
             .unwrap_or(0)
     }
 
-    /// Get child layer's end position
-    pub fn child_end(&self, child_uuid: Uuid) -> i32 {
+    /// Get child layer's placement end (out attr)
+    pub fn child_out(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
             .map(|a| a.get_i32_or_zero("out"))
             .unwrap_or(0)
     }
 
-    /// Get child layer's play_start in parent coordinates (absolute).
-    /// trim_in is a LOCAL offset from layer start: play_start = in + trim_in
-    /// trim_in=0 means no trim, trim_in=20 skips 20 frames from start
-    pub fn child_play_start(&self, child_uuid: Uuid) -> i32 {
+    /// Get child layer's visible start (in + trim_in)
+    pub fn child_start(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
-            .map(|a| {
-                let start = a.get_i32_or_zero("in");
-                let trim_in = a.get_i32_or("trim_in", 0);
-                start + trim_in
-            })
+            .map(|a| a.layer_start())
             .unwrap_or(0)
     }
 
-    /// Get child layer's play_end in parent coordinates (absolute).
-    /// trim_out is a LOCAL offset from layer end: play_end = out + trim_out
-    /// trim_out=0 means no trim, trim_out=-20 cuts 20 frames from end
-    pub fn child_play_end(&self, child_uuid: Uuid) -> i32 {
+    /// Get child layer's visible end (out + trim_out)
+    pub fn child_end(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
-            .map(|a| {
-                let end = a.get_i32_or_zero("out");
-                let trim_out = a.get_i32_or("trim_out", 0);
-                end + trim_out
-            })
+            .map(|a| a.layer_end())
             .unwrap_or(0)
     }
 
@@ -570,16 +558,8 @@ impl Comp {
             let mut max_frame = i32::MIN;
 
             for (_child_uuid, attrs) in &self.children {
-                // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
-                let child_start = attrs.get_i32("in").unwrap_or(0);
-                let child_end = attrs.get_i32("out").unwrap_or(child_start);
-                let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-                let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-                let child_play_start = child_start + trim_in;
-                let child_play_end = child_end + trim_out;
-
-                min_frame = min_frame.min(child_play_start);
-                max_frame = max_frame.max(child_play_end);
+                min_frame = min_frame.min(attrs.layer_start());
+                max_frame = max_frame.max(attrs.layer_end());
             }
 
             if min_frame != i32::MAX && max_frame != i32::MIN {
@@ -653,14 +633,9 @@ impl Comp {
     /// Negative trim_out trims from end, positive extends.
     pub fn child_work_area_abs(&self, child_uuid: Uuid) -> Option<(i32, i32)> {
         let attrs = self.children_attrs_get(&child_uuid)?;
-        let in_abs = attrs.get_i32("in").unwrap_or(0);
-        let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
-        let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-        let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-        let play_start = in_abs + trim_in;
-        let play_end = out_abs + trim_out;
-        // No clamping - trim can extend beyond layer bounds
-        Some((play_start.min(play_end), play_start.max(play_end)))
+        let start = attrs.layer_start();
+        let end = attrs.layer_end();
+        Some((start.min(end), start.max(end)))
     }
 
     // ===== Time Conversion Methods =====
@@ -1905,9 +1880,9 @@ impl Comp {
         Ok(())
     }
 
-    /// Set child play start in absolute parent coords.
-    /// Converts to local offset: trim_in = new_play_start - in
-    pub fn set_child_play_start(
+    /// Set child visible start in absolute parent coords.
+    /// Converts to local offset: trim_in = new_start - in
+    pub fn set_child_start(
         &mut self,
         child_idx: usize,
         new_play_start: i32,
@@ -1940,9 +1915,9 @@ impl Comp {
         Ok(())
     }
 
-    /// Set child play end in absolute parent coords.
-    /// Converts to local offset: trim_out = new_play_end - out
-    pub fn set_child_play_end(
+    /// Set child visible end in absolute parent coords.
+    /// Converts to local offset: trim_out = new_end - out
+    pub fn set_child_end(
         &mut self,
         child_idx: usize,
         new_play_end: i32,
@@ -1995,21 +1970,11 @@ impl Comp {
         let mut edges = Vec::new();
 
         for (_child_uuid, attrs) in &self.children {
-            let start = attrs.get_i32("in").unwrap_or(0);
-            let end = attrs.get_i32("out").unwrap_or(0);
-            // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
-            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-            let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-            let play_start = start + trim_in;
-            let play_end = end + trim_out;
-
-            // Visible range accounting for play range offsets
-            let visible_start = play_start;
-            let visible_end = play_end;
-
-            if visible_start <= visible_end {
-                edges.push((visible_start, true)); // Start edge
-                edges.push((visible_end, false)); // End edge
+            let start = attrs.layer_start();
+            let end = attrs.layer_end();
+            if start <= end {
+                edges.push((start, true));
+                edges.push((end, false));
             }
         }
 
@@ -2029,16 +1994,7 @@ impl Comp {
             .children
             .iter()
             .find(|(uuid, _)| *uuid == child_uuid)
-            .map(|(_, attrs)| {
-                let (bounds_start, bounds_end) =
-                    Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
-                // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
-                let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-                let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-                let start = bounds_start + trim_in;
-                let end = bounds_end + trim_out;
-                (start, end)
-            });
+            .map(|(_, attrs)| (attrs.layer_start(), attrs.layer_end()));
 
         self.children.retain(|(uuid, _)| *uuid != child_uuid);
         self.rebound();

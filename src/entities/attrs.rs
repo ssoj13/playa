@@ -201,6 +201,20 @@ impl Attrs {
         self.get_bool(key).unwrap_or(default)
     }
 
+    /// Layer visible start: in + trim_in
+    pub fn layer_start(&self) -> i32 {
+        let in_val = self.get_i32_or_zero("in");
+        let trim_in = self.get_i32_or_zero("trim_in");
+        in_val + trim_in
+    }
+
+    /// Layer visible end: out + trim_out
+    pub fn layer_end(&self) -> i32 {
+        let out_val = self.get_i32_or_zero("out");
+        let trim_out = self.get_i32_or_zero("trim_out");
+        out_val + trim_out
+    }
+
     /// Get mutable reference to attribute value
     pub fn get_mut(&mut self, key: &str) -> Option<&mut AttrValue> {
         self.map.get_mut(key)

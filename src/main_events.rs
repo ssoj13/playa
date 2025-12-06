@@ -530,13 +530,13 @@ pub fn handle_app_event(
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
             if comp.is_multi_selected(dragged_uuid) {
-                let dragged_start = comp.child_start(dragged_uuid);
-                let delta = e.new_start - dragged_start;
+                let dragged_in = comp.child_in(dragged_uuid);
+                let delta = e.new_start - dragged_in;
                 let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                 let _ = comp.move_layers(&selection_indices, delta, Some(e.new_idx));
             } else {
-                let dragged_start = comp.child_start(dragged_uuid);
-                let delta = e.new_start - dragged_start;
+                let dragged_in = comp.child_in(dragged_uuid);
+                let delta = e.new_start - dragged_in;
                 let _ = comp.move_layers(&[e.layer_idx], delta, Some(e.new_idx));
             }
         });
@@ -546,22 +546,15 @@ pub fn handle_app_event(
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
             if comp.is_multi_selected(dragged_uuid) {
-                let dragged_ps = comp.child_play_start(dragged_uuid);
+                let dragged_ps = comp.child_start(dragged_uuid);
                 let delta = e.new_play_start - dragged_ps;
                 let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                 let _ = comp.trim_layers(&selection_indices, delta, true);
             } else {
-                // Local trim offsets: play_start = in + trim_in
-                let delta = {
-                    let current = comp.children.get(e.layer_idx)
-                        .map(|(_u, attrs)| {
-                            let in_val = attrs.get_i32("in").unwrap_or(0);
-                            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-                            in_val + trim_in
-                        })
-                        .unwrap_or(0);
-                    e.new_play_start - current
-                };
+                let current = comp.children.get(e.layer_idx)
+                    .map(|(_u, attrs)| attrs.layer_start())
+                    .unwrap_or(0);
+                let delta = e.new_play_start - current;
                 let _ = comp.trim_layers(&[e.layer_idx], delta, true);
             }
         });
@@ -571,22 +564,15 @@ pub fn handle_app_event(
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
             if comp.is_multi_selected(dragged_uuid) {
-                let dragged_pe = comp.child_play_end(dragged_uuid);
+                let dragged_pe = comp.child_end(dragged_uuid);
                 let delta = e.new_play_end - dragged_pe;
                 let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                 let _ = comp.trim_layers(&selection_indices, delta, false);
             } else {
-                // Local trim offsets: play_end = out + trim_out
-                let delta = {
-                    let current = comp.children.get(e.layer_idx)
-                        .map(|(_u, attrs)| {
-                            let out_val = attrs.get_i32("out").unwrap_or(0);
-                            let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-                            out_val + trim_out
-                        })
-                        .unwrap_or(0);
-                    e.new_play_end - current
-                };
+                let current = comp.children.get(e.layer_idx)
+                    .map(|(_u, attrs)| attrs.layer_end())
+                    .unwrap_or(0);
+                let delta = e.new_play_end - current;
                 let _ = comp.trim_layers(&[e.layer_idx], delta, false);
             }
         });
@@ -616,9 +602,9 @@ pub fn handle_app_event(
                 let (play_start, _) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
                     (comp.child_start(layer_uuid), comp.child_end(layer_uuid))
                 });
-                let child_start = comp.child_start(layer_uuid);
+                let layer_in = comp.child_in(layer_uuid);
                 let delta = current_frame - play_start;
-                let _ = comp.move_child(layer_idx, child_start + delta);
+                let _ = comp.move_child(layer_idx, layer_in + delta);
             }
         });
         return Some(result);
@@ -632,9 +618,9 @@ pub fn handle_app_event(
                 let (_, play_end) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
                     (comp.child_start(layer_uuid), comp.child_end(layer_uuid))
                 });
-                let child_start = comp.child_start(layer_uuid);
+                let layer_in = comp.child_in(layer_uuid);
                 let delta = current_frame - play_end;
-                let _ = comp.move_child(layer_idx, child_start + delta);
+                let _ = comp.move_child(layer_idx, layer_in + delta);
             }
         });
         return Some(result);
@@ -645,7 +631,7 @@ pub fn handle_app_event(
             let selected = comp.layer_selection.clone();
             for layer_uuid in selected {
                 let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                let _ = comp.set_child_play_start(layer_idx, current_frame);
+                let _ = comp.set_child_start(layer_idx, current_frame);
             }
         });
         return Some(result);
@@ -656,7 +642,7 @@ pub fn handle_app_event(
             let selected = comp.layer_selection.clone();
             for layer_uuid in selected {
                 let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                let _ = comp.set_child_play_end(layer_idx, current_frame);
+                let _ = comp.set_child_end(layer_idx, current_frame);
             }
         });
         return Some(result);

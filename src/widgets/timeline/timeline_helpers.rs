@@ -29,24 +29,16 @@ impl LayerTool {
     ) -> GlobalDragState {
         match self {
             LayerTool::AdjustPlayStart => {
-                // Local trim offsets: play_start = in + trim_in
-                let layer_start = attrs.get_i32_or_zero("in");
-                let trim_in = attrs.get_i32_or("trim_in", 0);
-                let initial_play_start = layer_start + trim_in;
                 GlobalDragState::AdjustPlayStart {
                     layer_idx,
-                    initial_play_start,
+                    initial_play_start: attrs.layer_start(),
                     drag_start_x: drag_start_pos.x,
                 }
             }
             LayerTool::AdjustPlayEnd => {
-                // Local trim offsets: play_end = out + trim_out
-                let layer_end = attrs.get_i32_or_zero("out");
-                let trim_out = attrs.get_i32_or("trim_out", 0);
-                let initial_play_end = layer_end + trim_out;
                 GlobalDragState::AdjustPlayEnd {
                     layer_idx,
-                    initial_play_end,
+                    initial_play_end: attrs.layer_end(),
                     drag_start_x: drag_start_pos.x,
                 }
             }

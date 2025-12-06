@@ -528,11 +528,8 @@ pub fn render_canvas(
                               Color32::from_gray(35)
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
-                            // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
-                            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-                            let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-                            let play_start = child_start + trim_in;
-                            let play_end = child_end + trim_out;
+                            let play_start = attrs.layer_start();
+                            let play_end = attrs.layer_end();
                             let is_visible = attrs.get_bool("visible").unwrap_or(true);
 
                             // Calculate layer geometry and cache for interaction pass
@@ -831,10 +828,7 @@ pub fn render_canvas(
                                                     physical_to_display(*layer_idx).unwrap_or(*layer_idx)
                                                 });
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            // Local trim: play_start = in + trim_in
-                                            let in_val = attrs.get_i32("in").unwrap_or(0);
-                                            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-                                            let play_start = in_val + trim_in;
+                                            let play_start = attrs.layer_start();
                                             let visual_start = play_start as f32;
                                             let visual_end = new_play_end as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
