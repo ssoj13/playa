@@ -385,15 +385,21 @@ impl Project {
     }
 
     /// Remove media (clip or comp) by UUID.
-    /// Automatically clears cached frames for this comp from global cache.
+    /// Automatically clears cached frames and cancels pending worker tasks.
     pub fn remove_media(&mut self, uuid: Uuid) {
-        // Clear cached frames for this comp first
+        // 1. Increment epoch to cancel pending worker tasks for this media
+        // Why: Workers may still have tasks for this UUID; let them skip silently
+        if let Some(ref manager) = self.cache_manager {
+            manager.increment_epoch();
+        }
+
+        // 2. Clear cached frames for this comp
         if let Some(ref cache) = self.global_cache {
             cache.clear_comp(uuid);
             log::debug!("Cleared cache for removed comp: {}", uuid);
         }
 
-        // Remove from media pool and order
+        // 3. Remove from media pool and order
         self.media.write().unwrap().remove(&uuid);
         self.retain_comps_order(|u| *u != uuid);
     }

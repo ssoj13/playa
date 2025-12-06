@@ -984,6 +984,11 @@ impl Comp {
 
             // Enqueue background composition
             workers.execute_with_epoch(epoch, move || {
+                // Skip if comp was deleted (safety check - epoch should catch this)
+                if !project_clone.media.read().unwrap().contains_key(&uuid) {
+                    return;
+                }
+
                 // Skip if already Loaded (check status, not presence)
                 if let Some(status) = global_cache.get_status(uuid, frame_idx) {
                     if status == FrameStatus::Loaded {

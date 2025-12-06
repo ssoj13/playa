@@ -303,7 +303,12 @@ impl PlayaApp {
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
                 debug!("Comp {} layers changed (range: {:?})", e.comp_uuid, e.affected_range);
-                // Clear affected frames from cache (they need recomposition)
+                // 1. Increment epoch to cancel all pending worker tasks
+                // Why: Old tasks may write stale data to cache, causing eviction loops
+                if let Some(manager) = self.project.cache_manager() {
+                    manager.increment_epoch();
+                }
+                // 2. Clear affected frames from cache (they need recomposition)
                 // Preload is triggered by centralized dirty check in update()
                 if let Some(ref cache) = self.project.global_cache {
                     match e.affected_range {
