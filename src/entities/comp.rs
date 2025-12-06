@@ -762,25 +762,22 @@ impl Comp {
             return;
         }
 
-        // Smart check: Skip preload if entire work area is already cached
+        // Smart check: Skip preload if entire work area is already Loaded
         if let Some(ref global_cache) = self.global_cache {
-            let comp_start = self._in();
-            let seq_start = self.file_start().unwrap_or(comp_start);
-
-            let mut all_cached = true;
+            let mut all_loaded = true;
             for frame_idx in play_start..=play_end {
-                let local_idx = frame_idx - comp_start;
-                let seq_frame = seq_start.saturating_add(local_idx);
-
-                if !global_cache.contains(self.get_uuid(), seq_frame) {
-                    all_cached = false;
-                    break;
+                match global_cache.get_status(self.get_uuid(), frame_idx) {
+                    Some(FrameStatus::Loaded) => continue,
+                    _ => {
+                        all_loaded = false;
+                        break;
+                    }
                 }
             }
 
-            if all_cached {
+            if all_loaded {
                 debug!(
-                    "Preload skipped: work area [{}..{}] fully cached ({} frames)",
+                    "Preload skipped: work area [{}..{}] fully loaded ({} frames)",
                     play_start, play_end, play_end - play_start + 1
                 );
                 return;
@@ -893,13 +890,18 @@ impl Comp {
         epoch: u64,
         frame_idx: i32,
     ) {
-        // Skip if already in global cache (unified key: uuid + frame_idx)
-        if let Some(ref global_cache) = self.global_cache {
-            if global_cache.contains(self.get_uuid(), frame_idx) {
+        let global_cache = match &self.global_cache {
+            Some(cache) => cache.clone(),
+            None => return,
+        };
+
+        let uuid = self.get_uuid();
+
+        // Skip if already Loaded (check status, not just presence)
+        if let Some(status) = global_cache.get_status(uuid, frame_idx) {
+            if status == FrameStatus::Loaded {
                 return;
             }
-        } else {
-            return; // No global_cache available
         }
 
         if self.is_file_mode() {
@@ -915,23 +917,18 @@ impl Comp {
                 None => return,
             };
 
-            let uuid = self.get_uuid();
-            let global_cache = self.global_cache.as_ref().unwrap().clone();
             let (w, h) = self.dim();
 
-            // Check if frame already loaded - skip if so
-            if let Some(status) = global_cache.get_status(uuid, frame_idx) {
-                if status == FrameStatus::Loaded {
-                    return; // Already done
-                }
-                // Header/Loading/Error: let worker handle (load() has internal claim logic)
-            }
-
-            // Create frame with Header status and insert into cache BEFORE queueing
-            // This makes the frame visible in cache immediately (shows Loading status in UI)
-            let frame = Frame::new_unloaded(frame_path);
-            frame.crop(w, h, CropAlign::LeftTop);
-            global_cache.insert(uuid, frame_idx, frame.clone());
+            // Get or create frame from cache
+            let frame = if let Some(existing) = global_cache.get(uuid, frame_idx) {
+                existing
+            } else {
+                // Create new Header frame and insert
+                let new_frame = Frame::new_unloaded(frame_path.clone());
+                new_frame.crop(w, h, CropAlign::LeftTop);
+                global_cache.insert(uuid, frame_idx, new_frame.clone());
+                new_frame
+            };
 
             // Enqueue background load - frame is shared via Arc
             workers.execute_with_epoch(epoch, move || {
@@ -951,21 +948,20 @@ impl Comp {
             });
         } else {
             // Layer mode: compose from children in background
-            // Clone data for move into closure
-            let uuid = self.get_uuid();
-            let global_cache = self.global_cache.as_ref().unwrap().clone();
-            let project_clone = project.clone(); // Cheap: Arc fields just increment refcount
+            let project_clone = project.clone();
             let comp_clone = self.clone();
 
             // Enqueue background composition
             workers.execute_with_epoch(epoch, move || {
-                if global_cache.contains(uuid, frame_idx) {
-                    return;
+                // Skip if already Loaded (check status, not presence)
+                if let Some(status) = global_cache.get_status(uuid, frame_idx) {
+                    if status == FrameStatus::Loaded {
+                        return;
+                    }
                 }
 
                 // Compose frame using CPU compositor (use_gpu=false for thread safety)
                 if let Some(frame) = comp_clone.compose(frame_idx, &project_clone, false) {
-                    // GlobalFrameCache::insert() rejects non-Loaded frames automatically
                     global_cache.insert(uuid, frame_idx, frame);
                 } else {
                     log::debug!(
