@@ -185,3 +185,15 @@ pub struct PasteLayersEvent {
     pub comp_uuid: Uuid,
     pub target_frame: i32,
 }
+
+/// Select all layers in composition (Ctrl-A)
+#[derive(Clone, Debug)]
+pub struct SelectAllLayersEvent {
+    pub comp_uuid: Uuid,
+}
+
+/// Clear layer selection (F2 in Timeline)
+#[derive(Clone, Debug)]
+pub struct ClearLayerSelectionEvent {
+    pub comp_uuid: Uuid,
+}

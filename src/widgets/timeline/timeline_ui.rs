@@ -213,9 +213,16 @@ pub fn render_outline(
                         row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
                         row_ui.set_min_height(config.layer_height);
 
-                        handle.ui(&mut row_ui, |ui| {
-                            ui.label("≡");
-                        });
+                        // Fixed-width drag handle (20px)
+                        row_ui.allocate_ui_with_layout(
+                            egui::Vec2::new(20.0, config.layer_height),
+                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                            |ui| {
+                                handle.ui(ui, |ui| {
+                                    ui.label("≡");
+                                });
+                            },
+                        );
 
                         let mut visible = attrs.get_bool("visible").unwrap_or(true);
                         let mut opacity = attrs.get_float("opacity").unwrap_or(1.0);
@@ -227,17 +234,24 @@ pub fn render_outline(
                         let mut speed = attrs.get_float("speed").unwrap_or(1.0);
                         let mut dirty = false;
 
-                        if row_ui.checkbox(&mut visible, "").changed() {
-                            dirty = true;
-                        }
+                        // Fixed-width checkbox (20px)
+                        row_ui.allocate_ui_with_layout(
+                            egui::Vec2::new(20.0, config.layer_height),
+                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                            |ui| {
+                                if ui.checkbox(&mut visible, "").changed() {
+                                    dirty = true;
+                                }
+                            },
+                        );
 
                         let child_name = attrs
                             .get_str("name")
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| child_uuid.to_string());
-                        // Fixed-width name column for alignment
+                        // Fixed-width name column (150px)
                         row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(120.0, config.layer_height),
+                            egui::Vec2::new(150.0, config.layer_height),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
                                 ui.add(egui::Label::new(child_name).truncate());
@@ -359,17 +373,16 @@ pub fn render_outline(
             Vec2::new(ui.available_width(), remaining_height),
             Sense::click(),
         );
-        if empty_response.clicked() && ui.input(|i| i.pointer.primary_clicked()) {
-            // Clear selection when clicking empty area
-            if !comp.layer_selection.is_empty() {
-                dispatch(Box::new(CompSelectionChangedEvent {
-                    comp_uuid: comp_id,
-                    selection: vec![],
-                    anchor: None,
-                }));
-            }
+        // Only left-click clears selection (not right-click for context menu)
+        if empty_response.clicked_by(egui::PointerButton::Primary) {
+            log::debug!("Empty area clicked, clearing {} selected layers", comp.layer_selection.len());
+            dispatch(Box::new(CompSelectionChangedEvent {
+                comp_uuid: comp_id,
+                selection: vec![],
+                anchor: None,
+            }));
         }
-        // Visual feedback (optional): draw subtle background
+        // Visual feedback: subtle highlight on hover
         if empty_response.hovered() {
             ui.painter().rect_filled(
                 empty_rect,

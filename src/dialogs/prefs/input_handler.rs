@@ -141,6 +141,9 @@ impl HotkeyHandler {
         self.bind(Timeline, "Ctrl+D", DuplicateLayersEvent { comp_uuid: Uuid::nil() });
         self.bind(Timeline, "Ctrl+C", CopyLayersEvent { comp_uuid: Uuid::nil() });
         self.bind(Timeline, "Ctrl+V", PasteLayersEvent { comp_uuid: Uuid::nil(), target_frame: 0 });
+        // Selection operations
+        self.bind(Timeline, "Ctrl+A", SelectAllLayersEvent { comp_uuid: Uuid::nil() });
+        self.bind(Timeline, "F2", ClearLayerSelectionEvent { comp_uuid: Uuid::nil() }); // Overrides global F2 in timeline
 
         // Project-specific
         self.bind(Project, "Delete", RemoveSelectedMediaEvent);
@@ -154,27 +157,58 @@ impl HotkeyHandler {
     /// Handle keyboard input
     pub fn handle_input(&self, input: &egui::InputState) -> Option<BoxedEvent> {
         for event in &input.events {
-            if let egui::Event::Key {
-                key,
-                pressed: true,
-                modifiers,
-                ..
-            } = event
-            {
-                let key_str = format!("{:?}", key);
-                if let Some(ev) = self.handle_key_with_modifiers(
-                    &key_str,
-                    modifiers.ctrl,
-                    modifiers.shift,
-                    modifiers.alt,
-                ) {
-                    return Some(ev);
-                }
-                if !modifiers.any() {
-                    if let Some(ev) = self.handle_key(&key_str) {
+            // Handle egui's semantic Copy/Cut/Paste events (Ctrl+C/X/V are converted to these)
+            match event {
+                egui::Event::Copy => {
+                    log::debug!("Event::Copy (window={:?})", self.focused_window);
+                    if let Some(ev) = self.handle_key("Ctrl+C") {
                         return Some(ev);
                     }
                 }
+                egui::Event::Cut => {
+                    log::debug!("Event::Cut (window={:?})", self.focused_window);
+                    if let Some(ev) = self.handle_key("Ctrl+X") {
+                        return Some(ev);
+                    }
+                }
+                egui::Event::Paste(_) => {
+                    log::debug!("Event::Paste (window={:?})", self.focused_window);
+                    if let Some(ev) = self.handle_key("Ctrl+V") {
+                        return Some(ev);
+                    }
+                }
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => {
+                    let key_str = format!("{:?}", key);
+
+                    // Build combo string for debug
+                    let mut combo = String::new();
+                    if modifiers.ctrl { combo.push_str("Ctrl+"); }
+                    if modifiers.shift { combo.push_str("Shift+"); }
+                    if modifiers.alt { combo.push_str("Alt+"); }
+                    combo.push_str(&key_str);
+
+                    if let Some(ev) = self.handle_key_with_modifiers(
+                        &key_str,
+                        modifiers.ctrl,
+                        modifiers.shift,
+                        modifiers.alt,
+                    ) {
+                        log::debug!("Hotkey matched: {} (window={:?})", combo, self.focused_window);
+                        return Some(ev);
+                    }
+                    if !modifiers.any() {
+                        if let Some(ev) = self.handle_key(&key_str) {
+                            log::debug!("Hotkey matched (no mod): {} (window={:?})", key_str, self.focused_window);
+                            return Some(ev);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         None

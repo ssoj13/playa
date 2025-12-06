@@ -538,7 +538,7 @@ impl PlayaApp {
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
-            use playa::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent, DuplicateLayersEvent, CopyLayersEvent, PasteLayersEvent};
+            use playa::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent, DuplicateLayersEvent, CopyLayersEvent, PasteLayersEvent, SelectAllLayersEvent, ClearLayerSelectionEvent};
 
             // Fill comp_uuid for timeline-specific events
             if let Some(active_comp_uuid) = self.player.active_comp() {
@@ -561,10 +561,12 @@ impl PlayaApp {
                 }
                 // Layer clipboard operations
                 if downcast_event::<DuplicateLayersEvent>(&event).is_some() {
+                    log::debug!("Hotkey: Ctrl-D -> DuplicateLayersEvent");
                     self.event_bus.emit(DuplicateLayersEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
                 if downcast_event::<CopyLayersEvent>(&event).is_some() {
+                    log::debug!("Hotkey: Ctrl-C -> CopyLayersEvent");
                     self.event_bus.emit(CopyLayersEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
@@ -573,7 +575,19 @@ impl PlayaApp {
                     let target_frame = self.project.get_comp(active_comp_uuid)
                         .map(|c| c.frame())
                         .unwrap_or(0);
+                    log::debug!("Hotkey: Ctrl-V -> PasteLayersEvent at frame {}", target_frame);
                     self.event_bus.emit(PasteLayersEvent { comp_uuid: active_comp_uuid, target_frame });
+                    return;
+                }
+                // Selection operations
+                if downcast_event::<SelectAllLayersEvent>(&event).is_some() {
+                    log::debug!("Hotkey: Ctrl-A -> SelectAllLayersEvent");
+                    self.event_bus.emit(SelectAllLayersEvent { comp_uuid: active_comp_uuid });
+                    return;
+                }
+                if downcast_event::<ClearLayerSelectionEvent>(&event).is_some() {
+                    log::debug!("Hotkey: F2 -> ClearLayerSelectionEvent");
+                    self.event_bus.emit(ClearLayerSelectionEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
             }
