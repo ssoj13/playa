@@ -31,8 +31,11 @@ impl Default for AttributesState {
 ///
 /// Displays all attributes with appropriate UI widgets for editing.
 /// Supports: Str, Int, UInt, Float, Vec3, Vec4, Mat3, Mat4
-pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) {
-    render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut Vec::new(), false);
+/// Returns true if any attribute was changed.
+pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) -> bool {
+    let mut changed = Vec::new();
+    render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut changed, true);
+    !changed.is_empty()
 }
 
 /// Render attribute editor with support for mixed values (multiple selection).

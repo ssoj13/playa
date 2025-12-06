@@ -265,6 +265,27 @@ impl Comp {
         self.children.iter_mut().find(|(u, _)| u == uuid).map(|(_, a)| a)
     }
 
+    /// Set a single attribute on a child layer and emit change event.
+    /// This is the unified way to modify layer attributes.
+    pub fn set_child_attr(&mut self, uuid: &Uuid, key: &str, value: AttrValue) {
+        if let Some(attrs) = self.children_attrs_get_mut(uuid) {
+            attrs.set(key, value);
+        }
+        self.attrs.mark_dirty();
+        self.emit_attrs_changed();
+    }
+
+    /// Set multiple attributes on a child layer and emit change event once.
+    pub fn set_child_attrs(&mut self, uuid: &Uuid, values: &[(&str, AttrValue)]) {
+        if let Some(attrs) = self.children_attrs_get_mut(uuid) {
+            for (key, value) in values {
+                attrs.set(*key, value.clone());
+            }
+        }
+        self.attrs.mark_dirty();
+        self.emit_attrs_changed();
+    }
+
     /// Insert or update child attrs
     pub fn children_attrs_insert(&mut self, uuid: Uuid, attrs: Attrs) {
         if let Some(existing) = self.children.iter_mut().find(|(u, _)| *u == uuid) {

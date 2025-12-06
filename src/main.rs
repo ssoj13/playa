@@ -319,6 +319,13 @@ impl PlayaApp {
             }
             if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
                 debug!("Comp {} attrs changed - triggering cascade invalidation", e.0);
+                // Clear cache for this comp (attributes like opacity/blend_mode affect rendered frames)
+                if let Some(manager) = self.project.cache_manager() {
+                    manager.increment_epoch();
+                }
+                if let Some(ref cache) = self.project.global_cache {
+                    cache.clear_comp(e.0);
+                }
                 self.project.invalidate_cascade(e.0);
                 continue;
             }
@@ -878,41 +885,64 @@ impl PlayaApp {
                         &mut changed,
                     );
 
+                    // Apply changes to all selected layers via unified method
                     if !changed.is_empty() {
-                        for (key, val) in changed {
-                            for instance_uuid in selection.iter() {
-                                if let Some(attrs) = comp.children_attrs_get_mut(instance_uuid) {
-                                    attrs.set(key.clone(), val.clone());
-                                }
-                            }
+                        for instance_uuid in selection.iter() {
+                            let values: Vec<(&str, playa::entities::AttrValue)> = changed
+                                .iter()
+                                .map(|(k, v)| (k.as_str(), v.clone()))
+                                .collect();
+                            comp.set_child_attrs(instance_uuid, &values);
                         }
                     }
                 } else if let Some(layer_uuid) = selection.first() {
-                    // Single layer selected
+                    // Single layer selected - use render_with_mixed to track changes
                     let layer_idx = comp.uuid_to_idx(*layer_uuid).unwrap_or(0);
-                    if let Some(attrs) = comp.children_attrs_get_mut(layer_uuid) {
-                        let display_name = attrs
-                            .get_str("name")
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| format!("Layer {}", layer_idx));
-                        playa::widgets::ae::render(
-                            ui,
-                            attrs,
-                            &mut self.attributes_state,
-                            &display_name,
-                        );
-                    } else {
-                        ui.label("(layer has no attributes)");
+                    let layer_uuid = *layer_uuid;
+
+                    // Get display name and clone attrs for editing
+                    let (display_name, mut temp_attrs) = {
+                        if let Some(attrs) = comp.children_attrs_get(&layer_uuid) {
+                            let name = attrs
+                                .get_str("name")
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| format!("Layer {}", layer_idx));
+                            (name, attrs.clone())
+                        } else {
+                            ui.label("(layer has no attributes)");
+                            return;
+                        }
+                    };
+
+                    let mut changed: Vec<(String, playa::entities::AttrValue)> = Vec::new();
+                    playa::widgets::ae::render_with_mixed(
+                        ui,
+                        &mut temp_attrs,
+                        &mut self.attributes_state,
+                        &display_name,
+                        &std::collections::HashSet::new(),
+                        &mut changed,
+                    );
+
+                    // Apply changes via unified method
+                    if !changed.is_empty() {
+                        let values: Vec<(&str, playa::entities::AttrValue)> = changed
+                            .iter()
+                            .map(|(k, v)| (k.as_str(), v.clone()))
+                            .collect();
+                        comp.set_child_attrs(&layer_uuid, &values);
                     }
                 } else {
                     // No layer selected - show comp attributes
                     let comp_name = comp.name().to_string();
-                    playa::widgets::ae::render(
+                    if playa::widgets::ae::render(
                         ui,
                         &mut comp.attrs,
                         &mut self.attributes_state,
                         &comp_name,
-                    );
+                    ) {
+                        comp.emit_attrs_changed();
+                    }
                 }
             });
         }

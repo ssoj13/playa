@@ -609,15 +609,13 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
-            if let Some(attrs) = comp.children_attrs_get_mut(&e.layer_uuid) {
-                attrs.set("visible", crate::entities::AttrValue::Bool(e.visible));
-                attrs.set("opacity", crate::entities::AttrValue::Float(e.opacity));
-                attrs.set("blend_mode", crate::entities::AttrValue::Str(e.blend_mode.clone()));
-                attrs.set("speed", crate::entities::AttrValue::Float(e.speed));
-            }
-            // Mark comp as dirty and emit AttrsChangedEvent to trigger cache invalidation
-            comp.attrs.mark_dirty();
-            comp.emit_attrs_changed();
+            use crate::entities::AttrValue;
+            comp.set_child_attrs(&e.layer_uuid, &[
+                ("visible", AttrValue::Bool(e.visible)),
+                ("opacity", AttrValue::Float(e.opacity)),
+                ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
+                ("speed", AttrValue::Float(e.speed)),
+            ]);
         });
         return Some(result);
     }
