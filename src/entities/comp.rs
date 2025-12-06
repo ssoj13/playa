@@ -1916,7 +1916,8 @@ impl Comp {
             return;
         }
         let old_bounds = (self._in(), self._out());
-        let old_work = self.play_range(true);
+        // Compare raw attrs (not clamped) to detect if work area matches full bounds
+        let old_work = (self.trim_in(), self.trim_out());
         if self.children.is_empty() {
             // Default span when no children: 0..100 for a visible timeline
             self.attrs.set("in", AttrValue::Int(0));
