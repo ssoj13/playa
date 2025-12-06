@@ -31,7 +31,8 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// ```
 pub struct Workers {
     injector: Arc<Injector<Job>>,          // Global queue for external tasks
-    stealers: Vec<Stealer<Job>>,           // For stealing from worker queues
+    #[allow(dead_code)] // TODO: implement work-stealing between threads
+    stealers: Vec<Stealer<Job>>,
     _handles: Vec<thread::JoinHandle<()>>, // Keep handles to prevent premature drop
     current_epoch: Arc<AtomicU64>,         // Epoch counter (shared with CacheManager)
     shutdown: Arc<AtomicBool>,             // Shutdown signal

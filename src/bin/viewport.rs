@@ -36,6 +36,7 @@ struct ViewportApp {
     frame: Option<Frame>,
     displayed_frame: Option<i32>,
     show_help: bool,
+    #[allow(dead_code)] // TODO: use settings in viewport standalone
     settings: AppSettings,
 }
 

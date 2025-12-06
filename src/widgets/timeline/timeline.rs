@@ -107,8 +107,6 @@ pub enum TimelineViewMode {
 
 /// Precomputed layer geometry - shared between draw and interaction passes.
 pub(super) struct LayerGeom {
-    pub visible_start: i32,
-    pub visible_end: i32,
     pub full_bar_rect: eframe::egui::Rect,
     pub visible_bar_rect: Option<eframe::egui::Rect>,
 }
@@ -127,9 +125,6 @@ impl LayerGeom {
     ) -> Self {
         use eframe::egui::{Pos2, Rect};
 
-        let visible_start = play_start;
-        let visible_end = play_end;
-
         let frame_to_screen_x = |frame: f32, timeline_min_x: f32| -> f32 {
             let frame_offset = frame - state.pan_offset;
             timeline_min_x + (frame_offset * config.pixels_per_frame * state.zoom)
@@ -142,10 +137,10 @@ impl LayerGeom {
             Pos2::new(full_bar_x_end, child_y + config.layer_height - 4.0),
         );
 
-        let visible_bar_rect = if visible_start <= visible_end {
-            let visible_bar_x_start = frame_to_screen_x(visible_start as f32, timeline_rect.min.x);
+        let visible_bar_rect = if play_start <= play_end {
+            let visible_bar_x_start = frame_to_screen_x(play_start as f32, timeline_rect.min.x);
             let visible_bar_x_end =
-                frame_to_screen_x((visible_end + 1) as f32, timeline_rect.min.x);
+                frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x);
             Some(Rect::from_min_max(
                 Pos2::new(visible_bar_x_start, child_y + 4.0),
                 Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
@@ -155,8 +150,6 @@ impl LayerGeom {
         };
 
         Self {
-            visible_start,
-            visible_end,
             full_bar_rect,
             visible_bar_rect,
         }

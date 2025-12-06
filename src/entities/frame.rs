@@ -247,7 +247,8 @@ impl Frame {
         Self::from_f16_buffer_with_status(buffer, width, height, FrameStatus::Loaded)
     }
 
-    /// Create frame from U8 buffer (used by compositor)
+    /// Create frame from U8 buffer (used by tests)
+    #[allow(dead_code)]
     pub(crate) fn from_u8_buffer(buffer: Vec<u8>, width: usize, height: usize) -> Self {
         Self::from_u8_buffer_with_status(buffer, width, height, FrameStatus::Loaded)
     }

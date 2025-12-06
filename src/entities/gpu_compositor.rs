@@ -208,7 +208,8 @@ pub struct GpuCompositor {
     blend_program: Option<glow::Program>,
     vao: Option<glow::VertexArray>,
     vbo: Option<glow::Buffer>,
-    // Texture cache: hash(frame_data) -> texture
+    // TODO: implement GPU texture caching for frame reuse
+    #[allow(dead_code)]
     texture_cache: Arc<std::sync::Mutex<HashMap<u64, glow::Texture>>>,
 }
 

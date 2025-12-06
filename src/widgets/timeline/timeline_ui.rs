@@ -11,7 +11,7 @@
 
 use super::timeline_helpers::{
     compute_all_layer_rows, detect_layer_tool, draw_drop_preview, draw_frame_ruler,
-    draw_load_indicator, frame_to_screen_x, hash_color, row_to_y, screen_x_to_frame,
+    frame_to_screen_x, hash_color, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
@@ -350,10 +350,6 @@ pub fn render_canvas(
         if let Some(frame) = frame_opt {
             dispatch(Box::new(SetFrameEvent(frame)));
         }
-
-        // Load indicator - shows cache status for each frame
-        // Pass ruler_rect to ensure alignment with ruler ticks
-        draw_load_indicator(ui, comp, config, state, rect);
 
         // Middle-drag pan on ruler - initialize only, processing is in main loop
         if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO)) {

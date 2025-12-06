@@ -629,31 +629,30 @@ impl Comp {
             return None;
         }
 
-        log::debug!("cache_frame_statuses: mode={}, checking cache for {} frames",
-            if self.is_file_mode() { "File" } else { "Layer" }, duration);
-
-        // Query GlobalFrameCache for each frame status
+        // Query GlobalFrameCache for real frame status (Header/Loading/Loaded/Error)
         if let Some(ref global_cache) = self.global_cache {
+            // Lazy init: prefill cache with Header frames on first access
+            if !global_cache.has_comp(self.get_uuid()) {
+                self.prefill_cache();
+            }
+
             let comp_start = self._in();
             let mut statuses = Vec::with_capacity(duration as usize);
 
             for frame_offset in 0..duration {
                 let frame_idx = comp_start + frame_offset;
 
-                // Unified cache key: frame_idx for both File and Layer modes
-                let status = if global_cache.contains(self.get_uuid(), frame_idx) {
-                    FrameStatus::Loaded  // Green bar in UI
-                } else {
-                    FrameStatus::Header  // Gray bar in UI
-                };
+                // Get actual status from cache, or Placeholder if not cached yet
+                let status = global_cache
+                    .get_status(self.get_uuid(), frame_idx)
+                    .unwrap_or(FrameStatus::Placeholder);
                 statuses.push(status);
             }
 
             Some(statuses)
         } else {
             // Fallback if global_cache not available yet
-            log::warn!("cache_frame_statuses: global_cache not available for comp {}", self.get_uuid());
-            Some(vec![FrameStatus::Header; duration as usize])
+            Some(vec![FrameStatus::Placeholder; duration as usize])
         }
     }
 
@@ -665,6 +664,60 @@ impl Comp {
     /// Set global frame cache (called once after creation)
     pub fn set_global_cache(&mut self, cache: Arc<crate::core::global_cache::GlobalFrameCache>) {
         self.global_cache = Some(cache);
+    }
+
+    /// Pre-fill cache with Header frames for entire work area (lazy init)
+    ///
+    /// Creates unloaded frames for all positions in the comp's work area.
+    /// Called automatically on first access to cache_frame_statuses().
+    /// Does NOT trigger loading - that's done by signal_preload().
+    pub fn prefill_cache(&self) {
+        let global_cache = match &self.global_cache {
+            Some(cache) => cache,
+            None => return,
+        };
+
+        // Skip if already prefilled
+        if global_cache.has_comp(self.get_uuid()) {
+            return;
+        }
+
+        let uuid = self.get_uuid();
+        let comp_start = self._in();
+        let duration = self.frame_count();
+        if duration <= 0 {
+            return;
+        }
+
+        // File mode: create Header frames with paths
+        if self.is_file_mode() {
+            let (w, h) = self.dim();
+            let seq_start = self.file_start().unwrap_or(comp_start);
+
+            for frame_offset in 0..duration {
+                let frame_idx = comp_start + frame_offset;
+                let seq_frame = seq_start.saturating_add(frame_offset);
+
+                if let Some(path) = self.resolve_frame_path(seq_frame) {
+                    let frame = Frame::new_unloaded(path);
+                    frame.crop(w, h, CropAlign::LeftTop);
+                    global_cache.insert(uuid, frame_idx, frame);
+                }
+            }
+
+            debug!(
+                "Prefilled cache for file comp {}: {} frames as Header",
+                uuid, duration
+            );
+        } else {
+            // Layer mode: create Placeholder frames (status Placeholder)
+            // Layer frames are composed, not loaded - no path to set
+            // We skip prefill for layer comps - compose happens on demand
+            debug!(
+                "Layer comp {} - skipping prefill (compose on demand)",
+                uuid
+            );
+        }
     }
 
     /// Signal background preload for frames around current position
@@ -862,27 +915,39 @@ impl Comp {
                 None => return,
             };
 
-            // Clone data for move into closure
             let uuid = self.get_uuid();
             let global_cache = self.global_cache.as_ref().unwrap().clone();
             let (w, h) = self.dim();
 
-            // Enqueue background load
+            // Check if frame already loaded - skip if so
+            if let Some(status) = global_cache.get_status(uuid, frame_idx) {
+                if status == FrameStatus::Loaded {
+                    return; // Already done
+                }
+                // Header/Loading/Error: let worker handle (load() has internal claim logic)
+            }
+
+            // Create frame with Header status and insert into cache BEFORE queueing
+            // This makes the frame visible in cache immediately (shows Loading status in UI)
+            let frame = Frame::new_unloaded(frame_path);
+            frame.crop(w, h, CropAlign::LeftTop);
+            global_cache.insert(uuid, frame_idx, frame.clone());
+
+            // Enqueue background load - frame is shared via Arc
             workers.execute_with_epoch(epoch, move || {
-                if global_cache.contains(uuid, frame_idx) {
-                    return;
+                // frame.load() uses try_claim_for_loading() internally
+                // Atomically transitions Header → Loading, prevents duplicate loads
+                match frame.load() {
+                    Ok(_) => {
+                        // Re-insert to update memory tracking (buffer grew from 1x1 to full size)
+                        global_cache.insert(uuid, frame_idx, frame);
+                        log::debug!("Background preload completed: comp={}, frame={}", uuid, frame_idx);
+                    }
+                    Err(e) => {
+                        log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
+                        // Status is already Error from load(), no need to re-insert
+                    }
                 }
-
-                let frame = Frame::new_unloaded(frame_path);
-                frame.crop(w, h, CropAlign::LeftTop);
-
-                if let Err(e) = frame.load() {
-                    log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
-                    return;
-                }
-
-                global_cache.insert(uuid, frame_idx, frame);
-                log::debug!("Background preload completed: comp={}, frame={}", uuid, frame_idx);
             });
         } else {
             // Layer mode: compose from children in background

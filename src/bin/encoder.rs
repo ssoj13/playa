@@ -105,18 +105,9 @@ impl eframe::App for EncoderApp {
             }
 
             if let Some(ref mut dialog) = self.encode_dialog {
-                // Get active comp for dialog
-                let media = self.shell.project.media.read().unwrap();
-                let active_comp = self.shell.player.active_comp()
-                    .and_then(|uuid| media.get(&uuid));
-
                 // Render dialog inline (not as window)
                 ui.heading("Encode Settings");
                 ui.separator();
-
-                // The dialog.render() expects to be shown as a window, so we call it directly
-                // For standalone testing, we show the dialog content in the main panel
-                drop(media); // Release lock before render
 
                 let _should_stay_open = dialog.render(ctx, &self.shell.project, None);
             } else {

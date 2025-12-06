@@ -8,7 +8,7 @@ use std::sync::Arc;
 use eframe::egui;
 use playa::core::cache_man::CacheManager;
 use playa::entities::Project;
-use playa::core::event_bus::{downcast_event, EventBus};
+use playa::core::event_bus::EventBus;
 use playa::core::global_cache::CacheStrategy;
 use playa::main_events::{handle_app_event, EventResult};
 use playa::core::player::Player;

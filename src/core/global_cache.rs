@@ -99,6 +99,7 @@ pub struct GlobalFrameCache {
     /// Cache statistics
     stats: Arc<CacheStats>,
     /// Maximum entries (for eviction trigger)
+    #[allow(dead_code)] // TODO: implement capacity-based eviction
     capacity: usize,
 }
 
@@ -164,27 +165,24 @@ impl GlobalFrameCache {
             .unwrap_or(false)
     }
 
+    /// Get frame status without cloning the frame (lightweight query for UI)
+    pub fn get_status(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<crate::entities::FrameStatus> {
+        let cache = self.cache.lock().unwrap();
+        cache
+            .get(&comp_uuid)
+            .and_then(|frames| frames.get(&frame_idx))
+            .map(|frame| frame.status())
+    }
+
     /// Insert frame into cache
     ///
     /// Automatically evicts oldest frames if memory limit exceeded.
     /// Tracks memory usage via CacheManager.
     ///
-    /// IMPORTANT: Only caches frames with FrameStatus::Loaded.
-    /// Placeholder/Header/Loading/Error frames are rejected to prevent
-    /// caching incomplete composition results.
+    /// Accepts frames in ANY status (Header, Loading, Loaded, Error).
+    /// Header/Loading frames serve as placeholders that get loaded in-place.
+    /// Re-insert after loading to update memory tracking.
     pub fn insert(&self, comp_uuid: Uuid, frame_idx: i32, frame: Frame) {
-        use crate::entities::FrameStatus;
-
-        // Defense in depth: reject frames that aren't fully loaded
-        let status = frame.status();
-        if status != FrameStatus::Loaded {
-            log::debug!(
-                "GlobalFrameCache::insert REJECTED frame {}:{} (status={:?}, not Loaded)",
-                comp_uuid, frame_idx, status
-            );
-            return;
-        }
-
         let frame_size = frame.mem();
 
         // Apply strategy: LastOnly clears previous frames for this comp
@@ -347,6 +345,11 @@ impl GlobalFrameCache {
     /// Get number of cached comps
     pub fn comp_count(&self) -> usize {
         self.cache.lock().unwrap().len()
+    }
+
+    /// Check if cache has any frames for a comp
+    pub fn has_comp(&self, comp_uuid: Uuid) -> bool {
+        self.cache.lock().unwrap().contains_key(&comp_uuid)
     }
 
     /// Check if cache is empty

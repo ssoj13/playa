@@ -14,7 +14,7 @@ fn create_image_dialog(title: &str) -> rfd::FileDialog {
 }
 
 /// Render project window (dock tab): Unified list of Clips & Compositions
-pub fn render(ui: &mut egui::Ui, player: &mut Player, project: &Project) -> ProjectActions {
+pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> ProjectActions {
     let mut actions = ProjectActions::new();
 
     // Full-rect hover tracking
