@@ -578,6 +578,57 @@ pub fn handle_app_event(
         });
         return Some(result);
     }
+    // Slide layer: move "in" while compensating trim_in
+    if let Some(e) = downcast_event::<SlideLayerEvent>(&event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            use crate::entities::AttrValue;
+            if let Some((_uuid, attrs)) = comp.children.get_mut(e.layer_idx) {
+                attrs.set("in", AttrValue::Int(e.new_in));
+                attrs.set("trim_in", AttrValue::Int(e.new_trim_in));
+                log::debug!(
+                    "[SLIDE] layer {} -> in={}, trim_in={}",
+                    e.layer_idx, e.new_in, e.new_trim_in
+                );
+            }
+        });
+        return Some(result);
+    }
+    // Reset trims to zero for selected layers (Ctrl+R)
+    if let Some(e) = downcast_event::<ResetTrimsEvent>(&event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            use crate::entities::AttrValue;
+            for layer_uuid in comp.layer_selection.clone() {
+                if let Some((_uuid, attrs)) = comp.children.iter_mut().find(|(u, _)| *u == layer_uuid) {
+                    let old_trim_in = attrs.get_i32_or_zero("trim_in");
+                    let old_trim_out = attrs.get_i32_or_zero("trim_out");
+                    attrs.set("trim_in", AttrValue::Int(0));
+                    attrs.set("trim_out", AttrValue::Int(0));
+                    log::debug!(
+                        "[RESET TRIMS] layer {} -> trim_in: {} -> 0, trim_out: {} -> 0",
+                        layer_uuid, old_trim_in, old_trim_out
+                    );
+                }
+            }
+        });
+        return Some(result);
+    }
+    // Select all layers (Ctrl+A)
+    if let Some(e) = downcast_event::<SelectAllLayersEvent>(&event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            let all_uuids: Vec<Uuid> = comp.children.iter().map(|(u, _)| *u).collect();
+            comp.layer_selection = all_uuids;
+            log::debug!("[SELECT ALL] {} layers selected", comp.layer_selection.len());
+        });
+        return Some(result);
+    }
+    // Clear layer selection (F2)
+    if let Some(e) = downcast_event::<ClearLayerSelectionEvent>(&event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            comp.layer_selection.clear();
+            log::debug!("[CLEAR SELECTION] selection cleared");
+        });
+        return Some(result);
+    }
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;

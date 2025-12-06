@@ -18,7 +18,7 @@
 //! egui input → dispatch(BoxedEvent) → EventBus → Project/Comp mutations.
 
 use super::timeline_helpers::{
-    compute_all_layer_rows, detect_layer_tool, draw_drop_preview, draw_frame_ruler,
+    compute_all_layer_rows, detect_layer_tool_with_geom, draw_drop_preview, draw_frame_ruler,
     frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
@@ -30,6 +30,7 @@ use crate::core::project_events::ProjectActiveChangedEvent;
 use crate::entities::comp_events::{
     AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
     MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,
+    SlideLayerEvent,
 };
 use super::timeline_events::{
     TimelineFitAllEvent, TimelineLockWorkAreaChangedEvent, TimelinePanChangedEvent,
@@ -277,16 +278,23 @@ pub fn render_outline(
                             },
                         );
 
-                        egui::ComboBox::from_id_salt(format!("blend_outline_{}", child_uuid))
-                            .width(80.0)
-                            .selected_text(blend.clone())
-                            .show_ui(&mut row_ui, |ui| {
-                                for mode in
-                                    ["normal", "screen", "add", "subtract", "multiply", "divide"]
-                                {
-                                    ui.selectable_value(&mut blend, mode.to_string(), mode);
-                                }
-                            });
+                        // Fixed-width blend mode combo (90px)
+                        row_ui.allocate_ui_with_layout(
+                            egui::Vec2::new(90.0, config.layer_height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                egui::ComboBox::from_id_salt(format!("blend_outline_{}", child_uuid))
+                                    .width(80.0)
+                                    .selected_text(blend.clone())
+                                    .show_ui(ui, |ui| {
+                                        for mode in
+                                            ["normal", "screen", "add", "subtract", "multiply", "divide"]
+                                        {
+                                            ui.selectable_value(&mut blend, mode.to_string(), mode);
+                                        }
+                                    });
+                            },
+                        );
                         if blend != prev_blend {
                             dirty = true;
                         }
@@ -578,9 +586,9 @@ pub fn render_canvas(
                             let idx = original_idx;
                             let (child_uuid, attrs) = &comp.children[idx];
 
-                            // Get child start/end from attrs (now supports negative values)
-                            let child_start = attrs.get_i32("in").unwrap_or(0);
-                            let child_end = attrs.get_i32("out").unwrap_or(0);
+                            // Get full bar start/end (computed from in + src_len/speed)
+                            let child_start = attrs.full_bar_start();
+                            let child_end = attrs.full_bar_end();
 
                             // Get precomputed row from layout
                             let row = layer_rows.get(&idx).copied().unwrap_or(0);
@@ -671,7 +679,7 @@ pub fn render_canvas(
                               } else {
                                   Color32::from_gray(150)
                               };
-                              let stroke_width = if is_selected { 2.0 } else { 1.0 };
+                              let stroke_width = 1.0; // Always 1px stroke
                               painter.rect_stroke(
                                   geom.full_bar_rect,
                                   4.0,
@@ -689,13 +697,11 @@ pub fn render_canvas(
                             // Use cached geometry from draw pass
                             let Some(&geom) = geom_cache.get(&idx) else { continue };
 
-                            // Manual tool detection: use current visible bar bounds for handles/move
+                            // Tool detection with full geometry support (including Slide in trim zones)
                             let edge_threshold = 8.0;
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                                let handle_rect = geom.visible_bar_rect.unwrap_or(geom.full_bar_rect);
-
-                                // Double-click: dive into source comp (check independently of drag state)
-                                if handle_rect.contains(hover_pos) {
+                                // Double-click: dive into source comp (check on full bar)
+                                if geom.full_bar_rect.contains(hover_pos) {
                                     if ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
                                         if let Some(source_uuid_str) = attrs.get_str("uuid") {
                                             if let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) {
@@ -705,39 +711,43 @@ pub fn render_canvas(
                                     }
                                 }
 
-                                if state.drag_state.is_none() && handle_rect.contains(hover_pos) {
-                                    if let Some(tool) =
-                                            detect_layer_tool(hover_pos, handle_rect, edge_threshold)
-                                        {
-                                            ui.ctx().set_cursor_icon(tool.cursor());
+                                // Tool detection with geometry-aware function (supports Slide in trim zones)
+                                if state.drag_state.is_none() {
+                                    if let Some(tool) = detect_layer_tool_with_geom(
+                                        hover_pos,
+                                        geom.full_bar_rect,
+                                        geom.visible_bar_rect,
+                                        edge_threshold,
+                                    ) {
+                                        ui.ctx().set_cursor_icon(tool.cursor());
 
-                                            // On mouse press, create appropriate drag state
-                                            if ui.ctx().input(|i| i.pointer.primary_pressed()) {
-                                                log::debug!(
-                                                    "[TIMELINE] Creating drag state: {:?} for layer {}",
-                                                    tool, idx
-                                                );
-                                                // Ensure selection switches to dragged layer if it wasn't selected
-                                                {
-                                                    let modifiers = ui.ctx().input(|i| i.modifiers);
-                                                    let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
-                                                    if !multi && !comp.layer_selection.contains(child_uuid) {
-                                                        dispatch(Box::new(CompSelectionChangedEvent {
-                                                            comp_uuid: comp_id,
-                                                            selection: vec![*child_uuid],
-                                                            anchor: Some(*child_uuid),
-                                                        }));
-                                                    }
-                                                }
-                                                {
-                                                    state.drag_state =
-                                                        Some(tool.to_drag_state(idx, attrs, hover_pos));
-                                                    log::debug!(
-                                                        "[TIMELINE] Drag state created successfully"
-                                                    );
+                                        // On mouse press, create appropriate drag state
+                                        if ui.ctx().input(|i| i.pointer.primary_pressed()) {
+                                            log::debug!(
+                                                "[TIMELINE] Creating drag state: {:?} for layer {}",
+                                                tool, idx
+                                            );
+                                            // Ensure selection switches to dragged layer if it wasn't selected
+                                            {
+                                                let modifiers = ui.ctx().input(|i| i.modifiers);
+                                                let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
+                                                if !multi && !comp.layer_selection.contains(child_uuid) {
+                                                    dispatch(Box::new(CompSelectionChangedEvent {
+                                                        comp_uuid: comp_id,
+                                                        selection: vec![*child_uuid],
+                                                        anchor: Some(*child_uuid),
+                                                    }));
                                                 }
                                             }
+                                            {
+                                                state.drag_state =
+                                                    Some(tool.to_drag_state(idx, attrs, hover_pos));
+                                                log::debug!(
+                                                    "[TIMELINE] Drag state created successfully"
+                                                );
+                                            }
                                         }
+                                    }
                                 }
                             }
                         }
@@ -795,13 +805,10 @@ pub fn render_canvas(
                                                     as usize;
 
                                                 let ghost_child_y = row_to_y(target_row, config, timeline_rect);
-                                                let duration = (attrs.get_i32("out").unwrap_or(0)
-                                                    - attrs.get_i32("in").unwrap_or(0)
-                                                    + 1)
-                                                    .max(1);
+                                                let duration = (attrs.full_bar_end() - attrs.full_bar_start() + 1).max(1);
 
                                                 // Apply same delta to maintain relative offsets
-                                                let child_start = attrs.get_i32("in").unwrap_or(0);
+                                                let child_start = attrs.full_bar_start();
                                                 let ghost_start = child_start + delta_frames;
 
                                                 draw_drop_preview(
@@ -854,7 +861,7 @@ pub fn render_canvas(
                                                 });
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let visual_start = new_play_start as f32;
-                                            let layer_end = attrs.get_i32("out").unwrap_or(0) as f32;
+                                            let layer_end = attrs.full_bar_end() as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
 
@@ -924,6 +931,66 @@ pub fn render_canvas(
                                                 comp_uuid: comp_id,
                                                 layer_idx: *layer_idx,
                                                 new_play_end,
+                                            }));
+                                            state.drag_state = None;
+                                        }
+                                    }
+                                    GlobalDragState::SlidingLayer {
+                                        layer_idx, initial_in, initial_trim_in, speed, drag_start_x
+                                    } => {
+                                        let delta_x = current_pos.x - drag_start_x;
+                                        let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
+
+                                        // Slide: move "in" while compensating trim_in
+                                        // This keeps visible content (layer_start) in the same position
+                                        let new_in = *initial_in + delta_frames;
+                                        // Adjust trim_in to keep layer_start unchanged
+                                        // layer_start = in + trim_in/speed
+                                        // If in increases by delta, trim_in must decrease by delta*speed
+                                        let trim_delta = (delta_frames as f32 * speed).round() as i32;
+                                        let new_trim_in = (*initial_trim_in - trim_delta).max(0);
+
+                                        // Visual feedback: draw ghost full bar at new position
+                                        if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
+                                            let target_row = layer_rows
+                                                .get(layer_idx)
+                                                .copied()
+                                                .unwrap_or_else(|| {
+                                                    physical_to_display(*layer_idx).unwrap_or(*layer_idx)
+                                                });
+                                            let layer_y = row_to_y(target_row, config, timeline_rect);
+                                            // Compute new full_bar_end with new_in
+                                            let src_len = attrs.src_len();
+                                            let new_full_bar_end = new_in + (src_len as f32 / speed).ceil() as i32 - 1;
+                                            let ghost_x_start = frame_to_screen_x(new_in as f32, timeline_rect.min.x, config, state);
+                                            let ghost_x_end = frame_to_screen_x((new_full_bar_end + 1) as f32, timeline_rect.min.x, config, state);
+
+                                            let ghost_rect = Rect::from_min_max(
+                                                Pos2::new(ghost_x_start, layer_y + 4.0),
+                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
+                                            );
+                                            // Use orange color to distinguish from trim adjustments
+                                            painter.rect_stroke(
+                                                ghost_rect,
+                                                4.0,
+                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 180, 100, 200)),
+                                                egui::epaint::StrokeKind::Middle,
+                                            );
+                                        }
+
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
+
+                                        // On release, commit the slide
+                                        if ui.ctx().input(|i| i.pointer.any_released()) {
+                                            log::debug!(
+                                                "[SLIDE COMMIT] delta={}, new_in={}, new_trim_in={}",
+                                                delta_frames, new_in, new_trim_in
+                                            );
+                                            dispatch(Box::new(SlideLayerEvent {
+                                                comp_uuid: comp_id,
+                                                layer_idx: *layer_idx,
+                                                new_in,
+                                                new_trim_in,
                                             }));
                                             state.drag_state = None;
                                         }
@@ -1065,7 +1132,7 @@ pub fn render_canvas(
                                 }));
                             }
                         } else {
-                            // Click on empty space: scrub timeline without clearing selection
+                            // Click on empty space
                             let frame = screen_x_to_frame(
                                 pos.x,
                                 timeline_rect.min.x,
@@ -1076,6 +1143,17 @@ pub fn render_canvas(
                             dispatch(Box::new(SetFrameEvent(
                                 frame.min(total_frames.saturating_sub(1)),
                             )));
+
+                            // If click is BELOW all layers, clear selection
+                            let max_layer_y = comp.children.len() as f32 * config.layer_height + timeline_rect.min.y;
+                            if pos.y > max_layer_y && !comp.layer_selection.is_empty() {
+                                log::debug!("Canvas: click below layers at y={}, clearing selection", pos.y);
+                                dispatch(Box::new(CompSelectionChangedEvent {
+                                    comp_uuid: comp_id,
+                                    selection: vec![],
+                                    anchor: None,
+                                }));
+                            }
                         }
                     }
                 }

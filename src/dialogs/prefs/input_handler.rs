@@ -120,7 +120,7 @@ impl HotkeyHandler {
         self.bind(Global, "Ctrl+B", ResetPlayRangeEvent);
         self.bind(Global, "Ctrl+ArrowLeft", JumpToStartEvent);
         self.bind(Global, "Ctrl+ArrowRight", JumpToEndEvent);
-        self.bind(Global, "Ctrl+R", ResetSettingsEvent);
+        // Ctrl+R is now ResetTrimsEvent in Timeline context (see below)
         self.bind(Global, "Ctrl+S", QuickSaveEvent);
         self.bind(Global, "Ctrl+O", OpenProjectDialogEvent);
         self.bind(Global, "Z", ToggleFullscreenEvent);
@@ -144,6 +144,8 @@ impl HotkeyHandler {
         // Selection operations
         self.bind(Timeline, "Ctrl+A", SelectAllLayersEvent { comp_uuid: Uuid::nil() });
         self.bind(Timeline, "F2", ClearLayerSelectionEvent { comp_uuid: Uuid::nil() }); // Overrides global F2 in timeline
+        // Trim operations
+        self.bind(Timeline, "Ctrl+R", ResetTrimsEvent { comp_uuid: Uuid::nil() });
 
         // Project-specific
         self.bind(Project, "Delete", RemoveSelectedMediaEvent);

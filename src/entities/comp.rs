@@ -616,17 +616,6 @@ impl Comp {
         });
     }
 
-    /// Child placement bounds (start/end) in parent timeline, ordered and clamped if needed.
-    fn child_bounds_abs(start_attr: Option<i32>, end_attr: Option<i32>) -> (i32, i32) {
-        let s = start_attr.unwrap_or(0);
-        let e = end_attr.unwrap_or(s);
-        if e < s {
-            (e, s)
-        } else {
-            (s, e)
-        }
-    }
-
     /// Child work area in parent timeline (absolute).
     /// Uses LOCAL trim offsets: play_start = in + trim_in, play_end = out + trim_out
     /// trim_in/trim_out default to 0 (no trim).
@@ -1389,9 +1378,9 @@ impl Comp {
         // first child (top layer) composited last
         for (child_uuid, attrs) in self.children.iter().rev() {
             // Placement and bounds in parent timeline
-            let child_start = attrs.get_i32("in").unwrap_or(0);
-            let child_end = attrs.get_i32("out").unwrap_or(child_start);
-            let duration = (child_end - child_start + 1).max(0);
+            let child_start = attrs.full_bar_start();
+            let child_end = attrs.full_bar_end();
+            let duration = (child_end - child_start + 1).max(1);
             let (play_start, play_end) = self
                 .child_work_area_abs(*child_uuid)
                 .unwrap_or((child_start, child_end));
@@ -1619,7 +1608,9 @@ impl Comp {
         attrs.set("uuid", AttrValue::Str(source_uuid.to_string()));
         attrs.set("name", AttrValue::Str(name.to_string()));
         attrs.set("in", AttrValue::Int(start_frame));
-        attrs.set("out", AttrValue::Int(end_frame));
+        // Source length in source frames (invariant, doesn't change with speed)
+        // full_bar_end() is computed as: in + src_len/speed - 1
+        attrs.set("src_len", AttrValue::Int(duration));
         // Local trim offsets: 0 = no trim (play full range)
         attrs.set("trim_in", AttrValue::Int(0));
         attrs.set("trim_out", AttrValue::Int(0));
@@ -1667,8 +1658,8 @@ impl Comp {
 
         for &idx in child_order {
             let Some((_child_uuid, attrs)) = self.children.get(idx) else { continue };
-            let start = attrs.get_i32("in").unwrap_or(0);
-            let end = attrs.get_i32("out").unwrap_or(0);
+            let start = attrs.full_bar_start();
+            let end = attrs.full_bar_end();
 
             // Find first row without overlap
             let mut row = 0;
@@ -1718,14 +1709,13 @@ impl Comp {
             .get_mut(child_idx)
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
-        let old_start = attrs.get_i32("in").unwrap_or(0);
-        let old_end = attrs.get_i32("out").unwrap_or(0);
-        let duration = (old_end - old_start).max(0);
-        let new_end = new_start + duration;
+        let old_start = attrs.full_bar_start();
+        let old_end = attrs.full_bar_end();
 
         attrs.set("in", AttrValue::Int(new_start));
-        attrs.set("out", AttrValue::Int(new_end));
-        // trim_in/trim_out are LOCAL offsets - no change needed when moving layer
+        // No need to set "out" - it's computed from in + src_len/speed
+
+        let new_end = attrs.full_bar_end(); // Recomputed with new "in"
 
         self.rebound();
         self.update_dim_from_children();
@@ -1830,11 +1820,11 @@ impl Comp {
                 continue;
             }
             if let Some((_child_uuid, attrs)) = self.children.get_mut(idx) {
-                let in_val = attrs.get_i32("in").unwrap_or(0);
-                let out_val = attrs.get_i32("out").unwrap_or(0);
+                let in_val = attrs.full_bar_start();
+                let out_val = attrs.full_bar_end();
                 let speed = attrs.get_float("speed").unwrap_or(1.0);
-                let (bounds_start, bounds_end) = Self::child_bounds_abs(Some(in_val), Some(out_val));
-                let duration = bounds_end - bounds_start;
+                let src_len = attrs.src_len();
+                let (bounds_start, bounds_end) = (in_val, out_val);
 
                 // Track range before and after trim
                 range_min = range_min.min(bounds_start);
@@ -1851,18 +1841,20 @@ impl Comp {
                 if is_start {
                     // Apply local_delta to trim_in
                     let new_trim_in = trim_in + local_delta;
-                    // Clamp: trim_in >= 0, and play_start <= play_end
-                    // trim_in <= duration + trim_out
-                    let max_trim_in = duration + trim_out;
-                    let clamped_trim_in = new_trim_in.clamp(0, max_trim_in.max(0));
+                    // Clamp: trim_in >= 0, and visible_frames > 0
+                    // visible_frames = src_len - trim_in - trim_out > 0
+                    // trim_in < src_len - trim_out
+                    let max_trim_in = (src_len - trim_out - 1).max(0);
+                    let clamped_trim_in = new_trim_in.clamp(0, max_trim_in);
                     attrs.set("trim_in", AttrValue::Int(clamped_trim_in));
                 } else {
-                    // Apply local_delta to trim_out
-                    let new_trim_out = trim_out + local_delta;
-                    // Clamp: trim_out <= 0, and play_start <= play_end
-                    // trim_out >= trim_in - duration
-                    let min_trim_out = trim_in - duration;
-                    let clamped_trim_out = new_trim_out.clamp(min_trim_out.min(0), 0);
+                    // Apply -local_delta to trim_out (dragging right = negative delta = less trim)
+                    let new_trim_out = trim_out - local_delta;
+                    // Clamp: trim_out >= 0, and visible_frames > 0
+                    // visible_frames = src_len - trim_in - trim_out > 0
+                    // trim_out < src_len - trim_in
+                    let max_trim_out = (src_len - trim_in - 1).max(0);
+                    let clamped_trim_out = new_trim_out.clamp(0, max_trim_out);
                     attrs.set("trim_out", AttrValue::Int(clamped_trim_out));
                 }
             }
@@ -1896,11 +1888,10 @@ impl Comp {
             .get_mut(child_idx)
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
-        let in_abs = attrs.get_i32("in").unwrap_or(0);
-        let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
+        let in_abs = attrs.full_bar_start();
+        let out_abs = attrs.full_bar_end();
         let speed = attrs.get_float("speed").unwrap_or(1.0);
-        let old_trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-        let old_play_start = in_abs + (old_trim_in as f32 / speed).round() as i32;
+        let old_play_start = attrs.layer_start();
 
         // Convert parent offset to local trim offset
         // layer_start = in + trim_in/speed → trim_in = (layer_start - in) * speed
@@ -1909,7 +1900,7 @@ impl Comp {
 
         // Affected range: union of old and new play start
         let range_start = old_play_start.min(new_play_start);
-        let range_end = (in_abs + out_abs).max(range_start); // Ensure valid range
+        let range_end = out_abs.max(range_start); // Ensure valid range
 
         self.attrs.mark_dirty();
         self.event_emitter.emit(LayersChangedEvent {
@@ -1922,7 +1913,7 @@ impl Comp {
     }
 
     /// Set child visible end in absolute parent coords.
-    /// Converts to local offset: trim_out = (new_end - in) * speed - source_duration
+    /// Converts to local offset: trim_out = src_len - (new_end - in + 1) * speed
     pub fn set_child_end(
         &mut self,
         child_idx: usize,
@@ -1933,17 +1924,17 @@ impl Comp {
             .get_mut(child_idx)
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
-        let in_abs = attrs.get_i32("in").unwrap_or(0);
-        let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
+        let in_abs = attrs.full_bar_start();
         let speed = attrs.get_float("speed").unwrap_or(1.0);
-        let source_duration = out_abs - in_abs;
-        let old_trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-        let old_play_end = in_abs + ((source_duration + old_trim_out) as f32 / speed).round() as i32;
+        let src_len = attrs.src_len();
+        let old_play_end = attrs.layer_end();
 
         // Convert parent offset to local trim offset
-        // layer_end = in + (source_duration + trim_out)/speed
-        // → trim_out = (layer_end - in) * speed - source_duration
-        let new_trim_out = ((new_play_end - in_abs) as f32 * speed).round() as i32 - source_duration;
+        // layer_end = in + (src_len - trim_out)/speed - 1
+        // layer_end + 1 = in + (src_len - trim_out)/speed
+        // (layer_end + 1 - in) * speed = src_len - trim_out
+        // trim_out = src_len - (layer_end + 1 - in) * speed
+        let new_trim_out = src_len - ((new_play_end + 1 - in_abs) as f32 * speed).round() as i32;
         attrs.set("trim_out", AttrValue::Int(new_trim_out));
 
         // Affected range: union of old and new play end

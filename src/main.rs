@@ -538,7 +538,7 @@ impl PlayaApp {
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
-            use playa::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent, DuplicateLayersEvent, CopyLayersEvent, PasteLayersEvent, SelectAllLayersEvent, ClearLayerSelectionEvent};
+            use playa::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent, DuplicateLayersEvent, CopyLayersEvent, PasteLayersEvent, SelectAllLayersEvent, ClearLayerSelectionEvent, ResetTrimsEvent};
 
             // Fill comp_uuid for timeline-specific events
             if let Some(active_comp_uuid) = self.player.active_comp() {
@@ -588,6 +588,12 @@ impl PlayaApp {
                 if downcast_event::<ClearLayerSelectionEvent>(&event).is_some() {
                     log::debug!("Hotkey: F2 -> ClearLayerSelectionEvent");
                     self.event_bus.emit(ClearLayerSelectionEvent { comp_uuid: active_comp_uuid });
+                    return;
+                }
+                // Trim operations
+                if downcast_event::<ResetTrimsEvent>(&event).is_some() {
+                    log::debug!("Hotkey: Ctrl-R -> ResetTrimsEvent");
+                    self.event_bus.emit(ResetTrimsEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
             }

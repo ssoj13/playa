@@ -202,7 +202,7 @@ impl Attrs {
     }
 
     /// Layer visible start in parent coords: in + trim_in/speed
-    /// trim_in is LOCAL offset, converted to parent coords via speed
+    /// trim_in is source frames offset, converted to timeline frames via speed
     pub fn layer_start(&self) -> i32 {
         let in_val = self.get_i32_or_zero("in");
         let trim_in = self.get_i32_or_zero("trim_in");
@@ -211,17 +211,38 @@ impl Attrs {
         in_val + (trim_in as f32 / speed).round() as i32
     }
 
-    /// Layer visible end in parent coords: in + (source_duration + trim_out)/speed
-    /// trim_out is LOCAL offset, converted to parent coords via speed
+    /// Layer visible end in parent coords: layer_start + visible_timeline_frames - 1
+    /// visible_src_frames = src_len - trim_in - trim_out
+    /// visible_timeline_frames = visible_src_frames / speed
     pub fn layer_end(&self) -> i32 {
-        let in_val = self.get_i32_or_zero("in");
-        let out_val = self.get_i32_or_zero("out");
+        let layer_start = self.layer_start();
+        let src_len = self.get_i32_or_zero("src_len");
+        let trim_in = self.get_i32_or_zero("trim_in");
         let trim_out = self.get_i32_or_zero("trim_out");
-        // Clamp speed to safe range (0.1..4.0) to prevent duration explosion
         let speed = self.get_float_or("speed", 1.0).clamp(0.1, 4.0);
-        // source_duration = out - in, plus trim_out offset, scaled by speed
-        let source_with_trim = (out_val - in_val) + trim_out;
-        in_val + (source_with_trim as f32 / speed).round() as i32
+        // Visible source frames (at least 1 to prevent negative duration)
+        let visible_src = (src_len - trim_in - trim_out).max(1);
+        let visible_timeline = (visible_src as f32 / speed).round() as i32;
+        layer_start + visible_timeline - 1
+    }
+
+    /// Get source length (original duration in source frames)
+    pub fn src_len(&self) -> i32 {
+        self.get_i32_or_zero("src_len")
+    }
+
+    /// Full bar end (untrimmed): in + src_len/speed - 1
+    /// This replaces the "out" attribute - now computed, not stored
+    pub fn full_bar_end(&self) -> i32 {
+        let in_val = self.get_i32_or_zero("in");
+        let src_len = self.get_i32_or_zero("src_len");
+        let speed = self.get_float_or("speed", 1.0).clamp(0.1, 4.0);
+        in_val + (src_len as f32 / speed).ceil() as i32 - 1
+    }
+
+    /// Full bar start (same as "in")
+    pub fn full_bar_start(&self) -> i32 {
+        self.get_i32_or_zero("in")
     }
 
     /// Get mutable reference to attribute value

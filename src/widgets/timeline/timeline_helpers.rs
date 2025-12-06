@@ -9,6 +9,8 @@ pub(super) enum LayerTool {
     AdjustPlayStart,
     AdjustPlayEnd,
     Move,
+    /// Slide tool - drag in trim zones to slide layer in/out while keeping visible content in place
+    Slide,
 }
 
 impl LayerTool {
@@ -18,6 +20,7 @@ impl LayerTool {
                 egui::CursorIcon::ResizeHorizontal
             }
             LayerTool::Move => egui::CursorIcon::Grab,
+            LayerTool::Slide => egui::CursorIcon::ResizeColumn,
         }
     }
 
@@ -51,6 +54,22 @@ impl LayerTool {
                     drag_start_y: drag_start_pos.y,
                 }
             }
+            LayerTool::Slide => {
+                let initial_in = attrs.get_i32_or_zero("in");
+                let initial_trim_in = attrs.get_i32_or_zero("trim_in");
+                let speed = attrs.get_float_or("speed", 1.0);
+                log::debug!(
+                    "[SLIDE START] in={}, trim_in={}, speed={}",
+                    initial_in, initial_trim_in, speed
+                );
+                GlobalDragState::SlidingLayer {
+                    layer_idx,
+                    initial_in,
+                    initial_trim_in,
+                    speed,
+                    drag_start_x: drag_start_pos.x,
+                }
+            }
         }
     }
 }
@@ -77,6 +96,45 @@ pub(super) fn detect_layer_tool(
     } else {
         None
     }
+}
+
+/// Detect layer tool with full geometry - supports Slide in trim zones
+pub(super) fn detect_layer_tool_with_geom(
+    hover_pos: Pos2,
+    full_bar_rect: Rect,
+    visible_bar_rect: Option<Rect>,
+    edge_threshold: f32,
+) -> Option<LayerTool> {
+    // Must be within full bar expanded by threshold
+    if !full_bar_rect.expand(edge_threshold).contains(hover_pos) {
+        return None;
+    }
+
+    // If no visible bar (fully trimmed), treat as Move on full bar
+    let Some(visible_rect) = visible_bar_rect else {
+        if full_bar_rect.contains(hover_pos) {
+            return Some(LayerTool::Move);
+        }
+        return None;
+    };
+
+    // Check if in trim zones (between full_bar and visible_bar)
+    let in_left_trim_zone = hover_pos.x >= full_bar_rect.min.x
+        && hover_pos.x < visible_rect.min.x - edge_threshold
+        && hover_pos.y >= full_bar_rect.min.y
+        && hover_pos.y <= full_bar_rect.max.y;
+
+    let in_right_trim_zone = hover_pos.x > visible_rect.max.x + edge_threshold
+        && hover_pos.x <= full_bar_rect.max.x
+        && hover_pos.y >= full_bar_rect.min.y
+        && hover_pos.y <= full_bar_rect.max.y;
+
+    if in_left_trim_zone || in_right_trim_zone {
+        return Some(LayerTool::Slide);
+    }
+
+    // Use standard detection for visible bar (handles + move)
+    detect_layer_tool(hover_pos, visible_rect, edge_threshold)
 }
 
 pub(super) fn frame_to_screen_x(
