@@ -97,39 +97,15 @@ pub fn render_timeline_panel(
             if let Some(comp) = media.get(&comp_uuid) {
                 let config = TimelineConfig::default();
 
-                // CRITICAL ORDER: Toolbar and view selector MUST be rendered BEFORE calculating
-                // splitter_height. If we calculate height first, then render toolbar (which takes
-                // ~45px), the panels will receive incorrect height and egui will add unwanted
-                // vertical scrollbar. By rendering fixed-height elements first, available_height()
-                // returns the correct remaining space for panels.
+                // CRITICAL ORDER: Toolbar MUST be rendered BEFORE calculating splitter_height.
+                // If we calculate height first, then render toolbar, the panels will receive
+                // incorrect height and egui will add unwanted vertical scrollbar.
 
-                // Toolbar first (before view selector) - takes ~30px
-                render_toolbar(ui, timeline_state, |evt| event_bus.emit_boxed(evt));
+                // Toolbar with transport, zoom, snap, lock, loop, and view mode selector
+                render_toolbar(ui, timeline_state, player.loop_enabled(), |evt| event_bus.emit_boxed(evt));
                 ui.add_space(4.0);
 
-                // View selector (Split/Canvas/Outline buttons) - takes ~20px
-                ui.horizontal(|ui| {
-                    ui.label("View:");
-                    for (label, mode) in [
-                        ("Split", crate::widgets::timeline::TimelineViewMode::Split),
-                        (
-                            "Canvas",
-                            crate::widgets::timeline::TimelineViewMode::CanvasOnly,
-                        ),
-                        (
-                            "Outline",
-                            crate::widgets::timeline::TimelineViewMode::OutlineOnly,
-                        ),
-                    ] {
-                        let selected = timeline_state.view_mode == mode;
-                        if ui.selectable_label(selected, label).clicked() {
-                            timeline_state.view_mode = mode;
-                        }
-                    }
-                });
-                ui.add_space(4.0);
-
-                // Now calculate remaining height for panels (after toolbar ~30px + view selector ~20px)
+                // Now calculate remaining height for panels
                 let splitter_height = ui.available_height();
 
                 match timeline_state.view_mode {

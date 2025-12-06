@@ -24,7 +24,8 @@ use super::timeline_helpers::{
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
 use crate::core::event_bus::BoxedEvent;
-use crate::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent};
+use crate::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent, SetLoopEvent};
+use super::TimelineViewMode;
 use crate::core::project_events::ProjectActiveChangedEvent;
 use crate::entities::comp_events::{
     AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
@@ -69,8 +70,13 @@ fn compute_layer_selection(
     }
 }
 
-/// Render timeline toolbar (transport controls, zoom, snap)
-pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl FnMut(BoxedEvent)) {
+/// Render timeline toolbar (transport controls, zoom, snap, loop, view mode)
+pub fn render_toolbar(
+    ui: &mut Ui,
+    state: &mut TimelineState,
+    loop_enabled: bool,
+    mut dispatch: impl FnMut(BoxedEvent),
+) {
     ui.horizontal(|ui| {
         if ui.button("↞").on_hover_text("To Start").clicked() {
             dispatch(Box::new(JumpToStartEvent));
@@ -91,28 +97,20 @@ pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl
 
         ui.separator();
 
-        // Zoom controls emit actions; actual zoom applies in canvas via events
+        // Zoom controls
         ui.label("Zoom:");
         let zoom_response = ui.add_sized(
-            egui::Vec2::new(200.0, 20.0), // 2x longer slider
+            egui::Vec2::new(200.0, 20.0),
             egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2),
         );
         if zoom_response.changed() {
             dispatch(Box::new(TimelineZoomChangedEvent(state.zoom)));
         }
-        if ui
-            .button("Reset")
-            .on_hover_text("Reset Zoom to 1.0")
-            .clicked()
-        {
+        if ui.button("Reset").on_hover_text("Reset Zoom to 1.0").clicked() {
             state.zoom = 1.0;
             dispatch(Box::new(TimelineZoomChangedEvent(1.0)));
         }
-        if ui
-            .button("Fit")
-            .on_hover_text("Fit all clips to view")
-            .clicked()
-        {
+        if ui.button("Fit").on_hover_text("Fit all clips to view").clicked() {
             dispatch(Box::new(TimelineFitAllEvent(state.last_canvas_width)));
         }
 
@@ -121,6 +119,25 @@ pub fn render_toolbar(ui: &mut Ui, state: &mut TimelineState, mut dispatch: impl
         }
         if ui.checkbox(&mut state.lock_work_area, "Lock").changed() {
             dispatch(Box::new(TimelineLockWorkAreaChangedEvent(state.lock_work_area)));
+        }
+
+        // Loop checkbox
+        let mut loop_state = loop_enabled;
+        if ui.checkbox(&mut loop_state, "Loop").changed() {
+            dispatch(Box::new(SetLoopEvent(loop_state)));
+        }
+
+        ui.separator();
+
+        // View mode selector (moved from ui.rs)
+        for (label, mode) in [
+            ("Split", TimelineViewMode::Split),
+            ("Canvas", TimelineViewMode::CanvasOnly),
+            ("Outline", TimelineViewMode::OutlineOnly),
+        ] {
+            if ui.selectable_label(state.view_mode == mode, label).clicked() {
+                state.view_mode = mode;
+            }
         }
     });
 }
@@ -202,7 +219,14 @@ pub fn render_outline(
                             .get_str("name")
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| child_uuid.to_string());
-                        row_ui.label(child_name);
+                        // Fixed-width name column for alignment
+                        row_ui.allocate_ui_with_layout(
+                            egui::Vec2::new(120.0, config.layer_height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(egui::Label::new(child_name).truncate());
+                            },
+                        );
 
                         if row_ui
                             .add(
@@ -242,9 +266,15 @@ pub fn render_outline(
                         }
 
                         if dirty {
+                            // Apply to all selected layers if this layer is selected
+                            let targets = if comp.layer_selection.contains(child_uuid) {
+                                comp.layer_selection.clone()
+                            } else {
+                                vec![*child_uuid]
+                            };
                             dispatch(Box::new(LayerAttributesChangedEvent {
                                 comp_uuid: comp_id,
-                                layer_uuid: *child_uuid,
+                                layer_uuids: targets,
                                 visible,
                                 opacity,
                                 blend_mode: blend,
@@ -498,8 +528,11 @@ pub fn render_canvas(
                               Color32::from_gray(35)
                           };
                           painter.rect_filled(child_rect, 0.0, bg_color);
-                            let play_start = attrs.get_i32("trim_in").unwrap_or(child_start);
-                            let play_end = attrs.get_i32("trim_out").unwrap_or(child_end);
+                            // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
+                            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+                            let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+                            let play_start = child_start + trim_in;
+                            let play_end = child_end + trim_out;
                             let is_visible = attrs.get_bool("visible").unwrap_or(true);
 
                             // Calculate layer geometry and cache for interaction pass
@@ -798,7 +831,10 @@ pub fn render_canvas(
                                                     physical_to_display(*layer_idx).unwrap_or(*layer_idx)
                                                 });
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let play_start = attrs.get_i32("trim_in").unwrap_or(attrs.get_i32("in").unwrap_or(0));
+                                            // Local trim: play_start = in + trim_in
+                                            let in_val = attrs.get_i32("in").unwrap_or(0);
+                                            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+                                            let play_start = in_val + trim_in;
                                             let visual_start = play_start as f32;
                                             let visual_end = new_play_end as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);

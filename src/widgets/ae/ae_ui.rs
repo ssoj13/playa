@@ -193,6 +193,17 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
     let mut changed = false;
     let weak = ui.visuals().weak_text_color();
     let mut scope_changed = false;
+
+    // Speed multiplier based on modifier keys: Shift=5x (coarse), Ctrl=0.1x (fine)
+    let modifiers = ui.input(|i| i.modifiers);
+    let speed_mult = if modifiers.shift {
+        5.0
+    } else if modifiers.ctrl {
+        0.1
+    } else {
+        1.0
+    };
+
     ui.scope(|ui| {
         if mixed {
             ui.visuals_mut().override_text_color = Some(weak);
@@ -222,14 +233,14 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
             scope_changed |= ui.text_edit_singleline(s).changed();
         }
         (_, AttrValue::Int(v)) => {
-            scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0)).changed();
+            scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0 * speed_mult)).changed();
         }
         (_, AttrValue::UInt(v)) => {
             let mut temp = *v as i32;
             if ui
                 .add(
                     egui::DragValue::new(&mut temp)
-                        .speed(1.0)
+                        .speed(1.0 * speed_mult)
                         .range(0..=i32::MAX),
                 )
                 .changed()
@@ -239,28 +250,28 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
             }
         }
         (_, AttrValue::Float(v)) => {
-            scope_changed |= ui.add(egui::DragValue::new(v).speed(0.1)).changed();
+            scope_changed |= ui.add(egui::DragValue::new(v).speed(0.1 * speed_mult)).changed();
         }
         (_, AttrValue::Vec3(arr)) => {
             ui.horizontal(|ui| {
                 ui.label("X:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1)).changed();
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1 * speed_mult)).changed();
                 ui.label("Y:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1)).changed();
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1 * speed_mult)).changed();
                 ui.label("Z:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1)).changed();
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1 * speed_mult)).changed();
             });
         }
         (_, AttrValue::Vec4(arr)) => {
             ui.horizontal(|ui| {
                 ui.label("X:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1)).changed();
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1 * speed_mult)).changed();
                 ui.label("Y:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1)).changed();
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1 * speed_mult)).changed();
                 ui.label("Z:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1)).changed();
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1 * speed_mult)).changed();
                 ui.label("W:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1)).changed();
+                scope_changed |= ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1 * speed_mult)).changed();
             });
         }
         (_, AttrValue::Mat3(_)) => {
@@ -274,7 +285,7 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
         }
         (_, AttrValue::Int8(v)) => {
             let mut temp = *v as i32;
-            if ui.add(egui::DragValue::new(&mut temp).speed(1.0).range(-128..=127)).changed() {
+            if ui.add(egui::DragValue::new(&mut temp).speed(1.0 * speed_mult).range(-128..=127)).changed() {
                 *v = temp.clamp(-128, 127) as i8;
                 scope_changed = true;
             }

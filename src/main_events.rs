@@ -551,9 +551,14 @@ pub fn handle_app_event(
                 let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                 let _ = comp.trim_layers(&selection_indices, delta, true);
             } else {
+                // Local trim offsets: play_start = in + trim_in
                 let delta = {
                     let current = comp.children.get(e.layer_idx)
-                        .map(|(_u, attrs)| attrs.get_i32("trim_in").unwrap_or(attrs.get_i32("in").unwrap_or(0)))
+                        .map(|(_u, attrs)| {
+                            let in_val = attrs.get_i32("in").unwrap_or(0);
+                            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+                            in_val + trim_in
+                        })
                         .unwrap_or(0);
                     e.new_play_start - current
                 };
@@ -571,9 +576,14 @@ pub fn handle_app_event(
                 let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
                 let _ = comp.trim_layers(&selection_indices, delta, false);
             } else {
+                // Local trim offsets: play_end = out + trim_out
                 let delta = {
                     let current = comp.children.get(e.layer_idx)
-                        .map(|(_u, attrs)| attrs.get_i32("trim_out").unwrap_or(attrs.get_i32("out").unwrap_or(0)))
+                        .map(|(_u, attrs)| {
+                            let out_val = attrs.get_i32("out").unwrap_or(0);
+                            let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+                            out_val + trim_out
+                        })
                         .unwrap_or(0);
                     e.new_play_end - current
                 };
@@ -585,12 +595,15 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
-            comp.set_child_attrs(&e.layer_uuid, &[
-                ("visible", AttrValue::Bool(e.visible)),
-                ("opacity", AttrValue::Float(e.opacity)),
-                ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
-                ("speed", AttrValue::Float(e.speed)),
-            ]);
+            // Apply to all targeted layers (multi-selection support)
+            for layer_uuid in &e.layer_uuids {
+                comp.set_child_attrs(layer_uuid, &[
+                    ("visible", AttrValue::Bool(e.visible)),
+                    ("opacity", AttrValue::Float(e.opacity)),
+                    ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
+                    ("speed", AttrValue::Float(e.speed)),
+                ]);
+            }
         });
         return Some(result);
     }

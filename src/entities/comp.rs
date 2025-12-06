@@ -476,22 +476,28 @@ impl Comp {
             .unwrap_or(0)
     }
 
-    /// Get child layer's play_start (with fallback to start)
+    /// Get child layer's play_start in parent coordinates (absolute).
+    /// trim_in is a LOCAL offset from layer start: play_start = in + trim_in
+    /// trim_in=0 means no trim, trim_in=20 skips 20 frames from start
     pub fn child_play_start(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
             .map(|a| {
                 let start = a.get_i32_or_zero("in");
-                a.get_i32_or("trim_in", start)
+                let trim_in = a.get_i32_or("trim_in", 0);
+                start + trim_in
             })
             .unwrap_or(0)
     }
 
-    /// Get child layer's play_end (with fallback to end)
+    /// Get child layer's play_end in parent coordinates (absolute).
+    /// trim_out is a LOCAL offset from layer end: play_end = out + trim_out
+    /// trim_out=0 means no trim, trim_out=-20 cuts 20 frames from end
     pub fn child_play_end(&self, child_uuid: Uuid) -> i32 {
         self.children_attrs_get(&child_uuid)
             .map(|a| {
                 let end = a.get_i32_or_zero("out");
-                a.get_i32_or("trim_out", end)
+                let trim_out = a.get_i32_or("trim_out", 0);
+                end + trim_out
             })
             .unwrap_or(0)
     }
@@ -564,10 +570,13 @@ impl Comp {
             let mut max_frame = i32::MIN;
 
             for (_child_uuid, attrs) in &self.children {
+                // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
                 let child_start = attrs.get_i32("in").unwrap_or(0);
                 let child_end = attrs.get_i32("out").unwrap_or(child_start);
-                let child_play_start = attrs.get_i32("trim_in").unwrap_or(child_start);
-                let child_play_end = attrs.get_i32("trim_out").unwrap_or(child_end);
+                let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+                let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+                let child_play_start = child_start + trim_in;
+                let child_play_end = child_end + trim_out;
 
                 min_frame = min_frame.min(child_play_start);
                 max_frame = max_frame.max(child_play_end);
@@ -638,29 +647,20 @@ impl Comp {
         }
     }
 
-    /// Child work area in parent timeline (absolute). Defaults to full bounds.
+    /// Child work area in parent timeline (absolute).
+    /// Uses LOCAL trim offsets: play_start = in + trim_in, play_end = out + trim_out
+    /// trim_in/trim_out default to 0 (no trim).
+    /// Negative trim_out trims from end, positive extends.
     pub fn child_work_area_abs(&self, child_uuid: Uuid) -> Option<(i32, i32)> {
         let attrs = self.children_attrs_get(&child_uuid)?;
-        let (bounds_start, bounds_end) =
-            Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
-        let play_start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
-        let play_end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
-        Some(Self::clamp_range_to_bounds(
-            (play_start, play_end),
-            (bounds_start, bounds_end),
-        ))
-    }
-
-    /// Clamp range to bounds and ensure ordering.
-    fn clamp_range_to_bounds(
-        (start, end): (i32, i32),
-        (bounds_start, bounds_end): (i32, i32),
-    ) -> (i32, i32) {
-        let ordered_start = start.min(end);
-        let ordered_end = end.max(start);
-        let clamped_start = ordered_start.clamp(bounds_start, bounds_end);
-        let clamped_end = ordered_end.clamp(clamped_start, bounds_end);
-        (clamped_start, clamped_end)
+        let in_abs = attrs.get_i32("in").unwrap_or(0);
+        let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
+        let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+        let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+        let play_start = in_abs + trim_in;
+        let play_end = out_abs + trim_out;
+        // No clamping - trim can extend beyond layer bounds
+        Some((play_start.min(play_end), play_start.max(play_end)))
     }
 
     // ===== Time Conversion Methods =====
@@ -1645,9 +1645,9 @@ impl Comp {
         attrs.set("name", AttrValue::Str(name.to_string()));
         attrs.set("in", AttrValue::Int(start_frame));
         attrs.set("out", AttrValue::Int(end_frame));
-        // Work area defaults to full placement range in parent timeline
-        attrs.set("trim_in", AttrValue::Int(start_frame));
-        attrs.set("trim_out", AttrValue::Int(end_frame));
+        // Local trim offsets: 0 = no trim (play full range)
+        attrs.set("trim_in", AttrValue::Int(0));
+        attrs.set("trim_out", AttrValue::Int(0));
         attrs.set("opacity", AttrValue::Float(1.0));
         attrs.set("visible", AttrValue::Bool(true));
         attrs.set("blend_mode", AttrValue::Str("normal".to_string()));
@@ -1747,21 +1747,10 @@ impl Comp {
         let old_end = attrs.get_i32("out").unwrap_or(0);
         let duration = (old_end - old_start).max(0);
         let new_end = new_start + duration;
-        let delta = new_start - old_start;
-
-        let play_start_old = attrs.get_i32("trim_in").unwrap_or(old_start);
-        let play_end_old = attrs.get_i32("trim_out").unwrap_or(old_end);
 
         attrs.set("in", AttrValue::Int(new_start));
         attrs.set("out", AttrValue::Int(new_end));
-
-        // Shift work area by the same delta, clamped to new bounds
-        let shifted_start = play_start_old + delta;
-        let shifted_end = play_end_old + delta;
-        let (clamped_start, clamped_end) =
-            Self::clamp_range_to_bounds((shifted_start, shifted_end), (new_start, new_end));
-        attrs.set("trim_in", AttrValue::Int(clamped_start));
-        attrs.set("trim_out", AttrValue::Int(clamped_end));
+        // trim_in/trim_out are LOCAL offsets - no change needed when moving layer
 
         self.rebound();
         self.update_dim_from_children();
@@ -1847,6 +1836,7 @@ impl Comp {
 
     /// Trim multiple layers by delta on start or end.
     /// `indices` are child indices; delta applied to play_start (is_start=true) or play_end (false).
+    /// Uses LOCAL trim offsets: trim_in/trim_out are offsets from layer boundaries.
     pub fn trim_layers(&mut self, indices: &[usize], delta: i32, is_start: bool) -> anyhow::Result<()> {
         if indices.is_empty() {
             return Ok(());
@@ -1865,30 +1855,36 @@ impl Comp {
                 continue;
             }
             if let Some((_child_uuid, attrs)) = self.children.get_mut(idx) {
-                let bounds_start = attrs.get_i32("in").unwrap_or(0);
-                let bounds_end = attrs.get_i32("out").unwrap_or(0);
-                let (bounds_start, bounds_end) = Self::child_bounds_abs(Some(bounds_start), Some(bounds_end));
+                let in_val = attrs.get_i32("in").unwrap_or(0);
+                let out_val = attrs.get_i32("out").unwrap_or(0);
+                let (bounds_start, bounds_end) = Self::child_bounds_abs(Some(in_val), Some(out_val));
+                let duration = bounds_end - bounds_start;
 
                 // Track range before and after trim
                 range_min = range_min.min(bounds_start);
                 range_max = range_max.max(bounds_end);
 
+                // Get current local offsets (default 0 = no trim)
+                let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+                let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+
                 if is_start {
-                    let current = attrs.get_i32("trim_in").unwrap_or(bounds_start);
-                    let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
-                        (current + delta, attrs.get_i32("trim_out").unwrap_or(bounds_end)),
-                        (bounds_start, bounds_end),
-                    );
-                    attrs.set("trim_in", AttrValue::Int(clamped_start));
-                    attrs.set("trim_out", AttrValue::Int(clamped_end));
+                    // Apply delta to trim_in (affects play_start = in + trim_in)
+                    let new_trim_in = trim_in + delta;
+                    // Clamp: trim_in >= 0, and play_start <= play_end
+                    // play_start = in + trim_in, play_end = out + trim_out
+                    // in + trim_in <= out + trim_out → trim_in <= duration + trim_out
+                    let max_trim_in = duration + trim_out;
+                    let clamped_trim_in = new_trim_in.clamp(0, max_trim_in.max(0));
+                    attrs.set("trim_in", AttrValue::Int(clamped_trim_in));
                 } else {
-                    let current = attrs.get_i32("trim_out").unwrap_or(bounds_end);
-                    let (clamped_start, clamped_end) = Self::clamp_range_to_bounds(
-                        (attrs.get_i32("trim_in").unwrap_or(bounds_start), current + delta),
-                        (bounds_start, bounds_end),
-                    );
-                    attrs.set("trim_in", AttrValue::Int(clamped_start));
-                    attrs.set("trim_out", AttrValue::Int(clamped_end));
+                    // Apply delta to trim_out (affects play_end = out + trim_out)
+                    let new_trim_out = trim_out + delta;
+                    // Clamp: trim_out <= 0, and play_start <= play_end
+                    // in + trim_in <= out + trim_out → trim_out >= trim_in - duration
+                    let min_trim_out = trim_in - duration;
+                    let clamped_trim_out = new_trim_out.clamp(min_trim_out.min(0), 0);
+                    attrs.set("trim_out", AttrValue::Int(clamped_trim_out));
                 }
             }
         }
@@ -1909,7 +1905,8 @@ impl Comp {
         Ok(())
     }
 
-    /// Set child play start (adjust play_start attribute - visible start offset from child start).
+    /// Set child play start in absolute parent coords.
+    /// Converts to local offset: trim_in = new_play_start - in
     pub fn set_child_play_start(
         &mut self,
         child_idx: usize,
@@ -1920,18 +1917,18 @@ impl Comp {
             .get_mut(child_idx)
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
-        let (bounds_start, bounds_end) =
-            Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
-        let old_start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
-        let current_end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
-        let (clamped_start, clamped_end) =
-            Self::clamp_range_to_bounds((new_play_start, current_end), (bounds_start, bounds_end));
-        attrs.set("trim_in", AttrValue::Int(clamped_start));
-        attrs.set("trim_out", AttrValue::Int(clamped_end));
+        let in_abs = attrs.get_i32("in").unwrap_or(0);
+        let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
+        let old_trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+        let old_play_start = in_abs + old_trim_in;
 
-        // Affected range: union of old and new start positions
-        let range_start = old_start.min(clamped_start);
-        let range_end = old_start.max(clamped_start);
+        // Convert absolute play_start to local trim offset
+        let new_trim_in = new_play_start - in_abs;
+        attrs.set("trim_in", AttrValue::Int(new_trim_in));
+
+        // Affected range: union of old and new play start
+        let range_start = old_play_start.min(new_play_start);
+        let range_end = (in_abs + out_abs).max(range_start); // Ensure valid range
 
         self.attrs.mark_dirty();
         self.event_emitter.emit(LayersChangedEvent {
@@ -1943,7 +1940,8 @@ impl Comp {
         Ok(())
     }
 
-    /// Set child play end (adjust play_end attribute - visible end offset from child end).
+    /// Set child play end in absolute parent coords.
+    /// Converts to local offset: trim_out = new_play_end - out
     pub fn set_child_play_end(
         &mut self,
         child_idx: usize,
@@ -1954,18 +1952,18 @@ impl Comp {
             .get_mut(child_idx)
             .ok_or_else(|| anyhow::anyhow!("Child {} not found", child_idx))?;
 
-        let (bounds_start, bounds_end) =
-            Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
-        let current_start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
-        let old_end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
-        let (clamped_start, clamped_end) =
-            Self::clamp_range_to_bounds((current_start, new_play_end), (bounds_start, bounds_end));
-        attrs.set("trim_in", AttrValue::Int(clamped_start));
-        attrs.set("trim_out", AttrValue::Int(clamped_end));
+        let in_abs = attrs.get_i32("in").unwrap_or(0);
+        let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
+        let old_trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+        let old_play_end = out_abs + old_trim_out;
 
-        // Affected range: union of old and new end positions
-        let range_start = old_end.min(clamped_end);
-        let range_end = old_end.max(clamped_end);
+        // Convert absolute play_end to local trim offset
+        let new_trim_out = new_play_end - out_abs;
+        attrs.set("trim_out", AttrValue::Int(new_trim_out));
+
+        // Affected range: union of old and new play end
+        let range_start = in_abs.min(old_play_end).min(new_play_end);
+        let range_end = old_play_end.max(new_play_end);
 
         self.attrs.mark_dirty();
         self.event_emitter.emit(LayersChangedEvent {
@@ -1999,8 +1997,11 @@ impl Comp {
         for (_child_uuid, attrs) in &self.children {
             let start = attrs.get_i32("in").unwrap_or(0);
             let end = attrs.get_i32("out").unwrap_or(0);
-            let play_start = attrs.get_i32("trim_in").unwrap_or(start);
-            let play_end = attrs.get_i32("trim_out").unwrap_or(end);
+            // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
+            let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+            let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+            let play_start = start + trim_in;
+            let play_end = end + trim_out;
 
             // Visible range accounting for play range offsets
             let visible_start = play_start;
@@ -2031,8 +2032,11 @@ impl Comp {
             .map(|(_, attrs)| {
                 let (bounds_start, bounds_end) =
                     Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
-                let start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
-                let end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
+                // Local trim offsets: play_start = in + trim_in, play_end = out + trim_out
+                let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
+                let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
+                let start = bounds_start + trim_in;
+                let end = bounds_end + trim_out;
                 (start, end)
             });
 
