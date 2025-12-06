@@ -298,6 +298,7 @@ pub fn render_canvas(
     ui: &mut Ui,
     comp_uuid: Uuid,
     comp: &Comp,
+    project: &crate::entities::Project,
     config: &TimelineConfig,
     state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
@@ -528,6 +529,24 @@ pub fn render_canvas(
                             // Draw visible (trimmed) area with full color on top
                             if let Some(visible_bar_rect) = geom.visible_bar_rect {
                                 painter.rect_filled(visible_bar_rect, 4.0, base_color);
+
+                                // Draw diagonal hatch pattern for file comps (over the color)
+                                let is_source_file = attrs.get_str("uuid")
+                                    .and_then(|s| Uuid::parse_str(s).ok())
+                                    .and_then(|source_uuid| project.get_comp(source_uuid))
+                                    .map(|source| source.is_file_mode())
+                                    .unwrap_or(false);
+
+                                if is_source_file {
+                                    let hatch_id = state.get_hatch_texture(ui.ctx());
+                                    // Calculate UV to tile the pattern across the bar
+                                    let uv_scale = 16.0; // Pattern size in pixels
+                                    let uv = Rect::from_min_max(
+                                        Pos2::new(visible_bar_rect.min.x / uv_scale, visible_bar_rect.min.y / uv_scale),
+                                        Pos2::new(visible_bar_rect.max.x / uv_scale, visible_bar_rect.max.y / uv_scale),
+                                    );
+                                    painter.image(hatch_id, visible_bar_rect, uv, Color32::WHITE);
+                                }
 
                                 // Draw layer name centered on visible bar
                                 let text_color = Color32::WHITE;

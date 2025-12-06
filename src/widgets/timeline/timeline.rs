@@ -4,7 +4,7 @@
 //! are bridged to the EventBus; renderers read `TimelineConfig`/`TimelineState`
 //! to draw rows/bars and handle interactions.
 
-use eframe::egui::Pos2;
+use eframe::egui::{self, Pos2};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -33,7 +33,7 @@ impl Default for TimelineConfig {
 }
 
 /// Timeline state (persistent between frames)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TimelineState {
     pub zoom: f32,                     // Zoom multiplier (1.0 = default, range 0.1..4.0)
     pub pan_offset: f32,               // Horizontal scroll offset in frames
@@ -46,6 +46,25 @@ pub struct TimelineState {
     #[serde(skip)]
     pub last_canvas_width: f32, // Last known canvas width for Fit calculation
     pub outline_width: f32, // Width of outline panel in Split mode (persistent)
+    #[serde(skip)]
+    pub hatch_texture: Option<egui::TextureHandle>, // Diagonal hatch pattern for file comps
+}
+
+impl std::fmt::Debug for TimelineState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimelineState")
+            .field("zoom", &self.zoom)
+            .field("pan_offset", &self.pan_offset)
+            .field("drag_state", &self.drag_state)
+            .field("snap_enabled", &self.snap_enabled)
+            .field("lock_work_area", &self.lock_work_area)
+            .field("last_comp_uuid", &self.last_comp_uuid)
+            .field("view_mode", &self.view_mode)
+            .field("last_canvas_width", &self.last_canvas_width)
+            .field("outline_width", &self.outline_width)
+            .field("hatch_texture", &self.hatch_texture.as_ref().map(|_| "TextureHandle"))
+            .finish()
+    }
 }
 
 impl Default for TimelineState {
@@ -60,8 +79,56 @@ impl Default for TimelineState {
             view_mode: TimelineViewMode::Split,
             last_canvas_width: 800.0, // Default estimate
             outline_width: 400.0,     // Default outline panel width
+            hatch_texture: None,
         }
     }
+}
+
+impl TimelineState {
+    /// Get or create the diagonal hatch pattern texture for file comp bars
+    pub fn get_hatch_texture(&mut self, ctx: &egui::Context) -> egui::TextureId {
+        if self.hatch_texture.is_none() {
+            self.hatch_texture = Some(create_hatch_texture(ctx));
+        }
+        self.hatch_texture.as_ref().unwrap().id()
+    }
+}
+
+/// Create a small diagonal hatch pattern texture (16x16 pixels)
+fn create_hatch_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    const SIZE: usize = 16;
+    const LINE_WIDTH: usize = 2;
+    const SPACING: usize = 6;
+
+    let mut pixels = vec![egui::Color32::TRANSPARENT; SIZE * SIZE];
+
+    // Draw diagonal lines (bottom-left to top-right pattern)
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            // Diagonal pattern: (x + y) mod spacing determines if pixel is on the line
+            let diag = (x + y) % SPACING;
+            if diag < LINE_WIDTH {
+                // Semi-transparent white line
+                pixels[y * SIZE + x] = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 60);
+            }
+        }
+    }
+
+    let image = egui::ColorImage::from_rgba_unmultiplied(
+        [SIZE, SIZE],
+        &pixels.iter().flat_map(|c| c.to_array()).collect::<Vec<_>>(),
+    );
+
+    ctx.load_texture(
+        "hatch_pattern",
+        image,
+        egui::TextureOptions {
+            magnification: egui::TextureFilter::Nearest,
+            minification: egui::TextureFilter::Nearest,
+            wrap_mode: egui::TextureWrapMode::Repeat,
+            ..Default::default()
+        },
+    )
 }
 
 /// Global drag state - tracks what is currently being dragged

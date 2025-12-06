@@ -144,10 +144,39 @@ if panel_response.double_clicked() {
 }
 ```
 
-## Remaining
+#### ISSUE-14: Diagonal hatching for file comp bars
+**Files**: `src/widgets/timeline/timeline.rs`, `src/widgets/timeline/timeline_ui.rs`, `src/ui.rs`
 
-#### ISSUE-14: Research diagonal hatching for file comp bars
-This is a research task for visual differentiation of file comps vs layer comps in the timeline. Not yet implemented.
+Implemented pre-generated texture approach for maximum GPU efficiency:
+
+1. Created 16x16 diagonal pattern texture with semi-transparent white lines
+2. Texture created once lazily, stored in `TimelineState.hatch_texture`
+3. Pattern tiled over file comp bars using UV coordinates
+
+```rust
+// Create hatch pattern texture (16x16, diagonal lines)
+fn create_hatch_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    const SIZE: usize = 16;
+    const LINE_WIDTH: usize = 2;
+    const SPACING: usize = 6;
+    // ... generate diagonal pattern pixels
+    ctx.load_texture("hatch_pattern", image, TextureOptions { wrap_mode: Repeat, .. })
+}
+
+// In drawing code - check if source is file comp
+let is_source_file = attrs.get_str("uuid")
+    .and_then(|s| Uuid::parse_str(s).ok())
+    .and_then(|source_uuid| project.get_comp(source_uuid))
+    .map(|source| source.is_file_mode())
+    .unwrap_or(false);
+
+if is_source_file {
+    let hatch_id = state.get_hatch_texture(ui.ctx());
+    painter.image(hatch_id, visible_bar_rect, uv, Color32::WHITE);
+}
+```
+
+## All Tasks Completed
 
 ## Files Modified
 
@@ -155,8 +184,10 @@ This is a research task for visual differentiation of file comps vs layer comps 
 2. `src/entities/frame.rs` - Frame::new_composing()
 3. `src/entities/comp.rs` - compute_layer_rows, get_child_edges, enqueue_frame, lock optimization
 4. `src/main_events.rs` - consolidated handlers
-5. `src/widgets/timeline/timeline_ui.rs` - LayerGeom caching, latest_pos() fix
-6. `src/widgets/timeline/timeline_helpers.rs` - delegate to Comp::compute_layer_rows
-7. `src/widgets/viewport/viewport.rs` - fit() function, simplified scrubbing
-8. `src/widgets/viewport/viewport_ui.rs` - pass play_end to handle_scrubbing
-9. `src/widgets/project/project_ui.rs` - double-click to add clip
+5. `src/widgets/timeline/timeline.rs` - hatch_texture field, create_hatch_texture()
+6. `src/widgets/timeline/timeline_ui.rs` - LayerGeom caching, latest_pos() fix, hatch pattern drawing
+7. `src/widgets/timeline/timeline_helpers.rs` - delegate to Comp::compute_layer_rows
+8. `src/widgets/viewport/viewport.rs` - fit() function, simplified scrubbing
+9. `src/widgets/viewport/viewport_ui.rs` - pass play_end to handle_scrubbing
+10. `src/widgets/project/project_ui.rs` - double-click to add clip
+11. `src/ui.rs` - pass project to render_canvas
