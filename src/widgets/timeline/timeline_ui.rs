@@ -17,6 +17,7 @@ use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent};
+use crate::core::project_events::ProjectActiveChangedEvent;
 use crate::entities::comp_events::{
     AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
     MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,
@@ -258,6 +259,15 @@ pub fn render_outline(
                                 selection,
                                 anchor,
                             }));
+                        }
+
+                        // Double-click: dive into source comp
+                        if response.double_clicked() {
+                            if let Some(source_uuid_str) = attrs.get_str("uuid") {
+                                if let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) {
+                                    dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
+                                }
+                            }
                         }
                     },
                 )
@@ -549,7 +559,14 @@ pub fn render_canvas(
                                     let handle_rect = geom.visible_bar_rect.unwrap_or(geom.full_bar_rect);
 
                                     if handle_rect.contains(hover_pos) {
-                                        if let Some(tool) =
+                                        // Double-click: dive into source comp
+                                        if ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                                            if let Some(source_uuid_str) = attrs.get_str("uuid") {
+                                                if let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) {
+                                                    dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
+                                                }
+                                            }
+                                        } else if let Some(tool) =
                                             detect_layer_tool(hover_pos, handle_rect, edge_threshold)
                                         {
                                             ui.ctx().set_cursor_icon(tool.cursor());

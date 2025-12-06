@@ -259,9 +259,8 @@ impl Player {
             log::info!("Activated comp {} at frame {}", uuid, frame);
         });
 
-        // Keep selection in sync: ensure active is included and ordered
-        project.retain_selection(|u| *u != uuid);
-        project.push_selection(uuid);
+        // Reset selection to just the active comp
+        project.set_selection(vec![uuid]);
     }
 
 

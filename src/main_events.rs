@@ -278,9 +278,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<SelectMediaEvent>(&event) {
-        player.set_active_comp(Some(e.0), project);
-        project.retain_selection(|u| *u != e.0);
-        project.push_selection(e.0);
+        player.set_active_comp(Some(e.0), project); // also resets selection
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
         return Some(result);
     }
@@ -296,9 +294,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(&event) {
-        player.set_active_comp(Some(e.0), project);
-        project.retain_selection(|u| *u != e.0);
-        project.push_selection(e.0);
+        player.set_active_comp(Some(e.0), project); // also resets selection
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
         return Some(result);
     }
