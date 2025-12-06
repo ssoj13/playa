@@ -345,6 +345,43 @@ impl Project {
         uuid
     }
 
+    /// Generate unique layer name based on source name
+    /// Strips trailing numbers, scans ALL names in project.media, returns "base_N"
+    pub fn gen_name(&self, source_name: &str) -> String {
+        // Strip extension and trailing numbers: "clip_0017.exr" -> "clip"
+        let base = {
+            let name = source_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(source_name);
+            let name = name.trim_end_matches(|c: char| c.is_ascii_digit());
+            let name = name.trim_end_matches('_');
+            if name.is_empty() { "layer" } else { name }
+        };
+
+        // Find max existing number for this base across ALL comps and their children
+        let mut max_num = 0u32;
+        let media = self.media.read().expect("media lock poisoned");
+        for comp in media.values() {
+            // Check comp name
+            if comp.name().starts_with(base) {
+                let suffix = comp.name()[base.len()..].trim_start_matches('_');
+                if let Ok(n) = suffix.parse::<u32>() {
+                    max_num = max_num.max(n);
+                }
+            }
+            // Check all children names
+            for (_, attrs) in comp.get_children() {
+                if let Some(name) = attrs.get_str("name") {
+                    if name.starts_with(base) {
+                        let suffix = name[base.len()..].trim_start_matches('_');
+                        if let Ok(n) = suffix.parse::<u32>() {
+                            max_num = max_num.max(n);
+                        }
+                    }
+                }
+            }
+        }
+        format!("{}_{}", base, max_num + 1)
+    }
+
     /// Remove media and clean up all references to it in other comps
     pub fn remove_media_with_cleanup(&mut self, uuid: Uuid) {
         // Remove references from other comps (layers using this media as source)

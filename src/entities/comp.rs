@@ -1554,37 +1554,11 @@ impl Comp {
         })
     }
 
-    /// Add a new child to the composition at specified start frame.
-    ///
-    /// Automatically determines duration from source and creates child attributes.
-    /// Add child by looking up source from project
-    pub fn add_child(
+    /// Add child layer with all required info
+    pub fn add_child_layer(
         &mut self,
         source_uuid: Uuid,
-        start_frame: i32,
-        project: &super::Project,
-    ) -> anyhow::Result<()> {
-        // Get source to determine duration
-        let source = project
-            .get_comp(source_uuid)
-            .ok_or_else(|| anyhow::anyhow!("Source {} not found", source_uuid))?;
-
-        // First child defines comp resolution
-        if self.children.is_empty() {
-            let (w, h) = source.dim();
-            self.attrs.set("width", AttrValue::UInt(w as u32));
-            self.attrs.set("height", AttrValue::UInt(h as u32));
-        }
-
-        let duration = source.frame_count();
-        let dim = source.dim();
-        self.add_child_with_duration(source_uuid, start_frame, duration, None, dim)
-    }
-
-    /// Add child with explicit duration and optional target row
-    pub fn add_child_with_duration(
-        &mut self,
-        source_uuid: Uuid,
+        name: &str,
         start_frame: i32,
         duration: i32,
         target_row: Option<usize>,
@@ -1597,8 +1571,8 @@ impl Comp {
 
         // Create child attributes
         let mut attrs = Attrs::new();
-        attrs.set("uuid", AttrValue::Str(source_uuid.to_string())); // Reference to source comp (stored as string)
-        attrs.set("name", AttrValue::Str("Child".to_string()));
+        attrs.set("uuid", AttrValue::Str(source_uuid.to_string()));
+        attrs.set("name", AttrValue::Str(name.to_string()));
         attrs.set("in", AttrValue::Int(start_frame));
         attrs.set("out", AttrValue::Int(end_frame));
         // Work area defaults to full placement range in parent timeline
