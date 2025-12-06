@@ -118,7 +118,7 @@ impl StatusBar {
 
                 // Comp/Clip range info: <start | play_start <current_frame> play_end | end>
                 if let Some(comp_uuid) = player.active_comp() {
-                    let media = project.media.read().unwrap();
+                    let media = project.media.read().expect("media lock poisoned");
                     if let Some(comp) = media.get(&comp_uuid) {
                         ui.separator();
                         let start = comp._in();

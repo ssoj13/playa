@@ -93,7 +93,7 @@ pub fn render_timeline_panel(
                 timeline_state.last_comp_uuid = Some(comp_uuid);
             }
 
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
                 let config = TimelineConfig::default();
 

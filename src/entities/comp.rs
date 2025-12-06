@@ -847,29 +847,32 @@ impl Comp {
         }
 
         // Layer mode: also preload children (file comps need their frames loaded)
+        // Optimization: collect all source uuids first, then single lock for all lookups
         if !self.is_file_mode() {
-            for (child_uuid, attrs) in &self.children {
-                let source_uuid_str = match attrs.get_str("uuid") {
-                    Some(s) => s,
-                    None => continue,
-                };
-                let source_uuid = match Uuid::parse_str(source_uuid_str) {
-                    Ok(u) => u,
-                    Err(_) => continue,
-                };
+            // Collect (child_uuid, source_uuid) pairs without holding lock
+            let child_sources: Vec<(Uuid, Uuid)> = self.children.iter()
+                .filter_map(|(child_uuid, attrs)| {
+                    attrs.get_str("uuid")
+                        .and_then(|s| Uuid::parse_str(s).ok())
+                        .map(|source_uuid| (*child_uuid, source_uuid))
+                })
+                .collect();
 
-                // Get source comp and trigger its preload
-                let source = {
-                    let media = project.media.read().unwrap();
-                    media.get(&source_uuid).cloned()
-                };
+            // Single lock acquisition to get all source comps
+            let sources: Vec<(Uuid, Comp)> = {
+                let media = project.media.read().expect("media lock poisoned");
+                child_sources.iter()
+                    .filter_map(|(child_uuid, source_uuid)| {
+                        media.get(source_uuid).cloned().map(|c| (*child_uuid, c))
+                    })
+                    .collect()
+            };
 
-                if let Some(source) = source {
-                    // Calculate child's center frame based on parent's center
-                    let child_center = self.comp2local(*child_uuid, center)
-                        .map(|local| source._in() + local);
-                    source.signal_preload(workers, project, child_center);
-                }
+            // Now trigger preload for each source (lock released)
+            for (child_uuid, source) in sources {
+                let child_center = self.comp2local(child_uuid, center)
+                    .map(|local| source._in() + local);
+                source.signal_preload(workers, project, child_center);
             }
         }
 
@@ -1031,16 +1034,12 @@ impl Comp {
 
             let (w, h) = self.dim();
 
-            // Get or create frame from cache
-            let frame = if let Some(existing) = global_cache.get(uuid, frame_idx) {
-                existing
-            } else {
-                // Create new Header frame and insert
+            // Atomically get existing frame or create new one (prevents race condition)
+            let (frame, _was_inserted) = global_cache.get_or_insert(uuid, frame_idx, || {
                 let new_frame = Frame::new_unloaded(frame_path.clone());
                 new_frame.crop(w, h, CropAlign::LeftTop);
-                global_cache.insert(uuid, frame_idx, new_frame.clone());
                 new_frame
-            };
+            });
 
             // Enqueue background load - frame is shared via Arc
             workers.execute_with_epoch(epoch, move || {
@@ -1060,21 +1059,24 @@ impl Comp {
             });
         } else {
             // Layer mode: compose from children in background
+            // Atomically reserve slot with Loading placeholder to prevent race condition
+            let (_placeholder, was_inserted) = global_cache.get_or_insert(uuid, frame_idx, || {
+                Frame::new_composing()
+            });
+
+            // If slot already existed (Loading/Loaded), skip - another worker is handling it
+            if !was_inserted {
+                return;
+            }
+
             let project_clone = project.clone();
             let comp_clone = self.clone();
 
             // Enqueue background composition
             workers.execute_with_epoch(epoch, move || {
                 // Skip if comp was deleted (safety check - epoch should catch this)
-                if !project_clone.media.read().unwrap().contains_key(&uuid) {
+                if !project_clone.media.read().expect("media lock poisoned").contains_key(&uuid) {
                     return;
-                }
-
-                // Skip if already Loaded (check status, not presence)
-                if let Some(status) = global_cache.get_status(uuid, frame_idx) {
-                    if status == FrameStatus::Loaded {
-                        return;
-                    }
                 }
 
                 // Compose frame using CPU compositor (use_gpu=false for thread safety)
@@ -1373,13 +1375,13 @@ impl Comp {
 
             // Resolve source from Project.media and clone to avoid holding lock during recursive compose
             let source_comp = {
-                let media = project.media.read().unwrap();
+                let media = project.media.read().expect("media lock poisoned");
                 media.get(&source_uuid).cloned()
             };
 
             if let Some(source) = source_comp {
                 // Visibility toggle
-                if attrs.get_bool("visible").unwrap_or(true) == false {
+                if !attrs.get_bool("visible").unwrap_or(true) {
                     continue;
                 }
 
@@ -1635,25 +1637,27 @@ impl Comp {
         Ok(())
     }
 
-    /// Find insertion position in children array to achieve target visual row
-    fn find_insert_position_for_row(&self, target_row: usize) -> usize {
+    /// Compute visual row for each layer using greedy layout algorithm.
+    /// Returns HashMap<child_idx, row> for requested indices.
+    /// Layers are processed in order; each gets first non-overlapping row.
+    pub fn compute_layer_rows(&self, child_order: &[usize]) -> std::collections::HashMap<usize, usize> {
         use std::collections::HashMap;
 
-        // Compute current layout for all existing children
         let mut layer_rows: HashMap<usize, usize> = HashMap::new();
         let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new();
 
-        for (idx, (_child_uuid, attrs)) in self.children.iter().enumerate() {
+        for &idx in child_order {
+            let Some((_child_uuid, attrs)) = self.children.get(idx) else { continue };
             let start = attrs.get_i32("in").unwrap_or(0);
             let end = attrs.get_i32("out").unwrap_or(0);
 
-            // Find first free row for this layer
+            // Find first row without overlap
             let mut row = 0;
             loop {
                 let mut row_free = true;
                 if let Some(ranges) = occupied_rows.get(&row) {
-                    for (occupied_start, occupied_end) in ranges {
-                        if start <= *occupied_end && end >= *occupied_start {
+                    for (occ_start, occ_end) in ranges {
+                        if start <= *occ_end && end >= *occ_start {
                             row_free = false;
                             break;
                         }
@@ -1661,19 +1665,22 @@ impl Comp {
                 }
 
                 if row_free {
-                    occupied_rows
-                        .entry(row)
-                        .or_insert_with(Vec::new)
-                        .push((start, end));
+                    occupied_rows.entry(row).or_default().push((start, end));
                     layer_rows.insert(idx, row);
                     break;
                 }
-
                 row += 1;
             }
         }
+        layer_rows
+    }
 
-        // Find insertion position: before first layer with row >= target_row
+    /// Find insertion position in children array to achieve target visual row
+    fn find_insert_position_for_row(&self, target_row: usize) -> usize {
+        let child_order: Vec<usize> = (0..self.children.len()).collect();
+        let layer_rows = self.compute_layer_rows(&child_order);
+
+        // Find first layer with row >= target_row
         for idx in 0..self.children.len() {
             if let Some(&row) = layer_rows.get(&idx) {
                 if row >= target_row {
@@ -1681,8 +1688,6 @@ impl Comp {
                 }
             }
         }
-
-        // If no layer found with row >= target_row, insert at end
         self.children.len()
     }
 
@@ -1942,9 +1947,9 @@ impl Comp {
         self.set_work_area_abs(current_start, new_play_end);
     }
 
-    /// Get all child edges (start and end frames) sorted by distance from given frame
-    /// Returns vec of (frame_number, is_start) tuples
-    pub fn get_child_edges_near(&self, _from_frame: i32) -> Vec<(i32, bool)> {
+    /// Get all child edges (start and end frames) sorted by frame number.
+    /// Returns vec of (frame_number, is_start) tuples.
+    pub fn get_child_edges(&self) -> Vec<(i32, bool)> {
         let mut edges = Vec::new();
 
         for (_child_uuid, attrs) in &self.children {
@@ -2358,23 +2363,23 @@ mod tests {
         let leaf = file_comp("Leaf", 0, 9, 24.0);
         let leaf_uuid = leaf.get_uuid();
         project.push_comps_order(leaf_uuid);
-        project.media.write().unwrap().insert(leaf_uuid, leaf);
+        project.media.write().expect("media lock poisoned").insert(leaf_uuid, leaf);
 
         // Middle: layer comp that references leaf
         let mut inner = Comp::new("Inner", 0, 9, 24.0);
         inner.add_child(leaf_uuid, 0, &project).unwrap();
         let inner_uuid = inner.get_uuid();
         project.push_comps_order(inner_uuid);
-        project.media.write().unwrap().insert(inner_uuid, inner);
+        project.media.write().expect("media lock poisoned").insert(inner_uuid, inner);
 
         // Root: layer comp that references inner
         let mut root = Comp::new("Root", 0, 9, 24.0);
         root.add_child(inner_uuid, 0, &project).unwrap();
         let root_uuid = root.get_uuid();
-        project.media.write().unwrap().insert(root_uuid, root);
+        project.media.write().expect("media lock poisoned").insert(root_uuid, root);
 
         let frame = {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             let root_ref = media.get(&root_uuid).unwrap();
             root_ref.get_frame(5, &project, false)
         };
@@ -2392,18 +2397,18 @@ mod tests {
         // Source clip placeholder
         let clip = file_comp("Clip", 0, 4, 24.0);
         let clip_uuid = clip.get_uuid();
-        project.media.write().unwrap().insert(clip_uuid, clip);
+        project.media.write().expect("media lock poisoned").insert(clip_uuid, clip);
 
         // Comp with single child
         let mut comp = Comp::new("Test Comp", 0, 4, 24.0);
         comp.add_child(clip_uuid, 0, &project).unwrap();
         let comp_uuid = comp.get_uuid();
-        project.media.write().unwrap().insert(comp_uuid, comp);
+        project.media.write().expect("media lock poisoned").insert(comp_uuid, comp);
 
         // First render - should return a frame (composition works)
         // Note: With placeholder sources (not Loaded), frame is NOT cached
         {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             let comp_ref = media.get(&comp_uuid).unwrap();
             let frame = comp_ref.get_frame(2, &project, false);
             assert!(frame.is_some(), "Composition should return a frame");
@@ -2412,7 +2417,7 @@ mod tests {
 
         // Change child opacity - should mark attrs as dirty
         {
-            let mut media = project.media.write().unwrap();
+            let mut media = project.media.write().expect("media lock poisoned");
             let comp_mut = media.get_mut(&comp_uuid).unwrap();
             let child_uuid = comp_mut.children.first().map(|(u, _)| *u).unwrap();
             if let Some(attrs) = comp_mut.children_attrs_get_mut(&child_uuid) {
@@ -2423,7 +2428,7 @@ mod tests {
 
         // Second render should still work (composition recomputes)
         {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             let comp_ref = media.get(&comp_uuid).unwrap();
             let frame = comp_ref.get_frame(2, &project, false);
             assert!(frame.is_some(), "Recomposition should return a frame");
@@ -2461,7 +2466,7 @@ mod tests {
         for i in 0..3 {
             let comp = file_comp(&format!("Src{}", i), 0, 4, 24.0);
             let uuid = comp.get_uuid();
-            project.media.write().unwrap().insert(uuid, comp);
+            project.media.write().expect("media lock poisoned").insert(uuid, comp);
             sources.push(uuid);
         }
 
@@ -2482,10 +2487,10 @@ mod tests {
         }
 
         let comp_uuid = comp.get_uuid();
-        project.media.write().unwrap().insert(comp_uuid, comp);
+        project.media.write().expect("media lock poisoned").insert(comp_uuid, comp);
 
         let frame = {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             let comp_ref = media.get(&comp_uuid).unwrap();
             comp_ref.get_frame(2, &project, false)
         };

@@ -12,6 +12,15 @@ const ZOOM_STEP: f32 = 0.025;
 const ZOOM_IN_FACTOR: f32 = 1.0 + ZOOM_STEP;
 const ZOOM_OUT_FACTOR: f32 = 1.0 / ZOOM_IN_FACTOR;
 
+/// Linear interpolation: maps value from [old_min, old_max] to [new_min, new_max]
+fn fit(value: f32, old_min: f32, old_max: f32, new_min: f32, new_max: f32) -> f32 {
+    if (old_max - old_min).abs() < f32::EPSILON {
+        return new_min;
+    }
+    let t = (value - old_min) / (old_max - old_min);
+    new_min + t * (new_max - new_min)
+}
+
 /// Viewport mode
 #[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum ViewportMode {
@@ -224,20 +233,20 @@ impl ViewportState {
 
     /// High-level scrubbing handler. Returns Some(frame_idx) when scrubbing
     /// requests a new frame, or None if nothing changed.
+    /// Maps mouse X from image bounds directly to [play_start, play_end] frame range.
     pub fn handle_scrubbing(
         &mut self,
         response: &egui::Response,
         double_clicked: bool,
-        total_frames: i32,
+        play_start: i32,
+        play_end: i32,
     ) -> Option<i32> {
-        if double_clicked || total_frames == 0 {
+        if double_clicked || play_end < play_start {
             return None;
         }
 
-        // Precompute bounds before mutably borrowing scrubber to avoid borrow conflicts
         let current_bounds = self.get_image_screen_bounds();
         let current_size = self.image_size;
-
         let scrubber = &mut self.scrubber;
 
         // Start or continue scrubbing on primary click/drag
@@ -247,48 +256,31 @@ impl ViewportState {
         {
             // Start scrubbing - freeze bounds
             if !scrubber.is_active() {
-                let normalized = ViewportScrubber::mouse_to_normalized(mouse_pos.x, current_bounds);
-                scrubber.start_scrubbing(current_bounds, current_size, normalized);
+                scrubber.start_scrubbing(current_bounds, current_size, 0.5);
                 scrubber.set_last_mouse_x(mouse_pos.x);
             }
 
             // Use frozen bounds for entire scrubbing session
             let image_bounds = scrubber.frozen_bounds().unwrap_or(current_bounds);
 
-            let frame_idx = if scrubber.mouse_moved(mouse_pos.x) {
-                // Mouse moved - recalculate normalized from mouse
-                let normalized = ViewportScrubber::mouse_to_normalized(mouse_pos.x, image_bounds);
-                scrubber.set_normalized_position(normalized);
-                scrubber.set_last_mouse_x(mouse_pos.x);
+            // Simple fit: mouse_x in [image_left, image_right] -> frame in [play_start, play_end]
+            let frame = fit(
+                mouse_pos.x,
+                image_bounds.min.x, image_bounds.max.x,
+                play_start as f32, play_end as f32,
+            ).round() as i32;
 
-                let is_clamped = !(0.0..=1.0).contains(&normalized);
-                scrubber.set_clamped(is_clamped);
+            // Clamp to valid range
+            let frame_clamped = frame.clamp(play_start, play_end);
+            let is_clamped = frame != frame_clamped;
 
-                let frame_idx = ViewportScrubber::normalized_to_frame(normalized, total_frames);
-                scrubber.set_current_frame(frame_idx);
+            scrubber.set_clamped(is_clamped);
+            scrubber.set_current_frame(frame_clamped);
+            scrubber.set_visual_x(mouse_pos.x);
+            scrubber.set_last_mouse_x(mouse_pos.x);
 
-                // Visual line follows mouse everywhere (can be outside image bounds)
-                scrubber.set_visual_x(mouse_pos.x);
-                frame_idx
-            } else {
-                // Mouse didn't move - keep saved normalized position
-                let saved_normalized = scrubber.normalized_position().unwrap_or(0.5);
-                let is_clamped = !(0.0..=1.0).contains(&saved_normalized);
-                scrubber.set_clamped(is_clamped);
-
-                let frame_idx =
-                    ViewportScrubber::normalized_to_frame(saved_normalized, total_frames);
-                scrubber.set_current_frame(frame_idx);
-
-                let visual_x =
-                    ViewportScrubber::normalized_to_pixel(saved_normalized, image_bounds);
-                scrubber.set_visual_x(visual_x);
-                frame_idx
-            };
-
-            Some(frame_idx)
+            Some(frame_clamped)
         } else if response.drag_stopped() || response.clicked() {
-            // On release, stop scrubbing but keep last frame
             scrubber.stop_scrubbing();
             None
         } else {

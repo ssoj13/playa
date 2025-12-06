@@ -66,6 +66,44 @@ fn extract_suffix_number(name: &str, base: &str) -> Option<u32> {
     suffix.parse().ok()
 }
 
+/// Jump to next/prev layer edge in composition
+/// direction > 0: next edge, direction < 0: prev edge
+fn jump_to_edge(comp: &mut crate::entities::Comp, forward: bool) {
+    let current = comp.frame();
+    let edges = comp.get_child_edges();
+    if edges.is_empty() {
+        return;
+    }
+    if forward {
+        // Find first edge after current, or wrap to first
+        if let Some((frame, _)) = edges.iter().find(|(f, _)| *f > current) {
+            comp.set_frame(*frame);
+        } else if let Some((frame, _)) = edges.first() {
+            comp.set_frame(*frame);
+        }
+    } else {
+        // Find last edge before current, or wrap to last
+        if let Some((frame, _)) = edges.iter().rev().find(|(f, _)| *f < current) {
+            comp.set_frame(*frame);
+        } else if let Some((frame, _)) = edges.last() {
+            comp.set_frame(*frame);
+        }
+    }
+}
+
+/// Adjust base FPS up or down
+fn adjust_fps_base(player: &mut Player, project: &mut Project, increase: bool) {
+    if increase {
+        player.increase_fps_base();
+    } else {
+        player.decrease_fps_base();
+    }
+    if let Some(comp_uuid) = player.active_comp() {
+        let fps = player.fps_base();
+        project.modify_comp(comp_uuid, |comp| comp.set_fps(fps));
+    }
+}
+
 /// Result of handling an app event - may contain deferred actions
 #[derive(Default)]
 pub struct EventResult {
@@ -152,33 +190,13 @@ pub fn handle_app_event(
     }
     if downcast_event::<JumpToPrevEdgeEvent>(&event).is_some() {
         if let Some(comp_uuid) = player.active_comp() {
-            project.modify_comp(comp_uuid, |comp| {
-                let current = comp.frame();
-                let edges = comp.get_child_edges_near(current);
-                if !edges.is_empty() {
-                    if let Some((frame, _)) = edges.iter().rev().find(|(f, _)| *f < current) {
-                        comp.set_frame(*frame);
-                    } else if let Some((frame, _)) = edges.last() {
-                        comp.set_frame(*frame);
-                    }
-                }
-            });
+            project.modify_comp(comp_uuid, |comp| jump_to_edge(comp, false));
         }
         return Some(result);
     }
     if downcast_event::<JumpToNextEdgeEvent>(&event).is_some() {
         if let Some(comp_uuid) = player.active_comp() {
-            project.modify_comp(comp_uuid, |comp| {
-                let current = comp.frame();
-                let edges = comp.get_child_edges_near(current);
-                if !edges.is_empty() {
-                    if let Some((frame, _)) = edges.iter().find(|(f, _)| *f > current) {
-                        comp.set_frame(*frame);
-                    } else if let Some((frame, _)) = edges.first() {
-                        comp.set_frame(*frame);
-                    }
-                }
-            });
+            project.modify_comp(comp_uuid, |comp| jump_to_edge(comp, true));
         }
         return Some(result);
     }
@@ -193,19 +211,11 @@ pub fn handle_app_event(
 
     // === FPS Control ===
     if downcast_event::<IncreaseFPSBaseEvent>(&event).is_some() {
-        player.increase_fps_base();
-        if let Some(comp_uuid) = player.active_comp() {
-            let fps = player.fps_base();
-            project.modify_comp(comp_uuid, |comp| comp.set_fps(fps));
-        }
+        adjust_fps_base(player, project, true);
         return Some(result);
     }
     if downcast_event::<DecreaseFPSBaseEvent>(&event).is_some() {
-        player.decrease_fps_base();
-        if let Some(comp_uuid) = player.active_comp() {
-            let fps = player.fps_base();
-            project.modify_comp(comp_uuid, |comp| comp.set_fps(fps));
-        }
+        adjust_fps_base(player, project, false);
         return Some(result);
     }
 
@@ -297,7 +307,7 @@ pub fn handle_app_event(
         }
         // Fix active if deleted
         if let Some(a) = active {
-            if !project.media.read().unwrap().contains_key(&a) {
+            if !project.media.read().expect("media lock poisoned").contains_key(&a) {
                 let first = project.comps_order().first().cloned();
                 player.set_active_comp(first, project);
             }
@@ -305,7 +315,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<ClearAllMediaEvent>(&event).is_some() {
-        project.media.write().unwrap().clear();
+        project.media.write().expect("media lock poisoned").clear();
         project.set_comps_order(Vec::new());
         project.set_selection(Vec::new());
         player.set_active_comp(None, project);
@@ -405,7 +415,7 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<TimelineFitAllEvent>(&event) {
         if let Some(comp_uuid) = player.active_comp() {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
                 let (min_frame, max_frame) = comp.play_range(true);
                 let duration = (max_frame - min_frame + 1).max(1);
@@ -422,7 +432,7 @@ pub fn handle_app_event(
         let canvas_width = timeline_state.last_canvas_width;
         // Recursive call via TimelineFitAllEvent
         if let Some(comp_uuid) = player.active_comp() {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
                 let (min_frame, max_frame) = comp.play_range(true);
                 let duration = (max_frame - min_frame + 1).max(1);
@@ -466,7 +476,7 @@ pub fn handle_app_event(
         });
 
         let add_result = {
-            let mut media = project.media.write().unwrap();
+            let mut media = project.media.write().expect("media lock poisoned");
             if let Some(comp) = media.get_mut(&e.comp_uuid) {
                 if let Some(target_row) = e.target_row {
                     let (duration, source_dim, _) = source_info.clone().unwrap_or((1, (64, 64), String::new()));

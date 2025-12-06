@@ -468,6 +468,10 @@ pub fn render_canvas(
         }
 
         // Draw layers (egui automatically clips to visible area inside ScrollArea)
+                        // Cache LayerGeom results to avoid recalculating in interaction pass
+                        let mut geom_cache: std::collections::HashMap<usize, super::timeline::LayerGeom> =
+                            std::collections::HashMap::with_capacity(child_order.len());
+
                         // Draw child bars using precomputed layout
                         for (_display_idx, &original_idx) in child_order.iter().enumerate() {
                             let idx = original_idx;
@@ -497,11 +501,12 @@ pub fn render_canvas(
                             let play_end = attrs.get_i32("trim_out").unwrap_or(child_end);
                             let is_visible = attrs.get_bool("visible").unwrap_or(true);
 
-                            // Calculate layer geometry (deduplicated)
+                            // Calculate layer geometry and cache for interaction pass
                             let geom = super::timeline::LayerGeom::calc(
                                 child_start, child_end, play_start, play_end,
                                 child_y, timeline_rect, config, state
                             );
+                            geom_cache.insert(idx, geom);
 
                             // Child bar color (use hash of name for stable color per clip)
                             let child_name = attrs.get_str("name").unwrap_or("?");
@@ -560,21 +565,8 @@ pub fn render_canvas(
                             let idx = original_idx;
                             let (child_uuid, attrs) = &comp.children[idx];
 
-                            // Get child attrs (now supports negative values)
-                            let child_start = attrs.get_i32("in").unwrap_or(0);
-                            let child_end = attrs.get_i32("out").unwrap_or(0);
-                            let play_start = attrs.get_i32("trim_in").unwrap_or(child_start);
-                            let play_end = attrs.get_i32("trim_out").unwrap_or(child_end);
-
-                            // Get precomputed row from layout
-                            let row = layer_rows.get(&idx).copied().unwrap_or(0);
-                            let child_y = row_to_y(row, config, timeline_rect);
-
-                            // Calculate layer geometry (deduplicated)
-                            let geom = super::timeline::LayerGeom::calc(
-                                child_start, child_end, play_start, play_end,
-                                child_y, timeline_rect, config, state
-                            );
+                            // Use cached geometry from draw pass
+                            let Some(&geom) = geom_cache.get(&idx) else { continue };
 
                             // Manual tool detection: use current visible bar bounds for handles/move
                             let edge_threshold = 8.0;
@@ -635,8 +627,9 @@ pub fn render_canvas(
                         };
 
                         // Process active drag operations
+                        // Use latest_pos() instead of hover_pos() to track cursor even outside window
                         if let Some(drag) = &state.drag_state.clone() {
-                            if let Some(current_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                            if let Some(current_pos) = ui.ctx().input(|i| i.pointer.latest_pos()) {
                                 match drag {
                                     GlobalDragState::TimelinePan { drag_start_pos, initial_pan_offset } => {
                                         let delta_x = current_pos.x - drag_start_pos.x;
@@ -864,37 +857,11 @@ pub fn render_canvas(
                                     let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
                                     let dur = duration.unwrap_or(10).max(1);
 
-                                    // Calculate mouse row (raw for visual position, clamped for overlap check)
+                                    // Calculate mouse row for visual positioning
                                     let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y) / config.layer_height).floor() as i32;
                                     let mouse_row = mouse_row_raw.max(0) as usize;
 
-                                    // Check if this visual row has time overlap with any existing layer
-                                    let drop_end = drop_frame + dur;
-                                    let mut _has_overlap = false;
-
-                                    // Only check overlap if mouse is within timeline bounds
-                                    if hover_pos.y >= timeline_rect.min.y {
-                                        for &child_idx in child_order.iter() {
-                                            if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
-                                                let child_start = attrs.get_i32("in").unwrap_or(0);
-                                                let child_end = attrs.get_i32("out").unwrap_or(0);
-
-                                                // Get precomputed row for this layer
-                                                let child_row = layer_rows.get(&child_idx).copied().unwrap_or(0);
-
-                                                // Check if this layer is on the same visual row as mouse
-                                                if child_row == mouse_row {
-                                                    // Check time overlap
-                                                    if drop_frame <= child_end && drop_end >= child_start {
-                                                        _has_overlap = true;
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Always use mouse position for preview Y (shows insertion point)
+                                    // Use mouse position for preview Y (shows insertion point)
                                     let row_y = if hover_pos.y >= timeline_rect.min.y {
                                         row_to_y(mouse_row, config, timeline_rect)
                                     } else {
@@ -922,7 +889,7 @@ pub fn render_canvas(
 
                                         dispatch(Box::new(AddLayerEvent {
                                             comp_uuid: comp_id,
-                                            source_uuid: source_uuid.clone(),
+                                            source_uuid, // Uuid is Copy
                                             start_frame: drop_frame,
                                             target_row,
                                         }));

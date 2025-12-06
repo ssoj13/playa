@@ -206,7 +206,7 @@ impl Project {
         if !has_comps {
             let comp = Comp::new("Main", 0, 0, 24.0);
             let uuid = comp.get_uuid();
-            self.media.write().unwrap().insert(uuid, comp);
+            self.media.write().expect("media lock poisoned").insert(uuid, comp);
             self.push_comps_order(uuid);
             log::info!("Created default comp: {}", uuid);
             uuid
@@ -216,7 +216,7 @@ impl Project {
                 // Fallback: create new if order is broken
                 let comp = Comp::new("Main", 0, 0, 24.0);
                 let uuid = comp.get_uuid();
-                self.media.write().unwrap().insert(uuid, comp);
+                self.media.write().expect("media lock poisoned").insert(uuid, comp);
                 self.push_comps_order(uuid);
                 uuid
             })
@@ -232,7 +232,7 @@ impl Project {
         *self.compositor.borrow_mut() = CompositorType::default();
 
         // Rebuild comps in unified media HashMap
-        let mut media = self.media.write().unwrap();
+        let mut media = self.media.write().expect("media lock poisoned");
         for comp in media.values_mut() {
             // NOTE: No need to clear cache - GlobalFrameCache is project-level
             // Cache will be naturally invalidated via dirty tracking
@@ -284,18 +284,18 @@ impl Project {
     /// Get cloned composition by UUID.
     /// Returns owned Comp (cloned from media pool).
     pub fn get_comp(&self, uuid: Uuid) -> Option<Comp> {
-        self.media.read().unwrap().get(&uuid).cloned()
+        self.media.read().expect("media lock poisoned").get(&uuid).cloned()
     }
 
     /// Update composition in media pool.
     /// Replaces existing comp with same UUID.
     pub fn update_comp(&self, comp: Comp) {
-        self.media.write().unwrap().insert(comp.get_uuid(), comp);
+        self.media.write().expect("media lock poisoned").insert(comp.get_uuid(), comp);
     }
 
     /// Check if composition exists in media pool.
     pub fn contains_comp(&self, uuid: Uuid) -> bool {
-        self.media.read().unwrap().contains_key(&uuid)
+        self.media.read().expect("media lock poisoned").contains_key(&uuid)
     }
 
     /// Modify composition in-place via closure.
@@ -305,7 +305,7 @@ impl Project {
     where
         F: FnOnce(&mut Comp),
     {
-        if let Some(comp) = self.media.write().unwrap().get_mut(&uuid) {
+        if let Some(comp) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
             f(comp);
             true
         } else {
@@ -326,7 +326,7 @@ impl Project {
         }
 
         let uuid = comp.get_uuid();
-        self.media.write().unwrap().insert(uuid, comp);
+        self.media.write().expect("media lock poisoned").insert(uuid, comp);
         self.push_comps_order(uuid);
     }
 
@@ -349,7 +349,7 @@ impl Project {
     pub fn remove_media_with_cleanup(&mut self, uuid: Uuid) {
         // Remove references from other comps (layers using this media as source)
         {
-            let mut media = self.media.write().unwrap();
+            let mut media = self.media.write().expect("media lock poisoned");
             for (_comp_uuid, comp) in media.iter_mut() {
                 let children_to_remove = comp.find_children_by_source(uuid);
                 for child_uuid in children_to_remove {
@@ -365,12 +365,12 @@ impl Project {
 
     /// Set CacheManager for project and all existing comps (call after deserialization)
     pub fn set_cache_manager(&mut self, manager: Arc<CacheManager>) {
-        let media = self.media.read().unwrap();
+        let media = self.media.read().expect("media lock poisoned");
         log::info!("Project::set_cache_manager() called, setting for {} comps", media.len());
         drop(media); // Release read lock before acquiring write lock
 
         self.cache_manager = Some(Arc::clone(&manager));
-        let mut media = self.media.write().unwrap();
+        let mut media = self.media.write().expect("media lock poisoned");
         for comp in media.values_mut() {
             comp.set_cache_manager(Arc::clone(&manager));
         }
@@ -400,7 +400,7 @@ impl Project {
         }
 
         // 3. Remove from media pool and order
-        self.media.write().unwrap().remove(&uuid);
+        self.media.write().expect("media lock poisoned").remove(&uuid);
         self.retain_comps_order(|u| *u != uuid);
     }
 
@@ -417,7 +417,7 @@ impl Project {
         let mut current_uuid = comp_uuid;
 
         {
-            let media = self.media.read().unwrap();
+            let media = self.media.read().expect("media lock poisoned");
             loop {
                 // Find parent of current comp
                 let parent_uuid = media.get(&current_uuid)
@@ -434,7 +434,7 @@ impl Project {
         } // Release read lock
 
         // Mark all parents as dirty and clear their caches
-        let mut media = self.media.write().unwrap();
+        let mut media = self.media.write().expect("media lock poisoned");
         for parent_uuid in &parents_to_invalidate {
             if let Some(parent_comp) = media.get_mut(parent_uuid) {
                 log::debug!("Invalidating parent comp: {}", parent_uuid);
@@ -480,7 +480,7 @@ mod tests {
 
         // Add comps to project
         {
-            let mut media = project.media.write().unwrap();
+            let mut media = project.media.write().expect("media lock poisoned");
             media.insert(child_uuid, child);
             media.insert(parent_uuid, parent);
             media.insert(grandparent_uuid, grandparent);
@@ -488,7 +488,7 @@ mod tests {
 
         // Clear dirty flags (Comp::new() marks attrs as dirty)
         {
-            let mut media = project.media.write().unwrap();
+            let mut media = project.media.write().expect("media lock poisoned");
             media.get_mut(&child_uuid).unwrap().attrs.clear_dirty();
             media.get_mut(&parent_uuid).unwrap().attrs.clear_dirty();
             media.get_mut(&grandparent_uuid).unwrap().attrs.clear_dirty();
@@ -496,14 +496,14 @@ mod tests {
 
         // Mark only child as dirty
         {
-            let mut media = project.media.write().unwrap();
+            let mut media = project.media.write().expect("media lock poisoned");
             media.get_mut(&child_uuid).unwrap().attrs.mark_dirty();
         }
-        assert!(project.media.read().unwrap().get(&child_uuid).unwrap().attrs.is_dirty());
+        assert!(project.media.read().expect("media lock poisoned").get(&child_uuid).unwrap().attrs.is_dirty());
 
         // Parent and grandparent should be clean
         {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             assert!(!media.get(&parent_uuid).unwrap().attrs.is_dirty());
             assert!(!media.get(&grandparent_uuid).unwrap().attrs.is_dirty());
         }
@@ -513,7 +513,7 @@ mod tests {
 
         // After cascade, both parent and grandparent should be dirty
         {
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             assert!(
                 media.get(&parent_uuid).unwrap().attrs.is_dirty(),
                 "Parent should be dirty after cascade"
@@ -535,13 +535,13 @@ mod tests {
         let comp_uuid = comp.get_uuid();
         comp.attrs.mark_dirty();
 
-        project.media.write().unwrap().insert(comp_uuid, comp);
+        project.media.write().expect("media lock poisoned").insert(comp_uuid, comp);
 
         // Cascade invalidation should not crash
         project.invalidate_cascade(comp_uuid);
 
         // Comp should still be dirty
-        assert!(project.media.read().unwrap().get(&comp_uuid).unwrap().attrs.is_dirty());
+        assert!(project.media.read().expect("media lock poisoned").get(&comp_uuid).unwrap().attrs.is_dirty());
     }
 }
 
@@ -557,7 +557,7 @@ mod arc_rwlock_hashmap {
     where
         S: Serializer,
     {
-        map.read().unwrap().serialize(serializer)
+        map.read().expect("media lock poisoned").serialize(serializer)
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<RwLock<HashMap<Uuid, Comp>>>, D::Error>

@@ -17,12 +17,12 @@ fn create_image_dialog(title: &str) -> rfd::FileDialog {
 pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> ProjectActions {
     let mut actions = ProjectActions::new();
 
-    // Full-rect hover tracking
+    // Full-rect hover and click tracking
     let panel_rect = ui.available_rect_before_wrap();
     let panel_response = ui.interact(
         panel_rect,
         ui.id().with("project_panel"),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
 
     // Action buttons single row
@@ -84,7 +84,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 return;
             }
 
-            let media = project.media.read().unwrap();
+            let media = project.media.read().expect("media lock poisoned");
             for comp_uuid in &all_comps {
                 let comp = match media.get(comp_uuid) {
                     Some(c) => c,
@@ -291,6 +291,15 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 ui.add_space(1.0);
             }
         });
+
+    // Double-click on empty area opens file dialog (same as Add Clip button)
+    if panel_response.double_clicked() {
+        if let Some(paths) = create_image_dialog("Add Media Files").pick_files() {
+            if !paths.is_empty() {
+                actions.send(AddClipsEvent(paths));
+            }
+        }
+    }
 
     // Set hover state for input routing
     actions.hovered = panel_response.hovered();

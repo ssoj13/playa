@@ -195,52 +195,13 @@ pub(super) fn draw_frame_ruler(
     (frame_clicked, rect)
 }
 
-/// Compute visual rows for ALL layers using greedy layout algorithm
-/// Returns mapping of child_idx -> row
+/// Compute visual rows for ALL layers using greedy layout algorithm.
+/// Returns mapping of child_idx -> row. Delegates to Comp::compute_layer_rows.
 pub(super) fn compute_all_layer_rows(
     comp: &Comp,
     child_order: &[usize],
 ) -> std::collections::HashMap<usize, usize> {
-    use std::collections::HashMap;
-
-    let mut layer_rows: HashMap<usize, usize> = HashMap::new();
-    let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new(); // row -> [(start, end), ...]
-
-    // Process layers in order (by child_idx)
-    for &child_idx in child_order.iter() {
-        if let Some((_child_uuid, attrs)) = comp.children.get(child_idx) {
-            let start = attrs.get_i32("in").unwrap_or(0);
-            let end = attrs.get_i32("out").unwrap_or(0);
-
-            // Find first free row for this layer
-            let mut row = 0;
-            loop {
-                let mut row_free = true;
-                if let Some(ranges) = occupied_rows.get(&row) {
-                    for (occupied_start, occupied_end) in ranges {
-                        if start <= *occupied_end && end >= *occupied_start {
-                            row_free = false;
-                            break;
-                        }
-                    }
-                }
-
-                if row_free {
-                    // Mark this row as occupied by this layer's time range
-                    occupied_rows
-                        .entry(row)
-                        .or_insert_with(Vec::new)
-                        .push((start, end));
-                    layer_rows.insert(child_idx, row);
-                    break;
-                }
-
-                row += 1;
-            }
-        }
-    }
-
-    layer_rows
+    comp.compute_layer_rows(child_order)
 }
 
 /// Convert row index to Y coordinate in timeline

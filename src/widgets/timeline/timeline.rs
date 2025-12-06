@@ -106,6 +106,8 @@ pub enum TimelineViewMode {
 }
 
 /// Precomputed layer geometry - shared between draw and interaction passes.
+/// Computed once in draw pass and reused in interaction pass to avoid duplicate calculations.
+#[derive(Clone, Copy)]
 pub(super) struct LayerGeom {
     pub full_bar_rect: eframe::egui::Rect,
     pub visible_bar_rect: Option<eframe::egui::Rect>,

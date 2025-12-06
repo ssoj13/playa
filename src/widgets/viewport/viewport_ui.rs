@@ -98,8 +98,14 @@ pub fn render(
 
         handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
+        // Get play range for scrubbing (trim_in..trim_out)
+        let (play_start, play_end) = player.active_comp()
+            .and_then(|uuid| project.get_comp(uuid))
+            .map(|c| (c.trim_in(), c.trim_out()))
+            .unwrap_or((0, 0));
+
         if let Some(frame_idx) =
-            viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames(project))
+            viewport_state.handle_scrubbing(&response, double_clicked, play_start, play_end)
         {
             actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
         }

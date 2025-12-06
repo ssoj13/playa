@@ -361,6 +361,28 @@ impl Frame {
         }
     }
 
+    /// Create composing placeholder (for layer mode cache reservation)
+    ///
+    /// Creates minimal 1x1 frame with Loading status to prevent
+    /// race conditions where multiple workers try to compose same frame.
+    pub fn new_composing() -> Self {
+        let buffer_u8 = vec![0, 50, 100, 255]; // 1 pixel blue-ish (composing indicator)
+
+        let data = FrameData {
+            buffer: Arc::new(PixelBuffer::U8(buffer_u8)),
+            pixel_format: PixelFormat::Rgba8,
+            width: 1,
+            height: 1,
+            status: FrameStatus::Loading, // Mark as composing in progress
+            attrs: Attrs::new(),
+        };
+
+        Self {
+            data: Arc::new(Mutex::new(data)),
+            filename: None,
+        }
+    }
+
     /// Get filename if set
     pub fn file(&self) -> Option<&PathBuf> {
         self.filename.as_ref()

@@ -193,7 +193,7 @@ impl PlayaApp {
     /// Attach composition event emitter to all comps in the current project.
     fn attach_comp_event_emitter(&mut self) {
         let emitter = self.comp_event_emitter.clone();
-        for comp in self.project.media.write().unwrap().values_mut() {
+        for comp in self.project.media.write().expect("media lock poisoned").values_mut() {
             comp.set_event_emitter(emitter.clone());
         }
     }
@@ -1160,7 +1160,7 @@ impl eframe::App for PlayaApp {
         if self.show_encode_dialog
             && let Some(ref mut dialog) = self.encode_dialog
         {
-            let media = self.project.media.read().unwrap();
+            let media = self.project.media.read().expect("media lock poisoned");
             let active_comp = self
                 .player
                 .active_comp()

@@ -174,6 +174,36 @@ impl GlobalFrameCache {
             .map(|frame| frame.status())
     }
 
+    /// Atomically get existing frame or insert new one.
+    /// Returns (frame, was_inserted) - true if we inserted, false if already existed.
+    /// This prevents race conditions where two threads both check and insert.
+    pub fn get_or_insert(&self, comp_uuid: Uuid, frame_idx: i32, make_frame: impl FnOnce() -> Frame) -> (Frame, bool) {
+        let mut cache = self.cache.lock().unwrap();
+
+        // Check if frame already exists
+        if let Some(frames) = cache.get(&comp_uuid) {
+            if let Some(existing) = frames.get(&frame_idx) {
+                return (existing.clone(), false);
+            }
+        }
+
+        // Frame doesn't exist - create and insert
+        let frame = make_frame();
+        let frame_clone = frame.clone();
+
+        // Insert into cache
+        cache.entry(comp_uuid).or_default().insert(frame_idx, frame);
+
+        // Update LRU and memory tracking
+        {
+            let mut lru = self.lru_order.lock().unwrap();
+            lru.push_back(CacheKey { comp_uuid, frame_idx });
+        }
+        self.cache_manager.add_memory(frame_clone.mem());
+
+        (frame_clone, true)
+    }
+
     /// Insert frame into cache
     ///
     /// Automatically evicts oldest frames if memory limit exceeded.
