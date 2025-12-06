@@ -4,6 +4,14 @@
 //! - Layer name / clip name
 //! - Start..End range as horizontal bar
 //! - Visual indication of current_frame (playhead)
+//!
+//! # Interactions
+//!
+//! - **Click**: Select layer (with Shift/Ctrl for multi-select)
+//! - **Double-click**: Dive into source comp (activates the layer's source)
+//! - **Drag**: Move layer position or reorder
+//! - **Edge drag**: Trim in/out points
+//!
 //! Consumed by: `ui::render_timeline_panel`. Emits events through
 //! dispatch closures to EventBus, driven by shared `TimelineState` from
 //! `timeline.rs` and helper routines in `timeline_helpers.rs`. Data flow:

@@ -28,6 +28,11 @@
 //!
 //! `update()` called at 60Hz, advances frame index based on FPS.
 //! Handles sequence boundaries (loop or stop at end).
+//!
+//! # Selection Behavior
+//!
+//! `set_active_comp()` resets project selection to just the activated comp.
+//! This prevents multi-selection accumulation when adding/switching clips.
 
 use crate::entities::{Attrs, AttrValue, Project};
 use crate::entities::frame::Frame;
@@ -230,6 +235,10 @@ impl Player {
     ///
     /// Updates active_comp and emits CurrentFrameChanged event.
     /// Stops playback during transition.
+    ///
+    /// **Selection reset**: Resets project selection to just this comp.
+    /// Prevents multi-selection accumulation when adding new clips or
+    /// switching between comps (e.g., double-click on timeline layer).
     pub fn set_active_comp(&mut self, comp_uuid: Option<Uuid>, project: &mut Project) {
         // Handle None case - clear active
         let Some(uuid) = comp_uuid else {
