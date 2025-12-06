@@ -957,16 +957,25 @@ impl eframe::App for PlayaApp {
 
         // Centralized dirty check: if any attrs changed, invalidate and preload
         if let Some(comp_uuid) = self.player.active_comp() {
-            if let Some(comp) = self.project.get_comp(comp_uuid) {
-                let self_dirty = comp.attrs.is_dirty();
-                let children_dirty = comp.children.iter().any(|(_, attrs)| attrs.is_dirty());
-                if self_dirty || children_dirty {
-                    // Reset displayed frame to force re-render
-                    self.displayed_frame = None;
-                    // Trigger preload for current position
-                    self.enqueue_frame_loads_around_playhead(10);
-                    ctx.request_repaint();
-                }
+            let is_dirty = self.project.get_comp(comp_uuid)
+                .map(|comp| {
+                    comp.attrs.is_dirty() || comp.children.iter().any(|(_, attrs)| attrs.is_dirty())
+                })
+                .unwrap_or(false);
+
+            if is_dirty {
+                // Reset displayed frame to force re-render
+                self.displayed_frame = None;
+                // Trigger preload for current position
+                self.enqueue_frame_loads_around_playhead(10);
+                // Clear dirty flags to prevent repeated preload
+                self.project.modify_comp(comp_uuid, |comp| {
+                    comp.attrs.clear_dirty();
+                    for (_, attrs) in &comp.children {
+                        attrs.clear_dirty();
+                    }
+                });
+                ctx.request_repaint();
             }
         }
 

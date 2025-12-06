@@ -927,10 +927,11 @@ impl Comp {
 
         let uuid = self.get_uuid();
 
-        // Skip if already Loaded (check status, not just presence)
+        // Skip if already Loaded, Loading, or Error (don't re-enqueue)
         if let Some(status) = global_cache.get_status(uuid, frame_idx) {
-            if status == FrameStatus::Loaded {
-                return;
+            match status {
+                FrameStatus::Loaded | FrameStatus::Loading | FrameStatus::Error => return,
+                _ => {} // Header/Placeholder - proceed to enqueue
             }
         }
 
