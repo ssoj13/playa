@@ -307,6 +307,11 @@ impl EncodeDialog {
             }
         }
 
+        // Request continuous repaint while encoding (progress bar updates)
+        if self.is_encoding {
+            ctx.request_repaint();
+        }
+
         // Check if encoding completed (only process once while encoding)
         if self.is_encoding
             && let Some(ref progress) = self.progress

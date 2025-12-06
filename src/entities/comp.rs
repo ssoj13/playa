@@ -1832,6 +1832,7 @@ impl Comp {
             if let Some((_child_uuid, attrs)) = self.children.get_mut(idx) {
                 let in_val = attrs.get_i32("in").unwrap_or(0);
                 let out_val = attrs.get_i32("out").unwrap_or(0);
+                let speed = attrs.get_float("speed").unwrap_or(1.0);
                 let (bounds_start, bounds_end) = Self::child_bounds_abs(Some(in_val), Some(out_val));
                 let duration = bounds_end - bounds_start;
 
@@ -1839,24 +1840,27 @@ impl Comp {
                 range_min = range_min.min(bounds_start);
                 range_max = range_max.max(bounds_end);
 
+                // Convert delta from PARENT coords to LOCAL coords
+                // trim_in/trim_out are in LOCAL (source) frames
+                let local_delta = (delta as f32 * speed).round() as i32;
+
                 // Get current local offsets (default 0 = no trim)
                 let trim_in = attrs.get_i32("trim_in").unwrap_or(0);
                 let trim_out = attrs.get_i32("trim_out").unwrap_or(0);
 
                 if is_start {
-                    // Apply delta to trim_in (affects play_start = in + trim_in)
-                    let new_trim_in = trim_in + delta;
+                    // Apply local_delta to trim_in
+                    let new_trim_in = trim_in + local_delta;
                     // Clamp: trim_in >= 0, and play_start <= play_end
-                    // play_start = in + trim_in, play_end = out + trim_out
-                    // in + trim_in <= out + trim_out → trim_in <= duration + trim_out
+                    // trim_in <= duration + trim_out
                     let max_trim_in = duration + trim_out;
                     let clamped_trim_in = new_trim_in.clamp(0, max_trim_in.max(0));
                     attrs.set("trim_in", AttrValue::Int(clamped_trim_in));
                 } else {
-                    // Apply delta to trim_out (affects play_end = out + trim_out)
-                    let new_trim_out = trim_out + delta;
+                    // Apply local_delta to trim_out
+                    let new_trim_out = trim_out + local_delta;
                     // Clamp: trim_out <= 0, and play_start <= play_end
-                    // in + trim_in <= out + trim_out → trim_out >= trim_in - duration
+                    // trim_out >= trim_in - duration
                     let min_trim_out = trim_in - duration;
                     let clamped_trim_out = new_trim_out.clamp(min_trim_out.min(0), 0);
                     attrs.set("trim_out", AttrValue::Int(clamped_trim_out));
@@ -1881,7 +1885,7 @@ impl Comp {
     }
 
     /// Set child visible start in absolute parent coords.
-    /// Converts to local offset: trim_in = new_start - in
+    /// Converts to local offset: trim_in = (new_start - in) * speed
     pub fn set_child_start(
         &mut self,
         child_idx: usize,
@@ -1894,11 +1898,13 @@ impl Comp {
 
         let in_abs = attrs.get_i32("in").unwrap_or(0);
         let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
+        let speed = attrs.get_float("speed").unwrap_or(1.0);
         let old_trim_in = attrs.get_i32("trim_in").unwrap_or(0);
-        let old_play_start = in_abs + old_trim_in;
+        let old_play_start = in_abs + (old_trim_in as f32 / speed).round() as i32;
 
-        // Convert absolute play_start to local trim offset
-        let new_trim_in = new_play_start - in_abs;
+        // Convert parent offset to local trim offset
+        // layer_start = in + trim_in/speed → trim_in = (layer_start - in) * speed
+        let new_trim_in = ((new_play_start - in_abs) as f32 * speed).round() as i32;
         attrs.set("trim_in", AttrValue::Int(new_trim_in));
 
         // Affected range: union of old and new play start
@@ -1916,7 +1922,7 @@ impl Comp {
     }
 
     /// Set child visible end in absolute parent coords.
-    /// Converts to local offset: trim_out = new_end - out
+    /// Converts to local offset: trim_out = (new_end - in) * speed - source_duration
     pub fn set_child_end(
         &mut self,
         child_idx: usize,
@@ -1929,11 +1935,15 @@ impl Comp {
 
         let in_abs = attrs.get_i32("in").unwrap_or(0);
         let out_abs = attrs.get_i32("out").unwrap_or(in_abs);
+        let speed = attrs.get_float("speed").unwrap_or(1.0);
+        let source_duration = out_abs - in_abs;
         let old_trim_out = attrs.get_i32("trim_out").unwrap_or(0);
-        let old_play_end = out_abs + old_trim_out;
+        let old_play_end = in_abs + ((source_duration + old_trim_out) as f32 / speed).round() as i32;
 
-        // Convert absolute play_end to local trim offset
-        let new_trim_out = new_play_end - out_abs;
+        // Convert parent offset to local trim offset
+        // layer_end = in + (source_duration + trim_out)/speed
+        // → trim_out = (layer_end - in) * speed - source_duration
+        let new_trim_out = ((new_play_end - in_abs) as f32 * speed).round() as i32 - source_duration;
         attrs.set("trim_out", AttrValue::Int(new_trim_out));
 
         // Affected range: union of old and new play end

@@ -42,7 +42,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 /// FPS presets for jog/shuttle control
-const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0];
+const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0];
 
 /// Frame step size for Shift+Arrow and Shift+PageUp/PageDown
 pub const FRAME_JUMP_STEP: i32 = 25;

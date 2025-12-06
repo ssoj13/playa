@@ -22,6 +22,8 @@ pub fn help_text() -> &'static str {
     F4 - Toggle Encoder dialog\n\
     F5 - Toggle Preferences\n\
     ESC - Exit Fullscreen / Quit\n\n\
+    Ctrl+S - Save Project\n\
+    Ctrl+O - Open Project\n\
     Z - Toggle Fullscreen\n\
     Ctrl+R - Reset Settings\n\
     Backspace - Toggle Frame Numbers\n\n\
@@ -29,11 +31,11 @@ pub fn help_text() -> &'static str {
     B - Set Play Range Start\n\
     N - Set Play Range End\n\
     Ctrl+B - Reset Play Range\n\n\
-    Playback:\n\
-    Space / ↑ - Play/Pause Toggle\n\
-    K / . / ↓ - Stop\n\
+    Playback (J/K/L style: , / . ):\n\
+    Space / Insert / ↑ - Play/Pause Toggle\n\
+    K / / / ↓ - Stop\n\
     J / , - Jog Backward (accelerates)\n\
-    L / / - Jog Forward (accelerates)\n\n\
+    L / . - Jog Forward (accelerates)\n\n\
     Frame Navigation:\n\
     ← → - Step 1 frame\n\
     PgUp/PgDn - Step 1 frame\n\
@@ -51,7 +53,7 @@ pub fn help_text() -> &'static str {
     Delete - Remove Selected Layer\n\
     F - Fit Timeline\n\
     A - Reset Timeline Zoom\n\n\
-    FPS Control (Presets):\n\
+    FPS Control:\n\
     - - Decrease Base FPS\n\
     = / + - Increase Base FPS\n\n\
     Viewport:\n\

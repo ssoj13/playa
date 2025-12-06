@@ -225,6 +225,14 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
             }
         }
 
+        // Known slider attributes with specific ranges
+        ("speed", AttrValue::Float(v)) => {
+            scope_changed |= ui.add(egui::Slider::new(v, 0.1..=4.0).step_by(0.1)).changed();
+        }
+        ("opacity", AttrValue::Float(v)) => {
+            scope_changed |= ui.add(egui::Slider::new(v, 0.0..=1.0).step_by(0.01)).changed();
+        }
+
         // Fallbacks
         (_, AttrValue::Bool(v)) => {
             scope_changed |= ui.checkbox(v, "").changed();

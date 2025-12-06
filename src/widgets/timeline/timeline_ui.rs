@@ -258,7 +258,7 @@ pub fn render_outline(
                             .add(
                                 egui::DragValue::new(&mut speed)
                                     .speed(0.1)
-                                    .range(0.01..=8.0),
+                                    .range(0.1..=4.0),
                             )
                             .changed()
                         {

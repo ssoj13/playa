@@ -108,13 +108,10 @@ impl StatusBar {
 
                 ui.separator();
 
-                // FPS info (play vs base)
-                let fps = if player.is_playing() {
-                    player.fps_play()
-                } else {
-                    player.fps_base()
-                };
-                ui.monospace(format!("FPS:{:.2}", fps));
+                // FPS info: base/play
+                let base_fps = player.fps_base();
+                let play_fps = player.fps_play();
+                ui.monospace(format!("{:.0}/{:.0} fps", base_fps, play_fps));
 
                 // Comp/Clip range info: <start | play_start <current_frame> play_end | end>
                 if let Some(comp_uuid) = player.active_comp() {

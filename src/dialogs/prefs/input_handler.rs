@@ -83,9 +83,10 @@ impl HotkeyHandler {
         self.bind(Global, "F4", ToggleEncodeDialogEvent);
         self.bind(Global, "F5", ToggleSettingsEvent);
         self.bind(Global, "Space", TogglePlayPauseEvent);
+        self.bind(Global, "Insert", TogglePlayPauseEvent);  // KP_Ins / Insert
         self.bind(Global, "ArrowUp", TogglePlayPauseEvent);
         self.bind(Global, "K", StopEvent);
-        self.bind(Global, "Period", StopEvent);
+        self.bind(Global, "Slash", StopEvent);        // / = K (stop)
         self.bind(Global, "Num1", JumpToStartEvent);
         self.bind(Global, "Home", JumpToStartEvent);
         self.bind(Global, "Num2", JumpToEndEvent);
@@ -96,7 +97,8 @@ impl HotkeyHandler {
         self.bind(Global, "Shift+PageUp", StepBackwardLargeEvent);
         self.bind(Global, "Ctrl+PageDown", JumpToEndEvent);
         self.bind(Global, "Ctrl+PageUp", JumpToStartEvent);
-        self.bind(Global, "-", DecreaseFPSBaseEvent);
+        // FPS control: both regular and numpad +/-
+        self.bind(Global, "Minus", DecreaseFPSBaseEvent);
         self.bind(Global, "Equals", IncreaseFPSBaseEvent);
         self.bind(Global, "Plus", IncreaseFPSBaseEvent);
         self.bind(Global, "Shift+ArrowLeft", StepBackwardLargeEvent);
@@ -104,10 +106,11 @@ impl HotkeyHandler {
         self.bind(Global, "ArrowLeft", StepBackwardEvent);
         self.bind(Global, "ArrowRight", StepForwardEvent);
         self.bind(Global, "ArrowDown", StopEvent);
+        // J/K/L style: < = J, / = K, > = L
         self.bind(Global, "J", JogBackwardEvent);
-        self.bind(Global, "Comma", JogBackwardEvent);
+        self.bind(Global, "Comma", JogBackwardEvent);  // , or < = J (jog back)
         self.bind(Global, "L", JogForwardEvent);
-        self.bind(Global, "Slash", JogForwardEvent);
+        self.bind(Global, "Period", JogForwardEvent);  // . or > = L (jog forward)
         self.bind(Global, "Semicolon", JumpToPrevEdgeEvent);
         self.bind(Global, "Quote", JumpToNextEdgeEvent);
         self.bind(Global, "Backtick", ToggleLoopEvent);
