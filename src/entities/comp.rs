@@ -274,12 +274,48 @@ impl Comp {
         self.attrs.set("name", AttrValue::Str(name.into()));
     }
 
+    /// Set in point, keeping duration constant (out = in + length).
+    /// If trim_in was equal to old in, sync it. Same for trim_out.
     pub fn set_in(&mut self, val: i32) {
+        let old_in = self._in();
+        let old_out = self._out();
+        let length = old_out - old_in;
+        let new_out = val + length;
+
+        let trim_in = self.trim_in();
+        let trim_out = self.trim_out();
+
         self.attrs.set("in", AttrValue::Int(val));
+        self.attrs.set("out", AttrValue::Int(new_out));
+
+        if trim_in == old_in {
+            self.attrs.set("trim_in", AttrValue::Int(val));
+        }
+        if trim_out == old_out {
+            self.attrs.set("trim_out", AttrValue::Int(new_out));
+        }
     }
 
+    /// Set out point, keeping duration constant (in = out - length).
+    /// If trim_out was equal to old out, sync it. Same for trim_in.
     pub fn set_out(&mut self, val: i32) {
+        let old_in = self._in();
+        let old_out = self._out();
+        let length = old_out - old_in;
+        let new_in = val - length;
+
+        let trim_in = self.trim_in();
+        let trim_out = self.trim_out();
+
+        self.attrs.set("in", AttrValue::Int(new_in));
         self.attrs.set("out", AttrValue::Int(val));
+
+        if trim_in == old_in {
+            self.attrs.set("trim_in", AttrValue::Int(new_in));
+        }
+        if trim_out == old_out {
+            self.attrs.set("trim_out", AttrValue::Int(val));
+        }
     }
 
     // ===== Children accessor methods =====
@@ -476,12 +512,46 @@ impl Comp {
         self.attrs.set("fps", AttrValue::Float(fps));
     }
 
-    pub fn set_trim_in(&mut self, play_start: i32) {
-        self.attrs.set("trim_in", AttrValue::Int(play_start));
+    /// Set trim_in, keeping trim duration constant.
+    /// If trim_in was equal to in, sync in. Same for out/trim_out.
+    pub fn set_trim_in(&mut self, val: i32) {
+        let old_in = self._in();
+        let old_out = self._out();
+        let old_trim_in = self.trim_in();
+        let old_trim_out = self.trim_out();
+        let trim_len = old_trim_out - old_trim_in;
+        let new_trim_out = val + trim_len;
+
+        self.attrs.set("trim_in", AttrValue::Int(val));
+        self.attrs.set("trim_out", AttrValue::Int(new_trim_out));
+
+        if old_trim_in == old_in {
+            self.attrs.set("in", AttrValue::Int(val));
+        }
+        if old_trim_out == old_out {
+            self.attrs.set("out", AttrValue::Int(new_trim_out));
+        }
     }
 
-    pub fn set_trim_out(&mut self, play_end: i32) {
-        self.attrs.set("trim_out", AttrValue::Int(play_end));
+    /// Set trim_out, keeping trim duration constant.
+    /// If trim_out was equal to out, sync out. Same for in/trim_in.
+    pub fn set_trim_out(&mut self, val: i32) {
+        let old_in = self._in();
+        let old_out = self._out();
+        let old_trim_in = self.trim_in();
+        let old_trim_out = self.trim_out();
+        let trim_len = old_trim_out - old_trim_in;
+        let new_trim_in = val - trim_len;
+
+        self.attrs.set("trim_in", AttrValue::Int(new_trim_in));
+        self.attrs.set("trim_out", AttrValue::Int(val));
+
+        if old_trim_in == old_in {
+            self.attrs.set("in", AttrValue::Int(new_trim_in));
+        }
+        if old_trim_out == old_out {
+            self.attrs.set("out", AttrValue::Int(val));
+        }
     }
 
     /// Inclusive play range (work area) in absolute comp frames.

@@ -137,23 +137,24 @@ pub fn render_outline(
 ) {
     let comp_id = comp_uuid;
 
+    // Match the top padding of the timeline canvas (ruler + optional status bar + spacing)
+    // These must be OUTSIDE ScrollArea to stay in sync with canvas (which has ruler outside scroll)
+    let status_bar_height = comp
+        .cache_frame_statuses()
+        .as_ref()
+        .map(|_| 2.0)
+        .unwrap_or(0.0);
+    ui.add_space(20.0 + status_bar_height + 4.0);
+
     // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
     let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
     let dnd_response = egui::ScrollArea::vertical()
         .id_salt("timeline_layers_scroll") // share scroll with canvas
         .max_height(ui.available_height())
         .show(ui, |ui| {
-            ui.vertical(|ui| {
-                // Match the top padding of the timeline canvas (ruler + optional status bar + spacing)
-                // Ruler: 20.0, Status strip: 2.0 if present, spacer: 4.0
-                let status_bar_height = comp
-                    .cache_frame_statuses()
-                    .as_ref()
-                    .map(|_| 2.0)
-                    .unwrap_or(0.0);
-                ui.add_space(20.0 + status_bar_height + 4.0);
-
-                dnd(ui, "timeline_child_names_outline").show_vec(
+            // Zero out spacing to match canvas side
+            ui.spacing_mut().item_spacing.y = 0.0;
+            dnd(ui, "timeline_child_names_outline").show_vec(
                     &mut child_order,
                     |ui, child_idx, handle, _state| {
                         let idx = *child_idx;
@@ -279,8 +280,6 @@ pub fn render_outline(
                         }
                     },
                 )
-            })
-            .inner
         })
         .inner;
 
