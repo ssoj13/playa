@@ -5,13 +5,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::cache_man::CacheManager;
+use crate::core::cache_man::CacheManager;
 use crate::dialogs::prefs::AppSettings;
 use crate::entities::{Comp, Project};
-use crate::event_bus::{CompEventEmitter, EventBus};
-use crate::global_cache::CacheStrategy;
+use crate::core::event_bus::{CompEventEmitter, EventBus};
+use crate::core::global_cache::CacheStrategy;
 use crate::main_events::{handle_app_event, EventResult};
-use crate::player::Player;
+use crate::core::player::Player;
 use crate::widgets::timeline::TimelineState;
 use crate::widgets::viewport::ViewportState;
 

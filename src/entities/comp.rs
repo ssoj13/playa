@@ -26,8 +26,8 @@ use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::cache_man::CacheManager;
-use crate::workers::Workers;
+use crate::core::cache_man::CacheManager;
+use crate::core::workers::Workers;
 
 use super::frame::{CropAlign, Frame, FrameError, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::loader::Loader;
@@ -35,7 +35,7 @@ use super::{AttrValue, Attrs};
 use super::keys::*;
 use super::compositor::BlendMode;
 use crate::entities::loader_video;
-use crate::event_bus::CompEventEmitter;
+use crate::core::event_bus::CompEventEmitter;
 use crate::entities::comp_events::{LayersChangedEvent, CurrentFrameChangedEvent, AttrsChangedEvent};
 use crate::utils::media;
 
@@ -91,7 +91,7 @@ pub struct Comp {
     cache_manager: Option<Arc<CacheManager>>,
 
     #[serde(skip)]
-    global_cache: Option<Arc<crate::global_cache::GlobalFrameCache>>,
+    global_cache: Option<Arc<crate::core::global_cache::GlobalFrameCache>>,
 }
 
 impl Default for Comp {
@@ -663,7 +663,7 @@ impl Comp {
     }
 
     /// Set global frame cache (called once after creation)
-    pub fn set_global_cache(&mut self, cache: Arc<crate::global_cache::GlobalFrameCache>) {
+    pub fn set_global_cache(&mut self, cache: Arc<crate::core::global_cache::GlobalFrameCache>) {
         self.global_cache = Some(cache);
     }
 
@@ -737,9 +737,9 @@ impl Comp {
         // Determine strategy based on file type (video vs image sequence)
         let is_video = self.detect_video_at_frame(center);
         let strategy = if is_video {
-            crate::cache_man::PreloadStrategy::Forward
+            crate::core::cache_man::PreloadStrategy::Forward
         } else {
-            crate::cache_man::PreloadStrategy::Spiral
+            crate::core::cache_man::PreloadStrategy::Spiral
         };
 
         debug!(
@@ -748,10 +748,10 @@ impl Comp {
         );
 
         match strategy {
-            crate::cache_man::PreloadStrategy::Spiral => {
+            crate::core::cache_man::PreloadStrategy::Spiral => {
                 self.preload_spiral(workers, project, epoch, center, play_start, play_end);
             }
-            crate::cache_man::PreloadStrategy::Forward => {
+            crate::core::cache_man::PreloadStrategy::Forward => {
                 self.preload_forward(workers, project, epoch, center, play_start, play_end);
             }
         }

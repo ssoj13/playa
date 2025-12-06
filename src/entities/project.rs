@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{Attrs, Comp, CompositorType};
-use crate::cache_man::CacheManager;
-use crate::global_cache::{CacheStrategy, GlobalFrameCache};
+use crate::core::cache_man::CacheManager;
+use crate::core::global_cache::{CacheStrategy, GlobalFrameCache};
 
 /// Top-level project / scene.
 ///
@@ -227,7 +227,7 @@ impl Project {
     ///
     /// - Reinitializes compositor to default (CPU).
     /// - Sets event emitter and global_cache for all comps.
-    pub fn rebuild_runtime(&mut self, event_emitter: Option<crate::event_bus::CompEventEmitter>) {
+    pub fn rebuild_runtime(&mut self, event_emitter: Option<crate::core::event_bus::CompEventEmitter>) {
         // Reinitialize compositor (not serialized)
         *self.compositor.borrow_mut() = CompositorType::default();
 
@@ -256,7 +256,7 @@ impl Project {
     pub fn rebuild_with_manager(
         &mut self,
         manager: Arc<CacheManager>,
-        event_emitter: Option<crate::event_bus::CompEventEmitter>,
+        event_emitter: Option<crate::core::event_bus::CompEventEmitter>,
     ) {
         log::info!("Project::rebuild_with_manager() - unified rebuild");
         self.set_cache_manager(manager.clone());
@@ -335,7 +335,7 @@ impl Project {
         &mut self,
         name: &str,
         fps: f32,
-        event_emitter: crate::event_bus::CompEventEmitter,
+        event_emitter: crate::core::event_bus::CompEventEmitter,
     ) -> Uuid {
         let end = (fps * 5.0) as i32; // 5 seconds default duration
         let mut comp = Comp::new(name, 0, end, fps);
@@ -451,7 +451,7 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache_man::CacheManager;
+    use crate::core::cache_man::CacheManager;
 
     #[test]
     fn test_cascade_invalidation() {

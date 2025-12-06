@@ -1,4 +1,4 @@
-use playa::cache_man::CacheManager;
+use playa::core::cache_man::CacheManager;
 use playa::cli::Args;
 use playa::config;
 use playa::dialogs;
@@ -8,15 +8,15 @@ use playa::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa::entities;
 use playa::entities::Frame;
 use playa::entities::Project;
-use playa::event_bus::{CompEventEmitter, EventBus, downcast_event};
+use playa::core::event_bus::{CompEventEmitter, EventBus, downcast_event};
 use playa::main_events;
-use playa::player::Player;
+use playa::core::player::Player;
 use playa::ui;
 use playa::widgets;
 use playa::widgets::ae::AttributesState;
 use playa::widgets::status::StatusBar;
 use playa::widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
-use playa::workers::Workers;
+use playa::core::workers::Workers;
 
 use clap::Parser;
 use eframe::{egui, glow};

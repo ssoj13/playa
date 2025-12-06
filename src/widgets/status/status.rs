@@ -1,8 +1,8 @@
-use crate::cache_man::CacheManager;
+use crate::core::cache_man::CacheManager;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, PixelFormat};
-use crate::event_bus::BoxedEvent;
-use crate::player::Player;
+use crate::core::event_bus::BoxedEvent;
+use crate::core::player::Player;
 use crate::widgets::viewport::ViewportState;
 use eframe::egui;
 use std::sync::Arc;
@@ -103,7 +103,7 @@ impl StatusBar {
                 // Loop toggle
                 let mut loop_enabled = player.loop_enabled();
                 if ui.checkbox(&mut loop_enabled, "Loop").changed() {
-                    dispatch(Box::new(crate::player_events::SetLoopEvent(loop_enabled)));
+                    dispatch(Box::new(crate::core::player_events::SetLoopEvent(loop_enabled)));
                 }
 
                 ui.separator();

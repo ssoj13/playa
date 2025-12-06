@@ -15,8 +15,8 @@ use super::timeline_helpers::{
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
-use crate::event_bus::BoxedEvent;
-use crate::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent};
+use crate::core::event_bus::BoxedEvent;
+use crate::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent};
 use crate::entities::comp_events::{
     AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
     MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,

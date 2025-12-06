@@ -1,9 +1,9 @@
 //! Hotkey system - keyboard shortcuts management
 
 use crate::dialogs::prefs::prefs_events::HotkeyWindow;
-use crate::event_bus::BoxedEvent;
-use crate::player_events::*;
-use crate::project_events::*;
+use crate::core::event_bus::BoxedEvent;
+use crate::core::player_events::*;
+use crate::core::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;

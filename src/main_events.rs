@@ -23,10 +23,10 @@ use uuid::Uuid;
 
 use crate::dialogs::encode::EncodeDialog;
 use crate::entities::Project;
-use crate::event_bus::{BoxedEvent, downcast_event};
-use crate::player::Player;
-use crate::player_events::*;
-use crate::project_events::*;
+use crate::core::event_bus::{BoxedEvent, downcast_event};
+use crate::core::player::Player;
+use crate::core::player_events::*;
+use crate::core::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
@@ -101,11 +101,11 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<StepForwardLargeEvent>(&event).is_some() {
-        player.step(crate::player::FRAME_JUMP_STEP, project);
+        player.step(crate::core::player::FRAME_JUMP_STEP, project);
         return Some(result);
     }
     if downcast_event::<StepBackwardLargeEvent>(&event).is_some() {
-        player.step(-crate::player::FRAME_JUMP_STEP, project);
+        player.step(-crate::core::player::FRAME_JUMP_STEP, project);
         return Some(result);
     }
     if downcast_event::<JumpToStartEvent>(&event).is_some() {

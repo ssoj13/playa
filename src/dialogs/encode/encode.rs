@@ -1226,7 +1226,7 @@ pub fn encode_comp(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cache_man::CacheManager;
+    use crate::core::cache_man::CacheManager;
 
     /// Test encoding with placeholder frames
     #[test]

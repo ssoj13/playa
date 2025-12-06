@@ -6,13 +6,13 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use playa::cache_man::CacheManager;
+use playa::core::cache_man::CacheManager;
 use playa::entities::Project;
-use playa::event_bus::{downcast_event, EventBus};
-use playa::global_cache::CacheStrategy;
+use playa::core::event_bus::{downcast_event, EventBus};
+use playa::core::global_cache::CacheStrategy;
 use playa::main_events::{handle_app_event, EventResult};
-use playa::player::Player;
-use playa::project_events::*;
+use playa::core::player::Player;
+use playa::core::project_events::*;
 use playa::widgets::project::project_ui;
 
 fn main() -> eframe::Result<()> {
@@ -102,7 +102,7 @@ impl ProjectApp {
 
         // New comp
         if let Some((name, fps)) = result.new_comp {
-            let emitter = playa::event_bus::CompEventEmitter::from_emitter(self.event_bus.emitter());
+            let emitter = playa::core::event_bus::CompEventEmitter::from_emitter(self.event_bus.emitter());
             let uuid = self.project.create_comp(&name, fps, emitter);
             self.player.set_active_comp(Some(uuid), &mut self.project);
             log::info!("Created comp: {}", name);
@@ -142,7 +142,7 @@ impl ProjectApp {
                 Ok(comps) => {
                     for mut comp in comps {
                         // Set up comp with event emitter
-                        let emitter = playa::event_bus::CompEventEmitter::from_emitter(
+                        let emitter = playa::core::event_bus::CompEventEmitter::from_emitter(
                             self.event_bus.emitter(),
                         );
                         comp.set_event_emitter(emitter);

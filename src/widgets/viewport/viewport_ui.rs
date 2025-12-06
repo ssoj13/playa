@@ -8,8 +8,8 @@ use super::shaders::Shaders;
 use super::{ViewportRenderer, ViewportState};
 use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
-use crate::event_bus::BoxedEvent;
-use crate::player::Player;
+use crate::core::event_bus::BoxedEvent;
+use crate::core::player::Player;
 
 /// Viewport actions result - all actions via events
 #[derive(Default)]
@@ -19,7 +19,7 @@ pub struct ViewportActions {
 }
 
 impl ViewportActions {
-    pub fn send<E: crate::event_bus::Event>(&mut self, event: E) {
+    pub fn send<E: crate::core::event_bus::Event>(&mut self, event: E) {
         self.events.push(Box::new(event));
     }
 }
@@ -73,7 +73,7 @@ pub fn render(
         if let Some(paths) = create_image_dialog("Select Media Files").pick_files() {
             if !paths.is_empty() {
                 info!("Files selected: {:?}", paths);
-                actions.send(crate::project_events::AddClipsEvent(paths));
+                actions.send(crate::core::project_events::AddClipsEvent(paths));
             }
         }
     }
@@ -101,7 +101,7 @@ pub fn render(
         if let Some(frame_idx) =
             viewport_state.handle_scrubbing(&response, double_clicked, player.total_frames(project))
         {
-            actions.send(crate::player_events::SetFrameEvent(frame_idx));
+            actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
         }
 
         let render_start = std::time::Instant::now();
@@ -137,7 +137,9 @@ pub fn render(
         render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
 
         match frame_state {
-            FrameStatus::Loading => {
+            // Header = file comp created frame but not loaded yet
+            // Loading = worker claimed frame, loading in progress
+            FrameStatus::Header | FrameStatus::Loading => {
                 ui.painter().text(
                     panel_rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -155,7 +157,7 @@ pub fn render(
                     egui::Color32::from_rgb(255, 100, 100),
                 );
             }
-            FrameStatus::Loaded | FrameStatus::Header | FrameStatus::Placeholder => {}
+            FrameStatus::Loaded | FrameStatus::Placeholder => {}
         }
 
         // Draw viewport overlays (scrubber, guides, etc.)

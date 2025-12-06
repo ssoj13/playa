@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use log::debug;
 use uuid::Uuid;
 
-use crate::cache_man::CacheManager;
+use crate::core::cache_man::CacheManager;
 use crate::entities::Frame;
 
 /// Cache strategy for frame retention

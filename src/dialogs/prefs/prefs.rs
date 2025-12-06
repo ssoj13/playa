@@ -65,7 +65,7 @@ pub struct AppSettings {
     // Cache & Memory
     pub cache_memory_percent: f32,      // 25-95% of available (default 75%)
     pub reserve_system_memory_gb: f32,  // Reserve for system (default 2.0 GB)
-    pub cache_strategy: crate::global_cache::CacheStrategy, // Caching strategy (LastOnly or All)
+    pub cache_strategy: crate::core::global_cache::CacheStrategy, // Caching strategy (LastOnly or All)
 
     // Compositor backend (CPU or GPU)
     pub compositor_backend: CompositorBackend,
@@ -94,7 +94,7 @@ impl Default for AppSettings {
             workers_override: 0,
             cache_memory_percent: 75.0,
             reserve_system_memory_gb: 2.0,
-            cache_strategy: crate::global_cache::CacheStrategy::All, // Default: cache all frames
+            cache_strategy: crate::core::global_cache::CacheStrategy::All, // Default: cache all frames
             compositor_backend: CompositorBackend::default(),
             encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
             selected_settings_category: Some("UI".to_string()),
@@ -160,7 +160,7 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add_space(8.0);
     ui.label("Cache Strategy:");
     ui.horizontal(|ui| {
-        use crate::global_cache::CacheStrategy;
+        use crate::core::global_cache::CacheStrategy;
         ui.radio_value(&mut settings.cache_strategy, CacheStrategy::All, "All Frames");
         ui.radio_value(&mut settings.cache_strategy, CacheStrategy::LastOnly, "Last Only");
     });

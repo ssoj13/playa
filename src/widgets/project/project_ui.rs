@@ -2,8 +2,8 @@ use eframe::egui;
 use uuid::Uuid;
 
 use crate::entities::Project;
-use crate::project_events::*;
-use crate::player::Player;
+use crate::core::project_events::*;
+use crate::core::player::Player;
 use crate::widgets::project::project::ProjectActions;
 
 /// Create configured file dialog for image/video selection
