@@ -372,7 +372,7 @@ impl EncodeDialog {
                 ui.horizontal(|ui| {
                     ui.label("Framerate:");
                     ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        ui.add(egui::Slider::new(&mut self.fps, 1.0..=240.0).text("fps"));
+                        ui.add(egui::Slider::new(&mut self.fps, 1.0..=960.0).text("fps"));
                     });
                 });
 
