@@ -19,7 +19,7 @@
 
 use super::timeline_helpers::{
     compute_all_layer_rows, detect_layer_tool, draw_drop_preview, draw_frame_ruler,
-    frame_to_screen_x, hash_color, row_to_y, screen_x_to_frame,
+    frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, frame::FrameStatus};
@@ -342,7 +342,7 @@ pub fn render_canvas(
         ui.available_width()
     );
     let status_strip = comp.cache_frame_statuses();
-    let status_bar_height = status_strip.as_ref().map(|_| 6.0).unwrap_or(0.0);
+    let status_bar_height = status_strip.as_ref().map(|_| 4.0).unwrap_or(0.0);
 
     // Options + time ruler row (always visible)
     let mut ruler_rect: Option<Rect> = None;
@@ -502,9 +502,10 @@ pub fn render_canvas(
                                 child_y, timeline_rect, config, state
                             );
 
-                            // Child bar color (use hash of child_uuid for stable color)
+                            // Child bar color (use hash of name for stable color per clip)
+                            let child_name = attrs.get_str("name").unwrap_or("?");
                             let base_color = if is_visible {
-                                hash_color(*child_uuid)
+                                hash_color_str(child_name)
                             } else {
                                 Color32::from_gray(70)
                             };
@@ -523,9 +524,6 @@ pub fn render_canvas(
                                 painter.rect_filled(visible_bar_rect, 4.0, base_color);
 
                                 // Draw layer name centered on visible bar
-                                let child_name = attrs
-                                    .get_str("name")
-                                    .unwrap_or("?");
                                 let text_color = Color32::WHITE;
                                 let font_id = egui::FontId::proportional(11.0);
                                 let galley = painter.layout_no_wrap(

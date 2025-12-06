@@ -90,15 +90,15 @@ pub enum FrameStatus {
 }
 
 impl FrameStatus {
-    /// Get UI color for this status (for load indicator)
+    /// Get UI color for this status (for load indicator, 50% transparent)
     pub fn color(&self) -> eframe::egui::Color32 {
         use eframe::egui::Color32;
         match self {
-            FrameStatus::Placeholder => Color32::from_rgb(40, 40, 45), // Dark grey
-            FrameStatus::Header => Color32::from_rgb(60, 100, 180),    // Blue
-            FrameStatus::Loading => Color32::from_rgb(220, 160, 60),   // Orange
-            FrameStatus::Loaded => Color32::from_rgb(80, 200, 120),    // Green
-            FrameStatus::Error => Color32::from_rgb(200, 60, 60),      // Red
+            FrameStatus::Placeholder => Color32::from_rgba_unmultiplied(40, 40, 45, 128),
+            FrameStatus::Header => Color32::from_rgba_unmultiplied(60, 100, 180, 128),
+            FrameStatus::Loading => Color32::from_rgba_unmultiplied(220, 160, 60, 128),
+            FrameStatus::Loaded => Color32::from_rgba_unmultiplied(80, 200, 120, 128),
+            FrameStatus::Error => Color32::from_rgba_unmultiplied(200, 60, 60, 128),
         }
     }
 }

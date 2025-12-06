@@ -1,7 +1,6 @@
 //! Timeline UI helpers: tools, math and drawing utilities.
 use crate::entities::Comp;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
-use uuid::Uuid;
 
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 
@@ -279,12 +278,12 @@ pub(super) fn draw_drop_preview(
     );
 }
 
-pub(super) fn hash_color(uuid: Uuid) -> Color32 {
+pub(super) fn hash_color_str(s: &str) -> Color32 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
     let mut hasher = DefaultHasher::new();
-    uuid.hash(&mut hasher);
+    s.hash(&mut hasher);
     let hash = hasher.finish();
     let hue = (hash % 360) as f32;
     let saturation = 0.65;
