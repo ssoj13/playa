@@ -538,7 +538,7 @@ impl PlayaApp {
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
-            use playa::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent};
+            use playa::entities::comp_events::{AlignLayersStartEvent, AlignLayersEndEvent, TrimLayersStartEvent, TrimLayersEndEvent, DuplicateLayersEvent, CopyLayersEvent, PasteLayersEvent};
 
             // Fill comp_uuid for timeline-specific events
             if let Some(active_comp_uuid) = self.player.active_comp() {
@@ -557,6 +557,23 @@ impl PlayaApp {
                 }
                 if downcast_event::<TrimLayersEndEvent>(&event).is_some() {
                     self.event_bus.emit(TrimLayersEndEvent(active_comp_uuid));
+                    return;
+                }
+                // Layer clipboard operations
+                if downcast_event::<DuplicateLayersEvent>(&event).is_some() {
+                    self.event_bus.emit(DuplicateLayersEvent { comp_uuid: active_comp_uuid });
+                    return;
+                }
+                if downcast_event::<CopyLayersEvent>(&event).is_some() {
+                    self.event_bus.emit(CopyLayersEvent { comp_uuid: active_comp_uuid });
+                    return;
+                }
+                if downcast_event::<PasteLayersEvent>(&event).is_some() {
+                    // Get current playhead position for paste target
+                    let target_frame = self.project.get_comp(active_comp_uuid)
+                        .map(|c| c.frame())
+                        .unwrap_or(0);
+                    self.event_bus.emit(PasteLayersEvent { comp_uuid: active_comp_uuid, target_frame });
                     return;
                 }
             }
@@ -676,6 +693,7 @@ impl PlayaApp {
             &mut self.shader_manager,
             &mut self.timeline_state,
             &self.event_bus,
+            self.settings.show_tooltips,
         );
 
         // Store hover state for input routing

@@ -654,6 +654,118 @@ pub fn handle_app_event(
         return Some(result);
     }
 
+    // === Layer Clipboard Operations ===
+    if let Some(e) = downcast_event::<DuplicateLayersEvent>(&event) {
+        // Duplicate selected layers, insert copies above originals
+        let layers_to_dup: Vec<(Uuid, crate::entities::Attrs, i32)> = project
+            .get_comp(e.comp_uuid)
+            .map(|comp| {
+                comp.layer_selection
+                    .iter()
+                    .filter_map(|uuid| {
+                        comp.children_attrs_get(uuid).map(|attrs| {
+                            let start = attrs.get_i32("in").unwrap_or(0);
+                            (*uuid, attrs.clone(), start)
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !layers_to_dup.is_empty() {
+            // Generate names before taking write lock
+            let names: Vec<String> = layers_to_dup
+                .iter()
+                .map(|(_, attrs, _)| {
+                    let src_name = attrs.get_str("name").unwrap_or("layer");
+                    project.gen_name(src_name)
+                })
+                .collect();
+
+            project.modify_comp(e.comp_uuid, |comp| {
+                for ((src_uuid, mut attrs, _start), new_name) in layers_to_dup.into_iter().zip(names) {
+                    // Find insert position (above original)
+                    let insert_idx = comp.uuid_to_idx(src_uuid).unwrap_or(0);
+                    // Update attrs with new name
+                    attrs.set("name", crate::entities::AttrValue::Str(new_name));
+                    // Insert new layer
+                    let new_uuid = Uuid::new_v4();
+                    comp.children.insert(insert_idx, (new_uuid, attrs));
+                    // Select the new layer
+                    if !comp.layer_selection.contains(&new_uuid) {
+                        comp.layer_selection.push(new_uuid);
+                    }
+                }
+                comp.attrs.mark_dirty();
+            });
+        }
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<CopyLayersEvent>(&event) {
+        // Copy selected layers to clipboard
+        if let Some(comp) = project.get_comp(e.comp_uuid) {
+            let mut clipboard_items: Vec<crate::widgets::timeline::ClipboardLayer> = Vec::new();
+            for uuid in &comp.layer_selection {
+                if let Some(attrs) = comp.children_attrs_get(uuid) {
+                    let source_uuid = attrs
+                        .get_str("uuid")
+                        .and_then(|s| Uuid::parse_str(s).ok())
+                        .unwrap_or(*uuid);
+                    let original_start = attrs.get_i32("in").unwrap_or(0);
+                    clipboard_items.push(crate::widgets::timeline::ClipboardLayer {
+                        source_uuid,
+                        attrs: attrs.clone(),
+                        original_start,
+                    });
+                }
+            }
+            // Sort by original_start for consistent paste order
+            clipboard_items.sort_by_key(|item| item.original_start);
+            timeline_state.clipboard = clipboard_items;
+            debug!("Copied {} layers to clipboard", timeline_state.clipboard.len());
+        }
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<PasteLayersEvent>(&event) {
+        // Paste layers from clipboard at target frame
+        if !timeline_state.clipboard.is_empty() {
+            // Calculate offset from first layer's original position
+            let first_start = timeline_state.clipboard.first().map(|l| l.original_start).unwrap_or(0);
+            let offset = e.target_frame - first_start;
+
+            // Generate names before taking write lock
+            let names: Vec<String> = timeline_state
+                .clipboard
+                .iter()
+                .map(|item| {
+                    let src_name = item.attrs.get_str("name").unwrap_or("layer");
+                    project.gen_name(src_name)
+                })
+                .collect();
+
+            let clipboard_copy = timeline_state.clipboard.clone();
+            project.modify_comp(e.comp_uuid, |comp| {
+                comp.layer_selection.clear();
+                for (item, new_name) in clipboard_copy.into_iter().zip(names) {
+                    let mut attrs = item.attrs.clone();
+                    // Update name
+                    attrs.set("name", crate::entities::AttrValue::Str(new_name));
+                    // Shift position by offset
+                    let new_in = item.original_start + offset;
+                    attrs.set("in", crate::entities::AttrValue::Int(new_in));
+                    // Insert at top
+                    let new_uuid = Uuid::new_v4();
+                    comp.children.insert(0, (new_uuid, attrs));
+                    // Select pasted layer
+                    comp.layer_selection.push(new_uuid);
+                }
+                comp.attrs.mark_dirty();
+            });
+            debug!("Pasted {} layers at frame {}", timeline_state.clipboard.len(), e.target_frame);
+        }
+        return Some(result);
+    }
+
     // === Comp Play Area ===
     if let Some(e) = downcast_event::<SetCompPlayStartEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {

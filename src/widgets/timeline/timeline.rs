@@ -4,9 +4,20 @@
 //! are bridged to the EventBus; renderers read `TimelineConfig`/`TimelineState`
 //! to draw rows/bars and handle interactions.
 
+use crate::entities::Attrs;
 use eframe::egui::{self, Pos2};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+/// Clipboard entry for copied layers
+/// Stores source UUID and a clone of the layer attributes
+#[derive(Clone, Debug)]
+pub struct ClipboardLayer {
+    pub source_uuid: Uuid,
+    pub attrs: Attrs,
+    /// Original start frame (for calculating relative offsets)
+    pub original_start: i32,
+}
 
 /// Timeline actions result - returned from render functions
 #[derive(Default)]
@@ -48,6 +59,8 @@ pub struct TimelineState {
     pub outline_width: f32, // Width of outline panel in Split mode (persistent)
     #[serde(skip)]
     pub hatch_texture: Option<egui::TextureHandle>, // Diagonal hatch pattern for file comps
+    #[serde(skip)]
+    pub clipboard: Vec<ClipboardLayer>, // Copied layers for Ctrl-C/Ctrl-V
 }
 
 impl std::fmt::Debug for TimelineState {
@@ -63,6 +76,7 @@ impl std::fmt::Debug for TimelineState {
             .field("last_canvas_width", &self.last_canvas_width)
             .field("outline_width", &self.outline_width)
             .field("hatch_texture", &self.hatch_texture.as_ref().map(|_| "TextureHandle"))
+            .field("clipboard", &format!("{} layers", self.clipboard.len()))
             .finish()
     }
 }
@@ -80,6 +94,7 @@ impl Default for TimelineState {
             last_canvas_width: 800.0, // Default estimate
             outline_width: 400.0,     // Default outline panel width
             hatch_texture: None,
+            clipboard: Vec::new(),
         }
     }
 }

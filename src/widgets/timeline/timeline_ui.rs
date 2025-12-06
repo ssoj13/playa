@@ -75,6 +75,7 @@ pub fn render_toolbar(
     ui: &mut Ui,
     state: &mut TimelineState,
     loop_enabled: bool,
+    show_tooltips: bool,
     mut dispatch: impl FnMut(BoxedEvent),
 ) {
     ui.horizontal(|ui| {
@@ -114,17 +115,32 @@ pub fn render_toolbar(
             dispatch(Box::new(TimelineFitAllEvent(state.last_canvas_width)));
         }
 
-        if ui.checkbox(&mut state.snap_enabled, "Snap").changed() {
+        // Snap checkbox with optional tooltip (2s delay)
+        let snap_response = ui.checkbox(&mut state.snap_enabled, "Snap");
+        if snap_response.changed() {
             dispatch(Box::new(TimelineSnapChangedEvent(state.snap_enabled)));
         }
-        if ui.checkbox(&mut state.lock_work_area, "Lock").changed() {
-            dispatch(Box::new(TimelineLockWorkAreaChangedEvent(state.lock_work_area)));
+        if show_tooltips {
+            snap_response.on_hover_text_at_pointer("Snap to frame edges when dragging layers");
         }
 
-        // Loop checkbox
+        // Lock checkbox with optional tooltip (2s delay)
+        let lock_response = ui.checkbox(&mut state.lock_work_area, "Lock");
+        if lock_response.changed() {
+            dispatch(Box::new(TimelineLockWorkAreaChangedEvent(state.lock_work_area)));
+        }
+        if show_tooltips {
+            lock_response.on_hover_text_at_pointer("Lock work area markers (B/N keys)");
+        }
+
+        // Loop checkbox with optional tooltip (2s delay)
         let mut loop_state = loop_enabled;
-        if ui.checkbox(&mut loop_state, "Loop").changed() {
+        let loop_response = ui.checkbox(&mut loop_state, "Loop");
+        if loop_response.changed() {
             dispatch(Box::new(SetLoopEvent(loop_state)));
+        }
+        if show_tooltips {
+            loop_response.on_hover_text_at_pointer("Loop playback within work area (` key)");
         }
 
         ui.separator();
@@ -228,17 +244,24 @@ pub fn render_outline(
                             },
                         );
 
-                        if row_ui
-                            .add(
-                                egui::Slider::new(&mut opacity, 0.0..=1.0)
-                                    .show_value(false)
-                                    .smallest_positive(0.01)
-                                    .text(""),
-                            )
-                            .changed()
-                        {
-                            dirty = true;
-                        }
+                        // Fixed-width opacity slider for column alignment
+                        row_ui.allocate_ui_with_layout(
+                            egui::Vec2::new(60.0, config.layer_height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut opacity, 0.0..=1.0)
+                                            .show_value(false)
+                                            .smallest_positive(0.01)
+                                            .text(""),
+                                    )
+                                    .changed()
+                                {
+                                    dirty = true;
+                                }
+                            },
+                        );
 
                         egui::ComboBox::from_id_salt(format!("blend_outline_{}", child_uuid))
                             .width(80.0)
@@ -254,16 +277,23 @@ pub fn render_outline(
                             dirty = true;
                         }
 
-                        if row_ui
-                            .add(
-                                egui::DragValue::new(&mut speed)
-                                    .speed(0.1)
-                                    .range(0.1..=4.0),
-                            )
-                            .changed()
-                        {
-                            dirty = true;
-                        }
+                        // Fixed-width speed control for column alignment
+                        row_ui.allocate_ui_with_layout(
+                            egui::Vec2::new(50.0, config.layer_height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut speed)
+                                            .speed(0.1)
+                                            .range(0.1..=4.0),
+                                    )
+                                    .changed()
+                                {
+                                    dirty = true;
+                                }
+                            },
+                        );
 
                         if dirty {
                             // Apply to all selected layers if this layer is selected
@@ -320,6 +350,33 @@ pub fn render_outline(
             from_idx: update.from,
             to_idx: update.to,
         }));
+    }
+
+    // Handle click on empty area below layers to clear selection
+    let remaining_height = ui.available_height();
+    if remaining_height > 0.0 {
+        let (empty_rect, empty_response) = ui.allocate_exact_size(
+            Vec2::new(ui.available_width(), remaining_height),
+            Sense::click(),
+        );
+        if empty_response.clicked() && ui.input(|i| i.pointer.primary_clicked()) {
+            // Clear selection when clicking empty area
+            if !comp.layer_selection.is_empty() {
+                dispatch(Box::new(CompSelectionChangedEvent {
+                    comp_uuid: comp_id,
+                    selection: vec![],
+                    anchor: None,
+                }));
+            }
+        }
+        // Visual feedback (optional): draw subtle background
+        if empty_response.hovered() {
+            ui.painter().rect_filled(
+                empty_rect,
+                0.0,
+                ui.visuals().widgets.hovered.bg_fill.gamma_multiply(0.3),
+            );
+        }
     }
 }
 

@@ -112,6 +112,7 @@ impl eframe::App for TimelineApp {
                 &mut self.shader_manager,
                 &mut self.timeline_state,
                 &self.shell.event_bus,
+                self.settings.show_tooltips,
             );
 
             // Timeline events are emitted directly to event_bus by render_timeline_panel

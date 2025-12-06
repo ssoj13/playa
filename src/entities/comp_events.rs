@@ -163,3 +163,25 @@ pub struct SetCompPlayEndEvent {
 
 #[derive(Clone, Debug)]
 pub struct ResetCompPlayAreaEvent(pub Uuid);
+
+// === Layer Clipboard Operations ===
+
+/// Duplicate selected layers in-place (Ctrl-D)
+/// Creates copies of selected layers and inserts them above originals
+#[derive(Clone, Debug)]
+pub struct DuplicateLayersEvent {
+    pub comp_uuid: Uuid,
+}
+
+/// Copy selected layers to clipboard (Ctrl-C)
+#[derive(Clone, Debug)]
+pub struct CopyLayersEvent {
+    pub comp_uuid: Uuid,
+}
+
+/// Paste layers from clipboard at playhead position (Ctrl-V)
+#[derive(Clone, Debug)]
+pub struct PasteLayersEvent {
+    pub comp_uuid: Uuid,
+    pub target_frame: i32,
+}

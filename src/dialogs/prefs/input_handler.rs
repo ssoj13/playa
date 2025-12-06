@@ -137,6 +137,10 @@ impl HotkeyHandler {
         self.bind(Timeline, "CloseBracket", AlignLayersEndEvent(Uuid::nil()));
         self.bind(Timeline, "Alt+OpenBracket", TrimLayersStartEvent(Uuid::nil()));
         self.bind(Timeline, "Alt+CloseBracket", TrimLayersEndEvent(Uuid::nil()));
+        // Layer clipboard operations
+        self.bind(Timeline, "Ctrl+D", DuplicateLayersEvent { comp_uuid: Uuid::nil() });
+        self.bind(Timeline, "Ctrl+C", CopyLayersEvent { comp_uuid: Uuid::nil() });
+        self.bind(Timeline, "Ctrl+V", PasteLayersEvent { comp_uuid: Uuid::nil(), target_frame: 0 });
 
         // Project-specific
         self.bind(Project, "Delete", RemoveSelectedMediaEvent);

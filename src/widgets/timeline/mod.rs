@@ -10,6 +10,6 @@ mod timeline_ui;
 pub mod timeline_events;
 
 pub use timeline::{
-    GlobalDragState, TimelineActions, TimelineConfig, TimelineState, TimelineViewMode,
+    ClipboardLayer, GlobalDragState, TimelineActions, TimelineConfig, TimelineState, TimelineViewMode,
 };
 pub use timeline_ui::{render_canvas, render_outline, render_toolbar};

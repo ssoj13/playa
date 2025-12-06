@@ -54,6 +54,7 @@ pub struct AppSettings {
     pub show_playlist: bool,
     pub show_attributes_editor: bool,
     pub show_frame_numbers: bool, // Show frame numbers on timeslider
+    pub show_tooltips: bool,      // Show tooltips on toolbar controls (2s delay)
     pub dark_mode: bool,
     pub font_size: f32,
     pub timeline_snap_enabled: bool,
@@ -87,6 +88,7 @@ impl Default for AppSettings {
             show_playlist: true,
             show_attributes_editor: true,
             show_frame_numbers: true,
+            show_tooltips: true,
             dark_mode: true,
             font_size: 13.0,
             timeline_snap_enabled: true,
@@ -123,6 +125,7 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add_space(16.0);
 
     ui.checkbox(&mut settings.dark_mode, "Dark Mode");
+    ui.checkbox(&mut settings.show_tooltips, "Show Tooltips (2s delay on toolbar controls)");
 
     ui.add_space(16.0);
     ui.heading("Performance");
