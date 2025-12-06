@@ -94,23 +94,26 @@ impl TimelineState {
     }
 }
 
-/// Create a small diagonal hatch pattern texture (16x16 pixels)
+/// Create diagonal hatch pattern texture (64x64 pixels, thick lines)
+/// Returns grayscale multiplier: white = full color, dark = dimmed
 fn create_hatch_texture(ctx: &egui::Context) -> egui::TextureHandle {
-    const SIZE: usize = 16;
-    const LINE_WIDTH: usize = 2;
-    const SPACING: usize = 6;
+    const SIZE: usize = 64;
+    const LINE_WIDTH: usize = 14;
+    const SPACING: usize = 32; // Must divide SIZE evenly for seamless tiling
 
-    let mut pixels = vec![egui::Color32::TRANSPARENT; SIZE * SIZE];
+    let mut pixels = vec![egui::Color32::WHITE; SIZE * SIZE];
 
-    // Draw diagonal lines (bottom-left to top-right pattern)
+    // Draw diagonal stripes - dark bands on white background
+    // The texture will be multiplied with base color
     for y in 0..SIZE {
         for x in 0..SIZE {
-            // Diagonal pattern: (x + y) mod spacing determines if pixel is on the line
+            // Diagonal pattern: (x + y) mod spacing
             let diag = (x + y) % SPACING;
             if diag < LINE_WIDTH {
-                // Semi-transparent white line
-                pixels[y * SIZE + x] = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 60);
+                // Very subtle stripe (~95% brightness)
+                pixels[y * SIZE + x] = egui::Color32::from_gray(243);
             }
+            // else: white (full base color)
         }
     }
 
@@ -123,8 +126,8 @@ fn create_hatch_texture(ctx: &egui::Context) -> egui::TextureHandle {
         "hatch_pattern",
         image,
         egui::TextureOptions {
-            magnification: egui::TextureFilter::Nearest,
-            minification: egui::TextureFilter::Nearest,
+            magnification: egui::TextureFilter::Linear,
+            minification: egui::TextureFilter::Linear,
             wrap_mode: egui::TextureWrapMode::Repeat,
             ..Default::default()
         },
