@@ -470,7 +470,10 @@ impl Comp {
         self.set_trim_out(hi);
         // Don't clear cache - already loaded frames remain valid
         // Preload will automatically load new frames in the updated work area
-        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent {
+            comp_uuid: self.get_uuid(),
+            affected_range: None,
+        });
     }
 
     /// Child placement bounds (start/end) in parent timeline, ordered and clamped if needed.
@@ -1112,8 +1115,10 @@ impl Comp {
             return None; // Frame outside work area - don't compose
         }
 
-        // Check dirty flag OR cache miss
+        // Check dirty flag on comp OR any child attrs OR cache miss
+        let any_child_dirty = self.children.iter().any(|(_, attrs)| attrs.is_dirty());
         let needs_recompose = self.attrs.is_dirty()
+            || any_child_dirty
             || project.global_cache.as_ref()
                 .map(|cache| !cache.contains(self.get_uuid(), frame_idx))
                 .unwrap_or(true);
@@ -1137,6 +1142,10 @@ impl Comp {
         }
         if composed.status() == FrameStatus::Loaded {
             self.attrs.clear_dirty();
+            // Clear dirty on all children too
+            for (_, attrs) in &self.children {
+                attrs.clear_dirty();
+            }
         }
 
         Some(composed)
@@ -1512,7 +1521,10 @@ impl Comp {
         self.update_dim_from_children();
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent {
+            comp_uuid: self.get_uuid(),
+            affected_range: Some((start_frame, end_frame)),
+        });
         self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
@@ -1600,9 +1612,16 @@ impl Comp {
         self.rebound();
         self.update_dim_from_children();
 
+        // Affected range: union of old and new positions
+        let range_start = old_start.min(new_start);
+        let range_end = old_end.max(new_end);
+
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent {
+            comp_uuid: self.get_uuid(),
+            affected_range: Some((range_start, range_end)),
+        });
         self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
@@ -1683,6 +1702,10 @@ impl Comp {
         idxs.sort_unstable();
         idxs.dedup();
 
+        // Track affected range across all layers
+        let mut range_min = i32::MAX;
+        let mut range_max = i32::MIN;
+
         for idx in idxs {
             if idx >= self.children.len() {
                 continue;
@@ -1691,6 +1714,10 @@ impl Comp {
                 let bounds_start = attrs.get_i32("in").unwrap_or(0);
                 let bounds_end = attrs.get_i32("out").unwrap_or(0);
                 let (bounds_start, bounds_end) = Self::child_bounds_abs(Some(bounds_start), Some(bounds_end));
+
+                // Track range before and after trim
+                range_min = range_min.min(bounds_start);
+                range_max = range_max.max(bounds_end);
 
                 if is_start {
                     let current = attrs.get_i32("trim_in").unwrap_or(bounds_start);
@@ -1712,9 +1739,18 @@ impl Comp {
             }
         }
 
+        let affected_range = if range_min <= range_max {
+            Some((range_min, range_max))
+        } else {
+            None
+        };
+
         // Mark as dirty for cache invalidation
         self.attrs.mark_dirty();
-        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent {
+            comp_uuid: self.get_uuid(),
+            affected_range,
+        });
         self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
         Ok(())
     }
@@ -1732,15 +1768,22 @@ impl Comp {
 
         let (bounds_start, bounds_end) =
             Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
+        let old_start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
         let current_end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
         let (clamped_start, clamped_end) =
             Self::clamp_range_to_bounds((new_play_start, current_end), (bounds_start, bounds_end));
         attrs.set("trim_in", AttrValue::Int(clamped_start));
         attrs.set("trim_out", AttrValue::Int(clamped_end));
 
-        // Mark as dirty for cache invalidation
+        // Affected range: union of old and new start positions
+        let range_start = old_start.min(clamped_start);
+        let range_end = old_start.max(clamped_start);
+
         self.attrs.mark_dirty();
-        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent {
+            comp_uuid: self.get_uuid(),
+            affected_range: Some((range_start, range_end)),
+        });
         self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
@@ -1760,14 +1803,21 @@ impl Comp {
         let (bounds_start, bounds_end) =
             Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
         let current_start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
+        let old_end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
         let (clamped_start, clamped_end) =
             Self::clamp_range_to_bounds((current_start, new_play_end), (bounds_start, bounds_end));
         attrs.set("trim_in", AttrValue::Int(clamped_start));
         attrs.set("trim_out", AttrValue::Int(clamped_end));
 
-        // Mark as dirty for cache invalidation
+        // Affected range: union of old and new end positions
+        let range_start = old_end.min(clamped_end);
+        let range_end = old_end.max(clamped_end);
+
         self.attrs.mark_dirty();
-        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.event_emitter.emit(LayersChangedEvent {
+            comp_uuid: self.get_uuid(),
+            affected_range: Some((range_start, range_end)),
+        });
         self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
 
         Ok(())
@@ -1819,11 +1869,27 @@ impl Comp {
 
     /// Remove child comp from this composition
     pub fn remove_child(&mut self, child_uuid: Uuid) {
+        // Get removed child's range before removing
+        let affected_range = self
+            .children
+            .iter()
+            .find(|(uuid, _)| *uuid == child_uuid)
+            .map(|(_, attrs)| {
+                let (bounds_start, bounds_end) =
+                    Self::child_bounds_abs(attrs.get_i32("in"), attrs.get_i32("out"));
+                let start = attrs.get_i32("trim_in").unwrap_or(bounds_start);
+                let end = attrs.get_i32("trim_out").unwrap_or(bounds_end);
+                (start, end)
+            });
+
         self.children.retain(|(uuid, _)| *uuid != child_uuid);
         self.rebound();
         self.update_dim_from_children();
-        self.attrs.mark_dirty(); // Mark as dirty for cache invalidation
-        self.event_emitter.emit(LayersChangedEvent(self.get_uuid()));
+        self.attrs.mark_dirty();
+        self.event_emitter.emit(LayersChangedEvent {
+            comp_uuid: self.get_uuid(),
+            affected_range,
+        });
         self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
     }
 

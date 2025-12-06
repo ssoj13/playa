@@ -277,8 +277,8 @@ impl PlayaApp {
         comp.signal_preload(&self.workers, &self.project, None);
     }
 
-    /// Handle all events from the event bus (comp events, app events, etc.)
-    fn handle_events(&mut self) {
+    /// Handle events from event bus. Returns true if UI repaint is needed.
+    fn handle_events(&mut self) -> bool {
         use entities::comp_events::*;
 
         // Deferred actions to execute after event loop
@@ -289,6 +289,7 @@ impl PlayaApp {
         let mut deferred_enqueue_frames: Option<usize> = None;
         let mut deferred_quick_save = false;
         let mut deferred_show_open = false;
+        let needs_repaint = false;
 
         // Poll all events from the bus
         let events = self.event_bus.poll();
@@ -301,8 +302,15 @@ impl PlayaApp {
                 continue;
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
-                debug!("Comp {} layers changed", e.0);
-                self.displayed_frame = None;
+                debug!("Comp {} layers changed (range: {:?})", e.comp_uuid, e.affected_range);
+                // Clear affected frames from cache (they need recomposition)
+                // Preload is triggered by centralized dirty check in update()
+                if let Some(ref cache) = self.project.global_cache {
+                    match e.affected_range {
+                        Some((start, end)) => cache.clear_range(e.comp_uuid, start, end),
+                        None => cache.clear_comp(e.comp_uuid),
+                    }
+                }
                 continue;
             }
             if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
@@ -378,6 +386,8 @@ impl PlayaApp {
         if deferred_show_open {
             self.show_open_project_dialog();
         }
+
+        needs_repaint
     }
 
     /// Enable or disable "cinema mode": borderless fullscreen, hidden UI, black background.
@@ -451,6 +461,13 @@ impl PlayaApp {
                 }
                 self.selected_media_uuid = self.project.selection().last().cloned();
                 self.error_msg = None;
+
+                // Mark active comp as dirty to trigger preload via centralized dirty check
+                if let Some(active) = self.player.active_comp() {
+                    self.project.modify_comp(active, |comp| {
+                        comp.attrs.mark_dirty();
+                    });
+                }
             }
             Err(e) => {
                 error!("{}", e);
@@ -658,7 +675,7 @@ impl PlayaApp {
     }
 
     fn render_viewport_tab(&mut self, ui: &mut egui::Ui) {
-        // Determine if the texture needs to be re-uploaded by checking if the frame has changed
+        // Check if texture needs re-upload (frame changed or displayed_frame was reset by dirty check)
         let texture_needs_upload = self.displayed_frame != Some(self.player.current_frame(&self.project));
 
         // If the frame has changed, update our cached frame
@@ -934,7 +951,24 @@ impl eframe::App for PlayaApp {
         }
 
         // Process all events from the event bus
-        self.handle_events();
+        if self.handle_events() {
+            ctx.request_repaint();
+        }
+
+        // Centralized dirty check: if any attrs changed, invalidate and preload
+        if let Some(comp_uuid) = self.player.active_comp() {
+            if let Some(comp) = self.project.get_comp(comp_uuid) {
+                let self_dirty = comp.attrs.is_dirty();
+                let children_dirty = comp.children.iter().any(|(_, attrs)| attrs.is_dirty());
+                if self_dirty || children_dirty {
+                    // Reset displayed frame to force re-render
+                    self.displayed_frame = None;
+                    // Trigger preload for current position
+                    self.enqueue_frame_loads_around_playhead(10);
+                    ctx.request_repaint();
+                }
+            }
+        }
 
         // Periodic cache statistics logging (every 10 seconds)
         let current_time = ctx.input(|i| i.time);

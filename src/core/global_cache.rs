@@ -298,6 +298,53 @@ impl GlobalFrameCache {
         }
     }
 
+    /// Clear frames in a specific range for a comp
+    ///
+    /// More efficient than clear_comp when only part of timeline changed.
+    /// Frames will be recreated as Header on next access.
+    pub fn clear_range(&self, comp_uuid: Uuid, start: i32, end: i32) {
+        let mut cache = self.cache.lock().unwrap();
+        let mut lru = self.lru_order.lock().unwrap();
+
+        let Some(frames) = cache.get_mut(&comp_uuid) else {
+            return;
+        };
+
+        let mut total_freed = 0usize;
+        let mut count = 0;
+
+        // Collect keys to remove (can't modify while iterating)
+        let keys_to_remove: Vec<i32> = frames
+            .keys()
+            .filter(|&&idx| idx >= start && idx <= end)
+            .copied()
+            .collect();
+
+        for idx in keys_to_remove {
+            if let Some(frame) = frames.remove(&idx) {
+                let size = frame.mem();
+                self.cache_manager.free_memory(size);
+                total_freed += size;
+                count += 1;
+            }
+        }
+
+        // Remove from LRU queue
+        lru.retain(|k| !(k.comp_uuid == comp_uuid && k.frame_idx >= start && k.frame_idx <= end));
+
+        // Remove empty inner HashMap
+        if frames.is_empty() {
+            cache.remove(&comp_uuid);
+        }
+
+        if count > 0 {
+            debug!(
+                "Cleared range {}:[{}..{}]: {} frames, {} MB freed",
+                comp_uuid, start, end, count, total_freed / 1024 / 1024
+            );
+        }
+    }
+
     /// Clear entire cache
     pub fn clear_all(&self) {
         let mut cache = self.cache.lock().unwrap();

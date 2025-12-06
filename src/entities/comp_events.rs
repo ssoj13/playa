@@ -11,8 +11,15 @@ pub struct CurrentFrameChangedEvent {
     pub new_frame: i32,
 }
 
+/// Emitted when layers in a comp change (add/remove/move/reorder)
+/// If `affected_range` is Some, only that frame range needs recomposition.
+/// If None, entire comp cache should be cleared.
 #[derive(Clone, Debug)]
-pub struct LayersChangedEvent(pub Uuid);
+pub struct LayersChangedEvent {
+    pub comp_uuid: Uuid,
+    /// Optional frame range that was affected (start, end inclusive)
+    pub affected_range: Option<(i32, i32)>,
+}
 
 #[derive(Clone, Debug)]
 pub struct AttrsChangedEvent(pub Uuid);
