@@ -277,8 +277,8 @@ impl PlayaApp {
         comp.signal_preload(&self.workers, &self.project, None);
     }
 
-    /// Handle events from event bus. Returns true if UI repaint is needed.
-    fn handle_events(&mut self) -> bool {
+    /// Handle events from event bus.
+    fn handle_events(&mut self) {
         use entities::comp_events::*;
 
         // Deferred actions to execute after event loop
@@ -289,7 +289,6 @@ impl PlayaApp {
         let mut deferred_enqueue_frames: Option<usize> = None;
         let mut deferred_quick_save = false;
         let mut deferred_show_open = false;
-        let needs_repaint = false;
 
         // Poll all events from the bus
         let events = self.event_bus.poll();
@@ -391,8 +390,6 @@ impl PlayaApp {
         if deferred_show_open {
             self.show_open_project_dialog();
         }
-
-        needs_repaint
     }
 
     /// Enable or disable "cinema mode": borderless fullscreen, hidden UI, black background.
@@ -956,9 +953,7 @@ impl eframe::App for PlayaApp {
         }
 
         // Process all events from the event bus
-        if self.handle_events() {
-            ctx.request_repaint();
-        }
+        self.handle_events();
 
         // Centralized dirty check: if any attrs changed, invalidate and preload
         if let Some(comp_uuid) = self.player.active_comp() {
@@ -1333,12 +1328,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|p| (p / 100.0).clamp(0.05, 0.95))
                 .unwrap_or(0.75);
 
-            // workers_override in settings controls App-level workers; we keep it for future use
-            let _workers = args.workers.or(if app.settings.workers_override > 0 {
+            // workers_override in settings controls App-level workers
+            let desired_workers = args.workers.or(if app.settings.workers_override > 0 {
                 Some(app.settings.workers_override as usize)
             } else {
                 None
             });
+
+            // Recreate worker pool with CLI/settings override if specified
+            if let Some(num_workers) = desired_workers {
+                let num_workers = num_workers.max(1); // At least 1 worker
+                info!("Recreating worker pool with {} threads (CLI/settings override)", num_workers);
+                app.workers = Arc::new(Workers::new(num_workers, app.cache_manager.epoch_ref()));
+            }
 
             // Recreate Player runtime (no longer owns project)
             let mut player = Player::new();
@@ -1359,7 +1361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.player = player;
             app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;
-            app.applied_workers = _workers;
+            app.applied_workers = desired_workers;
             app.path_config = path_config_for_app;
 
             // Attempt to load shaders from the shaders directory

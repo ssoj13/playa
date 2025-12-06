@@ -49,9 +49,6 @@ pub struct EncodeDialog {
     /// Progress bar widget
     progress_bar: ProgressBar,
 
-    /// Last encoder name (for display)
-    encoder_name: String,
-
     /// Tonemapping mode for HDR→LDR conversion
     pub tonemap_mode: crate::entities::frame::TonemapMode,
 }
@@ -178,7 +175,6 @@ impl EncodeDialog {
             progress_rx: None,
             encode_thread: None,
             progress_bar: ProgressBar::new(400.0, 20.0),
-            encoder_name: String::new(),
             tonemap_mode: settings.tonemap_mode,
         }
     }
@@ -452,11 +448,6 @@ impl EncodeDialog {
                             progress.total_frames.max(0) as usize,
                         );
                         self.progress_bar.render(ui);
-
-                        // Encoder name
-                        if !self.encoder_name.is_empty() {
-                            ui.label(format!("Encoder: {}", self.encoder_name));
-                        }
                     }
                 } else {
                     // Not encoding: show empty progress bar to maintain dialog size
