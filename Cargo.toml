@@ -5,6 +5,7 @@ members = ["xtask"]
 name = "playa"
 version = "0.1.133"
 edition = "2024"
+autobins = false  # Don't auto-discover binaries in src/bin/
 authors = ["joss13@gmail.com"]
 description = "Image sequence player (EXR, PNG, JPEG, TIFF, .MP4). Pure Rust with optional OpenEXR/FFmpeg support."
 homepage = "https://github.com/ssoj13/playa"
