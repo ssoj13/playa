@@ -521,6 +521,23 @@ pub fn render_canvas(
                             // Draw visible (trimmed) area with full color on top
                             if let Some(visible_bar_rect) = geom.visible_bar_rect {
                                 painter.rect_filled(visible_bar_rect, 4.0, base_color);
+
+                                // Draw layer name centered on visible bar
+                                let child_name = attrs
+                                    .get_str("name")
+                                    .unwrap_or("?");
+                                let text_color = Color32::WHITE;
+                                let font_id = egui::FontId::proportional(11.0);
+                                let galley = painter.layout_no_wrap(
+                                    child_name.to_string(),
+                                    font_id,
+                                    text_color,
+                                );
+                                // Only draw if bar is wide enough for text
+                                if visible_bar_rect.width() > galley.size().x + 8.0 {
+                                    let text_pos = visible_bar_rect.center() - galley.size() / 2.0;
+                                    painter.galley(text_pos, galley, text_color);
+                                }
                             }
 
                               // Draw outline around full bar (thicker and colored when selected)
@@ -563,18 +580,21 @@ pub fn render_canvas(
                             // Manual tool detection: use current visible bar bounds for handles/move
                             let edge_threshold = 8.0;
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                                if state.drag_state.is_none() {
-                                    let handle_rect = geom.visible_bar_rect.unwrap_or(geom.full_bar_rect);
+                                let handle_rect = geom.visible_bar_rect.unwrap_or(geom.full_bar_rect);
 
-                                    if handle_rect.contains(hover_pos) {
-                                        // Double-click: dive into source comp
-                                        if ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
-                                            if let Some(source_uuid_str) = attrs.get_str("uuid") {
-                                                if let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) {
-                                                    dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
-                                                }
+                                // Double-click: dive into source comp (check independently of drag state)
+                                if handle_rect.contains(hover_pos) {
+                                    if ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                                        if let Some(source_uuid_str) = attrs.get_str("uuid") {
+                                            if let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) {
+                                                dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
                                             }
-                                        } else if let Some(tool) =
+                                        }
+                                    }
+                                }
+
+                                if state.drag_state.is_none() && handle_rect.contains(hover_pos) {
+                                    if let Some(tool) =
                                             detect_layer_tool(hover_pos, handle_rect, edge_threshold)
                                         {
                                             ui.ctx().set_cursor_icon(tool.cursor());
@@ -606,7 +626,6 @@ pub fn render_canvas(
                                                 }
                                             }
                                         }
-                                    }
                                 }
                             }
                         }

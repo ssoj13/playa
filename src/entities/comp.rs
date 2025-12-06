@@ -1514,6 +1514,11 @@ impl Comp {
         attrs.set("speed", AttrValue::Float(1.0));
         attrs.set("width", AttrValue::UInt(source_dim.0 as u32));
         attrs.set("height", AttrValue::UInt(source_dim.1 as u32));
+        // Transform attributes
+        attrs.set("position", AttrValue::Vec3([0.0, 0.0, 0.0]));
+        attrs.set("rotation", AttrValue::Vec3([0.0, 0.0, 0.0]));
+        attrs.set("scale", AttrValue::Vec3([1.0, 1.0, 1.0]));
+        attrs.set("pivot", AttrValue::Vec3([0.0, 0.0, 0.0]));
 
         // Add to children at appropriate position for target row
         if let Some(target_row) = target_row {
