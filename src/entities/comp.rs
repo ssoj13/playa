@@ -762,6 +762,33 @@ impl Comp {
             return;
         }
 
+        // Layer mode: also preload children (file comps need their frames loaded)
+        if !self.is_file_mode() {
+            for (child_uuid, attrs) in &self.children {
+                let source_uuid_str = match attrs.get_str("uuid") {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let source_uuid = match Uuid::parse_str(source_uuid_str) {
+                    Ok(u) => u,
+                    Err(_) => continue,
+                };
+
+                // Get source comp and trigger its preload
+                let source = {
+                    let media = project.media.read().unwrap();
+                    media.get(&source_uuid).cloned()
+                };
+
+                if let Some(source) = source {
+                    // Calculate child's center frame based on parent's center
+                    let child_center = self.comp2local(*child_uuid, center)
+                        .map(|local| source._in() + local);
+                    source.signal_preload(workers, project, child_center);
+                }
+            }
+        }
+
         // Smart check: Skip preload if entire work area is already Loaded
         if let Some(ref global_cache) = self.global_cache {
             let mut all_loaded = true;

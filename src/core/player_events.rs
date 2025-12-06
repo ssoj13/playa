@@ -67,3 +67,13 @@ pub struct ToggleLoopEvent;
 
 #[derive(Clone, Debug)]
 pub struct SetLoopEvent(pub bool);
+
+// === Preload ===
+
+/// Request to preload a specific frame for a comp
+/// Sent when a frame is needed but not yet loaded (e.g., during composition)
+#[derive(Clone, Debug)]
+pub struct PreloadFrameEvent {
+    pub comp_uuid: uuid::Uuid,
+    pub frame_idx: i32,
+}
