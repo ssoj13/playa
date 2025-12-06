@@ -630,6 +630,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(&event) {
+        log::info!("[LayerAttrsChanged] comp={}, layers={:?}, opacity={}", e.comp_uuid, e.layer_uuids, e.opacity);
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
             // Apply to all targeted layers (multi-selection support)
@@ -640,6 +641,19 @@ pub fn handle_app_event(
                     ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
                     ("speed", AttrValue::Float(e.speed)),
                 ]);
+            }
+        });
+        return Some(result);
+    }
+    // Generic layer attrs change (from Attribute Editor)
+    if let Some(e) = downcast_event::<SetLayerAttrsEvent>(&event) {
+        log::info!("[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}", e.comp_uuid, e.layer_uuids, e.attrs);
+        project.modify_comp(e.comp_uuid, |comp| {
+            let values: Vec<(&str, crate::entities::AttrValue)> = e.attrs.iter()
+                .map(|(k, v)| (k.as_str(), v.clone()))
+                .collect();
+            for layer_uuid in &e.layer_uuids {
+                comp.set_child_attrs(layer_uuid, &values);
             }
         });
         return Some(result);

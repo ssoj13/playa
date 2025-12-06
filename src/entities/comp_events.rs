@@ -128,6 +128,7 @@ pub struct TrimLayersStartEvent(pub Uuid);
 #[derive(Clone, Debug)]
 pub struct TrimLayersEndEvent(pub Uuid);
 
+/// Timeline outline layer attributes (visible, opacity, blend_mode, speed)
 #[derive(Clone, Debug)]
 pub struct LayerAttributesChangedEvent {
     pub comp_uuid: Uuid,
@@ -136,6 +137,15 @@ pub struct LayerAttributesChangedEvent {
     pub opacity: f32,
     pub blend_mode: String,
     pub speed: f32,
+}
+
+/// Generic layer attributes change (from Attribute Editor)
+/// Supports arbitrary key-value pairs for any attribute
+#[derive(Clone, Debug)]
+pub struct SetLayerAttrsEvent {
+    pub comp_uuid: Uuid,
+    pub layer_uuids: Vec<Uuid>,
+    pub attrs: Vec<(String, crate::entities::AttrValue)>,
 }
 
 // === Comp Selection ===
