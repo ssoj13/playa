@@ -121,6 +121,7 @@ impl HotkeyHandler {
         self.bind(Global, "Ctrl+S", QuickSaveEvent);
         self.bind(Global, "Ctrl+O", OpenProjectDialogEvent);
         self.bind(Global, "Z", ToggleFullscreenEvent);
+        self.bind(Global, "U", ProjectPreviousCompEvent);
         self.bind(Global, "F", FitViewportEvent);
         self.bind(Global, "A", Viewport100Event);
         self.bind(Global, "H", Viewport100Event);

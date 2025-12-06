@@ -1017,6 +1017,11 @@ impl Comp {
         self.event_emitter = emitter;
     }
 
+    /// Emit AttrsChangedEvent to trigger cache invalidation
+    pub fn emit_attrs_changed(&self) {
+        self.event_emitter.emit(AttrsChangedEvent(self.get_uuid()));
+    }
+
     /// Get current frame (hot path - called 60fps during playback)
     #[inline]
     pub fn frame(&self) -> i32 {

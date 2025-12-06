@@ -104,6 +104,16 @@ impl Player {
         self.attrs.set_json("active_comp", &uuid);
     }
 
+    /// Get previous comp UUID (for U key navigation back)
+    pub fn previous_comp(&self) -> Option<Uuid> {
+        self.attrs.get_json("previous_comp").unwrap_or(None)
+    }
+
+    /// Set previous comp UUID
+    fn set_previous_comp_uuid(&mut self, uuid: Option<Uuid>) {
+        self.attrs.set_json("previous_comp", &uuid);
+    }
+
     /// Check if playing
     pub fn is_playing(&self) -> bool {
         self.attrs.get_bool_or("is_playing", false)
@@ -251,6 +261,12 @@ impl Player {
         if !project.contains_comp(uuid) {
             log::warn!("Comp {} not found, cannot activate", uuid);
             return;
+        }
+
+        // Save current as previous (for U key navigation back)
+        let current = self.active_comp();
+        if current != Some(uuid) {
+            self.set_previous_comp_uuid(current);
         }
 
         // Stop playback during transition

@@ -53,3 +53,7 @@ pub struct ProjectSelectionChangedEvent {
 
 #[derive(Clone, Debug)]
 pub struct ProjectActiveChangedEvent(pub Uuid);
+
+/// Navigate back to previous comp (U key)
+#[derive(Clone, Debug)]
+pub struct ProjectPreviousCompEvent;

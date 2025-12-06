@@ -32,6 +32,27 @@ use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 
+/// Strip trailing numbers and extension from filename
+/// "clipper_runs_0017.tga" -> "clipper_runs"
+/// "shot_001" -> "shot"
+fn strip_trailing_numbers(name: &str) -> String {
+    // Remove extension if present
+    let name = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(name);
+    // Remove trailing _NNNN or NNNN pattern
+    let name = name.trim_end_matches(|c: char| c.is_ascii_digit());
+    let name = name.trim_end_matches('_');
+    if name.is_empty() { "layer".to_string() } else { name.to_string() }
+}
+
+/// Extract suffix number from layer name if it matches base pattern
+/// "clipper_runs_3" with base "clipper_runs" -> Some(3)
+fn extract_suffix_number(name: &str, base: &str) -> Option<u32> {
+    if !name.starts_with(base) { return None; }
+    let suffix = &name[base.len()..];
+    let suffix = suffix.trim_start_matches('_');
+    suffix.parse().ok()
+}
+
 /// Result of handling an app event - may contain deferred actions
 #[derive(Default)]
 pub struct EventResult {
@@ -298,6 +319,13 @@ pub fn handle_app_event(
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
         return Some(result);
     }
+    if downcast_event::<ProjectPreviousCompEvent>(&event).is_some() {
+        if let Some(prev) = player.previous_comp() {
+            player.set_active_comp(Some(prev), project);
+            project.selection_anchor = project.comps_order().iter().position(|u| *u == prev);
+        }
+        return Some(result);
+    }
     if let Some(e) = downcast_event::<CompSelectionChangedEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             comp.layer_selection = e.selection.clone();
@@ -419,17 +447,16 @@ pub fn handle_app_event(
 
     // === Layer Operations ===
     if let Some(e) = downcast_event::<AddLayerEvent>(&event) {
-        let source_data = if e.target_row.is_some() {
-            project.get_comp(e.source_uuid).map(|s| (s.frame_count(), s.dim()))
-        } else {
-            None
-        };
+        // Get source comp info for naming and duration
+        let source_info = project.get_comp(e.source_uuid).map(|s| {
+            (s.frame_count(), s.dim(), s.name().to_string())
+        });
 
         let add_result = {
             let mut media = project.media.write().unwrap();
             if let Some(comp) = media.get_mut(&e.comp_uuid) {
                 if let Some(target_row) = e.target_row {
-                    let (duration, source_dim) = source_data.unwrap_or((1, (64, 64)));
+                    let (duration, source_dim, _) = source_info.clone().unwrap_or((1, (64, 64), String::new()));
                     comp.add_child_with_duration(e.source_uuid, e.start_frame, duration, Some(target_row), source_dim)
                 } else {
                     comp.add_child(e.source_uuid, e.start_frame, project)
@@ -445,6 +472,30 @@ pub fn handle_app_event(
                     child_comp.set_parent(Some(e.comp_uuid));
                 }
             });
+
+            // Auto-name the new layer based on source name
+            if let Some((_, _, source_name)) = source_info {
+                let base_name = strip_trailing_numbers(&source_name);
+                project.modify_comp(e.comp_uuid, |parent_comp| {
+                    // Find next available number for this base name
+                    let mut max_num = 0;
+                    for (_, attrs) in parent_comp.get_children() {
+                        if let Some(name) = attrs.get_str("name") {
+                            if let Some(num) = extract_suffix_number(name, &base_name) {
+                                max_num = max_num.max(num);
+                            }
+                        }
+                    }
+                    let new_name = format!("{}_{}", base_name, max_num + 1);
+                    // Set name on the last added child (most recent)
+                    if let Some((child_uuid, _)) = parent_comp.get_children().last() {
+                        let child_uuid = *child_uuid;
+                        if let Some(attrs) = parent_comp.children_attrs_get_mut(&child_uuid) {
+                            attrs.set("name", crate::entities::AttrValue::Str(new_name));
+                        }
+                    }
+                });
+            }
         } else if let Err(err) = add_result {
             log::error!("Failed to add layer: {}", err);
         }
@@ -564,6 +615,9 @@ pub fn handle_app_event(
                 attrs.set("blend_mode", crate::entities::AttrValue::Str(e.blend_mode.clone()));
                 attrs.set("speed", crate::entities::AttrValue::Float(e.speed));
             }
+            // Mark comp as dirty and emit AttrsChangedEvent to trigger cache invalidation
+            comp.attrs.mark_dirty();
+            comp.emit_attrs_changed();
         });
         return Some(result);
     }
