@@ -38,7 +38,7 @@ env_logger = "0.11"
 glob = "0.3"
 half = "1.8"
 image = { version = "0.25", features = ["exr", "png", "jpeg", "tiff", "tga", "hdr"] }
-indexmap = "2.7"
+indexmap = "2.12"
 log = "0.4"
 lru = "0.14"
 num_cpus = "1.17"
@@ -51,7 +51,7 @@ rfd = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sysinfo = "0.37"
-uuid = { version = "1.18", features = ["v4", "serde"] }
+uuid = { version = "1.19", features = ["v4", "serde"] }
 taffy = "0.9.2"
 
 # Build dependencies moved to xtask: Use `cargo xtask build` to build with automatic dependency management
