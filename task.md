@@ -15,14 +15,13 @@
   - If you feel task is complex - ask questions, then just split it into sub-tasks, create a plan and follow it updating that plan on each step (setting checkboxes on what's done).
   - Create comprehensive report so you could "survive" after context compactification, re-read it and continue without losing details. Offer pro-grade solutions.
 
-## Outputs:
-  - At the end create a professional comprehensive report and update plan and write it to planN.md where N is the next available number, and wait for approval! 
-
-
 # Task:
   1. разнести F1 хелп по разным окнам - чтобы у каждого окна был свой хелп по своим кнопкам. Чтобы в каждом окне можно было по F1 открыть свой хелп, независимо от другого. Т.е. сделай Help видимо вообще функцией каждого окна. Предложи варианты.
-  2. По ctrl-f1 можно сделать новую панель куда будут сведены все клавиши от всех панелей. Надо продумать как сделать не загромождая всё.
-  3. Как у нас хранятся слои в Comp? просто Vec<Tuple(Uuid, Attrs)> или у нас это отдельный тип с сериадизацией? Ты бы как сделал? Может сделать отдельный файл Layer.rs и там определить и чтобы Comp оперировала с данными оттуда? Можно инвалидировать атрибуты per-layer и прочие другие штуки.
+  2. По F11 можно сделать новую панель куда будут сведены все клавиши от всех панелей. Надо продумать как сделать не загромождая всё. Отдельный какой-то файл в src/dialogs/help?
+  3. Как у нас хранятся слои в Comp? просто Vec<Tuple(Uuid, Attrs)> или у нас это отдельный тип с сериализацией? Ты бы как сделал? Может сделать отдельный файл Layer.rs и там определить и чтобы Comp оперировала с данными оттуда? Можно инвалидировать атрибуты per-layer и прочие другие штуки.
   4. Рассмотреть возможность добавления нескольких слоёв на один трек в timeline: видимо перейти от Vec<Layer> на Vec<Vec<Layer, ..>, ..>? Предложи хорошие варианты.
   5. Нужно акцептить и файлы и каталоги как инпут. Если это каталог - то искать всю вложенную медию(видео) - опция один, и все вложенные сиквенсы - опция два. Ввести для этого отдельный раздел в Prefs с двумя чекбоксами.
   6. Изучи вопрос добавления Node editor. Какие крейты можно использовать? Каждый комп можно представить просто как ноду с кучей инпутов, куда воткнуты другие компы. Идеальная страктура для node network.
+
+## Outputs:
+  - At the end create a professional comprehensive report and update plan and write it to planN.md where N is the next available number, and wait for approval! 
