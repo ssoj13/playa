@@ -335,7 +335,13 @@ impl ViewportRenderer {
                 if self.texture.is_none() {
                     self.texture = gl.create_texture().ok();
                 }
-                let texture = self.texture.unwrap();
+                let texture = match self.texture {
+                    Some(t) => t,
+                    None => {
+                        error!("Failed to create texture for viewport");
+                        return;
+                    }
+                };
                 gl.bind_texture(glow::TEXTURE_2D, Some(texture));
                 gl.tex_image_2d(
                     glow::TEXTURE_2D,
@@ -380,7 +386,13 @@ impl ViewportRenderer {
             // Ensure PBOs are the correct size and format
             self.recreate_pbos_if_needed(gl, width, height, pixel_format);
 
-            let texture = self.texture.unwrap();
+            let texture = match self.texture {
+                Some(t) => t,
+                None => {
+                    error!("Texture is None during upload");
+                    return;
+                }
+            };
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
 
             let write_pbo_index = self.pbo_index;

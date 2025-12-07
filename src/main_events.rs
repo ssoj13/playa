@@ -95,6 +95,32 @@ pub struct EventResult {
     pub show_open_dialog: bool,
 }
 
+impl EventResult {
+    /// Merge another result into this one (accumulates multiple event results)
+    pub fn merge(&mut self, other: EventResult) {
+        // Last write wins for single values
+        if other.load_project.is_some() {
+            self.load_project = other.load_project;
+        }
+        if other.save_project.is_some() {
+            self.save_project = other.save_project;
+        }
+        if other.new_comp.is_some() {
+            self.new_comp = other.new_comp;
+        }
+        if other.enqueue_frames.is_some() {
+            self.enqueue_frames = other.enqueue_frames;
+        }
+        // Accumulate paths instead of overwriting
+        if let Some(paths) = other.load_sequences {
+            self.load_sequences.get_or_insert_with(Vec::new).extend(paths);
+        }
+        // Bool flags: set to true if any event sets them
+        self.quick_save |= other.quick_save;
+        self.show_open_dialog |= other.show_open_dialog;
+    }
+}
+
 /// Handle a single app event (called from main event loop).
 /// Returns Some(result) if event was handled, None otherwise.
 pub fn handle_app_event(
@@ -612,23 +638,8 @@ pub fn handle_app_event(
         });
         return Some(result);
     }
-    // Select all layers (Ctrl+A)
-    if let Some(e) = downcast_event::<SelectAllLayersEvent>(&event) {
-        project.modify_comp(e.comp_uuid, |comp| {
-            let all_uuids: Vec<Uuid> = comp.children.iter().map(|(u, _)| *u).collect();
-            comp.layer_selection = all_uuids;
-            log::debug!("[SELECT ALL] {} layers selected", comp.layer_selection.len());
-        });
-        return Some(result);
-    }
-    // Clear layer selection (F2)
-    if let Some(e) = downcast_event::<ClearLayerSelectionEvent>(&event) {
-        project.modify_comp(e.comp_uuid, |comp| {
-            comp.layer_selection.clear();
-            log::debug!("[CLEAR SELECTION] selection cleared");
-        });
-        return Some(result);
-    }
+    // NOTE: SelectAllLayersEvent and ClearLayerSelectionEvent handlers
+    // are below (after clipboard events) with proper layer_selection_anchor handling
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(&event) {
         log::info!("[LayerAttrsChanged] comp={}, layers={:?}, opacity={}", e.comp_uuid, e.layer_uuids, e.opacity);
         project.modify_comp(e.comp_uuid, |comp| {

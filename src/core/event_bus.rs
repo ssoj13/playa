@@ -10,6 +10,10 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
+use log::warn;
+
+/// Maximum events in queue before oldest are evicted
+const MAX_QUEUE_SIZE: usize = 1000;
 
 /// Marker trait for events. Events must be Send + Sync + 'static.
 pub trait Event: Any + Send + Sync + 'static {
@@ -89,7 +93,7 @@ impl EventBus {
         });
         self.subscribers
             .write()
-            .expect("lock")
+            .unwrap_or_else(|e| e.into_inner())
             .entry(type_id)
             .or_default()
             .push(wrapped);
@@ -103,14 +107,20 @@ impl EventBus {
         let type_id = TypeId::of::<E>();
 
         // Invoke immediate callbacks
-        if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
+        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
             for cb in cbs {
                 cb(&event);
             }
         }
 
-        // Queue for deferred processing
-        self.queue.lock().expect("lock").push(Box::new(event));
+        // Queue for deferred processing with eviction
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        if queue.len() >= MAX_QUEUE_SIZE {
+            let evict_count = queue.len() / 2;
+            warn!("EventBus queue full ({} events), evicting oldest {}", queue.len(), evict_count);
+            queue.drain(0..evict_count);
+        }
+        queue.push(Box::new(event));
     }
 
     /// Emit boxed event (for dynamic dispatch).
@@ -120,14 +130,20 @@ impl EventBus {
         // Invoke immediate callbacks
         // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable,
         // not Box<dyn Event>'s blanket impl (see downcast_event docs)
-        if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
+        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
             for cb in cbs {
                 cb((*event).as_any());
             }
         }
 
-        // Queue for deferred processing
-        self.queue.lock().expect("lock").push(event);
+        // Queue for deferred processing with eviction
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        if queue.len() >= MAX_QUEUE_SIZE {
+            let evict_count = queue.len() / 2;
+            warn!("EventBus queue full ({} events), evicting oldest {}", queue.len(), evict_count);
+            queue.drain(0..evict_count);
+        }
+        queue.push(event);
     }
 
     // ========== Deferred Processing ==========
@@ -141,7 +157,7 @@ impl EventBus {
     /// }
     /// ```
     pub fn poll(&self) -> Vec<BoxedEvent> {
-        std::mem::take(&mut *self.queue.lock().expect("lock"))
+        std::mem::take(&mut *self.queue.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     // ========== Handle & Utilities ==========
@@ -156,20 +172,20 @@ impl EventBus {
 
     /// Clear subscribers for type E
     pub fn unsubscribe_all<E: Event>(&self) {
-        self.subscribers.write().expect("lock").remove(&TypeId::of::<E>());
+        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).remove(&TypeId::of::<E>());
     }
 
     /// Clear all subscribers and queue
     pub fn clear(&self) {
-        self.subscribers.write().expect("lock").clear();
-        self.queue.lock().expect("lock").clear();
+        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).clear();
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     /// Check if there are subscribers for event type E
     pub fn has_subscribers<E: Event>(&self) -> bool {
         self.subscribers
             .read()
-            .expect("lock")
+            .unwrap_or_else(|e| e.into_inner())
             .get(&TypeId::of::<E>())
             .map(|v| !v.is_empty())
             .unwrap_or(false)
@@ -177,7 +193,7 @@ impl EventBus {
 
     /// Check queue length
     pub fn queue_len(&self) -> usize {
-        self.queue.lock().expect("lock").len()
+        self.queue.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 
@@ -205,14 +221,20 @@ impl EventEmitter {
         let type_id = TypeId::of::<E>();
 
         // Invoke immediate callbacks
-        if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
+        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
             for cb in cbs {
                 cb(&event);
             }
         }
 
-        // Queue for deferred processing
-        self.queue.lock().expect("lock").push(Box::new(event));
+        // Queue for deferred processing with eviction
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        if queue.len() >= MAX_QUEUE_SIZE {
+            let evict_count = queue.len() / 2;
+            warn!("EventEmitter queue full ({} events), evicting oldest {}", queue.len(), evict_count);
+            queue.drain(0..evict_count);
+        }
+        queue.push(Box::new(event));
     }
 
     /// Emit boxed event
@@ -221,14 +243,20 @@ impl EventEmitter {
 
         // Invoke immediate callbacks
         // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable
-        if let Some(cbs) = self.subscribers.read().expect("lock").get(&type_id) {
+        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
             for cb in cbs {
                 cb((*event).as_any());
             }
         }
 
-        // Queue for deferred processing
-        self.queue.lock().expect("lock").push(event);
+        // Queue for deferred processing with eviction
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        if queue.len() >= MAX_QUEUE_SIZE {
+            let evict_count = queue.len() / 2;
+            warn!("EventEmitter queue full ({} events), evicting oldest {}", queue.len(), evict_count);
+            queue.drain(0..evict_count);
+        }
+        queue.push(event);
     }
 }
 

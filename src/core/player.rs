@@ -461,11 +461,16 @@ impl Player {
         };
 
         // Apply loop/clamp logic based on loop_enabled
+        let range_size = play_end - play_start + 1;
+        // Guard against invalid range (division by zero)
+        if range_size <= 0 {
+            return;
+        }
+
         let final_frame = if target > play_end {
             if loop_enabled {
                 // Loop: wrap around to play_start
                 let overflow = target - play_end;
-                let range_size = play_end - play_start + 1;
                 play_start + ((overflow - 1) % range_size)
             } else {
                 // Clamp to play_end
@@ -475,7 +480,6 @@ impl Player {
             if loop_enabled {
                 // Loop: wrap around to play_end
                 let underflow = play_start - target;
-                let range_size = play_end - play_start + 1;
                 play_end - ((underflow - 1) % range_size)
             } else {
                 // Clamp to play_start

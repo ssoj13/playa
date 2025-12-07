@@ -109,7 +109,8 @@ impl eframe::App for EncoderApp {
                 ui.heading("Encode Settings");
                 ui.separator();
 
-                let _should_stay_open = dialog.render(ctx, &self.shell.project, None);
+                let active_comp = self.shell.player.active_comp();
+                let _should_stay_open = dialog.render(ctx, &self.shell.project, active_comp);
             } else {
                 ui.centered_and_justified(|ui| {
                     ui.label("No comp loaded. Check test sequence path.");

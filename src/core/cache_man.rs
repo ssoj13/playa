@@ -92,7 +92,8 @@ impl CacheManager {
 
     /// Check if memory limit exceeded
     pub fn check_memory_limit(&self) -> bool {
-        self.memory_usage.load(Ordering::Relaxed) > self.max_memory_bytes.load(Ordering::Relaxed)
+        // Use Acquire to ensure consistent view of both values
+        self.memory_usage.load(Ordering::Acquire) > self.max_memory_bytes.load(Ordering::Acquire)
     }
 
     /// Get memory statistics (usage, limit)

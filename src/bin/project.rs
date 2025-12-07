@@ -246,7 +246,7 @@ impl eframe::App for ProjectApp {
             }
         }
 
-        // Request repaint for continuous updates
-        ctx.request_repaint();
+        // Only request repaint if needed (avoid continuous CPU usage)
+        // Currently no animation or background tasks need continuous repaint
     }
 }

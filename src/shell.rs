@@ -80,9 +80,10 @@ impl Shell {
         }
     }
 
-    /// Process events from the event bus, returns deferred actions
+    /// Process events from the event bus, returns merged deferred actions
     pub fn process_events(&mut self) -> Option<EventResult> {
-        let mut result: Option<EventResult> = None;
+        let mut merged = EventResult::default();
+        let mut any_handled = false;
 
         // Dummy state for unused parameters
         let mut timeline_state = TimelineState::default();
@@ -116,11 +117,12 @@ impl Shell {
                 &mut fullscreen_dirty,
                 &mut reset_settings_pending,
             ) {
-                result = Some(r);
+                merged.merge(r);
+                any_handled = true;
             }
         }
 
-        result
+        if any_handled { Some(merged) } else { None }
     }
 
     /// Process events with custom state (for timeline/viewport binaries)
@@ -130,7 +132,8 @@ impl Shell {
         viewport_state: &mut ViewportState,
         settings: &mut AppSettings,
     ) -> Option<EventResult> {
-        let mut result: Option<EventResult> = None;
+        let mut merged = EventResult::default();
+        let mut any_handled = false;
 
         let mut show_help = false;
         let mut show_playlist = false;
@@ -160,11 +163,12 @@ impl Shell {
                 &mut fullscreen_dirty,
                 &mut reset_settings_pending,
             ) {
-                result = Some(r);
+                merged.merge(r);
+                any_handled = true;
             }
         }
 
-        result
+        if any_handled { Some(merged) } else { None }
     }
 
     /// Handle deferred actions from EventResult

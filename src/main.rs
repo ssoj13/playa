@@ -262,6 +262,9 @@ impl PlayaApp {
     /// Unified interface: works for both File mode and Layer mode.
     /// File mode: loads frames from disk using spiral/forward strategies
     /// Layer mode: composes frames from children (on-demand for now)
+    ///
+    /// # Arguments
+    /// * `_radius` - Hint for how many frames around playhead to preload (TODO: implement)
     fn enqueue_frame_loads_around_playhead(&self, _radius: usize) {
         // Get active comp
         let Some(comp_uuid) = self.player.active_comp() else {
@@ -1003,8 +1006,8 @@ impl eframe::App for PlayaApp {
             self.update_compositor_backend(gl);
         }
 
-        // Process all events from the event bus
-        self.handle_events();
+        // NOTE: Events processed after player.update() to catch events from player too
+        // (handle_events() called once at line ~1100)
 
         // Centralized dirty check: if any attrs changed, invalidate and preload
         if let Some(comp_uuid) = self.player.active_comp() {

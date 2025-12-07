@@ -23,7 +23,6 @@ pub struct VideoMetadata {
     pub frame_count: usize,
     pub width: u32,
     pub height: u32,
-    #[allow(dead_code)]
     pub fps: f64,
 }
 

@@ -583,11 +583,13 @@ pub fn encode_sequence_from_comp(
     );
 
     // Stage 1: Get target dimensions from first frame
-    let _ = progress_tx.send(EncodeProgress {
+    if progress_tx.send(EncodeProgress {
         current_frame: 0,
         total_frames,
         stage: EncodeStage::Validating,
-    });
+    }).is_err() {
+        return Err(EncodeError::Cancelled); // UI closed
+    }
 
     // Get first frame to determine target dimensions
     let first_frame = comp.get_frame(play_range.0, project, true).ok_or_else(|| {
@@ -607,23 +609,20 @@ pub fn encode_sequence_from_comp(
     }
 
     // Stage 2: Create encoder
-    let _ = progress_tx.send(EncodeProgress {
+    if progress_tx.send(EncodeProgress {
         current_frame: 0,
         total_frames,
         stage: EncodeStage::Opening,
-    });
+    }).is_err() {
+        return Err(EncodeError::Cancelled);
+    }
 
     // Initialize FFmpeg (suppress logging)
     unsafe {
         ffmpeg::ffi::av_log_set_level(ffmpeg::ffi::AV_LOG_QUIET);
     }
 
-    // Create output muxer (MP4 or MOV container)
-    let _container_format = match settings.container {
-        Container::MP4 => "mp4",
-        Container::MOV => "mov",
-    };
-
+    // Create output muxer (container format inferred from output path extension)
     let mut octx = ffmpeg::format::output(&settings.output_path)
         .map_err(|e| EncodeError::OutputCreateFailed(e.to_string()))?;
 
@@ -906,11 +905,13 @@ pub fn encode_sequence_from_comp(
     }
 
     // Stage 3: Encoding loop
-    let _ = progress_tx.send(EncodeProgress {
+    if progress_tx.send(EncodeProgress {
         current_frame: 0,
         total_frames,
         stage: EncodeStage::Encoding,
-    });
+    }).is_err() {
+        return Err(EncodeError::Cancelled);
+    }
 
     info!("Starting encoding loop for {} frames", total_frames);
 
@@ -973,6 +974,11 @@ pub fn encode_sequence_from_comp(
             frame.clone()
         };
 
+        // Check for cancellation after crop
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(EncodeError::Cancelled);
+        }
+
         // Detect if source is HDR (F16/F32 pixel format)
         let source_is_hdr = matches!(
             frame_cropped.pixel_format(),
@@ -998,6 +1004,11 @@ pub fn encode_sequence_from_comp(
             // No tonemapping needed (either 10-bit encoding or source is already LDR)
             frame_cropped
         };
+
+        // Check for cancellation after tonemap
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(EncodeError::Cancelled);
+        }
 
         // STEP 3: Convert to RGB24 (8-bit) or RGB48 (10-bit)
         let mut ffmpeg_frame = if needs_10bit {
@@ -1134,11 +1145,13 @@ pub fn encode_sequence_from_comp(
 
         // Update progress
         let current_frame = frame_idx - play_range.0 + 1;
-        let _ = progress_tx.send(EncodeProgress {
+        if progress_tx.send(EncodeProgress {
             current_frame,
             total_frames,
             stage: EncodeStage::Encoding,
-        });
+        }).is_err() {
+            return Err(EncodeError::Cancelled);
+        }
 
         if current_frame % 10 == 0 {
             info!("Encoded frame {}/{}", current_frame, total_frames);
@@ -1146,11 +1159,13 @@ pub fn encode_sequence_from_comp(
     }
 
     // Stage 4: Flush encoder
-    let _ = progress_tx.send(EncodeProgress {
+    if progress_tx.send(EncodeProgress {
         current_frame: total_frames,
         total_frames,
         stage: EncodeStage::Flushing,
-    });
+    }).is_err() {
+        return Err(EncodeError::Cancelled);
+    }
 
     info!("Flushing encoder...");
 
@@ -1196,7 +1211,7 @@ pub fn encode_sequence_from_comp(
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to write trailer: {}", e)))?;
     info!("Trailer written successfully");
 
-    // Stage 5: Complete
+    // Stage 5: Complete (ignore send error - encoding is done anyway)
     let _ = progress_tx.send(EncodeProgress {
         current_frame: total_frames,
         total_frames,
@@ -1565,10 +1580,8 @@ impl SwsContext {
         let mut dst_frame = ffmpeg::util::frame::video::Video::new(self.dst_format, width, height);
 
         // Convert using swscale context
-        self.ctx
-            .as_mut()
-            .unwrap()
-            .run(&src_frame, &mut dst_frame)
+        let ctx = self.ctx.as_mut().ok_or("SwsContext not initialized")?;
+        ctx.run(&src_frame, &mut dst_frame)
             .map_err(|e| format!("swscale conversion failed: {}", e))?;
 
         Ok(dst_frame)
@@ -1638,10 +1651,8 @@ impl SwsContext {
         let mut dst_frame = ffmpeg::util::frame::video::Video::new(self.dst_format, width, height);
 
         // Convert RGB48LE → YUV10 using swscale context
-        self.ctx
-            .as_mut()
-            .unwrap()
-            .run(&src_frame, &mut dst_frame)
+        let ctx = self.ctx.as_mut().ok_or("SwsContext not initialized")?;
+        ctx.run(&src_frame, &mut dst_frame)
             .map_err(|e| format!("RGB48→YUV10 swscale conversion failed: {}", e))?;
 
         Ok(dst_frame)

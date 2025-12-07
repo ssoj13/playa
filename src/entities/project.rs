@@ -568,9 +568,8 @@ mod tests {
         let mut project = Project::new(manager);
 
         // Create orphan comp (no parents)
-        let mut comp = Comp::new("Orphan", 0, 100, 24.0);
+        let comp = Comp::new("Orphan", 0, 100, 24.0);
         let comp_uuid = comp.get_uuid();
-        comp.attrs.mark_dirty();
 
         project.media.write().expect("media lock poisoned").insert(comp_uuid, comp);
 

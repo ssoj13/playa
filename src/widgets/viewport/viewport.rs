@@ -76,7 +76,7 @@ impl ViewportState {
         // Draw scrubber line during scrubbing
         self.scrubber.draw(ui, panel_rect);
 
-        // Future: Ð´Ð¾Ð±Ð°Ð²Ð¸Ñ‚ÑŒ guides, safe zones, grid, Ð¸ Ñ‚.Ð´.
+        // Future: add guides, safe zones, grid, etc.
     }
 
     /// Update viewport size (called when window resizes)
@@ -350,7 +350,6 @@ pub struct ViewportScrubber {
     current_frame: Option<usize>,
     is_clamped: bool, // True when normalized is outside 0.0..1.0 (frame is clamped)
     frozen_bounds: Option<egui::Rect>, // Frozen image bounds during scrubbing
-    frozen_image_size: Option<egui::Vec2>, // Frozen image size for detecting changes
     last_mouse_x: Option<f32>, // Last mouse X position for movement detection
 }
 
@@ -363,7 +362,6 @@ impl ViewportScrubber {
             current_frame: None,
             is_clamped: false,
             frozen_bounds: None,
-            frozen_image_size: None,
             last_mouse_x: None,
         }
     }
@@ -418,7 +416,7 @@ impl ViewportScrubber {
     ) {
         self.is_active = true;
         self.frozen_bounds = Some(image_bounds);
-        self.frozen_image_size = Some(image_size);
+        let _ = image_size; // Parameter kept for API compatibility
         self.normalized_position = Some(normalized);
     }
 
@@ -429,7 +427,6 @@ impl ViewportScrubber {
         self.current_frame = None;
         self.is_clamped = false;
         self.frozen_bounds = None;
-        self.frozen_image_size = None;
         self.last_mouse_x = None;
     }
 

@@ -84,7 +84,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 return;
             }
 
-            let media = project.media.read().expect("media lock poisoned");
+            let media = project.media.read().unwrap_or_else(|e| e.into_inner());
             for comp_uuid in &all_comps {
                 let comp = match media.get(comp_uuid) {
                     Some(c) => c,

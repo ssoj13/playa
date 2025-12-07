@@ -46,6 +46,9 @@ pub struct EncodeDialog {
     /// Encoder thread handle
     encode_thread: Option<JoinHandle<Result<(), EncodeError>>>,
 
+    /// Orphaned thread handles (timed out but not joined)
+    orphan_handles: Vec<JoinHandle<Result<(), EncodeError>>>,
+
     /// Progress bar widget
     progress_bar: ProgressBar,
 
@@ -96,11 +99,18 @@ impl EncodeDialog {
                 let new_num = num + 1;
                 let old_width = num_str.len();
 
-                // Calculate how many digits the new number has
-                let new_num_digits = if new_num == 0 {
-                    1
-                } else {
-                    ((new_num as f64).log10().floor() as usize) + 1
+                // Calculate how many digits the new number has (integer-based for precision)
+                let new_num_digits = match new_num {
+                    0 => 1,
+                    n => {
+                        let mut count = 0;
+                        let mut val = n;
+                        while val > 0 {
+                            count += 1;
+                            val /= 10;
+                        }
+                        count
+                    }
                 };
 
                 // Use original width if new number fits, otherwise use natural width
@@ -174,6 +184,7 @@ impl EncodeDialog {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             progress_rx: None,
             encode_thread: None,
+            orphan_handles: Vec::new(),
             progress_bar: ProgressBar::new(400.0, 20.0),
             tonemap_mode: settings.tonemap_mode,
         }
@@ -580,6 +591,9 @@ impl EncodeDialog {
     fn stop_encoding_internal(&mut self) {
         self.cancel_flag.store(true, Ordering::Relaxed);
 
+        // Clean up any previously orphaned threads that have finished
+        self.cleanup_orphan_handles();
+
         // Wait for thread with timeout
         if let Some(handle) = self.encode_thread.take() {
             use std::time::{Duration, Instant};
@@ -601,9 +615,9 @@ impl EncodeDialog {
                 }
 
                 if start.elapsed() > timeout {
-                    info!("Encode thread didn't stop within timeout - forcefully resetting UI");
-                    // Thread is stuck, but we reset UI anyway
-                    // The thread will be dropped and remain orphaned
+                    info!("Encode thread didn't stop within timeout - storing for later cleanup");
+                    // Store handle for later cleanup instead of leaking
+                    self.orphan_handles.push(handle);
                     break;
                 }
 
@@ -615,6 +629,23 @@ impl EncodeDialog {
         self.reset_encoding_state();
         self.progress = None;
         self.cancel_flag = Arc::new(AtomicBool::new(false));
+    }
+
+    /// Clean up finished orphan thread handles
+    fn cleanup_orphan_handles(&mut self) {
+        // Retain only handles that are still running
+        let mut finished_count = 0;
+        self.orphan_handles.retain(|handle| {
+            if handle.is_finished() {
+                finished_count += 1;
+                false // Remove from vec, will be dropped and joined
+            } else {
+                true // Keep in vec
+            }
+        });
+        if finished_count > 0 {
+            info!("Cleaned up {} orphaned encode thread(s)", finished_count);
+        }
     }
 
     /// Stop encoding (cleanup after completion or error)
@@ -1001,5 +1032,22 @@ impl EncodeDialog {
         // Empty line for vertical alignment with H264 tab
         ui.add_space(4.0);
         ui.label("");
+    }
+}
+
+impl Drop for EncodeDialog {
+    fn drop(&mut self) {
+        // Join any orphaned encode threads on dialog close
+        for handle in self.orphan_handles.drain(..) {
+            if let Err(e) = handle.join() {
+                info!("Orphaned encode thread panicked during cleanup: {:?}", e);
+            }
+        }
+        // Also join the active thread if any
+        if let Some(handle) = self.encode_thread.take() {
+            if let Err(e) = handle.join() {
+                info!("Encode thread panicked during dialog close: {:?}", e);
+            }
+        }
     }
 }

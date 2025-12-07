@@ -17,7 +17,7 @@ pub fn help_text() -> &'static str {
     "Drag'n'drop a file here or double-click to open\n\n\
     Hotkeys:\n\
     F1 - Toggle this help\n\
-    F2 - Toggle Project panel\n\
+    F2 - Toggle Project panel (in Timeline: Clear Selection)\n\
     F3 - Toggle Attributes panel\n\
     F4 - Toggle Encoder dialog\n\
     F5 - Toggle Preferences\n\

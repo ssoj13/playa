@@ -7,7 +7,7 @@
 //!
 //! Epoch mechanism allows cancelling stale requests during fast timeline scrubbing.
 
-use crossbeam::deque::{Injector, Stealer, Worker};
+use crossbeam::deque::{Injector, Worker};
 use log::debug;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -31,9 +31,8 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// ```
 pub struct Workers {
     injector: Arc<Injector<Job>>,          // Global queue for external tasks
-    #[allow(dead_code)] // TODO: implement work-stealing between threads
-    stealers: Vec<Stealer<Job>>,
-    _handles: Vec<thread::JoinHandle<()>>, // Keep handles to prevent premature drop
+    // Note: stealers Vec cloned into each thread, not stored here
+    handles: Vec<thread::JoinHandle<()>>,  // Thread handles for proper shutdown
     current_epoch: Arc<AtomicU64>,         // Epoch counter (shared with CacheManager)
     shutdown: Arc<AtomicBool>,             // Shutdown signal
 }
@@ -122,8 +121,7 @@ impl Workers {
 
         Self {
             injector,
-            stealers,
-            _handles: handles,
+            handles,
             current_epoch: epoch,
             shutdown,
         }
@@ -190,9 +188,16 @@ impl Workers {
 
 impl Drop for Workers {
     fn drop(&mut self) {
-        debug!("Workers shutting down ({} threads)...", self._handles.len());
+        debug!("Workers shutting down ({} threads)...", self.handles.len());
         // Signal all workers to stop
         self.shutdown.store(true, Ordering::SeqCst);
-        // Workers will exit on next iteration when they see shutdown flag
+        
+        // Join all worker threads to ensure clean shutdown
+        for handle in self.handles.drain(..) {
+            if let Err(e) = handle.join() {
+                debug!("Worker thread panicked during shutdown: {:?}", e);
+            }
+        }
+        debug!("All workers stopped");
     }
 }

@@ -36,8 +36,13 @@ pub enum CompositorType {
 
 impl Clone for CompositorType {
     fn clone(&self) -> Self {
-        // GPU compositor can't be cloned (OpenGL resources)
-        // Return default CPU compositor instead
+        // GPU compositor can't be cloned (OpenGL resources are tied to context)
+        // This is expected during Project serialization (compositor is #[serde(skip)])
+        // but should NOT happen in normal code - use RefCell or Arc instead
+        if matches!(self, CompositorType::Gpu(_)) {
+            log::warn!("CompositorType::clone() called on GPU variant - downgrading to CPU. \
+                        This may indicate a bug if not during serialization.");
+        }
         CompositorType::Cpu(CpuCompositor)
     }
 }

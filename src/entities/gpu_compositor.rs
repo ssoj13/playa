@@ -197,6 +197,39 @@ use log::{debug, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// RAII guard for OpenGL textures - ensures cleanup on drop
+struct TextureGuard {
+    gl: Arc<glow::Context>,
+    textures: Vec<glow::Texture>,
+}
+
+impl TextureGuard {
+    fn new(gl: Arc<glow::Context>) -> Self {
+        Self { gl, textures: Vec::new() }
+    }
+
+    fn push(&mut self, texture: glow::Texture) {
+        self.textures.push(texture);
+    }
+
+    /// Delete specific texture and remove from guard
+    fn delete(&mut self, texture: glow::Texture) {
+        if let Some(pos) = self.textures.iter().position(|t| *t == texture) {
+            self.textures.remove(pos);
+            unsafe { self.gl.delete_texture(texture); }
+        }
+    }
+}
+
+impl Drop for TextureGuard {
+    fn drop(&mut self) {
+        // Clean up all remaining textures
+        for texture in self.textures.drain(..) {
+            unsafe { self.gl.delete_texture(texture); }
+        }
+    }
+}
+
 /// GPU compositor using OpenGL for hardware-accelerated blending
 ///
 /// Note: Does NOT implement Clone - OpenGL resources (FBO, VAO, VBO, Program)
@@ -727,20 +760,21 @@ void main() {
             min_status
         );
 
-        // Upload all frames to textures
-        let mut textures = Vec::new();
+        // Upload all frames to textures with RAII guard for cleanup on error
+        let mut guard = TextureGuard::new(Arc::clone(&self.gl));
         for (frame, _, _) in &frames {
             let texture = self.upload_frame_to_texture(frame)?;
-            textures.push(texture);
+            guard.push(texture);
         }
 
         // Blend textures sequentially: bottom-to-top
-        let mut result_texture = textures[0];
-        for i in 1..textures.len() {
-            let top_texture = textures[i];
+        let mut result_texture = guard.textures[0];
+        for i in 1..guard.textures.len() {
+            let top_texture = guard.textures[i];
             let (_, opacity, mode) = &frames[i];
 
-            result_texture = self.blend_textures(
+            // blend_textures creates new texture, add to guard
+            let new_result = self.blend_textures(
                 result_texture,
                 top_texture,
                 *opacity,
@@ -749,26 +783,21 @@ void main() {
                 height,
                 format,
             )?;
+            guard.push(new_result);
 
-            // Clean up intermediate textures (except the result)
-            unsafe {
-                if i > 1 {
-                    // Don't delete first texture yet
-                    self.gl.delete_texture(textures[i - 1]);
-                }
+            // Clean up old result texture (except original input textures)
+            if i > 1 {
+                guard.delete(result_texture);
             }
+            result_texture = new_result;
         }
 
         // Download result from GPU with min_status from inputs
         let result_frame = self.download_texture_to_frame(result_texture, width, height, format, min_status)?;
 
-        // Cleanup all textures
-        unsafe {
-            for texture in textures {
-                self.gl.delete_texture(texture);
-            }
-            self.gl.delete_texture(result_texture);
-        }
+        // Guard will clean up all textures on drop (including result_texture)
+        // This happens automatically - no manual cleanup needed
+        drop(guard);
 
         debug!("GPU blend completed successfully with status: {:?}", min_status);
         Ok(result_frame)
