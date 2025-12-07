@@ -506,7 +506,9 @@ impl Comp {
         self.attrs.set("fps", AttrValue::Float(fps));
     }
 
-    /// Set trim_in, keeping trim duration constant.
+    /// Slide work area by moving trim_in, keeping duration constant.
+    /// trim_out moves together with trim_in to maintain work area length.
+    /// Use set_work_area_abs() to set independent endpoints.
     /// If trim_in was equal to in, sync in. Same for out/trim_out.
     pub fn set_trim_in(&mut self, val: i32) {
         let old_in = self._in();
@@ -527,7 +529,9 @@ impl Comp {
         }
     }
 
-    /// Set trim_out, keeping trim duration constant.
+    /// Slide work area by moving trim_out, keeping duration constant.
+    /// trim_in moves together with trim_out to maintain work area length.
+    /// Use set_work_area_abs() to set independent endpoints.
     /// If trim_out was equal to out, sync out. Same for in/trim_in.
     pub fn set_trim_out(&mut self, val: i32) {
         let old_in = self._in();
@@ -602,12 +606,15 @@ impl Comp {
     }
 
     /// Set comp work area in absolute frames. Automatically clamps/order-fixes.
+    /// Note: sets trim_in/trim_out directly, not via set_trim_in/set_trim_out
+    /// which maintain duration (sliding behavior).
     pub fn set_work_area_abs(&mut self, start: i32, end: i32) {
         let (comp_start, comp_end) = (self._in(), self._out());
         let lo = start.min(end).clamp(comp_start, comp_end);
         let hi = end.max(start).clamp(lo, comp_end);
-        self.set_trim_in(lo);
-        self.set_trim_out(hi);
+        // Set directly - don't use set_trim_in/set_trim_out which maintain duration
+        self.attrs.set("trim_in", AttrValue::Int(lo));
+        self.attrs.set("trim_out", AttrValue::Int(hi));
         // Don't clear cache - already loaded frames remain valid
         // Preload will automatically load new frames in the updated work area
         self.event_emitter.emit(LayersChangedEvent {
@@ -1086,7 +1093,8 @@ impl Comp {
                     Ok(_) => {
                         // Re-insert to update memory tracking (buffer grew from 1x1 to full size)
                         global_cache.insert(uuid, frame_idx, frame);
-                        log::debug!("Background preload completed: comp={}, frame={}", uuid, frame_idx);
+                        // Spammy per-frame log
+                        log::trace!("Background preload completed: comp={}, frame={}", uuid, frame_idx);
                     }
                     Err(e) => {
                         log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
@@ -1968,14 +1976,18 @@ impl Comp {
     /// Ensures `play_end` remains >= start and clamps to comp bounds.
     pub fn set_comp_play_start(&mut self, new_play_start: i32) {
         let current_end = self.trim_out();
+        log::debug!("[B] set_comp_play_start: new_start={}, current_end={}", new_play_start, current_end);
         self.set_work_area_abs(new_play_start, current_end);
+        log::debug!("[B] after: trim_in={}, trim_out={}", self.trim_in(), self.trim_out());
     }
 
     /// Set comp play end in absolute comp frames (inclusive).
     /// Ensures `play_start` remains <= end and clamps to comp bounds.
     pub fn set_comp_play_end(&mut self, new_play_end: i32) {
         let current_start = self.trim_in();
+        log::debug!("[N] set_comp_play_end: current_start={}, new_end={}", current_start, new_play_end);
         self.set_work_area_abs(current_start, new_play_end);
+        log::debug!("[N] after: trim_in={}, trim_out={}", self.trim_in(), self.trim_out());
     }
 
     /// Get all child edges (start and end frames) sorted by frame number.

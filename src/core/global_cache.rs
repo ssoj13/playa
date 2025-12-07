@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::hash::{Hash, Hasher};
 use indexmap::IndexSet;
-use log::debug;
+use log::{debug, trace};
 use uuid::Uuid;
 
 use crate::core::cache_man::CacheManager;
@@ -254,7 +254,8 @@ impl GlobalFrameCache {
                 // Remove from LRU queue - O(1) hash lookup + O(n) shift
                 let key = CacheKey { comp_uuid, frame_idx };
                 lru.shift_remove(&key);
-                debug!("Replaced frame: {}:{} (freed {} bytes)", comp_uuid, frame_idx, old_size);
+                // Spammy per-frame log
+                trace!("Replaced frame: {}:{} (freed {} bytes)", comp_uuid, frame_idx, old_size);
             }
 
             // Insert new frame
@@ -267,7 +268,8 @@ impl GlobalFrameCache {
             self.cache_manager.add_memory(frame_size);
         }
 
-        debug!("Cached frame: {}:{} ({} bytes)", comp_uuid, frame_idx, frame_size);
+        // Spammy per-frame log
+        trace!("Cached frame: {}:{} ({} bytes)", comp_uuid, frame_idx, frame_size);
     }
 
     /// Evict oldest frame from cache

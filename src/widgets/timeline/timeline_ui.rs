@@ -435,7 +435,8 @@ pub fn render_canvas(
     let extended_max = layers_max.max(comp_end) + margin;
     let total_frames = (extended_max - extended_min + 1).max(100);
 
-    log::debug!(
+    // Spammy per-frame log, use trace level
+    log::trace!(
         "Comp '{}': start={}, end={}, layers={}..{}, total_frames={}",
         comp.name(),
         comp_start,
@@ -459,7 +460,8 @@ pub fn render_canvas(
     let ruler_width =
         (total_frames as f32 * config.pixels_per_frame * state.zoom).max(ui.available_width());
 
-    log::debug!(
+    // Spammy per-frame log, use trace level
+    log::trace!(
         "ruler_width={}, timeline_width={}, available_width={}",
         ruler_width,
         timeline_width,
@@ -1022,6 +1024,9 @@ pub fn render_canvas(
                         let comp_start = comp._in();
                         let comp_end = comp._out();
 
+                        // Spammy per-frame log, use trace level
+                        log::trace!("work_area: play=[{}..{}] comp=[{}..{}]", play_start, play_end, comp_start, comp_end);
+
                         // Darken region before work area start
                         if play_start > comp_start {
                             let start_x = frame_to_screen_x(comp_start as f32, timeline_rect.min.x, config, state);
@@ -1030,7 +1035,7 @@ pub fn render_canvas(
                                 Pos2::new(start_x, timeline_rect.min.y),
                                 Pos2::new(end_x, timeline_rect.max.y),
                             );
-                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 51));
+                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 100));
                         }
 
                         // Darken region after work area end
@@ -1041,7 +1046,7 @@ pub fn render_canvas(
                                 Pos2::new(start_x, timeline_rect.min.y),
                                 Pos2::new(end_x, timeline_rect.max.y),
                             );
-                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 51));
+                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 100));
                         }
 
                         // Check for drag'n'drop from Project Window using global drag state

@@ -226,6 +226,7 @@ pub fn handle_app_event(
 
     // === Play Range Control ===
     if downcast_event::<SetPlayRangeStartEvent>(&event).is_some() {
+        log::debug!("[B] SetPlayRangeStartEvent received, active_comp={:?}", player.active_comp());
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 let current = comp.frame();
@@ -235,6 +236,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<SetPlayRangeEndEvent>(&event).is_some() {
+        log::debug!("[N] SetPlayRangeEndEvent received, active_comp={:?}", player.active_comp());
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 let current = comp.frame();

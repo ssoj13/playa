@@ -92,7 +92,8 @@ impl StatusBar {
                     } else {
                         0
                     };
-                    log::debug!("StatusBar: cache_manager present, usage={}MB, limit={}MB", usage_mb, limit_mb);
+                    // Spammy per-frame log, use trace level
+                    log::trace!("StatusBar: cache_manager present, usage={}MB, limit={}MB", usage_mb, limit_mb);
                     ui.monospace(format!("Mem: {}/{}MB ({}%)", usage_mb, limit_mb, percent));
                     ui.separator();
                 } else {
