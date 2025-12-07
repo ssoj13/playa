@@ -44,6 +44,12 @@ pub struct ViewportState {
     pub viewport_size: egui::Vec2,
     #[serde(skip)]
     pub scrubber: ViewportScrubber,
+    /// Last rendered cache epoch (0 = needs refresh)
+    #[serde(skip)]
+    pub last_rendered_epoch: u64,
+    /// Last rendered frame number (for detecting frame changes)
+    #[serde(skip)]
+    pub last_rendered_frame: Option<i32>,
 }
 
 impl Default for ViewportState {
@@ -55,6 +61,8 @@ impl Default for ViewportState {
             image_size: egui::Vec2::new(1920.0, 1080.0),
             viewport_size: egui::Vec2::new(1920.0, 1080.0),
             scrubber: ViewportScrubber::new(),
+            last_rendered_epoch: 0,
+            last_rendered_frame: None,
         }
     }
 }
@@ -69,6 +77,12 @@ impl ViewportState {
         self.zoom = 1.0;
         self.pan = egui::Vec2::ZERO;
         self.mode = ViewportMode::AutoFit;
+    }
+
+    /// Request viewport to refresh current frame (resets tracking to force re-render)
+    pub fn request_refresh(&mut self) {
+        self.last_rendered_epoch = 0;
+        self.last_rendered_frame = None;
     }
 
     /// Draw all viewport overlays (scrubber, guides, safe zones, etc.)

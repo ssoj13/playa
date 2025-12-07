@@ -15,7 +15,7 @@ use playa::ui;
 use playa::widgets;
 use playa::widgets::ae::AttributesState;
 use playa::widgets::status::StatusBar;
-use playa::widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
+use playa::widgets::viewport::{Shaders, ViewportRefreshEvent, ViewportRenderer, ViewportState};
 use playa::core::workers::Workers;
 
 use clap::Parser;
@@ -40,8 +40,6 @@ enum DockTab {
 struct PlayaApp {
     #[serde(skip)]
     frame: Option<Frame>,
-    #[serde(skip)]
-    displayed_frame: Option<i32>,
     #[serde(skip)]
     player: Player,
     #[serde(skip)]
@@ -137,7 +135,6 @@ impl Default for PlayaApp {
 
         Self {
             frame: None,
-            displayed_frame: None,
             player,
             error_msg: None,
             status_bar,
@@ -335,6 +332,14 @@ impl PlayaApp {
                 }
                 // 3. Invalidate parent comps that reference this one
                 self.project.invalidate_cascade(e.0);
+                // 4. Request viewport refresh
+                self.event_bus.emit(ViewportRefreshEvent);
+                continue;
+            }
+            // ViewportRefreshEvent - force viewport to re-fetch current frame
+            if downcast_event::<ViewportRefreshEvent>(&event).is_some() {
+                debug!("ViewportRefreshEvent - forcing frame refresh");
+                self.viewport_state.request_refresh();
                 continue;
             }
 
@@ -731,19 +736,26 @@ impl PlayaApp {
 
     fn render_viewport_tab(&mut self, ui: &mut egui::Ui) {
         // Check if texture needs re-upload:
-        // 1. Frame number changed
-        // 2. Current frame is still loading (need to poll for completion)
-        let frame_changed = self.displayed_frame != Some(self.player.current_frame(&self.project));
+        // 1. Cache epoch changed (attributes modified)
+        // 2. Frame number changed (scrubbing/playback)
+        // 3. Current frame is still loading (need to poll for completion)
+        let current_epoch = self.cache_manager.current_epoch();
+        let current_frame = self.player.current_frame(&self.project);
+        
+        let epoch_changed = self.viewport_state.last_rendered_epoch != current_epoch;
+        let frame_changed = self.viewport_state.last_rendered_frame != Some(current_frame);
         let frame_loading = self.frame.as_ref()
             .map(|f| matches!(f.status(), crate::entities::frame::FrameStatus::Header | crate::entities::frame::FrameStatus::Loading))
             .unwrap_or(false);
-        let texture_needs_upload = frame_changed || frame_loading;
+        let texture_needs_upload = epoch_changed || frame_changed || frame_loading;
 
-        // If the frame has changed or is loading, refresh from cache
+        // If refresh needed, get frame from cache/compositor
         if texture_needs_upload {
             self.frame = self.player.get_current_frame(&self.project);
+            // Update tracking only when frame is fully loaded
             if !frame_loading {
-                self.displayed_frame = Some(self.player.current_frame(&self.project));
+                self.viewport_state.last_rendered_epoch = current_epoch;
+                self.viewport_state.last_rendered_frame = Some(current_frame);
             }
         }
 
@@ -1026,8 +1038,8 @@ impl eframe::App for PlayaApp {
                 .unwrap_or(false);
 
             if is_dirty {
-                // Reset displayed frame to force re-render
-                self.displayed_frame = None;
+                // Reset viewport tracking to force re-render
+                self.viewport_state.request_refresh();
                 // Trigger preload for current position
                 self.enqueue_frame_loads_around_playhead(10);
                 // Clear dirty flags to prevent repeated preload

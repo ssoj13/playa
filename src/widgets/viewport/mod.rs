@@ -12,3 +12,4 @@ pub use renderer::ViewportRenderer;
 pub use shaders::Shaders;
 pub use viewport::ViewportState;
 pub use viewport_ui::render;
+pub use viewport_events::ViewportRefreshEvent;

@@ -11,3 +11,7 @@ pub struct FitViewportEvent;
 
 #[derive(Clone, Debug)]
 pub struct Viewport100Event;
+
+/// Force viewport to refresh current frame (e.g., after attribute changes)
+#[derive(Clone, Debug)]
+pub struct ViewportRefreshEvent;
