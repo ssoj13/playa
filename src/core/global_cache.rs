@@ -299,6 +299,31 @@ impl GlobalFrameCache {
         false
     }
 
+    /// Clear a single cached frame for a specific comp
+    ///
+    /// Use this for light attribute changes (opacity, blend_mode) that only
+    /// require recomposing the current frame, not the entire comp.
+    pub fn clear_frame(&self, comp_uuid: Uuid, frame_idx: i32) {
+        let mut cache = self.cache.lock().unwrap();
+        let mut lru = self.lru_order.lock().unwrap();
+
+        if let Some(frames) = cache.get_mut(&comp_uuid) {
+            if let Some(frame) = frames.remove(&frame_idx) {
+                let size = frame.mem();
+                self.cache_manager.free_memory(size);
+
+                // Remove from LRU queue
+                let key = CacheKey { comp_uuid, frame_idx };
+                lru.retain(|k| *k != key);
+
+                log::debug!(
+                    "Cleared single frame {}:{} ({} bytes freed)",
+                    comp_uuid, frame_idx, size
+                );
+            }
+        }
+    }
+
     /// Clear all cached frames for a specific comp - O(1)
     ///
     /// This is the main benefit of nested HashMap structure.
