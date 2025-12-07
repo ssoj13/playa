@@ -18,7 +18,7 @@
 //! egui input → dispatch(BoxedEvent) → EventBus → Project/Comp mutations.
 
 use super::timeline_helpers::{
-    compute_all_layer_rows, detect_layer_tool_with_geom, draw_drop_preview, draw_frame_ruler,
+    detect_layer_tool_with_geom, draw_drop_preview, draw_frame_ruler,
     frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
@@ -445,7 +445,7 @@ pub fn render_canvas(
     let timeline_width =
         (total_frames as f32 * config.pixels_per_frame * state.zoom).max(available_for_timeline);
 
-    // Note: layer_rows_inner computed inside ScrollArea closure for fresh data each frame
+    // Note: row = layer index (simple 1:1 mapping, no packing)
 
     let ruler_width =
         (total_frames as f32 * config.pixels_per_frame * state.zoom).max(ui.available_width());
@@ -535,16 +535,13 @@ pub fn render_canvas(
         .max_height(ui.available_height())
         .show(ui, |ui| {
         ui.push_id("timeline_layers", |ui| {
-            // child_order and layer_rows_inner already computed above for total_height calculation
+            // child_order computed here, row = index (no smart packing)
 
-            // Recompute layer_rows_inner inside closure to ensure fresh data
+            // Simple row assignment: each layer gets its own row based on index
+            // No "smart" packing - layer order in children = visual row order
             let child_order_inner: Vec<usize> = (0..comp.children.len()).collect();
-            let layer_rows_inner = compute_all_layer_rows(comp, &child_order_inner);
-            let max_row_inner = layer_rows_inner.values().copied().max().unwrap_or(0);
-            let total_height_inner = ((max_row_inner + 1).max(1) as f32) * config.layer_height;
-
-            log::debug!("Timeline render: {} layers, max_row={}, height={}",
-                comp.children.len(), max_row_inner, total_height_inner);
+            let num_layers = comp.children.len();
+            let total_height_inner = (num_layers.max(1) as f32) * config.layer_height;
 
             // Timeline bars - horizontal pan via state.pan_offset, vertical scroll via ScrollArea.
             let (timeline_rect, timeline_response) = ui.allocate_exact_size(
@@ -590,23 +587,19 @@ pub fn render_canvas(
                         let mut geom_cache: std::collections::HashMap<usize, super::timeline::LayerGeom> =
                             std::collections::HashMap::with_capacity(child_order_inner.len());
 
-                        // First pass: draw row backgrounds (alternating colors by row index)
-                        // This prevents layer backgrounds from overlapping when multiple layers share a row
-                        let mut drawn_rows: std::collections::HashSet<usize> = std::collections::HashSet::new();
-                        for row in 0..=max_row_inner {
-                            if drawn_rows.insert(row) {
-                                let row_y = row_to_y(row, config, timeline_rect);
-                                let row_rect = Rect::from_min_size(
-                                    Pos2::new(timeline_rect.min.x, row_y),
-                                    Vec2::new(timeline_width, config.layer_height),
-                                );
-                                let bg_color = if row % 2 == 0 {
-                                    Color32::from_gray(30)
-                                } else {
-                                    Color32::from_gray(35)
-                                };
-                                painter.rect_filled(row_rect, 0.0, bg_color);
-                            }
+                        // First pass: draw row backgrounds (alternating colors)
+                        for row in 0..num_layers {
+                            let row_y = row_to_y(row, config, timeline_rect);
+                            let row_rect = Rect::from_min_size(
+                                Pos2::new(timeline_rect.min.x, row_y),
+                                Vec2::new(timeline_width, config.layer_height),
+                            );
+                            let bg_color = if row % 2 == 0 {
+                                Color32::from_gray(30)
+                            } else {
+                                Color32::from_gray(35)
+                            };
+                            painter.rect_filled(row_rect, 0.0, bg_color);
                         }
 
                         // Second pass: draw layer bars
@@ -619,7 +612,7 @@ pub fn render_canvas(
                             let child_end = attrs.full_bar_end();
 
                             // Get precomputed row from layout
-                            let row = layer_rows_inner.get(&idx).copied().unwrap_or(0);
+                            let row = idx;  // Simple: row = layer index
                             let child_y = row_to_y(row, config, timeline_rect);
                             let play_start = attrs.layer_start();
                             let play_end = attrs.layer_end();
@@ -814,7 +807,7 @@ pub fn render_canvas(
                                         for child_uuid in selection {
                                             if let Some(attrs) = comp.children_attrs_get(&child_uuid) {
                                                 let idx_sel = comp.uuid_to_idx(child_uuid).unwrap_or(0);
-                                                let current_row = layer_rows_inner.get(&idx_sel).copied().unwrap_or(idx_sel);
+                                                let current_row = idx_sel;  // row = layer index
                                                 let target_row = (current_row as i32 + delta_children)
                                                     .clamp(0, comp.children.len().saturating_sub(1) as i32)
                                                     as usize;
@@ -867,13 +860,8 @@ pub fn render_canvas(
 
                                         // Visual feedback: draw ghost play range preview
                                         if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
-                                            // Use actual row for Y positioning
-                                            let target_row = layer_rows_inner
-                                                .get(layer_idx)
-                                                .copied()
-                                                .unwrap_or_else(|| {
-                                                    physical_to_display(*layer_idx).unwrap_or(*layer_idx)
-                                                });
+                                            // row = layer index
+                                            let target_row = *layer_idx;
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let visual_start = new_play_start as f32;
                                             let layer_end = attrs.full_bar_end() as f32;
@@ -912,13 +900,8 @@ pub fn render_canvas(
 
                                         // Visual feedback: draw ghost play range preview
                                         if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
-                                            // Use actual row for Y positioning
-                                            let target_row = layer_rows_inner
-                                                .get(layer_idx)
-                                                .copied()
-                                                .unwrap_or_else(|| {
-                                                    physical_to_display(*layer_idx).unwrap_or(*layer_idx)
-                                                });
+                                            // row = layer index
+                                            let target_row = *layer_idx;
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let play_start = attrs.layer_start();
                                             let visual_start = play_start as f32;
@@ -977,12 +960,7 @@ pub fn render_canvas(
 
                                         // Visual feedback: draw ghost full bar at new position
                                         if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
-                                            let target_row = layer_rows_inner
-                                                .get(layer_idx)
-                                                .copied()
-                                                .unwrap_or_else(|| {
-                                                    physical_to_display(*layer_idx).unwrap_or(*layer_idx)
-                                                });
+                                            let target_row = *layer_idx;  // row = layer index
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let src_len = attrs.src_len();
                                             let new_full_bar_end = new_in + (src_len as f32 / speed).ceil() as i32 - 1;
@@ -1123,8 +1101,8 @@ pub fn render_canvas(
                         // otherwise treat it as a frame scrub on empty space.
                         let mut clicked_layer: Option<usize> = None;
                         for (_display_idx, &original_idx) in child_order_inner.iter().enumerate() {
-                            // Get precomputed row from layout
-                            let row = layer_rows_inner.get(&original_idx).copied().unwrap_or(0);
+                            // row = layer index
+                            let row = original_idx;
                             let layer_y = row_to_y(row, config, timeline_rect);
 
                             let row_rect = Rect::from_min_max(
