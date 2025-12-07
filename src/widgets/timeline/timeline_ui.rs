@@ -413,13 +413,25 @@ pub fn render_canvas(
     // This allows negative starts and ensures ruler shows full range
     let comp_start = comp._in();
     let comp_end = comp._out();
-    let total_frames = (comp_end + 1).max(100); // From frame 0 to end (inclusive), minimum 100
+
+    // Calculate extended range to include all layer positions (even beyond comp bounds)
+    let (layers_min, layers_max) = comp.children.iter().fold((comp_start, comp_end), |(min, max), (_, attrs)| {
+        let start = attrs.full_bar_start();
+        let end = attrs.full_bar_end();
+        (min.min(start), max.max(end))
+    });
+    // Add margin for smooth dragging beyond boundaries
+    let extended_min = layers_min.min(comp_start) - 50;
+    let extended_max = layers_max.max(comp_end) + 50;
+    let total_frames = (extended_max - extended_min + 1).max(100);
 
     log::debug!(
-        "Comp '{}': start={}, end={}, total_frames={}",
+        "Comp '{}': start={}, end={}, layers={}..{}, total_frames={}",
         comp.name(),
         comp_start,
         comp_end,
+        layers_min,
+        layers_max,
         total_frames
     );
 
@@ -431,8 +443,13 @@ pub fn render_canvas(
     };
     let timeline_width =
         (total_frames as f32 * config.pixels_per_frame * state.zoom).max(available_for_timeline);
+
+    // Compute layer rows first to determine actual height needed
+    let child_order: Vec<usize> = (0..comp.children.len()).collect();
+    let layer_rows = compute_all_layer_rows(comp, &child_order);
+    let max_row = layer_rows.values().copied().max().unwrap_or(0);
     // Ensure non-zero height so DnD/drop zone works even for empty comps
-    let total_height = (comp.children.len().max(1) as f32) * config.layer_height;
+    let total_height = ((max_row + 1).max(1) as f32) * config.layer_height;
 
     let ruler_width =
         (total_frames as f32 * config.pixels_per_frame * state.zoom).max(ui.available_width());
@@ -522,11 +539,7 @@ pub fn render_canvas(
         .max_height(ui.available_height())
         .show(ui, |ui| {
         ui.push_id("timeline_layers", |ui| {
-            // Create temporary child order (layers displayed in original order from comp.children)
-            let child_order: Vec<usize> = (0..comp.children.len()).collect();
-
-            // Compute layout for all layers once (single source of truth)
-            let layer_rows = compute_all_layer_rows(comp, &child_order);
+            // child_order and layer_rows already computed above for total_height calculation
 
             // Timeline bars - horizontal pan via state.pan_offset, vertical scroll via ScrollArea.
             // Use allocate_painter so ScrollArea knows the full vertical extent (all rows) and
