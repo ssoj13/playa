@@ -87,7 +87,7 @@ impl HotkeyHandler {
         self.bind(Global, "F2", TogglePlaylistEvent);
         self.bind(Global, "F3", ToggleAttributeEditorEvent);
         self.bind(Global, "F4", ToggleEncodeDialogEvent);
-        self.bind(Global, "F5", ToggleSettingsEvent);
+        self.bind(Global, "F12", ToggleSettingsEvent);
         self.bind(Global, "Space", TogglePlayPauseEvent);
         self.bind(Global, "Insert", TogglePlayPauseEvent);  // KP_Ins / Insert
         self.bind(Global, "ArrowUp", TogglePlayPauseEvent);

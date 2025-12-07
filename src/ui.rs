@@ -1,6 +1,14 @@
 //! Top-level egui wiring for the Playa UI.
+//!
 //! - Drives timeline/viewport panels using shared Player/TimelineState/Shader state.
 //! - Bridges widget events into the central EventBus (set frame, layer ops, playback).
+//!
+//! # Panel Layout
+//!
+//! Split mode uses `egui::Frame::NONE` on both SidePanel and CentralPanel
+//! to ensure consistent alignment between outline and canvas areas.
+//! This removes default panel margins that caused visual offsets.
+//!
 //! Data flow: UI interactions → EventBus → Player/Project/Comps → next UI frame/render.
 use eframe::egui;
 
@@ -20,7 +28,7 @@ pub fn help_text() -> &'static str {
     F2 - Toggle Project panel (in Timeline: Clear Selection)\n\
     F3 - Toggle Attributes panel\n\
     F4 - Toggle Encoder dialog\n\
-    F5 - Toggle Preferences\n\
+    F12 - Toggle Preferences\n\
     ESC - Exit Fullscreen / Quit\n\n\
     Ctrl+S - Save Project\n\
     Ctrl+O - Open Project\n\

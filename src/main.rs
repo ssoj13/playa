@@ -1,3 +1,23 @@
+//! Playa - Video editing application main entry point.
+//!
+//! # Event-Driven Architecture
+//!
+//! The app uses EventBus for decoupled communication between components:
+//! - `AttrsChangedEvent` → increments cache epoch → emits `ViewportRefreshEvent`
+//! - `ViewportRefreshEvent` → calls `viewport_state.request_refresh()`
+//! - Epoch mismatch detection in `render_viewport_tab` triggers frame re-render
+//!
+//! # Viewport Refresh Flow
+//!
+//! ```text
+//! User changes attribute → AttrsChangedEvent
+//!                       → cache_manager.increment_epoch()
+//!                       → emit ViewportRefreshEvent
+//!                       → viewport_state.request_refresh()
+//!                       → next frame: epoch mismatch detected
+//!                       → frame re-rendered from cache
+//! ```
+
 use playa::core::cache_man::CacheManager;
 use playa::cli::Args;
 use playa::config;
@@ -734,11 +754,13 @@ impl PlayaApp {
         }
     }
 
+    /// Render viewport tab with epoch-based refresh detection.
+    ///
+    /// Texture re-upload triggers:
+    /// 1. Cache epoch changed (attributes modified via AttrsChangedEvent)
+    /// 2. Frame number changed (scrubbing/playback)
+    /// 3. Current frame still loading (poll for completion)
     fn render_viewport_tab(&mut self, ui: &mut egui::Ui) {
-        // Check if texture needs re-upload:
-        // 1. Cache epoch changed (attributes modified)
-        // 2. Frame number changed (scrubbing/playback)
-        // 3. Current frame is still loading (need to poll for completion)
         let current_epoch = self.cache_manager.current_epoch();
         let current_frame = self.player.current_frame(&self.project);
         

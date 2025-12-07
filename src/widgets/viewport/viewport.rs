@@ -1,3 +1,22 @@
+//! Viewport state management - pan, zoom, scrubbing, and refresh tracking.
+//!
+//! ## Key Types
+//! - [`ViewportState`] - Main state: zoom, pan, mode, and refresh tracking
+//! - [`ViewportMode`] - Manual, AutoFit, or Auto100 zoom modes
+//! - [`ViewportScrubber`] - Timeline scrubbing via mouse drag on viewport
+//!
+//! ## Refresh Mechanism (Epoch-based)
+//! Viewport tracks two values to detect when frame needs re-rendering:
+//! - `last_rendered_epoch` - Cache epoch when frame was last rendered
+//! - `last_rendered_frame` - Frame number when last rendered
+//!
+//! Refresh triggers when:
+//! 1. `cache_manager.current_epoch() != last_rendered_epoch` (attributes changed)
+//! 2. `player.current_frame() != last_rendered_frame` (scrubbing/playback)
+//! 3. Current frame status is Loading/Header (polling for completion)
+//!
+//! Call `request_refresh()` to force re-render (resets both tracking values).
+
 use eframe::egui;
 use log::{debug, info};
 

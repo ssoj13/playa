@@ -5,12 +5,21 @@
 //! - Start..End range as horizontal bar
 //! - Visual indication of current_frame (playhead)
 //!
+//! # View Modes
+//!
+//! Timeline supports three view modes (buttons in toolbar):
+//! - **Split**: Outliner on left, Canvas on right (using `Frame::NONE` for alignment)
+//! - **Outliner**: Full-width outline view only
+//! - **Layers**: Full-width canvas/layers view only
+//!
 //! # Interactions
 //!
 //! - **Click**: Select layer (with Shift/Ctrl for multi-select)
 //! - **Double-click**: Dive into source comp (activates the layer's source)
 //! - **Drag**: Move layer position or reorder
 //! - **Edge drag**: Trim in/out points
+//!
+//! # Architecture
 //!
 //! Consumed by: `ui::render_timeline_panel`. Emits events through
 //! dispatch closures to EventBus, driven by shared `TimelineState` from
