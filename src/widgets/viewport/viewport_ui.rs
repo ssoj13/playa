@@ -153,6 +153,8 @@ pub fn render(
                     egui::FontId::proportional(24.0),
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
                 );
+                // Request repaint to check if frame finished loading
+                ui.ctx().request_repaint();
             }
             FrameStatus::Error => {
                 ui.painter().text(

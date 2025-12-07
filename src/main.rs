@@ -730,13 +730,21 @@ impl PlayaApp {
     }
 
     fn render_viewport_tab(&mut self, ui: &mut egui::Ui) {
-        // Check if texture needs re-upload (frame changed or displayed_frame was reset by dirty check)
-        let texture_needs_upload = self.displayed_frame != Some(self.player.current_frame(&self.project));
+        // Check if texture needs re-upload:
+        // 1. Frame number changed
+        // 2. Current frame is still loading (need to poll for completion)
+        let frame_changed = self.displayed_frame != Some(self.player.current_frame(&self.project));
+        let frame_loading = self.frame.as_ref()
+            .map(|f| matches!(f.status(), crate::entities::frame::FrameStatus::Header | crate::entities::frame::FrameStatus::Loading))
+            .unwrap_or(false);
+        let texture_needs_upload = frame_changed || frame_loading;
 
-        // If the frame has changed, update our cached frame
+        // If the frame has changed or is loading, refresh from cache
         if texture_needs_upload {
             self.frame = self.player.get_current_frame(&self.project);
-            self.displayed_frame = Some(self.player.current_frame(&self.project));
+            if !frame_loading {
+                self.displayed_frame = Some(self.player.current_frame(&self.project));
+            }
         }
 
         let (viewport_actions, render_time) = widgets::viewport::render(
