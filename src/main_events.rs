@@ -608,10 +608,14 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SlideLayerEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
-            if let Some((_uuid, attrs)) = comp.children.get_mut(e.layer_idx) {
-                attrs.set("in", AttrValue::Int(e.new_in));
-                attrs.set("trim_in", AttrValue::Int(e.new_trim_in));
-                attrs.set("trim_out", AttrValue::Int(e.new_trim_out));
+            if let Some(uuid) = comp.idx_to_uuid(e.layer_idx) {
+                // Use set_child_attrs (not direct attrs.set) to emit AttrsChangedEvent
+                // which triggers cache invalidation via event bus
+                comp.set_child_attrs(&uuid, &[
+                    ("in", AttrValue::Int(e.new_in)),
+                    ("trim_in", AttrValue::Int(e.new_trim_in)),
+                    ("trim_out", AttrValue::Int(e.new_trim_out)),
+                ]);
                 log::debug!(
                     "[SLIDE] layer {} -> in={}, trim_in={}, trim_out={}",
                     e.layer_idx, e.new_in, e.new_trim_in, e.new_trim_out
