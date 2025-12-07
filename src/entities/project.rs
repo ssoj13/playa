@@ -4,11 +4,10 @@
 //! Project is the unit of serialization: scenes are saved and loaded via
 //! `Project::to_json` / `Project::from_json`.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -23,7 +22,7 @@ use crate::core::global_cache::{CacheStrategy, GlobalFrameCache};
 /// - `comps_order`: Vec<Uuid> as JSON - UI order of media items
 /// - `selection`: Vec<Uuid> as JSON - current selection (ordered)
 /// - `active`: Option<Uuid> as JSON - currently active item
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Project {
     /// All serializable project state (includes comps_order, selection, active)
     pub attrs: Attrs,
@@ -40,10 +39,10 @@ pub struct Project {
 
     /// Frame compositor (runtime-only, not serialized)
     /// Used by Comp.compose() for multi-layer blending
-    /// Uses RefCell for interior mutability (GPU compositor needs mutable access)
+    /// Uses Mutex for thread-safe interior mutability
     #[serde(skip)]
     #[serde(default = "Project::default_compositor")]
-    pub compositor: RefCell<CompositorType>,
+    pub compositor: Mutex<CompositorType>,
 
     /// Global cache manager (runtime-only, set on creation/load)
     #[serde(skip)]
@@ -58,10 +57,27 @@ pub struct Project {
     last_save_path: Option<std::path::PathBuf>,
 }
 
+impl Clone for Project {
+    fn clone(&self) -> Self {
+        Self {
+            attrs: self.attrs.clone(),
+            media: Arc::clone(&self.media),
+            selection_anchor: self.selection_anchor,
+            // Clone compositor by locking and cloning inner value
+            compositor: Mutex::new(
+                self.compositor.lock().unwrap_or_else(|e| e.into_inner()).clone()
+            ),
+            cache_manager: self.cache_manager.clone(),
+            global_cache: self.global_cache.clone(),
+            last_save_path: self.last_save_path.clone(),
+        }
+    }
+}
+
 impl Project {
     /// Default compositor constructor for serde
-    fn default_compositor() -> RefCell<CompositorType> {
-        RefCell::new(CompositorType::default())
+    fn default_compositor() -> Mutex<CompositorType> {
+        Mutex::new(CompositorType::default())
     }
 
     pub fn new(cache_manager: Arc<CacheManager>) -> Self {
@@ -88,7 +104,7 @@ impl Project {
             attrs,
             media: Arc::new(RwLock::new(HashMap::new())),
             selection_anchor: None,
-            compositor: RefCell::new(CompositorType::default()), // CPU compositor by default
+            compositor: Mutex::new(CompositorType::default()), // CPU compositor by default
             cache_manager: Some(cache_manager),
             global_cache: Some(global_cache),
             last_save_path: None,
@@ -229,7 +245,7 @@ impl Project {
     /// - Sets event emitter and global_cache for all comps.
     pub fn rebuild_runtime(&mut self, event_emitter: Option<crate::core::event_bus::CompEventEmitter>) {
         // Reinitialize compositor (not serialized)
-        *self.compositor.borrow_mut() = CompositorType::default();
+        *self.compositor.lock().unwrap_or_else(|e| e.into_inner()) = CompositorType::default();
 
         // Rebuild comps in unified media HashMap
         let mut media = self.media.write().expect("media lock poisoned");
@@ -278,7 +294,7 @@ impl Project {
     /// GPU compositor requires OpenGL context.
     pub fn set_compositor(&self, compositor: CompositorType) {
         log::info!("Compositor changed to: {:?}", compositor);
-        *self.compositor.borrow_mut() = compositor;
+        *self.compositor.lock().unwrap_or_else(|e| e.into_inner()) = compositor;
     }
 
     /// Get cloned composition by UUID.

@@ -1119,7 +1119,7 @@ pub fn render_canvas(
                                 let children_uuids = comp.children_uuids_vec();
                                 let (selection, anchor) = compute_layer_selection(
                                     &comp.layer_selection,
-                                    comp.layer_selection_anchor.clone(),
+                                    comp.layer_selection_anchor,
                                     *clicked_uuid,
                                     idx,
                                     modifiers,

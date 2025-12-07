@@ -36,7 +36,7 @@ struct EncoderApp {
 
 impl EncoderApp {
     fn new() -> Self {
-        let shell = shell::Shell::with_test_sequence(shell::TEST_SEQUENCE);
+        let shell = shell::Shell::with_test_sequence(&shell::test_sequence());
 
         // Create encode dialog if we have an active comp
         let encode_dialog = shell.player.active_comp().map(|_| {

@@ -1571,8 +1571,18 @@ impl Comp {
         );
 
         // Use GPU compositor (main thread) or CPU compositor (background threads)
+        // Debug assertion: GPU compositor should only be used from main thread
+        #[cfg(debug_assertions)]
+        if use_gpu {
+            // GPU compositing requires OpenGL context which is main-thread only
+            debug_assert!(
+                std::thread::current().name().map_or(true, |n| !n.starts_with("playa-worker")),
+                "GPU compositor called from worker thread - this will fail"
+            );
+        }
+
         let result = if use_gpu {
-            project.compositor.borrow_mut().blend_with_dim(source_frames, dim)
+            project.compositor.lock().unwrap_or_else(|e| e.into_inner()).blend_with_dim(source_frames, dim)
         } else {
             THREAD_COMPOSITOR.with(|comp| {
                 comp.borrow_mut().blend_with_dim(source_frames, dim)

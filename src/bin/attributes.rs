@@ -31,7 +31,7 @@ struct AttributesApp {
 
 impl AttributesApp {
     fn new() -> Self {
-        let shell = shell::Shell::with_test_sequence(shell::TEST_SEQUENCE);
+        let shell = shell::Shell::with_test_sequence(&shell::test_sequence());
 
         Self {
             shell,

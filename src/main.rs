@@ -677,7 +677,7 @@ impl PlayaApp {
 
         // Check if compositor type changed
         let current_is_cpu = matches!(
-            *self.project.compositor.borrow(),
+            *self.project.compositor.lock().unwrap_or_else(|e| e.into_inner()),
             CompositorType::Cpu(_)
         );
         let desired_is_cpu = matches!(desired_backend, CompositorType::Cpu(_));

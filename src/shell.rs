@@ -238,5 +238,8 @@ pub fn init_logger() {
         .init();
 }
 
-/// Default test sequence path
-pub const TEST_SEQUENCE: &str = r"D:\_demo\Srcs\Kz\kz.0000.tif";
+/// Default test sequence path (override with PLAYA_TEST_SEQUENCE env var)
+pub fn test_sequence() -> String {
+    std::env::var("PLAYA_TEST_SEQUENCE")
+        .unwrap_or_else(|_| r"D:\_demo\Srcs\Kz\kz.0000.tif".to_string())
+}
