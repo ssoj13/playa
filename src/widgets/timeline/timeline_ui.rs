@@ -214,16 +214,8 @@ pub fn render_outline(
                         row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
                         row_ui.set_min_height(config.layer_height);
 
-                        // Fixed-width drag handle (20px)
-                        row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(20.0, config.layer_height),
-                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                            |ui| {
-                                handle.ui(ui, |ui| {
-                                    ui.label("≡");
-                                });
-                            },
-                        );
+                        // Consume DnD handle without rendering (reorder via canvas DnD)
+                        let _ = handle;
 
                         let mut visible = attrs.get_bool("visible").unwrap_or(true);
                         let mut opacity = attrs.get_float("opacity").unwrap_or(1.0);
