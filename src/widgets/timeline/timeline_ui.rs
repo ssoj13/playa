@@ -250,11 +250,12 @@ pub fn render_outline(
                             .get_str("name")
                             .map(|s| s.to_string())
                             .unwrap_or_else(|| child_uuid.to_string());
-                        // Fixed-width name column (150px)
+                        // Fixed-width name column (150px) - set_min_width ensures next elements align
                         row_ui.allocate_ui_with_layout(
                             egui::Vec2::new(150.0, config.layer_height),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
+                                ui.set_min_width(150.0);
                                 ui.add(egui::Label::new(child_name).truncate());
                             },
                         );
