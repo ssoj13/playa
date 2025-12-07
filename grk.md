@@ -143,4 +143,80 @@ The timeline window implementation is well-structured but contains several UI/UX
 
 ## Implementation Plan
 
-See `plan1.md` for detailed implementation steps and task breakdown.
+# Implementation Plan: Timeline Bug Fixes
+
+## Overview
+This plan outlines the steps to fix the identified bugs in the Playa timeline window. Tasks are prioritized by impact and complexity.
+
+## Bug Fixes
+
+### [x] Bug 1: Fix Layer Control Horizontal Alignment
+- [x] Analyze current layout in `render_outline` (`src/widgets/timeline/timeline_ui.rs`)
+- [x] Implement vertical separators between columns
+- [x] Test alignment with varying name lengths
+- [x] Verify in split-view and outline-only modes
+
+### [x] Bug 2: Remove Redundant Reorder Handle
+- [x] Remove drag handle ("≡") allocation in `render_outline`
+- [x] Update item spacing if needed
+- [x] Test that canvas DnD still works for reordering
+- [x] Verify no regression in layer manipulation
+
+### [x] Bug 3: Fix Layer Disappearance During Drag
+- [x] Modify `timeline_width` calculation in `render_canvas` to account for all layer positions
+- [x] Add margin for smooth dragging (e.g., 100 frames)
+- [x] Test dragging layers beyond original boundaries
+- [x] Verify rendering with 3+ layers, especially upper ones
+- [x] Performance test with many displaced layers
+
+### [x] Bug 4: Implement Viewport Status Updates
+- [x] Identify viewport update loop location
+- [x] Add polling for current frame cache status
+- [x] Request repaint when status changes from loading to ready
+- [x] Test startup cache loading updates viewport automatically
+- [x] Verify no unnecessary repaints when status unchanged
+
+### [x] Bug 5: Synchronize Timeline Panel Drawing
+- [x] Add matching top spacing in `render_canvas` before ruler
+- [x] Ensure consistent vertical alignment between outline and canvas
+- [x] Test in split-view mode
+- [x] Verify ruler and status bar alignment
+
+## Testing and Validation
+
+### [ ] Comprehensive Testing
+- [ ] Test all view modes (Split, Canvas Only, Outline Only)
+- [ ] Test with various layer counts and configurations
+- [ ] Test drag operations across boundaries
+- [ ] Performance testing with large compositions
+- [ ] Cross-platform testing (Windows/Linux/macOS)
+
+### [ ] Regression Testing
+- [ ] Verify existing functionality still works
+- [ ] Check keyboard shortcuts
+- [ ] Test timeline zoom and pan
+- [ ] Validate layer attribute changes persist
+
+## Code Quality
+
+### [ ] Code Review
+- [ ] Ensure changes follow existing patterns
+- [ ] Add comments for complex logic
+- [ ] Update any affected documentation
+
+### [ ] Performance Considerations
+- [ ] Profile timeline rendering performance
+- [ ] Ensure no memory leaks in extended timeline calculations
+- [ ] Optimize polling frequency for cache status
+
+## Deployment
+
+### [ ] Integration
+- [ ] Merge changes to main branch
+- [ ] Update changelog
+- [ ] Notify team of changes
+
+### [ ] User Acceptance
+- [ ] Demonstrate fixes to stakeholders
+- [ ] Collect feedback on timeline usability improvements
+
