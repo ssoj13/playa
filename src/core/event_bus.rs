@@ -5,6 +5,9 @@
 //! - emit() invokes callbacks immediately AND queues for deferred processing
 //! - poll() returns queued events for batch processing in main loop
 //!
+//! Callback order: FIFO (first-subscribed, first-called) within same event type.
+//! Cross-type order undefined - don't rely on ordering between different event types.
+//!
 //! This provides true pub/sub with egui-friendly deferred processing.
 
 use std::any::{Any, TypeId};

@@ -208,7 +208,7 @@ pub struct ClearLayerSelectionEvent {
     pub comp_uuid: Uuid,
 }
 
-/// Slide layer - move "in" while compensating trim_in to keep visible content in place
+/// Slide layer - move "in" while compensating trim_in/trim_out to keep visible content in place
 /// This is the "Slide tool" from After Effects: dragging in trim zones slides the clip without
 /// moving the visible content on the timeline.
 #[derive(Clone, Debug)]
@@ -217,8 +217,10 @@ pub struct SlideLayerEvent {
     pub layer_idx: usize,
     /// New in value (full bar start on timeline)
     pub new_in: i32,
-    /// New trim_in value (compensated to keep visible content position)
+    /// New trim_in value (compensated to keep layer_start position)
     pub new_trim_in: i32,
+    /// New trim_out value (compensated to keep layer_end position)
+    pub new_trim_out: i32,
 }
 
 /// Reset trim_in and trim_out to zero for selected layers (Ctrl+R)

@@ -796,8 +796,6 @@ impl Frame {
         self.data.lock().unwrap().pixel_format
     }
 
-    /// Get pixels as u8 slice (for backward compatibility, only works with Rgba8 format)
-
     /// Get dimensions
     pub fn width(&self) -> usize {
         self.data.lock().unwrap().width

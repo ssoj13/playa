@@ -21,6 +21,12 @@ pub struct HotkeyHandler {
     focused_window: HotkeyWindow,
 }
 
+impl Default for HotkeyHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HotkeyHandler {
     /// Create new hotkey handler
     pub fn new() -> Self {

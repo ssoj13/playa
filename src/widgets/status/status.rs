@@ -8,15 +8,14 @@ use eframe::egui;
 use std::sync::Arc;
 
 /// Status bar component (simplified, no cache progress)
+#[derive(Default)]
 pub struct StatusBar {
     pub current_message: String,
 }
 
 impl StatusBar {
     pub fn new() -> Self {
-        Self {
-            current_message: String::new(),
-        }
+        Self::default()
     }
 
     /// Read messages from channel and update status (no-op for now)

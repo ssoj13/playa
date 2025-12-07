@@ -936,19 +936,29 @@ pub fn render_canvas(
                                         }
                                     }
                                     GlobalDragState::SlidingLayer {
-                                        layer_idx, initial_in, initial_trim_in, speed, drag_start_x
+                                        layer_idx, initial_in, initial_trim_in, initial_trim_out, speed, drag_start_x
                                     } => {
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
 
-                                        // Slide: move "in" while compensating trim_in
-                                        // This keeps visible content (layer_start) in the same position
+                                        // Slide: move full bar while keeping visible content (layer_start & layer_end) in place
+                                        //
+                                        // Geometry:
+                                        //   layer_start = in + trim_in/speed
+                                        //   layer_end = layer_start + (src_len - trim_in - trim_out)/speed - 1
+                                        //
+                                        // When in changes by delta:
+                                        //   - To keep layer_start fixed: trim_in must change by -delta*speed
+                                        //   - To keep visible_src (and thus layer_end) fixed:
+                                        //     visible_src = src_len - trim_in - trim_out = const
+                                        //     If trim_in decreases by X, trim_out must increase by X
+                                        //
                                         let new_in = *initial_in + delta_frames;
-                                        // Adjust trim_in to keep layer_start unchanged
-                                        // layer_start = in + trim_in/speed
-                                        // If in increases by delta, trim_in must decrease by delta*speed
                                         let trim_delta = (delta_frames as f32 * speed).round() as i32;
+                                        // trim_in decreases when sliding right (delta > 0)
                                         let new_trim_in = (*initial_trim_in - trim_delta).max(0);
+                                        // trim_out increases by same amount to keep visible_src constant
+                                        let new_trim_out = (*initial_trim_out + trim_delta).max(0);
 
                                         // Visual feedback: draw ghost full bar at new position
                                         if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
@@ -959,7 +969,6 @@ pub fn render_canvas(
                                                     physical_to_display(*layer_idx).unwrap_or(*layer_idx)
                                                 });
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            // Compute new full_bar_end with new_in
                                             let src_len = attrs.src_len();
                                             let new_full_bar_end = new_in + (src_len as f32 / speed).ceil() as i32 - 1;
                                             let ghost_x_start = frame_to_screen_x(new_in as f32, timeline_rect.min.x, config, state);
@@ -969,7 +978,6 @@ pub fn render_canvas(
                                                 Pos2::new(ghost_x_start, layer_y + 4.0),
                                                 Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
                                             );
-                                            // Use orange color to distinguish from trim adjustments
                                             painter.rect_stroke(
                                                 ghost_rect,
                                                 4.0,
@@ -980,17 +988,18 @@ pub fn render_canvas(
 
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
 
-                                        // On release, commit the slide
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
                                             log::debug!(
-                                                "[SLIDE COMMIT] delta={}, new_in={}, new_trim_in={}",
-                                                delta_frames, new_in, new_trim_in
+                                                "[SLIDE COMMIT] delta={}, in: {}→{}, trim_in: {}→{}, trim_out: {}→{}",
+                                                delta_frames, initial_in, new_in,
+                                                initial_trim_in, new_trim_in, initial_trim_out, new_trim_out
                                             );
                                             dispatch(Box::new(SlideLayerEvent {
                                                 comp_uuid: comp_id,
                                                 layer_idx: *layer_idx,
                                                 new_in,
                                                 new_trim_in,
+                                                new_trim_out,
                                             }));
                                             state.drag_state = None;
                                         }

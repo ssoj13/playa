@@ -78,7 +78,7 @@ pub fn ensure_dirs(config: &PathConfig) -> Result<()> {
 }
 
 /// Check if any config files exist in the given directory
-fn has_local_config_files(dir: &PathBuf) -> bool {
+fn has_local_config_files(dir: &std::path::Path) -> bool {
     let files = ["playa.json", "playa.log"];
     files.iter().any(|f| dir.join(f).exists())
 }

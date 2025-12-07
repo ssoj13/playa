@@ -57,15 +57,17 @@ impl LayerTool {
             LayerTool::Slide => {
                 let initial_in = attrs.get_i32_or_zero("in");
                 let initial_trim_in = attrs.get_i32_or_zero("trim_in");
+                let initial_trim_out = attrs.get_i32_or_zero("trim_out");
                 let speed = attrs.get_float_or("speed", 1.0);
                 log::debug!(
-                    "[SLIDE START] in={}, trim_in={}, speed={}",
-                    initial_in, initial_trim_in, speed
+                    "[SLIDE START] in={}, trim_in={}, trim_out={}, speed={}",
+                    initial_in, initial_trim_in, initial_trim_out, speed
                 );
                 GlobalDragState::SlidingLayer {
                     layer_idx,
                     initial_in,
                     initial_trim_in,
+                    initial_trim_out,
                     speed,
                     drag_start_x: drag_start_pos.x,
                 }

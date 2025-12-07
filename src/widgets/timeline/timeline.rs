@@ -181,11 +181,12 @@ pub enum GlobalDragState {
         initial_play_end: i32,
         drag_start_x: f32,
     },
-    /// Sliding layer - moves in while compensating trim_in to keep visible content in place
+    /// Sliding layer - moves in while compensating trim_in/trim_out to keep visible content in place
     SlidingLayer {
         layer_idx: usize,
         initial_in: i32,
         initial_trim_in: i32,
+        initial_trim_out: i32,
         speed: f32,
         drag_start_x: f32,
     },

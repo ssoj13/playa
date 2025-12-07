@@ -604,16 +604,17 @@ pub fn handle_app_event(
         });
         return Some(result);
     }
-    // Slide layer: move "in" while compensating trim_in
+    // Slide layer: move "in" while compensating trim_in/trim_out
     if let Some(e) = downcast_event::<SlideLayerEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
             if let Some((_uuid, attrs)) = comp.children.get_mut(e.layer_idx) {
                 attrs.set("in", AttrValue::Int(e.new_in));
                 attrs.set("trim_in", AttrValue::Int(e.new_trim_in));
+                attrs.set("trim_out", AttrValue::Int(e.new_trim_out));
                 log::debug!(
-                    "[SLIDE] layer {} -> in={}, trim_in={}",
-                    e.layer_idx, e.new_in, e.new_trim_in
+                    "[SLIDE] layer {} -> in={}, trim_in={}, trim_out={}",
+                    e.layer_idx, e.new_in, e.new_trim_in, e.new_trim_out
                 );
             }
         });

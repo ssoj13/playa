@@ -191,10 +191,8 @@ impl GlobalFrameCache {
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
 
         // Check if frame already exists
-        if let Some(frames) = cache.get(&comp_uuid) {
-            if let Some(existing) = frames.get(&frame_idx) {
-                return (existing.clone(), false);
-            }
+        if let Some(existing) = cache.get(&comp_uuid).and_then(|f| f.get(&frame_idx)) {
+            return (existing.clone(), false);
         }
 
         // Frame doesn't exist - create and insert
@@ -250,22 +248,17 @@ impl GlobalFrameCache {
             let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
             // Remove old frame if exists (prevents memory leak)
-            if let Some(frames) = cache.get_mut(&comp_uuid) {
-                if let Some(old_frame) = frames.remove(&frame_idx) {
-                    let old_size = old_frame.mem();
-                    self.cache_manager.free_memory(old_size);
-                    // Remove from LRU queue - O(1) hash lookup + O(n) shift
-                    let key = CacheKey { comp_uuid, frame_idx };
-                    lru.shift_remove(&key);
-                    debug!("Replaced frame: {}:{} (freed {} bytes)", comp_uuid, frame_idx, old_size);
-                }
+            if let Some(old_frame) = cache.get_mut(&comp_uuid).and_then(|f| f.remove(&frame_idx)) {
+                let old_size = old_frame.mem();
+                self.cache_manager.free_memory(old_size);
+                // Remove from LRU queue - O(1) hash lookup + O(n) shift
+                let key = CacheKey { comp_uuid, frame_idx };
+                lru.shift_remove(&key);
+                debug!("Replaced frame: {}:{} (freed {} bytes)", comp_uuid, frame_idx, old_size);
             }
 
             // Insert new frame
-            cache
-                .entry(comp_uuid)
-                .or_insert_with(HashMap::new)
-                .insert(frame_idx, frame);
+            cache.entry(comp_uuid).or_default().insert(frame_idx, frame);
 
             // Add to LRU queue (back = most recent)
             lru.insert(CacheKey { comp_uuid, frame_idx });
@@ -290,7 +283,8 @@ impl GlobalFrameCache {
             None => return false,
         };
 
-        // Remove from nested HashMap
+        // Remove from nested HashMap (need frames ref for is_empty check after remove)
+        #[allow(clippy::collapsible_if)]
         if let Some(frames) = cache.get_mut(&key.comp_uuid) {
             if let Some(evicted) = frames.remove(&key.frame_idx) {
                 let evicted_size = evicted.mem();
@@ -322,20 +316,18 @@ impl GlobalFrameCache {
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
-        if let Some(frames) = cache.get_mut(&comp_uuid) {
-            if let Some(frame) = frames.remove(&frame_idx) {
-                let size = frame.mem();
-                self.cache_manager.free_memory(size);
+        if let Some(frame) = cache.get_mut(&comp_uuid).and_then(|f| f.remove(&frame_idx)) {
+            let size = frame.mem();
+            self.cache_manager.free_memory(size);
 
-                // Remove from LRU queue - O(1) lookup via hash
-                let key = CacheKey { comp_uuid, frame_idx };
-                lru.shift_remove(&key);
+            // Remove from LRU queue - O(1) lookup via hash
+            let key = CacheKey { comp_uuid, frame_idx };
+            lru.shift_remove(&key);
 
-                log::debug!(
-                    "Cleared single frame {}:{} ({} bytes freed)",
-                    comp_uuid, frame_idx, size
-                );
-            }
+            log::debug!(
+                "Cleared single frame {}:{} ({} bytes freed)",
+                comp_uuid, frame_idx, size
+            );
         }
     }
 
