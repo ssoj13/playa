@@ -149,8 +149,8 @@ pub fn render_toolbar(
         // View mode selector (moved from ui.rs)
         for (label, mode) in [
             ("Split", TimelineViewMode::Split),
-            ("Canvas", TimelineViewMode::CanvasOnly),
-            ("Outline", TimelineViewMode::OutlineOnly),
+            ("Outliner", TimelineViewMode::OutlineOnly),
+            ("Layers", TimelineViewMode::CanvasOnly),
         ] {
             if ui.selectable_label(state.view_mode == mode, label).clicked() {
                 state.view_mode = mode;
@@ -173,13 +173,13 @@ pub fn render_outline(
 
     // Match the top padding of the timeline canvas (ruler + status bar + spacing)
     // Must be OUTSIDE ScrollArea to stay in sync with canvas
-    // Extra 24.0 accounts for panel frame differences between SidePanel and CentralPanel
+    // Note: Both panels now use Frame::none() so no offset compensation needed
     let status_bar_height = comp
         .cache_frame_statuses()
         .as_ref()
         .map(|_| 2.0)
         .unwrap_or(0.0);
-    ui.add_space(20.0 + status_bar_height + 4.0 + 24.0);
+    ui.add_space(20.0 + status_bar_height + 4.0);
 
     // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
     let mut child_order: Vec<usize> = (0..comp.children.len()).collect();

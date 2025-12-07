@@ -120,6 +120,7 @@ pub fn render_timeline_panel(
                             .resizable(true)
                             .min_width(100.0)
                             .default_width(saved_width)
+                            .frame(egui::Frame::NONE)  // Remove default frame to align with canvas
                             .show_inside(ui, |ui| {
                                 // Lock panel to exact height to prevent vertical scrollbar.
                                 // set_height() alone is not enough - egui can still add scrollbar
@@ -155,7 +156,9 @@ pub fn render_timeline_panel(
                             timeline_state.outline_width = new_width.max(400.0); // Ensure minimum 400px
                         }
 
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::NONE)  // Remove default frame to align with outline
+                            .show_inside(ui, |ui| {
                             // Same as outline: lock to exact height to prevent unwanted vertical scroll
                             ui.set_height(splitter_height);
                             ui.set_max_height(splitter_height);
@@ -172,7 +175,9 @@ pub fn render_timeline_panel(
                         });
                     }
                     crate::widgets::timeline::TimelineViewMode::CanvasOnly => {
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::NONE)
+                            .show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
                             ui.set_max_height(splitter_height);
                             timeline_actions = render_canvas(
@@ -188,7 +193,9 @@ pub fn render_timeline_panel(
                         });
                     }
                     crate::widgets::timeline::TimelineViewMode::OutlineOnly => {
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame::NONE)
+                            .show_inside(ui, |ui| {
                             ui.set_height(splitter_height);
                             ui.set_max_height(splitter_height);
                             render_outline(

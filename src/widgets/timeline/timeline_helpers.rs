@@ -251,15 +251,6 @@ pub(super) fn draw_frame_ruler(
     (frame_clicked, rect)
 }
 
-/// Compute visual rows for ALL layers using greedy layout algorithm.
-/// Returns mapping of child_idx -> row. Delegates to Comp::compute_layer_rows.
-pub(super) fn compute_all_layer_rows(
-    comp: &Comp,
-    child_order: &[usize],
-) -> std::collections::HashMap<usize, usize> {
-    comp.compute_layer_rows(child_order)
-}
-
 /// Convert row index to Y coordinate in timeline
 pub(super) fn row_to_y(row: usize, config: &TimelineConfig, timeline_rect: Rect) -> f32 {
     timeline_rect.min.y + (row as f32 * config.layer_height)
