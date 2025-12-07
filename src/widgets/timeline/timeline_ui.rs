@@ -765,7 +765,10 @@ pub fn render_canvas(
                                     GlobalDragState::TimelinePan { drag_start_pos, initial_pan_offset } => {
                                         let delta_x = current_pos.x - drag_start_pos.x;
                                         let delta_frames = delta_x / (config.pixels_per_frame * state.zoom);
-                                        let new_pan = initial_pan_offset - delta_frames;
+                                        // Clamp pan_offset to reasonable bounds: -100 to comp duration + buffer
+                                        let pan_buffer = 100.0;
+                                        let new_pan = (initial_pan_offset - delta_frames)
+                                            .clamp(-pan_buffer, total_frames as f32 + pan_buffer);
 
                                         // Update state directly to avoid frame delay
                                         state.pan_offset = new_pan;

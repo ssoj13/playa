@@ -1660,42 +1660,16 @@ impl Comp {
         Ok(())
     }
 
-    /// Compute visual row for each layer using greedy layout algorithm.
-    /// Returns HashMap<child_idx, row> for requested indices.
-    /// Layers are processed in order; each gets first non-overlapping row.
+    /// Compute visual row for each layer using sequential assignment.
+    /// Each layer gets its position in child_order as its row.
+    /// This prevents layers from "disappearing" when moved outside timeline bounds,
+    /// since row assignment is based on display order, not time overlap.
     pub fn compute_layer_rows(&self, child_order: &[usize]) -> std::collections::HashMap<usize, usize> {
-        use std::collections::HashMap;
-
-        let mut layer_rows: HashMap<usize, usize> = HashMap::new();
-        let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new();
-
-        for &idx in child_order {
-            let Some((_child_uuid, attrs)) = self.children.get(idx) else { continue };
-            let start = attrs.full_bar_start();
-            let end = attrs.full_bar_end();
-
-            // Find first row without overlap
-            let mut row = 0;
-            loop {
-                let mut row_free = true;
-                if let Some(ranges) = occupied_rows.get(&row) {
-                    for (occ_start, occ_end) in ranges {
-                        if start <= *occ_end && end >= *occ_start {
-                            row_free = false;
-                            break;
-                        }
-                    }
-                }
-
-                if row_free {
-                    occupied_rows.entry(row).or_default().push((start, end));
-                    layer_rows.insert(idx, row);
-                    break;
-                }
-                row += 1;
-            }
-        }
-        layer_rows
+        child_order
+            .iter()
+            .enumerate()
+            .map(|(row, &idx)| (idx, row))
+            .collect()
     }
 
     /// Find insertion position in children array to achieve target visual row
