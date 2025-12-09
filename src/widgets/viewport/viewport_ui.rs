@@ -246,18 +246,12 @@ fn handle_viewport_input(
     }
 }
 
-fn render_help_overlay(ui: &mut egui::Ui, panel_rect: egui::Rect) {
-    use crate::help::{VIEWPORT_HELP, PLAYBACK_HELP, render_help_overlay as render_help};
-
-    // Combine viewport and playback help
-    let combined: Vec<_> = VIEWPORT_HELP.iter().chain(PLAYBACK_HELP.iter()).cloned().collect();
-
-    // Position at top-left of viewport
-    let pos = panel_rect.left_top() + egui::vec2(10.0, 10.0);
-    egui::Area::new(egui::Id::new("viewport_help_overlay"))
-        .fixed_pos(pos)
-        .order(egui::Order::Foreground)
-        .show(ui.ctx(), |ui| {
-            render_help(ui, &combined, true);
-        });
+fn render_help_overlay(ui: &egui::Ui, panel_rect: egui::Rect) {
+    ui.painter().text(
+        panel_rect.left_top() + egui::vec2(10.0, 10.0),
+        egui::Align2::LEFT_TOP,
+        crate::ui::help_text(),
+        egui::FontId::proportional(13.0),
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128),
+    );
 }

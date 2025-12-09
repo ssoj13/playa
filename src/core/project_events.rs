@@ -17,10 +17,6 @@ pub struct AddCompEvent {
     pub fps: f32,
 }
 
-/// Scan folder for media (video files and image sequences)
-#[derive(Clone, Debug)]
-pub struct AddFolderEvent(pub PathBuf);
-
 #[derive(Clone, Debug)]
 pub struct RemoveMediaEvent(pub Uuid);
 
