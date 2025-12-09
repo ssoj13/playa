@@ -290,11 +290,10 @@ impl PlayaApp {
 
         let mut all_paths: Vec<PathBuf> = Vec::new();
 
-        // Use scanseq for image sequences
+        // Use scanseq for image sequences (no mask = all sequences)
         if scan_seqs {
             let scanner = Scanner::path(&folder)
                 .recursive(true)
-                .vfx_images()  // exr, dpx, tif, png, jpg, tga, hdr
                 .min_len(2)
                 .scan();
 
