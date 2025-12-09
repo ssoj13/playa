@@ -5,6 +5,7 @@ use egui_ltreeview::TreeView;
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SettingsCategory {
     General,
+    Input,
     UI,
 }
 
@@ -12,6 +13,7 @@ impl SettingsCategory {
     fn as_str(&self) -> &'static str {
         match self {
             SettingsCategory::General => "General",
+            SettingsCategory::Input => "Input",
             SettingsCategory::UI => "UI",
         }
     }
@@ -19,6 +21,7 @@ impl SettingsCategory {
     fn from_str(s: &str) -> Option<Self> {
         match s {
             "General" => Some(SettingsCategory::General),
+            "Input" => Some(SettingsCategory::Input),
             "UI" => Some(SettingsCategory::UI),
             _ => None,
         }
@@ -74,6 +77,10 @@ pub struct AppSettings {
     // Encoding dialog
     pub encode_dialog: crate::dialogs::encode::EncodeDialogSettings,
 
+    // Input / Folder scanning
+    pub scan_nested_media: bool,      // Scan subdirs for video files
+    pub scan_nested_sequences: bool,  // Scan subdirs for image sequences
+
     // Internal
     pub selected_settings_category: Option<String>,
 }
@@ -99,16 +106,48 @@ impl Default for AppSettings {
             cache_strategy: crate::core::global_cache::CacheStrategy::All, // Default: cache all frames
             compositor_backend: CompositorBackend::default(),
             encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
+            scan_nested_media: true,
+            scan_nested_sequences: true,
             selected_settings_category: Some("UI".to_string()),
         }
     }
 }
 
 /// Render General settings category
-fn render_general_settings(ui: &mut egui::Ui, _settings: &mut AppSettings) {
-    ui.label("(No settings yet)");
+fn render_general_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.heading("Playback");
     ui.add_space(8.0);
-    ui.label("General settings will be added here in the future.");
+
+    ui.label("Default FPS:");
+    ui.add(
+        egui::Slider::new(&mut settings.fps_base, 1.0..=120.0)
+            .suffix(" fps")
+            .step_by(1.0),
+    );
+    ui.add_space(8.0);
+
+    ui.checkbox(&mut settings.loop_enabled, "Loop playback by default");
+}
+
+/// Render Input settings category (folder scanning)
+fn render_input_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.heading("Folder Scanning");
+    ui.add_space(8.0);
+
+    ui.label("When adding a folder, scan for:");
+    ui.add_space(4.0);
+
+    ui.checkbox(
+        &mut settings.scan_nested_media,
+        "Video files in subdirectories (.mp4, .mov, .avi, etc.)",
+    );
+    ui.checkbox(
+        &mut settings.scan_nested_sequences,
+        "Image sequences in subdirectories (.exr, .png, .jpg, etc.)",
+    );
+
+    ui.add_space(16.0);
+    ui.label("Note: Use 'Add Folder' button in Project panel to scan directories.");
 }
 
 /// Render UI settings category
@@ -216,7 +255,8 @@ pub fn render_settings_window(
                             let tree_id = ui.make_persistent_id("settings_tree_view");
                             let (_response, actions) = TreeView::new(tree_id).show(ui, |builder| {
                                 builder.leaf(0, SettingsCategory::General.as_str());
-                                builder.leaf(1, SettingsCategory::UI.as_str());
+                                builder.leaf(1, SettingsCategory::Input.as_str());
+                                builder.leaf(2, SettingsCategory::UI.as_str());
                             });
 
                             // Handle selection from actions
@@ -226,7 +266,8 @@ pub fn render_settings_window(
                                 {
                                     selected = match node_id {
                                         0 => SettingsCategory::General,
-                                        1 => SettingsCategory::UI,
+                                        1 => SettingsCategory::Input,
+                                        2 => SettingsCategory::UI,
                                         _ => selected,
                                     };
                                 }
@@ -241,6 +282,7 @@ pub fn render_settings_window(
 
                             match selected {
                                 SettingsCategory::General => render_general_settings(ui, settings),
+                                SettingsCategory::Input => render_input_settings(ui, settings),
                                 SettingsCategory::UI => render_ui_settings(ui, settings),
                             }
                         });

@@ -49,6 +49,13 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
         {
             actions.send(AddClipsEvent(paths));
         }
+        if ui.button("Add Folder").clicked()
+            && let Some(path) = rfd::FileDialog::new()
+                .set_title("Select Folder to Scan")
+                .pick_folder()
+        {
+            actions.send(AddFolderEvent(path));
+        }
         if ui.button("Add Comp").clicked() {
             actions.send(AddCompEvent {
                 name: "New Comp".to_string(),

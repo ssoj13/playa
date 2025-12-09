@@ -156,9 +156,6 @@ impl Comp {
         attrs.set(A_VISIBLE, AttrValue::Bool(true));
         attrs.set(A_OPACITY, AttrValue::Float(1.0));
         attrs.set(A_BLEND_MODE, AttrValue::Str("normal".to_string()));
-        // Legacy alias
-        attrs.set("transparency", AttrValue::Float(1.0));
-        attrs.set("layer_mode", AttrValue::Str("normal".to_string()));
 
         // === Transform ===
         attrs.set(A_POSITION, AttrValue::Vec3([0.0, 0.0, 0.0]));
@@ -859,11 +856,19 @@ impl Comp {
     /// Strategies:
     /// - Spiral: image sequences (0, ±1, ±2, ...) - cheap seeking both directions
     /// - Forward: video files (center → end) - expensive backward seeking
+    /// Trigger background preload of frames around current position.
+    ///
+    /// # Arguments
+    /// * `workers` - Worker pool for background loading
+    /// * `project` - Project reference for media access
+    /// * `center_override` - Override center frame (None = use current frame)
+    /// * `radius` - Max frames to preload around center (None = entire work area)
     pub fn signal_preload(
         &self,
         workers: &Arc<Workers>,
         project: &super::Project,
         center_override: Option<i32>,
+        radius: Option<usize>,
     ) {
         // Get current epoch without incrementing (let frames load in background)
         let epoch = if let Some(ref manager) = self.cache_manager {
@@ -873,17 +878,19 @@ impl Comp {
         };
 
         let center = center_override.unwrap_or(self.frame());
-        let (play_start, play_end) = self.work_area_abs(true);
+        let (work_start, work_end) = self.work_area_abs(true);
 
-        // Debug: show coordinate spaces
+        // Apply radius constraint if specified
+        let (play_start, play_end) = if let Some(r) = radius {
+            let r = r as i32;
+            ((center - r).max(work_start), (center + r).min(work_end))
+        } else {
+            (work_start, work_end)
+        };
+
         debug!(
-            "signal_preload: current_frame={}, comp[{}..{}], file_start={:?}, work_area[{}..{}]",
-            center,
-            self._in(),
-            self._out(),
-            self.file_start(),
-            play_start,
-            play_end
+            "signal_preload: center={}, radius={:?}, work_area[{}..{}], preload[{}..{}]",
+            center, radius, work_start, work_end, play_start, play_end
         );
 
         if play_end < play_start {
@@ -916,7 +923,7 @@ impl Comp {
             for (child_uuid, source) in sources {
                 let child_center = self.comp2local(child_uuid, center)
                     .map(|local| source._in() + local);
-                source.signal_preload(workers, project, child_center);
+                source.signal_preload(workers, project, child_center, radius);
             }
         }
 

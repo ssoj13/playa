@@ -89,6 +89,7 @@ pub struct EventResult {
     pub load_project: Option<PathBuf>,
     pub save_project: Option<PathBuf>,
     pub load_sequences: Option<Vec<PathBuf>>,
+    pub scan_folder: Option<PathBuf>,
     pub new_comp: Option<(String, f32)>,
     pub enqueue_frames: Option<usize>,
     pub quick_save: bool,
@@ -114,6 +115,9 @@ impl EventResult {
         // Accumulate paths instead of overwriting
         if let Some(paths) = other.load_sequences {
             self.load_sequences.get_or_insert_with(Vec::new).extend(paths);
+        }
+        if other.scan_folder.is_some() {
+            self.scan_folder = other.scan_folder;
         }
         // Bool flags: set to true if any event sets them
         self.quick_save |= other.quick_save;
@@ -278,6 +282,10 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<AddCompEvent>(&event) {
         result.new_comp = Some((e.name.clone(), e.fps));
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<AddFolderEvent>(&event) {
+        result.scan_folder = Some(e.0.clone());
         return Some(result);
     }
     if let Some(e) = downcast_event::<SaveProjectEvent>(&event) {

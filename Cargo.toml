@@ -53,6 +53,7 @@ serde_json = "1.0"
 sysinfo = "0.37"
 uuid = { version = "1.18", features = ["v4", "serde"] }
 taffy = "0.9.2"
+scanseq = "0.1.4"
 
 # Build dependencies moved to xtask: Use `cargo xtask build` to build with automatic dependency management
 # Set RPATH on Linux to search for .so files in executable directory (configured in .cargo/config.toml)

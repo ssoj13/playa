@@ -274,6 +274,63 @@ impl PlayaApp {
         }
     }
 
+    /// Scan folder for media files based on settings
+    fn scan_folder(&mut self, folder: PathBuf) {
+        use scanseq::core::{Scanner, scan_files, VIDEO_EXTS};
+
+        let scan_media = self.settings.scan_nested_media;
+        let scan_seqs = self.settings.scan_nested_sequences;
+
+        if !scan_media && !scan_seqs {
+            info!("Folder scanning disabled in settings");
+            return;
+        }
+
+        info!("Scanning folder: {:?} (media={}, sequences={})", folder, scan_media, scan_seqs);
+
+        let mut all_paths: Vec<PathBuf> = Vec::new();
+
+        // Use scanseq for image sequences
+        if scan_seqs {
+            let scanner = Scanner::path(&folder)
+                .recursive(true)
+                .vfx_images()  // exr, dpx, tif, png, jpg, tga, hdr
+                .min_len(2)
+                .scan();
+
+            info!("scanseq found {} sequences in {:.1}ms",
+                scanner.len(),
+                scanner.result.elapsed_ms
+            );
+
+            // Add first file of each sequence
+            for seq in scanner.iter() {
+                all_paths.push(PathBuf::from(seq.first_file()));
+            }
+        }
+
+        // Use scanseq scan_files for video files
+        if scan_media {
+            match scan_files(&[&folder], true, VIDEO_EXTS) {
+                Ok(videos) => {
+                    info!("scanseq found {} video files", videos.len());
+                    all_paths.extend(videos);
+                }
+                Err(e) => {
+                    warn!("Failed to scan videos: {}", e);
+                }
+            }
+        }
+
+        if all_paths.is_empty() {
+            info!("No media found in folder: {:?}", folder);
+            return;
+        }
+
+        info!("Loading {} media items...", all_paths.len());
+        let _ = self.load_sequences(all_paths);
+    }
+
     /// Enqueue frame loading around playhead for active comp.
     ///
     /// Unified interface: works for both File mode and Layer mode.
@@ -281,9 +338,8 @@ impl PlayaApp {
     /// Layer mode: composes frames from children (on-demand for now)
     ///
     /// # Arguments
-    /// * `_radius` - Hint for how many frames around playhead to preload (TODO: implement)
-    fn enqueue_frame_loads_around_playhead(&self, _radius: usize) {
-        // Get active comp
+    /// * `radius` - Max frames around playhead to preload (0 = entire work area)
+    fn enqueue_frame_loads_around_playhead(&self, radius: usize) {
         let Some(comp_uuid) = self.player.active_comp() else {
             debug!("No active comp for frame loading");
             return;
@@ -293,8 +349,9 @@ impl PlayaApp {
             return;
         };
 
-        // Trigger preload (works for both File and Layer modes)
-        comp.signal_preload(&self.workers, &self.project, None);
+        // Trigger preload with optional radius limit
+        let radius_opt = if radius > 0 { Some(radius) } else { None };
+        comp.signal_preload(&self.workers, &self.project, None, radius_opt);
     }
 
     /// Handle events from event bus.
@@ -305,6 +362,7 @@ impl PlayaApp {
         let mut deferred_load_project: Option<std::path::PathBuf> = None;
         let mut deferred_save_project: Option<std::path::PathBuf> = None;
         let mut deferred_load_sequences: Option<Vec<std::path::PathBuf>> = None;
+        let mut deferred_scan_folder: Option<std::path::PathBuf> = None;
         let mut deferred_new_comp: Option<(String, f32)> = None;
         let mut deferred_enqueue_frames: Option<usize> = None;
         let mut deferred_quick_save = false;
@@ -391,6 +449,9 @@ impl PlayaApp {
                 if let Some(paths) = result.load_sequences {
                     deferred_load_sequences = Some(paths);
                 }
+                if let Some(folder) = result.scan_folder {
+                    deferred_scan_folder = Some(folder);
+                }
                 if let Some(comp_data) = result.new_comp {
                     deferred_new_comp = Some(comp_data);
                 }
@@ -415,6 +476,9 @@ impl PlayaApp {
         }
         if let Some(paths) = deferred_load_sequences {
             let _ = self.load_sequences(paths);
+        }
+        if let Some(folder) = deferred_scan_folder {
+            self.scan_folder(folder);
         }
         if let Some((name, fps)) = deferred_new_comp {
             let uuid = self.project.create_comp(&name, fps, self.comp_event_emitter.clone());

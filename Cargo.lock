@@ -2359,6 +2359,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jwalk"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2735847566356cd2179a2a38264839308f7079fa96e6bd5a42d740460e003c56"
+dependencies = [
+ "crossbeam",
+ "rayon",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3310,6 +3320,7 @@ dependencies = [
  "rayon",
  "regex",
  "rfd",
+ "scanseq",
  "serde",
  "serde_json",
  "sysinfo",
@@ -3822,6 +3833,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "scanseq"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "605878ce18486c73e1269e0f736c5d63fd00831395ab655a9311a6d035a42333"
+dependencies = [
+ "clap",
+ "env_logger",
+ "glob",
+ "indicatif",
+ "jwalk",
+ "log",
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
