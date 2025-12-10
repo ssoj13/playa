@@ -487,7 +487,7 @@ pub fn handle_app_event(
             let mut media = project.media.write().expect("media lock poisoned");
             if let Some(comp) = media.get_mut(&e.comp_uuid) {
                 let (duration, source_dim, name) = source_info.unwrap_or((1, (64, 64), "layer_1".to_string()));
-                comp.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.target_row, source_dim)
+                comp.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim)
             } else {
                 Err(anyhow::anyhow!("Parent comp not found"))
             }

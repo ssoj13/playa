@@ -9,12 +9,14 @@ pub mod compositor;
 pub mod gpu_compositor;
 pub mod frame;
 pub mod keys;
+pub mod layer;
 pub mod loader;
 pub mod loader_video;
 pub mod project;
 
 pub use attrs::{AttrValue, Attrs};
-pub use comp::Comp;
+pub use comp::{Comp, CompDfsIter, CompIterItem};
 pub use compositor::CompositorType;
 pub use frame::{Frame, FrameStatus};
+pub use layer::{Layer, Track};
 pub use project::Project;

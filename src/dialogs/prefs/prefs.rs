@@ -6,6 +6,7 @@ use egui_ltreeview::TreeView;
 enum SettingsCategory {
     General,
     UI,
+    Compositing,
 }
 
 impl SettingsCategory {
@@ -13,6 +14,7 @@ impl SettingsCategory {
         match self {
             SettingsCategory::General => "General",
             SettingsCategory::UI => "UI",
+            SettingsCategory::Compositing => "Compositing",
         }
     }
 
@@ -20,6 +22,7 @@ impl SettingsCategory {
         match s {
             "General" => Some(SettingsCategory::General),
             "UI" => Some(SettingsCategory::UI),
+            "Compositing" => Some(SettingsCategory::Compositing),
             _ => None,
         }
     }
@@ -169,18 +172,26 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     });
     ui.label("All Frames: Maximum performance, more memory usage.");
     ui.label("Last Only: Minimal memory, only last accessed frame per comp.");
+}
 
-    ui.add_space(16.0);
-    ui.heading("Compositing");
+/// Render Compositing settings category
+fn render_compositing_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.heading("Backend");
     ui.add_space(8.0);
 
     ui.horizontal(|ui| {
-        ui.label("Backend:");
+        ui.label("Compositor:");
         ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Cpu, "CPU");
         ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Gpu, "GPU");
     });
     ui.label("GPU compositor uses OpenGL for 10-50x faster multi-layer blending.");
     ui.label("Requires OpenGL 3.0+. Falls back to CPU on errors.");
+
+    ui.add_space(16.0);
+    ui.heading("Safety");
+    ui.add_space(8.0);
+    ui.label("Cycle detection is always enabled.");
+    ui.label("Prevents infinite loops when compositions reference each other.");
 }
 
 /// Render settings window
@@ -217,6 +228,7 @@ pub fn render_settings_window(
                             let (_response, actions) = TreeView::new(tree_id).show(ui, |builder| {
                                 builder.leaf(0, SettingsCategory::General.as_str());
                                 builder.leaf(1, SettingsCategory::UI.as_str());
+                                builder.leaf(2, SettingsCategory::Compositing.as_str());
                             });
 
                             // Handle selection from actions
@@ -227,6 +239,7 @@ pub fn render_settings_window(
                                     selected = match node_id {
                                         0 => SettingsCategory::General,
                                         1 => SettingsCategory::UI,
+                                        2 => SettingsCategory::Compositing,
                                         _ => selected,
                                     };
                                 }
@@ -242,6 +255,7 @@ pub fn render_settings_window(
                             match selected {
                                 SettingsCategory::General => render_general_settings(ui, settings),
                                 SettingsCategory::UI => render_ui_settings(ui, settings),
+                                SettingsCategory::Compositing => render_compositing_settings(ui, settings),
                             }
                         });
                     });

@@ -68,7 +68,8 @@ pub struct AddLayerEvent {
     pub comp_uuid: Uuid,
     pub source_uuid: Uuid,
     pub start_frame: i32,
-    pub target_row: Option<usize>,
+    /// Insert position in children array (computed by calc_drop_on_track)
+    pub insert_idx: Option<usize>,
 }
 
 #[derive(Clone, Debug)]

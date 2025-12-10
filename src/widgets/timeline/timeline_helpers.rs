@@ -257,6 +257,7 @@ pub(super) fn row_to_y(row: usize, config: &TimelineConfig, timeline_rect: Rect)
 }
 
 /// Draw drop preview (ghost) using the standard layer move style.
+/// If `is_cycle` is true, draws red to indicate invalid drop.
 pub(super) fn draw_drop_preview(
     painter: &egui::Painter,
     frame: i32,
@@ -265,6 +266,7 @@ pub(super) fn draw_drop_preview(
     timeline_rect: Rect,
     config: &TimelineConfig,
     state: &TimelineState,
+    is_cycle: bool,
 ) {
     let start_x = frame_to_screen_x(frame as f32, timeline_rect.min.x, config, state);
     let end_x = frame_to_screen_x(
@@ -278,10 +280,15 @@ pub(super) fn draw_drop_preview(
         Pos2::new(start_x, row_y + 4.0),
         Pos2::new(end_x, row_y + 4.0 + bar_height),
     );
+    let color = if is_cycle {
+        Color32::from_rgba_unmultiplied(255, 80, 80, 200) // Red for cycle
+    } else {
+        Color32::from_rgba_unmultiplied(100, 220, 255, 180) // Blue normal
+    };
     painter.rect_stroke(
         thumb_rect,
         4.0,
-        egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 180)),
+        egui::Stroke::new(2.0, color),
         egui::epaint::StrokeKind::Middle,
     );
 }

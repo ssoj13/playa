@@ -32,6 +32,7 @@ egui_dnd = "0.14"
 egui_dock = { version = "0.18", features = ["serde"] }
 egui_glow = "0.33"
 egui_extras = "0.33"
+egui-snarl = { version = "0.9", features = ["serde"] }
 egui_taffy = "0.10.0"
 egui_ltreeview = { version = "0.6.0", features = ["persistence"] }
 env_logger = "0.11"

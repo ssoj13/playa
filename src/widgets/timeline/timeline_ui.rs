@@ -838,6 +838,7 @@ pub fn render_canvas(
                                                     timeline_rect,
                                                     config,
                                                     state,
+                                                    false, // Not a cycle - moving existing layer
                                                 );
                                             }
                                         }
@@ -1058,12 +1059,21 @@ pub fn render_canvas(
                             // Use mouse Y position directly, adjust only for time overlap
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
-                                    let drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
+                                    let raw_drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
                                     let dur = duration.unwrap_or(10).max(1);
 
                                     // Calculate mouse row for visual positioning
                                     let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y) / config.layer_height).floor() as i32;
                                     let mouse_row = mouse_row_raw.max(0) as usize;
+
+                                    // Use calc_drop_on_track to snap before/after existing layers
+                                    let (snap_frame, insert_idx) = comp.calc_drop_on_track(raw_drop_frame, dur, mouse_row);
+
+                                    // Check for cyclic dependency
+                                    let is_cycle = {
+                                        let media = project.media.read().expect("media lock");
+                                        comp.check_collisions(source_uuid, &media, true)
+                                    };
 
                                     // Use mouse position for preview Y (shows insertion point)
                                     let row_y = if hover_pos.y >= timeline_rect.min.y {
@@ -1075,31 +1085,32 @@ pub fn render_canvas(
 
                                     draw_drop_preview(
                                         &ui.painter(),
-                                        drop_frame,
+                                        snap_frame,
                                         row_y,
                                         dur,
                                         timeline_rect,
                                         config,
                                         state,
+                                        is_cycle,
                                     );
 
-                                    if ui.ctx().input(|i| i.pointer.any_released()) {
-                                        // Always use mouse position for target row (insert between layers)
-                                        let target_row = if hover_pos.y >= timeline_rect.min.y {
-                                            Some(mouse_row)
-                                        } else {
-                                            Some(0) // Above timeline -> insert at top
-                                        };
-
+                                    // Only allow drop if not a cycle
+                                    if !is_cycle && ui.ctx().input(|i| i.pointer.any_released()) {
                                         dispatch(Box::new(AddLayerEvent {
                                             comp_uuid: comp_id,
-                                            source_uuid, // Uuid is Copy
-                                            start_frame: drop_frame,
-                                            target_row,
+                                            source_uuid,
+                                            start_frame: snap_frame,
+                                            insert_idx: Some(insert_idx),
                                         }));
                                         ui.ctx().data_mut(|data| {
                                             data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));
                                         });
+                                    } else if is_cycle && ui.ctx().input(|i| i.pointer.any_released()) {
+                                        // Clear drag state even if cycle detected
+                                        ui.ctx().data_mut(|data| {
+                                            data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));
+                                        });
+                                        log::warn!("Blocked cyclic dependency: {} -> {}", source_uuid, comp_id);
                                     }
                                 }
                             }

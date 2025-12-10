@@ -45,7 +45,7 @@
 //!                              - invalidate_cascade() (parent comps)
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -71,11 +71,22 @@ use crate::utils::media;
 use std::cell::RefCell;
 use super::compositor::CpuCompositor;
 
-// Thread-local CPU compositor for background composition
-// Each worker thread gets its own compositor instance (zero allocation after init)
-// GPU compositor remains in Project.compositor (main thread only)
+// Thread-local storage for composition operations.
+// Using thread_local avoids locks and allows parallel worker threads.
 thread_local! {
+    // CPU compositor instance per thread.
+    // Why thread-local: GPU compositor requires OpenGL context (main thread only),
+    // but background workers need CPU fallback. Each worker gets own instance
+    // to avoid contention. Zero allocation after init.
     static THREAD_COMPOSITOR: RefCell<CpuCompositor> = RefCell::new(CpuCompositor);
+
+    // Runtime cycle detection stack.
+    // Why: Prevents infinite recursion when comp hierarchy has cycles.
+    // How: Before compose() processes a comp, it adds UUID to stack.
+    //      If UUID already present = cycle detected = return placeholder.
+    //      On exit, UUID removed to allow visiting from different branches.
+    // Thread-local because each thread has independent call stack.
+    static COMPOSE_STACK: RefCell<HashSet<Uuid>> = RefCell::new(HashSet::new());
 }
 
 /// Unified composition descriptor with dual-mode operation.
@@ -1373,6 +1384,23 @@ impl Comp {
     /// (not Loaded), so GlobalFrameCache will reject it - preventing green frame caching.
     fn compose(&self, frame_idx: i32, project: &super::Project, use_gpu: bool) -> Option<Frame> {
         use log::debug;
+
+        // Runtime cycle detection: check if we're already composing this comp
+        let my_uuid = self.get_uuid();
+        let is_cycle = COMPOSE_STACK.with(|stack| {
+            let mut s = stack.borrow_mut();
+            if s.contains(&my_uuid) {
+                log::warn!("Cycle detected in compose(): {} is already in stack, returning placeholder", my_uuid);
+                true
+            } else {
+                s.insert(my_uuid);
+                false
+            }
+        });
+        if is_cycle {
+            return Some(self.placeholder_frame());
+        }
+
         let mut source_frames: Vec<(Frame, f32, BlendMode)> = Vec::new();
         let mut earliest: Option<(i32, usize)> = None; // (start_frame, index in source_frames)
         let mut target_format: PixelFormat = PixelFormat::Rgba8;
@@ -1597,6 +1625,11 @@ impl Comp {
             })
         };
 
+        // Cleanup: remove from compose stack before returning
+        COMPOSE_STACK.with(|stack| {
+            stack.borrow_mut().remove(&my_uuid);
+        });
+
         // If not all children loaded, mark frame as Loading so cache rejects it
         result.map(|frame| {
             if !all_children_loaded {
@@ -1610,13 +1643,16 @@ impl Comp {
     }
 
     /// Add child layer with all required info
+    ///
+    /// # Arguments
+    /// * `insert_idx` - Position in children array (from calc_drop_on_track), None = append
     pub fn add_child_layer(
         &mut self,
         source_uuid: Uuid,
         name: &str,
         start_frame: i32,
         duration: i32,
-        target_row: Option<usize>,
+        insert_idx: Option<usize>,
         source_dim: (usize, usize),
     ) -> anyhow::Result<()> {
         let end_frame = start_frame + duration - 1;
@@ -1647,10 +1683,10 @@ impl Comp {
         attrs.set("scale", AttrValue::Vec3([1.0, 1.0, 1.0]));
         attrs.set("pivot", AttrValue::Vec3([0.0, 0.0, 0.0]));
 
-        // Add to children at appropriate position for target row
-        if let Some(target_row) = target_row {
-            let insert_pos = self.find_insert_position_for_row(target_row);
-            self.children.insert(insert_pos, (instance_uuid, attrs));
+        // Insert at specified position or append
+        if let Some(idx) = insert_idx {
+            let idx = idx.min(self.children.len());
+            self.children.insert(idx, (instance_uuid, attrs));
         } else {
             self.children.push((instance_uuid, attrs));
         }
@@ -1720,6 +1756,181 @@ impl Comp {
             }
         }
         self.children.len()
+    }
+
+    /// Calculate drop position for a new layer on existing track.
+    /// Returns (snap_frame, insert_idx) where:
+    /// - snap_frame: adjusted start frame (snapped before/after existing layer)
+    /// - insert_idx: position in children array
+    ///
+    /// Logic: if drop_frame is left of existing layer's center -> place before,
+    /// otherwise place after.
+    pub fn calc_drop_on_track(
+        &self,
+        drop_frame: i32,
+        new_duration: i32,
+        target_row: usize,
+    ) -> (i32, usize) {
+        let child_order: Vec<usize> = (0..self.children.len()).collect();
+        let layer_rows = self.compute_layer_rows(&child_order);
+
+        // Collect layers in target row with their ranges
+        let mut layers_in_row: Vec<(usize, i32, i32)> = Vec::new(); // (idx, start, end)
+        for (&idx, &row) in &layer_rows {
+            if row == target_row {
+                if let Some((_, attrs)) = self.children.get(idx) {
+                    let start = attrs.full_bar_start();
+                    let end = attrs.full_bar_end();
+                    layers_in_row.push((idx, start, end));
+                }
+            }
+        }
+
+        // No layers in this row - use drop_frame as-is
+        if layers_in_row.is_empty() {
+            let insert_pos = self.find_insert_position_for_row(target_row);
+            return (drop_frame, insert_pos);
+        }
+
+        // Sort by start frame
+        layers_in_row.sort_by_key(|(_, start, _)| *start);
+
+        // Find the layer whose range contains drop_frame or is nearest
+        let mut best_layer: Option<(usize, i32, i32)> = None;
+        let mut best_dist = i32::MAX;
+
+        for &(idx, start, end) in &layers_in_row {
+            let center = (start + end) / 2;
+            let dist = (drop_frame - center).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_layer = Some((idx, start, end));
+            }
+        }
+
+        let Some((layer_idx, layer_start, layer_end)) = best_layer else {
+            let insert_pos = self.find_insert_position_for_row(target_row);
+            return (drop_frame, insert_pos);
+        };
+
+        let layer_center = (layer_start + layer_end) / 2;
+
+        if drop_frame < layer_center {
+            // Place BEFORE: new layer ends at layer_start - 1
+            let snap_frame = layer_start - new_duration;
+            // Insert before this layer in array
+            (snap_frame, layer_idx)
+        } else {
+            // Place AFTER: new layer starts at layer_end + 1
+            let snap_frame = layer_end + 1;
+            // Insert after this layer in array
+            (snap_frame, layer_idx + 1)
+        }
+    }
+
+    /// Check for cyclic dependencies in composition hierarchy.
+    ///
+    /// Called BEFORE adding a layer to prevent cycle creation.
+    /// This is a proactive check (vs COMPOSE_STACK which is reactive/runtime).
+    ///
+    /// # Algorithm
+    ///
+    /// Uses DFS to traverse potential_child's subtree looking for self.
+    /// If found = adding would create cycle = return true = block operation.
+    ///
+    /// ```text
+    /// Example: A wants to add B as child
+    /// If B -> C -> A exists, adding B to A creates: A -> B -> C -> A (cycle!)
+    /// So we check: does A appear in B's subtree? If yes, block.
+    /// ```
+    ///
+    /// # Arguments
+    ///
+    /// * `potential_child` - UUID of comp being added as child
+    /// * `media` - Read guard to project media HashMap (for traversing hierarchy)
+    /// * `hier` - if true, full subtree check; if false, only direct children
+    ///
+    /// # Returns
+    ///
+    /// * `true` if adding `potential_child` would create a cycle (BLOCK operation)
+    /// * `false` if safe to add
+    ///
+    /// # Called By
+    ///
+    /// - `timeline_ui.rs` during drag preview (shows red indicator)
+    /// - `main_events.rs` AddLayerEvent handler (blocks the add)
+    pub fn check_collisions(
+        &self,
+        potential_child: Uuid,
+        media: &HashMap<Uuid, Comp>,
+        hier: bool,
+    ) -> bool {
+        let my_uuid = self.get_uuid();
+
+        // Direct self-reference
+        if potential_child == my_uuid {
+            return true;
+        }
+
+        if !hier {
+            // Only check if potential_child is already a direct child
+            return self.children.iter().any(|(_, attrs)| {
+                attrs.get_str(A_UUID)
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .map_or(false, |uuid| uuid == potential_child)
+            });
+        }
+
+        // Full hierarchy check: would adding potential_child create a cycle?
+        // This happens if my_uuid appears anywhere in potential_child's subtree
+        let mut stack = vec![potential_child];
+        let mut visited = HashSet::new();
+
+        while let Some(current) = stack.pop() {
+            if current == my_uuid {
+                return true; // Cycle detected!
+            }
+
+            if !visited.insert(current) {
+                continue; // Already visited
+            }
+
+            if let Some(comp) = media.get(&current) {
+                for (_, attrs) in &comp.children {
+                    if let Some(source_str) = attrs.get_str(A_UUID) {
+                        if let Ok(source_uuid) = Uuid::parse_str(source_str) {
+                            stack.push(source_uuid);
+                        }
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Create depth-first iterator over composition hierarchy.
+    ///
+    /// Traverses all descendant comps starting from self. Useful for:
+    /// - Cache invalidation cascade (invalidate all descendants)
+    /// - Preload planning (gather all source files)
+    /// - Dependency analysis (check what comps are used)
+    /// - Export (collect all required assets)
+    ///
+    /// # Cycle Protection
+    ///
+    /// Built-in via `visited` HashSet. If a comp is seen twice (cycle),
+    /// it's skipped on subsequent visits. This prevents infinite loops.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// for item in comp.iter_dfs(&media) {
+    ///     println!("Depth {}: {} (leaf={})", item.depth, item.uuid, item.is_leaf);
+    /// }
+    /// ```
+    pub fn iter_dfs<'a>(&self, media: &'a HashMap<Uuid, Comp>) -> CompDfsIter<'a> {
+        CompDfsIter::new(self.get_uuid(), media)
     }
 
     /// Move a child to a new start position, preserving duration.
@@ -2121,6 +2332,110 @@ impl Comp {
         result
     }
 
+}
+
+// ============================================================================
+// Depth-First Iterator
+// ============================================================================
+
+/// Single item yielded by CompDfsIter during hierarchy traversal.
+///
+/// Contains enough info for most use cases without needing to look up the Comp.
+#[derive(Clone, Debug)]
+pub struct CompIterItem {
+    /// Comp UUID - use with media.get() if you need full Comp
+    pub uuid: Uuid,
+    /// Depth in hierarchy: 0 = root, 1 = direct child, 2 = grandchild, etc.
+    pub depth: usize,
+    /// True if this is a leaf node (file mode comp or layer comp with no children).
+    /// Leaves don't need recursive processing.
+    pub is_leaf: bool,
+}
+
+/// Depth-first iterator over composition hierarchy.
+///
+/// # Implementation
+///
+/// Uses explicit stack (not recursion) for DFS traversal:
+/// 1. Pop (uuid, depth) from stack
+/// 2. If already visited, skip (cycle protection)
+/// 3. If past max_depth, skip
+/// 4. Push children onto stack (reversed for correct order)
+/// 5. Yield CompIterItem
+///
+/// # Why not recursive?
+///
+/// - Predictable stack usage (no stack overflow risk)
+/// - Can pause/resume iteration
+/// - Easier cycle detection with explicit visited set
+///
+/// # Lifetime
+///
+/// Borrows `media` HashMap for duration of iteration.
+/// Do NOT modify media while iterating.
+pub struct CompDfsIter<'a> {
+    /// Reference to project media map for resolving UUIDs to Comps
+    media: &'a HashMap<Uuid, Comp>,
+    /// DFS stack: (comp_uuid, depth_level)
+    stack: Vec<(Uuid, usize)>,
+    /// Already-visited UUIDs (cycle protection)
+    visited: HashSet<Uuid>,
+    /// Optional depth limit (None = unlimited)
+    max_depth: Option<usize>,
+}
+
+impl<'a> CompDfsIter<'a> {
+    pub fn new(root: Uuid, media: &'a HashMap<Uuid, Comp>) -> Self {
+        Self {
+            media,
+            stack: vec![(root, 0)],
+            visited: HashSet::new(),
+            max_depth: None,
+        }
+    }
+
+    /// Limit traversal depth
+    pub fn with_max_depth(mut self, depth: usize) -> Self {
+        self.max_depth = Some(depth);
+        self
+    }
+}
+
+impl<'a> Iterator for CompDfsIter<'a> {
+    type Item = CompIterItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some((uuid, depth)) = self.stack.pop() {
+            // Cycle protection
+            if !self.visited.insert(uuid) {
+                continue;
+            }
+
+            // Depth limit
+            if let Some(max) = self.max_depth {
+                if depth > max {
+                    continue;
+                }
+            }
+
+            let comp = self.media.get(&uuid)?;
+            let is_leaf = comp.is_file_mode() || comp.children.is_empty();
+
+            // Push children in reverse order (first child processed first)
+            if !is_leaf && self.max_depth.map_or(true, |m| depth < m) {
+                for (_, attrs) in comp.children.iter().rev() {
+                    if let Some(source_str) = attrs.get_str(A_UUID) {
+                        if let Ok(source_uuid) = Uuid::parse_str(source_str) {
+                            self.stack.push((source_uuid, depth + 1));
+                        }
+                    }
+                }
+            }
+
+            return Some(CompIterItem { uuid, depth, is_leaf });
+        }
+        None
+    }
 }
 
 impl Comp {
