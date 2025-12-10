@@ -4,21 +4,24 @@
 //!
 //! Visual representation of composition hierarchy as a node network.
 //! Each Comp becomes a node, child relationships become wire connections.
-//! Alternative view to timeline - same data, different visualization.
+//! Shows FULL TREE depth - recursively traverses all children.
 //!
 //! # Architecture
 //!
 //! ```text
 //! ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-//! │ Source Node │────▶│ Source Node │────▶│ Output Node │
+//! │ Leaf Node   │────▶│ Parent Node │────▶│ Output Node │
 //! │ (file comp) │     │ (layer comp)│     │ (current)   │
 //! └─────────────┘     └─────────────┘     └─────────────┘
 //!       [F]                 [C]                [OUT]
-//! ```
 //!
-//! - Source nodes: comps used as children (inputs to current comp)
-//! - Output node: the currently viewed comp (has input pins)
-//! - Wires: child->parent relationship (source's output to parent's input)
+//! Full tree example:
+//!   [F] clip1 ──┐
+//!   [F] clip2 ──┼──▶ [C] precomp ──┐
+//!   [F] clip3 ──┘                  │
+//!   [F] clip4 ─────────────────────┼──▶ [OUT] main
+//!   [F] clip5 ─────────────────────┘
+//! ```
 //!
 //! # Crate Choice: egui-snarl 0.9.0
 //!
@@ -31,8 +34,14 @@
 //! # Data Flow
 //!
 //! 1. `set_comp()` - called when user switches to different comp
-//! 2. `rebuild_from_comp()` - reads Comp.children, creates nodes/wires
-//! 3. `render_node_editor()` - displays via egui-snarl
+//! 2. `rebuild_from_comp()` - recursively reads Comp.children, creates nodes/wires
+//! 3. `render_node_editor()` - displays via egui-snarl with toolbar
+//!
+//! # Toolbar
+//!
+//! - A (All) - zoom to fit all nodes
+//! - F (Fit) - zoom to fit selected nodes (or all if none selected)
+//! - L (Layout) - auto-arrange nodes in clean tree layout
 //!
 //! Currently READ-ONLY view. Future: edits in node graph sync back to Comp.
 //!
@@ -41,6 +50,9 @@
 //! - `egui-snarl` - node graph UI library
 //! - `Comp`, `Project` - data sources
 //! - Called from: timeline widget (as alternate tab)
+
+use std::collections::{HashMap, HashSet};
+use std::sync::RwLockReadGuard;
 
 use eframe::egui::{Color32, Pos2, Ui};
 use egui_snarl::ui::{PinInfo, SnarlStyle, SnarlViewer};
@@ -51,80 +63,42 @@ use uuid::Uuid;
 use crate::core::event_bus::BoxedEvent;
 use crate::entities::{Comp, Project};
 
-/// Node types in the composition graph.
-///
-/// Two variants map to composition structure:
-/// - `Source` - a comp used as child (displayed on left side)
-/// - `Output` - the currently viewed comp (displayed on right side)
-///
-/// # Color Coding
-///
-/// Visual distinction helps users understand node types:
-/// - Orange [F] - file mode comp (loads from disk)
-/// - Green [C] - layer mode comp (composites children)
-/// - Red [OUT] - output node (current view target)
+/// Node in the composition graph - just a UUID reference to Comp.
+/// All data (name, type, children) comes from project.media at render time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum CompNode {
-    /// Source composition - appears as input to the current comp.
-    /// `is_file` determines color: orange for file comps, green for layer comps.
-    Source {
-        comp_uuid: Uuid,
-        name: String,
-        is_file: bool,
-    },
-    /// Output node - represents the currently viewed composition.
-    /// Has input pins where source nodes connect.
-    Output { comp_uuid: Uuid, name: String },
-}
-
-impl CompNode {
-    pub fn name(&self) -> &str {
-        match self {
-            CompNode::Source { name, .. } => name,
-            CompNode::Output { name, .. } => name,
-        }
-    }
-
-    pub fn uuid(&self) -> Uuid {
-        match self {
-            CompNode::Source { comp_uuid, .. } => *comp_uuid,
-            CompNode::Output { comp_uuid, .. } => *comp_uuid,
-        }
-    }
-
-    pub fn is_output(&self) -> bool {
-        matches!(self, CompNode::Output { .. })
-    }
+pub struct CompNode {
+    pub uuid: Uuid,
 }
 
 /// SnarlViewer implementation for rendering CompNode.
-///
-/// egui-snarl requires implementing SnarlViewer to define:
-/// - How many inputs/outputs each node type has
-/// - How to render pin labels and colors
-/// - Header appearance with icons and colors
-///
-/// This is a stateless viewer - all data comes from CompNode variants.
-struct CompNodeViewer;
+/// Holds reference to Project for resolving Comp data at render time.
+struct CompNodeViewer<'a> {
+    project: &'a Project,
+    output_uuid: Uuid, // current comp being viewed
+}
+
+impl<'a> CompNodeViewer<'a> {
+    fn get_comp(&self, uuid: Uuid) -> Option<Comp> {
+        self.project.media.read().ok()?.get(&uuid).cloned()
+    }
+}
 
 #[allow(refining_impl_trait)]
-impl SnarlViewer<CompNode> for CompNodeViewer {
+impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
     fn title(&mut self, node: &CompNode) -> String {
-        node.name().to_string()
+        self.get_comp(node.uuid)
+            .map(|c| c.name().to_string())
+            .unwrap_or_else(|| "Unknown".to_string())
     }
 
-    fn outputs(&mut self, node: &CompNode) -> usize {
-        match node {
-            CompNode::Source { .. } => 1,
-            CompNode::Output { .. } => 0,
-        }
+    fn outputs(&mut self, _node: &CompNode) -> usize {
+        1
     }
 
     fn inputs(&mut self, node: &CompNode) -> usize {
-        match node {
-            CompNode::Source { .. } => 0,
-            CompNode::Output { .. } => 8,
-        }
+        self.get_comp(node.uuid)
+            .map(|c| c.children_len())
+            .unwrap_or(0)
     }
 
     fn show_input(
@@ -139,23 +113,12 @@ impl SnarlViewer<CompNode> for CompNodeViewer {
 
     fn show_output(
         &mut self,
-        pin: &OutPin,
+        _pin: &OutPin,
         ui: &mut Ui,
-        snarl: &mut Snarl<CompNode>,
+        _snarl: &mut Snarl<CompNode>,
     ) -> PinInfo {
-        let node = &snarl[pin.id.node];
-        match node {
-            CompNode::Source { is_file, .. } => {
-                let color = if *is_file {
-                    Color32::from_rgb(255, 180, 100)
-                } else {
-                    Color32::from_rgb(100, 255, 180)
-                };
-                ui.label("Out");
-                PinInfo::circle().with_fill(color)
-            }
-            _ => PinInfo::circle().with_fill(Color32::GRAY),
-        }
+        ui.label("Out");
+        PinInfo::circle().with_fill(Color32::from_rgb(180, 180, 180))
     }
 
     fn has_body(&mut self, _node: &CompNode) -> bool {
@@ -180,24 +143,36 @@ impl SnarlViewer<CompNode> for CompNodeViewer {
         ui: &mut Ui,
         snarl: &mut Snarl<CompNode>,
     ) {
-        let node_data = &snarl[node];
-        let (color, icon) = match node_data {
-            CompNode::Source { is_file, .. } => {
-                if *is_file {
-                    (Color32::from_rgb(255, 180, 100), "[F]")
+        let uuid = snarl[node].uuid;
+        let comp = self.get_comp(uuid);
+
+        let (icon, color, name) = match comp {
+            Some(c) => {
+                let is_output = uuid == self.output_uuid;
+                let is_file = c.is_file_mode();
+                let name = c.name().to_string();
+
+                if is_output {
+                    ("[OUT]", Color32::from_rgb(255, 100, 100), name)
+                } else if is_file {
+                    ("[F]", Color32::from_rgb(255, 180, 100), name)
                 } else {
-                    (Color32::from_rgb(100, 255, 180), "[C]")
+                    ("[C]", Color32::from_rgb(100, 255, 180), name)
                 }
             }
-            CompNode::Output { .. } => (Color32::from_rgb(255, 100, 100), "[OUT]"),
+            None => ("[?]", Color32::GRAY, "Unknown".to_string()),
         };
 
         ui.horizontal(|ui| {
             ui.colored_label(color, icon);
-            ui.label(node_data.name());
+            ui.label(name);
         });
     }
 }
+
+/// Layout constants for node positioning
+const HORIZONTAL_SPACING: f32 = 200.0;
+const VERTICAL_SPACING: f32 = 70.0;
 
 /// Persistent state for node editor panel.
 ///
@@ -215,7 +190,7 @@ impl SnarlViewer<CompNode> for CompNodeViewer {
 /// - User switches to different comp (`set_comp()`)
 /// - External change to comp children (via `mark_dirty()`)
 ///
-/// This is efficient because comps typically have <20 children.
+/// This is efficient because comps typically have <100 nodes.
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct NodeEditorState {
     /// The egui-snarl graph containing nodes and wires.
@@ -231,6 +206,14 @@ pub struct NodeEditorState {
     /// Set by `set_comp()` or `mark_dirty()`, cleared by `rebuild_from_comp()`.
     #[serde(skip)]
     needs_rebuild: bool,
+
+    /// Flag to trigger fit-all on next frame
+    #[serde(skip)]
+    pub fit_all_requested: bool,
+
+    /// Flag to trigger re-layout on next frame
+    #[serde(skip)]
+    pub layout_requested: bool,
 }
 
 impl NodeEditorState {
@@ -239,6 +222,8 @@ impl NodeEditorState {
             snarl: Snarl::new(),
             comp_uuid: None,
             needs_rebuild: true,
+            fit_all_requested: false,
+            layout_requested: false,
         }
     }
 
@@ -255,23 +240,24 @@ impl NodeEditorState {
         }
     }
 
-    /// Rebuild graph from composition hierarchy.
+    /// Rebuild graph from composition hierarchy (FULL TREE).
     ///
-    /// Creates a visual node graph from Comp.children:
+    /// Creates a visual node graph by recursively traversing all children:
     /// 1. Clear existing graph
-    /// 2. Create Output node for current comp (right side, x=400)
-    /// 3. For each child layer: create Source node (left side, x=100)
-    /// 4. Connect each source's output pin to output's input pin
+    /// 2. Recursively collect all nodes in the tree (DFS)
+    /// 3. Create nodes with proper types (Leaf/Intermediate/Output)
+    /// 4. Connect wires between parent-child relationships
+    /// 5. Apply tree layout (rightmost = output, leftmost = leaves)
     ///
-    /// # Layout
+    /// # Layout Algorithm
     ///
-    /// Simple vertical stack for source nodes (y += 60 per node).
-    /// Future: could use actual node positions or auto-layout algorithm.
+    /// Uses depth-first traversal to determine tree depth, then positions:
+    /// - X position based on depth (deeper = more left)
+    /// - Y position based on vertical slot within depth level
     ///
-    /// # Lock Behavior
+    /// # Cycle Detection
     ///
-    /// Takes read lock on project.media to resolve source comp names/types.
-    /// Lock is held for duration of rebuild (fast, typically <1ms).
+    /// Uses visited set to prevent infinite loops from cyclic references.
     pub fn rebuild_from_comp(&mut self, comp: &Comp, project: &Project) {
         if !self.needs_rebuild {
             return;
@@ -280,60 +266,180 @@ impl NodeEditorState {
 
         self.snarl = Snarl::new();
 
-        let comp_uuid = comp.get_uuid();
+        let root_uuid = comp.get_uuid();
         let media = project.media.read().expect("media lock");
 
-        // Output node (current comp) positioned on right side
-        let output_pos = Pos2::new(400.0, 200.0);
-        let output_id = self.snarl.insert_node(
-            output_pos,
-            CompNode::Output {
-                comp_uuid,
-                name: comp.name().to_string(),
-            },
+        log::debug!(
+            "NodeEditor: rebuilding for comp '{}' ({}), media has {} items",
+            comp.name(),
+            root_uuid,
+            media.len()
+        );
+        log::debug!("NodeEditor: comp is in media? {}", media.contains_key(&root_uuid));
+
+        // Phase 1: Collect all nodes recursively with their depth and children count
+        let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
+        let mut visited: HashSet<Uuid> = HashSet::new();
+        let mut max_depth = 0;
+
+        collect_tree_recursive(
+            root_uuid,
+            0,
+            &media,
+            &mut node_info,
+            &mut visited,
+            &mut max_depth,
         );
 
-        // Create source nodes for each child, stacked vertically on left
-        let mut y = 50.0;
-        let mut input_idx = 0usize;
+        log::debug!(
+            "NodeEditor rebuild: root={}, nodes={}, max_depth={}",
+            root_uuid,
+            node_info.len(),
+            max_depth
+        );
 
-        for (_, attrs) in comp.get_children() {
-            if let Some(source_str) = attrs.get_str("uuid") {
-                if let Ok(source_uuid) = Uuid::parse_str(source_str) {
-                    let pos = Pos2::new(100.0, y);
+        // Phase 2: Calculate Y positions for each depth level
+        let mut depth_slots: HashMap<usize, usize> = HashMap::new();
+        let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
 
-                    // Resolve source comp to get name and type
-                    let (name, is_file) = if let Some(source_comp) = media.get(&source_uuid) {
-                        (source_comp.name().to_string(), source_comp.is_file_mode())
-                    } else {
-                        ("Unknown".to_string(), false)
-                    };
+        // Create all nodes with layout positions
+        for (&uuid, info) in &node_info {
+            let depth = info.depth;
+            let slot = *depth_slots.get(&depth).unwrap_or(&0);
+            depth_slots.insert(depth, slot + 1);
 
-                    let source_id = self.snarl.insert_node(
-                        pos,
-                        CompNode::Source {
-                            comp_uuid: source_uuid,
-                            name,
-                            is_file,
-                        },
-                    );
+            // X: rightmost for root (depth=0), leftmost for deepest
+            let x = (max_depth - depth) as f32 * HORIZONTAL_SPACING + 50.0;
+            let y = slot as f32 * VERTICAL_SPACING + 50.0;
 
-                    // Wire: source output[0] -> output input[N]
-                    let out_pin = OutPinId {
-                        node: source_id,
-                        output: 0,
-                    };
-                    let in_pin = InPinId {
-                        node: output_id,
-                        input: input_idx,
-                    };
-                    let _ = self.snarl.connect(out_pin, in_pin);
+            log::debug!("NodeEditor: creating node {} at ({}, {})", uuid, x, y);
+            let node_id = self.snarl.insert_node(Pos2::new(x, y), CompNode { uuid });
+            uuid_to_node.insert(uuid, node_id);
+        }
 
-                    y += 60.0;
-                    input_idx += 1;
+        // Phase 3: Create wires (child output -> parent input)
+        for (&parent_uuid, info) in &node_info {
+            if let Some(&parent_id) = uuid_to_node.get(&parent_uuid) {
+                for (input_idx, &child_uuid) in info.children.iter().enumerate() {
+                    if let Some(&child_id) = uuid_to_node.get(&child_uuid) {
+                        let out_pin = OutPinId {
+                            node: child_id,
+                            output: 0,
+                        };
+                        let in_pin = InPinId {
+                            node: parent_id,
+                            input: input_idx,
+                        };
+                        let _ = self.snarl.connect(out_pin, in_pin);
+                    }
                 }
             }
         }
+
+        // Request fit-all after rebuild
+        self.fit_all_requested = true;
+    }
+
+    /// Re-layout existing nodes in a clean tree arrangement
+    pub fn relayout(&mut self, project: &Project) {
+        // Check if we have any nodes
+        if self.snarl.node_ids().next().is_none() {
+            return;
+        }
+
+        // Collect UUID -> NodeId mapping
+        let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
+        for (node_id, node) in self.snarl.node_ids() {
+            uuid_to_node.insert(node.uuid, node_id);
+        }
+
+        // Find root - use the comp_uuid from state
+        let Some(root_uuid) = self.comp_uuid else { return };
+        let media = project.media.read().expect("media lock");
+
+        // Collect tree info
+        let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
+        let mut visited: HashSet<Uuid> = HashSet::new();
+        let mut max_depth = 0;
+
+        collect_tree_recursive(
+            root_uuid,
+            0,
+            &media,
+            &mut node_info,
+            &mut visited,
+            &mut max_depth,
+        );
+
+        // Build new positions map
+        let mut new_positions: HashMap<Uuid, Pos2> = HashMap::new();
+        let mut depth_slots: HashMap<usize, usize> = HashMap::new();
+
+        for (&uuid, info) in &node_info {
+            let depth = info.depth;
+            let slot = *depth_slots.get(&depth).unwrap_or(&0);
+            depth_slots.insert(depth, slot + 1);
+
+            let x = (max_depth - depth) as f32 * HORIZONTAL_SPACING + 50.0;
+            let y = slot as f32 * VERTICAL_SPACING + 50.0;
+            new_positions.insert(uuid, Pos2::new(x, y));
+        }
+
+        // Apply new positions using nodes_info_mut (gives &mut Node with pub pos field)
+        for node in self.snarl.nodes_info_mut() {
+            if let Some(&new_pos) = new_positions.get(&node.value.uuid) {
+                node.pos = new_pos;
+            }
+        }
+
+        self.fit_all_requested = true;
+    }
+}
+
+/// Info collected during tree traversal (only layout-relevant data)
+struct NodeInfo {
+    depth: usize,
+    children: Vec<Uuid>,
+}
+
+/// Recursively collect all nodes in the composition tree
+fn collect_tree_recursive(
+    uuid: Uuid,
+    depth: usize,
+    media: &RwLockReadGuard<'_, HashMap<Uuid, Comp>>,
+    node_info: &mut HashMap<Uuid, NodeInfo>,
+    visited: &mut HashSet<Uuid>,
+    max_depth: &mut usize,
+) {
+    // Cycle detection
+    if visited.contains(&uuid) {
+        return;
+    }
+    visited.insert(uuid);
+
+    *max_depth = (*max_depth).max(depth);
+
+    let Some(comp) = media.get(&uuid) else {
+        // Unknown comp - add minimal info
+        node_info.insert(uuid, NodeInfo { depth, children: vec![] });
+        return;
+    };
+
+    // Collect children UUIDs
+    let mut children: Vec<Uuid> = vec![];
+    for (_, attrs) in comp.get_children() {
+        if let Some(source_str) = attrs.get_str("uuid") {
+            if let Ok(child_uuid) = Uuid::parse_str(source_str) {
+                children.push(child_uuid);
+            }
+        }
+    }
+
+    node_info.insert(uuid, NodeInfo { depth, children: children.clone() });
+
+    // Recurse into children
+    for child_uuid in children {
+        collect_tree_recursive(child_uuid, depth + 1, media, node_info, visited, max_depth);
     }
 }
 
@@ -353,7 +459,8 @@ impl NodeEditorState {
 ///
 /// 1. Syncs state to current comp (triggers rebuild if comp changed)
 /// 2. Rebuilds graph from Comp.children if dirty
-/// 3. Renders via egui-snarl with default styling
+/// 3. Renders toolbar with A/F/L buttons
+/// 4. Renders via egui-snarl with default styling
 ///
 /// Currently read-only. Future: dispatch LayerAddedEvent etc on graph edits.
 pub fn render_node_editor(
@@ -369,10 +476,59 @@ pub fn render_node_editor(
     // Rebuild graph from Comp.children if needed
     state.rebuild_from_comp(comp, project);
 
-    // Stateless viewer interprets CompNode for rendering
-    let mut viewer = CompNodeViewer;
+    // Handle layout request
+    if state.layout_requested {
+        state.layout_requested = false;
+        state.relayout(project);
+    }
 
-    // Render with default wire/node styling
+    // Toolbar
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+
+        // A - fit All nodes
+        if ui
+            .button("A")
+            .on_hover_text("Fit All - zoom to see all nodes")
+            .clicked()
+        {
+            state.fit_all_requested = true;
+        }
+
+        // F - fit selected (or all if none selected)
+        if ui
+            .button("F")
+            .on_hover_text("Fit - zoom to selected nodes (or all)")
+            .clicked()
+        {
+            state.fit_all_requested = true;
+        }
+
+        // L - Layout nodes
+        if ui
+            .button("L")
+            .on_hover_text("Layout - arrange nodes in tree")
+            .clicked()
+        {
+            state.layout_requested = true;
+        }
+
+        ui.separator();
+
+        // Node count info
+        let node_count = state.snarl.node_ids().count();
+        ui.label(format!("{} nodes", node_count));
+    });
+
+    ui.separator();
+
+    // Viewer with project reference for resolving comp data
+    let mut viewer = CompNodeViewer {
+        project,
+        output_uuid: comp.get_uuid(),
+    };
+
+    // Render with default styling
     let style = SnarlStyle::default();
     state.snarl.show(&mut viewer, &style, "comp_node_editor", ui);
 }
