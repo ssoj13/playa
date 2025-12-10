@@ -12,7 +12,7 @@ use playa::core::event_bus::EventBus;
 use playa::core::global_cache::CacheStrategy;
 use playa::main_events::{handle_app_event, EventResult};
 use playa::core::player::Player;
-use playa::core::project_events::*;
+use playa::widgets::project::project_events::*;
 use playa::widgets::project::project_ui;
 
 fn main() -> eframe::Result<()> {

@@ -31,4 +31,5 @@ pub enum HotkeyWindow {
     Viewport,
     Timeline,
     Project,
+    NodeEditor,
 }

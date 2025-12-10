@@ -3,10 +3,11 @@
 use crate::dialogs::prefs::prefs_events::HotkeyWindow;
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player_events::*;
-use crate::core::project_events::*;
+use crate::widgets::project::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
+use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 use eframe::egui;
 use std::collections::HashMap;
@@ -160,6 +161,11 @@ impl HotkeyHandler {
         self.bind(Viewport, "F", FitViewportEvent);
         self.bind(Viewport, "A", Viewport100Event);
         self.bind(Viewport, "H", Viewport100Event);
+
+        // Node editor-specific
+        self.bind(NodeEditor, "A", NodeEditorFitAllEvent);
+        self.bind(NodeEditor, "F", NodeEditorFitSelectedEvent);
+        self.bind(NodeEditor, "L", NodeEditorLayoutEvent);
     }
 
     /// Handle keyboard input

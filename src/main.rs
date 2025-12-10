@@ -135,6 +135,8 @@ struct PlayaApp {
     timeline_hovered: bool,
     #[serde(skip)]
     project_hovered: bool,
+    #[serde(skip)]
+    node_editor_hovered: bool,
     attributes_state: AttributesState,
     /// Node editor state (snarl graph for composition visualization)
     node_editor_state: NodeEditorState,
@@ -200,6 +202,7 @@ impl Default for PlayaApp {
             viewport_hovered: false,
             timeline_hovered: false,
             project_hovered: false,
+            node_editor_hovered: false,
             attributes_state: AttributesState::default(),
             node_editor_state: NodeEditorState::new(),
         }
@@ -263,6 +266,8 @@ impl PlayaApp {
                 // Activate first sequence and trigger frame loading
                 if let Some(uuid) = first_uuid {
                     self.player.set_active_comp(Some(uuid), &mut self.project);
+                    self.node_editor_state.set_comp(uuid);
+                    self.node_editor_state.mark_dirty();
                     self.enqueue_frame_loads_around_playhead(10);
                 }
 
@@ -374,6 +379,7 @@ impl PlayaApp {
                 &mut self.player,
                 &mut self.project,
                 &mut self.timeline_state,
+                &mut self.node_editor_state,
                 &mut self.viewport_state,
                 &mut self.settings,
                 &mut self.show_help,
@@ -424,6 +430,7 @@ impl PlayaApp {
         if let Some((name, fps)) = deferred_new_comp {
             let uuid = self.project.create_comp(&name, fps, self.comp_event_emitter.clone());
             self.player.set_active_comp(Some(uuid), &mut self.project);
+            self.node_editor_state.set_comp(uuid);
             info!("Created new comp: {}", uuid);
         }
         if let Some(n) = deferred_enqueue_frames {
@@ -501,10 +508,12 @@ impl PlayaApp {
                 // Restore active comp from project (also sync selection)
                 if let Some(active) = self.project.active() {
                     self.player.set_active_comp(Some(active), &mut self.project);
+                    self.node_editor_state.set_comp(active);
                 } else {
                     // Ensure default if none
                     let uuid = self.project.ensure_default_comp();
                     self.player.set_active_comp(Some(uuid), &mut self.project);
+                    self.node_editor_state.set_comp(uuid);
                 }
                 self.selected_media_uuid = self.project.selection().last().cloned();
                 self.error_msg = None;
@@ -539,6 +548,11 @@ impl PlayaApp {
         // Priority 3: Explicit viewport hover
         if self.viewport_hovered {
             return HotkeyWindow::Viewport;
+        }
+
+        // Priority 4: Node editor hover
+        if self.node_editor_hovered {
+            return HotkeyWindow::NodeEditor;
         }
 
         // Priority 4: Default to timeline when a comp is active (no mouse gating)
@@ -915,6 +929,7 @@ impl PlayaApp {
     /// Source nodes (children) connect to Output node (current comp).
     fn render_node_editor_tab(&mut self, ui: &mut egui::Ui) {
         let Some(comp_uuid) = self.player.active_comp() else {
+            self.node_editor_hovered = false;
             ui.centered_and_justified(|ui| {
                 ui.label("No composition selected");
             });
@@ -924,13 +939,18 @@ impl PlayaApp {
         // Get comp reference and render node editor
         if let Some(comp) = self.project.get_comp(comp_uuid) {
             let emitter = self.event_bus.emitter();
-            render_node_editor(
+            let hovered = render_node_editor(
                 ui,
                 &mut self.node_editor_state,
                 &self.project,
                 &comp,
                 |evt| emitter.emit_boxed(evt),
             );
+
+            // Hover tracking for input routing
+            self.node_editor_hovered = hovered;
+        } else {
+            self.node_editor_hovered = false;
         }
     }
 
@@ -1064,6 +1084,10 @@ impl<'a> TabViewer for DockTabs<'a> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
+        if !matches!(tab, DockTab::NodeEditor) {
+            // Ensure node editor hover does not linger when tab not drawn
+            self.app.node_editor_hovered = false;
+        }
         match tab {
             DockTab::Viewport => self.app.render_viewport_tab(ui),
             DockTab::Timeline => self.app.render_timeline_tab(ui),
@@ -1076,6 +1100,9 @@ impl<'a> TabViewer for DockTabs<'a> {
 
 impl eframe::App for PlayaApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Reset hover flag for node editor each frame to avoid stale focus when tab not rendered
+        self.node_editor_hovered = false;
+
         // Get GL context and update compositor backend
         if let Some(gl) = frame.gl() {
             self.update_compositor_backend(gl);

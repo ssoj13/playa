@@ -2,7 +2,7 @@ use eframe::egui;
 use uuid::Uuid;
 
 use crate::entities::Project;
-use crate::core::project_events::*;
+use crate::widgets::project::project_events::*;
 use crate::core::player::Player;
 use crate::widgets::project::project::ProjectActions;
 

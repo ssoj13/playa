@@ -73,7 +73,7 @@ pub fn render(
         if let Some(paths) = create_image_dialog("Select Media Files").pick_files() {
             if !paths.is_empty() {
                 info!("Files selected: {:?}", paths);
-                actions.send(crate::core::project_events::AddClipsEvent(paths));
+                actions.send(crate::widgets::project::project_events::AddClipsEvent(paths));
             }
         }
     }

@@ -35,7 +35,7 @@ use crate::entities::{Comp, frame::FrameStatus};
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent, SetLoopEvent};
 use super::TimelineViewMode;
-use crate::core::project_events::ProjectActiveChangedEvent;
+use crate::widgets::project::project_events::ProjectActiveChangedEvent;
 use crate::entities::comp_events::{
     AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
     MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,

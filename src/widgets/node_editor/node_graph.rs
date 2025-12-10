@@ -35,7 +35,7 @@
 //!
 //! 1. `set_comp()` - called when user switches to different comp
 //! 2. `rebuild_from_comp()` - recursively reads Comp.children, creates nodes/wires
-//! 3. `render_node_editor()` - displays via egui-snarl with toolbar
+//! 3. `render_node_editor()` - displays via egui-snarl with toolbar and returns hover flag
 //!
 //! # Toolbar
 //!
@@ -51,7 +51,7 @@
 //! - `Comp`, `Project` - data sources
 //! - Called from: timeline widget (as alternate tab)
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::RwLockReadGuard;
 
 use eframe::egui::{Color32, Pos2, Ui};
@@ -61,13 +61,18 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::core::event_bus::BoxedEvent;
-use crate::entities::{Comp, Project};
+use crate::entities::{AttrValue, Comp, Project};
+use egui_snarl::ui::get_selected_nodes;
+use crate::entities::Attrs;
 
 /// Node in the composition graph - just a UUID reference to Comp.
 /// All data (name, type, children) comes from project.media at render time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompNode {
+    /// Layer/instance UUID (unique per placement inside parent)
     pub uuid: Uuid,
+    /// Source comp UUID (used for name and child resolution)
+    pub source_uuid: Uuid,
 }
 
 /// SnarlViewer implementation for rendering CompNode.
@@ -78,15 +83,15 @@ struct CompNodeViewer<'a> {
 }
 
 impl<'a> CompNodeViewer<'a> {
-    fn get_comp(&self, uuid: Uuid) -> Option<Comp> {
-        self.project.media.read().ok()?.get(&uuid).cloned()
+    fn get_comp(&self, source_uuid: Uuid) -> Option<Comp> {
+        self.project.media.read().ok()?.get(&source_uuid).cloned()
     }
 }
 
 #[allow(refining_impl_trait)]
 impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
     fn title(&mut self, node: &CompNode) -> String {
-        self.get_comp(node.uuid)
+        self.get_comp(node.source_uuid)
             .map(|c| c.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string())
     }
@@ -96,7 +101,7 @@ impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
     }
 
     fn inputs(&mut self, node: &CompNode) -> usize {
-        self.get_comp(node.uuid)
+        self.get_comp(node.source_uuid)
             .map(|c| c.children_len())
             .unwrap_or(0)
     }
@@ -143,12 +148,12 @@ impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
         ui: &mut Ui,
         snarl: &mut Snarl<CompNode>,
     ) {
-        let uuid = snarl[node].uuid;
-        let comp = self.get_comp(uuid);
+        let source_uuid = snarl[node].source_uuid;
+        let comp = self.get_comp(source_uuid);
 
         let (icon, color, name) = match comp {
             Some(c) => {
-                let is_output = uuid == self.output_uuid;
+                let is_output = source_uuid == self.output_uuid;
                 let is_file = c.is_file_mode();
                 let name = c.name().to_string();
 
@@ -211,6 +216,10 @@ pub struct NodeEditorState {
     #[serde(skip)]
     pub fit_all_requested: bool,
 
+    /// Flag to trigger fit-selected on next frame
+    #[serde(skip)]
+    pub fit_selected_requested: bool,
+
     /// Flag to trigger re-layout on next frame
     #[serde(skip)]
     pub layout_requested: bool,
@@ -223,6 +232,7 @@ impl NodeEditorState {
             comp_uuid: None,
             needs_rebuild: true,
             fit_all_requested: false,
+            fit_selected_requested: false,
             layout_requested: false,
         }
     }
@@ -279,15 +289,16 @@ impl NodeEditorState {
 
         // Phase 1: Collect all nodes recursively with their depth and children count
         let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
-        let mut visited: HashSet<Uuid> = HashSet::new();
+        let mut ancestors: Vec<Uuid> = Vec::new();
         let mut max_depth = 0;
 
         collect_tree_recursive(
             root_uuid,
+            root_uuid,
             0,
             &media,
             &mut node_info,
-            &mut visited,
+            &mut ancestors,
             &mut max_depth,
         );
 
@@ -302,26 +313,41 @@ impl NodeEditorState {
         let mut depth_slots: HashMap<usize, usize> = HashMap::new();
         let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
 
-        // Create all nodes with layout positions
-        for (&uuid, info) in &node_info {
+        // Create all nodes with layout positions (prefer stored positions)
+        for (_, info) in &node_info {
             let depth = info.depth;
             let slot = *depth_slots.get(&depth).unwrap_or(&0);
             depth_slots.insert(depth, slot + 1);
 
-            // X: rightmost for root (depth=0), leftmost for deepest
-            let x = (max_depth - depth) as f32 * HORIZONTAL_SPACING + 50.0;
-            let y = slot as f32 * VERTICAL_SPACING + 50.0;
+            // Default grid position
+            let default_x = (max_depth - depth) as f32 * HORIZONTAL_SPACING + 50.0;
+            let default_y = slot as f32 * VERTICAL_SPACING + 50.0;
+            let default_pos = Pos2::new(default_x, default_y);
 
-            log::debug!("NodeEditor: creating node {} at ({}, {})", uuid, x, y);
-            let node_id = self.snarl.insert_node(Pos2::new(x, y), CompNode { uuid });
-            uuid_to_node.insert(uuid, node_id);
+            let pos = load_node_pos(comp, info.instance_uuid, default_pos);
+
+            log::debug!(
+                "NodeEditor: creating node {} (src {}) at ({}, {})",
+                info.instance_uuid,
+                info.source_uuid,
+                pos.x,
+                pos.y
+            );
+            let node_id = self.snarl.insert_node(
+                pos,
+                CompNode {
+                    uuid: info.instance_uuid,
+                    source_uuid: info.source_uuid,
+                },
+            );
+            uuid_to_node.insert(info.instance_uuid, node_id);
         }
 
         // Phase 3: Create wires (child output -> parent input)
         for (&parent_uuid, info) in &node_info {
             if let Some(&parent_id) = uuid_to_node.get(&parent_uuid) {
-                for (input_idx, &child_uuid) in info.children.iter().enumerate() {
-                    if let Some(&child_id) = uuid_to_node.get(&child_uuid) {
+                for (input_idx, &(child_instance, _)) in info.children.iter().enumerate() {
+                    if let Some(&child_id) = uuid_to_node.get(&child_instance) {
                         let out_pin = OutPinId {
                             node: child_id,
                             output: 0,
@@ -359,15 +385,16 @@ impl NodeEditorState {
 
         // Collect tree info
         let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
-        let mut visited: HashSet<Uuid> = HashSet::new();
+        let mut ancestors: Vec<Uuid> = Vec::new();
         let mut max_depth = 0;
 
         collect_tree_recursive(
             root_uuid,
+            root_uuid,
             0,
             &media,
             &mut node_info,
-            &mut visited,
+            &mut ancestors,
             &mut max_depth,
         );
 
@@ -375,14 +402,14 @@ impl NodeEditorState {
         let mut new_positions: HashMap<Uuid, Pos2> = HashMap::new();
         let mut depth_slots: HashMap<usize, usize> = HashMap::new();
 
-        for (&uuid, info) in &node_info {
+        for (&instance_uuid, info) in &node_info {
             let depth = info.depth;
             let slot = *depth_slots.get(&depth).unwrap_or(&0);
             depth_slots.insert(depth, slot + 1);
 
             let x = (max_depth - depth) as f32 * HORIZONTAL_SPACING + 50.0;
             let y = slot as f32 * VERTICAL_SPACING + 50.0;
-            new_positions.insert(uuid, Pos2::new(x, y));
+            new_positions.insert(instance_uuid, Pos2::new(x, y));
         }
 
         // Apply new positions using nodes_info_mut (gives &mut Node with pub pos field)
@@ -399,48 +426,151 @@ impl NodeEditorState {
 /// Info collected during tree traversal (only layout-relevant data)
 struct NodeInfo {
     depth: usize,
-    children: Vec<Uuid>,
+    instance_uuid: Uuid,
+    source_uuid: Uuid,
+    children: Vec<(Uuid, Uuid)>, // (instance_uuid, source_uuid)
+}
+
+fn nodes_bounding_box(snarl: &Snarl<CompNode>, nodes: &[NodeId]) -> Option<(Pos2, Pos2)> {
+    let mut min = Pos2::new(f32::INFINITY, f32::INFINITY);
+    let mut max = Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+
+    for node_id in nodes {
+        if let Some(node) = snarl.get_node_info(*node_id) {
+            min.x = min.x.min(node.pos.x);
+            min.y = min.y.min(node.pos.y);
+            max.x = max.x.max(node.pos.x);
+            max.y = max.y.max(node.pos.y);
+        }
+    }
+
+    if min.x.is_finite() && min.y.is_finite() && max.x.is_finite() && max.y.is_finite() {
+        Some((min, max))
+    } else {
+        None
+    }
+}
+
+fn center_nodes(snarl: &mut Snarl<CompNode>, target: Pos2, nodes: &[NodeId]) {
+    if nodes.is_empty() {
+        return;
+    }
+    if let Some((min, max)) = nodes_bounding_box(snarl, nodes) {
+        let center = Pos2::new((min.x + max.x) * 0.5, (min.y + max.y) * 0.5);
+        let delta = target - center;
+        for node_id in nodes {
+            if let Some(node) = snarl.get_node_info_mut(*node_id) {
+                node.pos += delta;
+            }
+        }
+    }
+}
+
+fn load_node_pos(comp: &Comp, instance_uuid: Uuid, default: Pos2) -> Pos2 {
+    let maybe_attr = if instance_uuid == comp.get_uuid() {
+        comp.attrs.get("node_pos")
+    } else {
+        comp.children_attrs_get(&instance_uuid)
+            .and_then(|a| a.get("node_pos"))
+    };
+
+    if let Some(AttrValue::Vec3([x, y, _])) = maybe_attr {
+        Pos2::new(*x, *y)
+    } else {
+        default
+    }
+}
+
+fn set_node_pos(attrs: &mut Attrs, pos: Pos2) -> bool {
+    let new_val = [pos.x, pos.y, 0.0];
+    let mut changed = true;
+    if let Some(AttrValue::Vec3(current)) = attrs.get("node_pos") {
+        let dx = (current[0] - new_val[0]).abs();
+        let dy = (current[1] - new_val[1]).abs();
+        changed = dx > 0.001 || dy > 0.001;
+    }
+    if changed {
+        attrs.set("node_pos", AttrValue::Vec3(new_val));
+        attrs.clear_dirty(); // node_pos is UI-only; avoid cache invalidation
+    }
+    changed
 }
 
 /// Recursively collect all nodes in the composition tree
 fn collect_tree_recursive(
-    uuid: Uuid,
+    instance_uuid: Uuid,
+    source_uuid: Uuid,
     depth: usize,
     media: &RwLockReadGuard<'_, HashMap<Uuid, Comp>>,
     node_info: &mut HashMap<Uuid, NodeInfo>,
-    visited: &mut HashSet<Uuid>,
+    ancestors: &mut Vec<Uuid>,
     max_depth: &mut usize,
 ) {
-    // Cycle detection
-    if visited.contains(&uuid) {
+    // Cycle detection by source path (allows multiple instances of the same comp elsewhere)
+    if ancestors.contains(&source_uuid) {
+        node_info.insert(
+            instance_uuid,
+            NodeInfo {
+                depth,
+                instance_uuid,
+                source_uuid,
+                children: vec![],
+            },
+        );
         return;
     }
-    visited.insert(uuid);
+    ancestors.push(source_uuid);
 
     *max_depth = (*max_depth).max(depth);
 
-    let Some(comp) = media.get(&uuid) else {
+    let Some(comp) = media.get(&source_uuid) else {
         // Unknown comp - add minimal info
-        node_info.insert(uuid, NodeInfo { depth, children: vec![] });
+        node_info.insert(
+            instance_uuid,
+            NodeInfo {
+                depth,
+                instance_uuid,
+                source_uuid,
+                children: vec![],
+            },
+        );
+        ancestors.pop();
         return;
     };
 
     // Collect children UUIDs
-    let mut children: Vec<Uuid> = vec![];
-    for (_, attrs) in comp.get_children() {
+    let mut children: Vec<(Uuid, Uuid)> = vec![];
+    for (layer_uuid, attrs) in comp.get_children() {
         if let Some(source_str) = attrs.get_str("uuid") {
             if let Ok(child_uuid) = Uuid::parse_str(source_str) {
-                children.push(child_uuid);
+                children.push((*layer_uuid, child_uuid));
             }
         }
     }
 
-    node_info.insert(uuid, NodeInfo { depth, children: children.clone() });
+    node_info.insert(
+        instance_uuid,
+        NodeInfo {
+            depth,
+            instance_uuid,
+            source_uuid,
+            children: children.clone(),
+        },
+    );
 
     // Recurse into children
-    for child_uuid in children {
-        collect_tree_recursive(child_uuid, depth + 1, media, node_info, visited, max_depth);
+    for (child_instance, child_source) in children {
+        collect_tree_recursive(
+            child_instance,
+            child_source,
+            depth + 1,
+            media,
+            node_info,
+            ancestors,
+            max_depth,
+        );
     }
+    ancestors.pop();
 }
 
 /// Render node editor widget.
@@ -468,13 +598,35 @@ pub fn render_node_editor(
     state: &mut NodeEditorState,
     project: &Project,
     comp: &Comp,
-    _dispatch: impl FnMut(BoxedEvent),
-) {
+    mut dispatch: impl FnMut(BoxedEvent),
+) -> bool {
+    let widget_id = ui.make_persistent_id("comp_node_editor");
+
     // Sync to current comp (sets needs_rebuild if comp changed)
     state.set_comp(comp.get_uuid());
 
     // Rebuild graph from Comp.children if needed
-    state.rebuild_from_comp(comp, project);
+    if state.needs_rebuild {
+        state.rebuild_from_comp(comp, project);
+    }
+
+    // Handle fit/layout requests from events
+    if state.fit_all_requested {
+        state.fit_all_requested = false;
+        let all_nodes: Vec<NodeId> = state.snarl.node_ids().map(|(id, _)| id).collect();
+        center_nodes(&mut state.snarl, ui.max_rect().center(), &all_nodes);
+    }
+    if state.fit_selected_requested {
+        // Center selected nodes if any, otherwise fallback to all nodes
+        let selected_nodes = get_selected_nodes(widget_id, ui.ctx());
+        if !selected_nodes.is_empty() {
+            center_nodes(&mut state.snarl, ui.max_rect().center(), &selected_nodes);
+        } else {
+            let all_nodes: Vec<NodeId> = state.snarl.node_ids().map(|(id, _)| id).collect();
+            center_nodes(&mut state.snarl, ui.max_rect().center(), &all_nodes);
+        }
+        state.fit_selected_requested = false;
+    }
 
     // Handle layout request
     if state.layout_requested {
@@ -528,7 +680,50 @@ pub fn render_node_editor(
         output_uuid: comp.get_uuid(),
     };
 
-    // Render with default styling
+    // Render with default styling and detect node moves by comparing positions
     let style = SnarlStyle::default();
-    state.snarl.show(&mut viewer, &style, "comp_node_editor", ui);
+    let before_positions: HashMap<NodeId, Pos2> = state
+        .snarl
+        .nodes_pos_ids()
+        .map(|(id, pos, _)| (id, pos))
+        .collect();
+
+    state
+        .snarl
+        .show(&mut viewer, &style, "comp_node_editor", ui);
+
+    // Persist moved nodes via event bus (comp root uses direct attr update)
+    if let Some(comp_uuid) = state.comp_uuid {
+        let mut moved_layers = Vec::new();
+        let mut moved_root = None;
+        for (node_id, pos, node) in state.snarl.nodes_pos_ids() {
+            let was = before_positions.get(&node_id).copied();
+            if was.map(|p| p.distance(pos)).unwrap_or(f32::INFINITY) > 0.01 {
+                if node.uuid == comp_uuid {
+                    moved_root = Some(pos);
+                } else {
+                    moved_layers.push((node.uuid, pos));
+                }
+            }
+        }
+
+        if let Some(pos) = moved_root {
+            project.modify_comp(comp_uuid, |c| {
+                set_node_pos(&mut c.attrs, pos);
+                c.attrs.clear_dirty();
+            });
+        }
+
+        if !moved_layers.is_empty() {
+            // Per-layer positions; send separate events to keep per-node values
+            for (layer_uuid, pos) in moved_layers {
+                dispatch(Box::new(crate::entities::comp_events::SetLayerAttrsEvent {
+                    comp_uuid,
+                    layer_uuids: vec![layer_uuid],
+                    attrs: vec![("node_pos".to_string(), AttrValue::Vec3([pos.x, pos.y, 0.0]))],
+                }));
+            }
+        }
+    }
+    ui.rect_contains_pointer(ui.max_rect())
 }

@@ -14,6 +14,7 @@ use crate::main_events::{handle_app_event, EventResult};
 use crate::core::player::Player;
 use crate::widgets::timeline::TimelineState;
 use crate::widgets::viewport::ViewportState;
+use crate::widgets::node_editor::NodeEditorState;
 
 /// Common shell state shared by all standalone binaries
 pub struct Shell {
@@ -87,6 +88,7 @@ impl Shell {
 
         // Dummy state for unused parameters
         let mut timeline_state = TimelineState::default();
+        let mut node_editor_state = NodeEditorState::new();
         let mut viewport_state = ViewportState::new();
         let mut settings = AppSettings::default();
         let mut show_help = false;
@@ -105,6 +107,7 @@ impl Shell {
                 &mut self.player,
                 &mut self.project,
                 &mut timeline_state,
+                &mut node_editor_state,
                 &mut viewport_state,
                 &mut settings,
                 &mut show_help,
@@ -135,6 +138,7 @@ impl Shell {
         let mut merged = EventResult::default();
         let mut any_handled = false;
 
+        let mut node_editor_state = NodeEditorState::new();
         let mut show_help = false;
         let mut show_playlist = false;
         let mut show_settings = false;
@@ -151,6 +155,7 @@ impl Shell {
                 &mut self.player,
                 &mut self.project,
                 timeline_state,
+                &mut node_editor_state,
                 viewport_state,
                 settings,
                 &mut show_help,

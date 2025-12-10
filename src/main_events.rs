@@ -39,10 +39,11 @@ use crate::entities::Project;
 use crate::core::event_bus::{BoxedEvent, downcast_event};
 use crate::core::player::Player;
 use crate::core::player_events::*;
-use crate::core::project_events::*;
+use crate::widgets::project::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
+use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 
 /// Jump to next/prev layer edge in composition
@@ -167,6 +168,7 @@ pub fn handle_app_event(
     player: &mut Player,
     project: &mut Project,
     timeline_state: &mut crate::widgets::timeline::TimelineState,
+    node_editor_state: &mut crate::widgets::node_editor::NodeEditorState,
     viewport_state: &mut crate::widgets::viewport::ViewportState,
     settings: &mut crate::dialogs::prefs::AppSettings,
     show_help: &mut bool,
@@ -398,6 +400,7 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(&event) {
         player.set_active_comp(Some(e.0), project); // also resets selection
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
+        node_editor_state.set_comp(e.0);
         return Some(result);
     }
     if downcast_event::<ProjectPreviousCompEvent>(&event).is_some() {
@@ -505,6 +508,20 @@ pub fn handle_app_event(
     }
     if downcast_event::<TimelineResetZoomEvent>(&event).is_some() {
         timeline_state.zoom = 1.0;
+        return Some(result);
+    }
+
+    // === Node Editor State ===
+    if downcast_event::<NodeEditorFitAllEvent>(&event).is_some() {
+        node_editor_state.fit_all_requested = true;
+        return Some(result);
+    }
+    if downcast_event::<NodeEditorFitSelectedEvent>(&event).is_some() {
+        node_editor_state.fit_selected_requested = true;
+        return Some(result);
+    }
+    if downcast_event::<NodeEditorLayoutEvent>(&event).is_some() {
+        node_editor_state.layout_requested = true;
         return Some(result);
     }
 
