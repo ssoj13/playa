@@ -54,7 +54,7 @@
 use std::collections::HashMap;
 use std::sync::RwLockReadGuard;
 
-use eframe::egui::{Color32, Pos2, Ui};
+use eframe::egui::{Color32, Pos2, Ui, Vec2, Event};
 use egui_snarl::ui::{PinInfo, SnarlStyle, SnarlViewer};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
@@ -601,6 +601,27 @@ pub fn render_node_editor(
     mut dispatch: impl FnMut(BoxedEvent),
 ) -> bool {
     let widget_id = ui.make_persistent_id("comp_node_editor");
+    let pointer_pos = ui.ctx().pointer_latest_pos();
+    let hover_rect = ui.max_rect();
+    let is_pointer_inside = pointer_pos.map(|p| hover_rect.contains(p)).unwrap_or(false);
+
+    // Interpret plain wheel scroll as zoom (like Ctrl+wheel) when pointer is over node editor.
+    // We convert scroll into a Zoom event for the next frame and zero-out scroll for this frame
+    // to avoid panning.
+    if is_pointer_inside {
+        let (scroll_delta, mods) = ui.ctx().input(|i| (i.raw_scroll_delta, i.modifiers));
+        if scroll_delta != Vec2::ZERO && !mods.ctrl && !mods.command {
+            let speed = 1.0 / 200.0; // matches egui default scroll_zoom_speed
+            let delta_sum = scroll_delta.x + scroll_delta.y;
+            let factor = (speed * delta_sum).exp();
+
+            ui.ctx().input_mut(|i| {
+                i.raw.events.push(Event::Zoom(factor));
+                i.raw_scroll_delta = Vec2::ZERO;
+                i.smooth_scroll_delta = Vec2::ZERO;
+            });
+        }
+    }
 
     // Sync to current comp (sets needs_rebuild if comp changed)
     state.set_comp(comp.get_uuid());
