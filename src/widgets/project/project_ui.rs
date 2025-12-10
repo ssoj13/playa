@@ -49,6 +49,14 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
         {
             actions.send(AddClipsEvent(paths));
         }
+        // Add Folder - pick a directory and scan for media files recursively
+        if ui.button("Add Folder").clicked()
+            && let Some(folder) = rfd::FileDialog::new()
+                .set_title("Add Media Folder")
+                .pick_folder()
+        {
+            actions.send(AddFolderEvent(folder));
+        }
         if ui.button("Add Comp").clicked() {
             actions.send(AddCompEvent {
                 name: "New Comp".to_string(),

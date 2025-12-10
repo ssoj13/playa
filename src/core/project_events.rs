@@ -11,6 +11,10 @@ pub struct AddClipEvent(pub PathBuf);
 #[derive(Clone, Debug)]
 pub struct AddClipsEvent(pub Vec<PathBuf>);
 
+/// Add folder event - scans directory recursively for media files
+#[derive(Clone, Debug)]
+pub struct AddFolderEvent(pub PathBuf);
+
 #[derive(Clone, Debug)]
 pub struct AddCompEvent {
     pub name: String,

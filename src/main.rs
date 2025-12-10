@@ -34,6 +34,7 @@ use playa::core::player::Player;
 use playa::ui;
 use playa::widgets;
 use playa::widgets::ae::AttributesState;
+use playa::widgets::node_editor::{NodeEditorState, render_node_editor};
 use playa::widgets::status::StatusBar;
 use playa::widgets::viewport::{Shaders, ViewportRefreshEvent, ViewportRenderer, ViewportState};
 use playa::core::workers::Workers;
@@ -52,6 +53,7 @@ enum DockTab {
     Timeline,
     Project,
     Attributes,
+    NodeEditor,
 }
 
 /// Main application state
@@ -134,6 +136,8 @@ struct PlayaApp {
     #[serde(skip)]
     project_hovered: bool,
     attributes_state: AttributesState,
+    /// Node editor state (snarl graph for composition visualization)
+    node_editor_state: NodeEditorState,
 }
 
 impl Default for PlayaApp {
@@ -197,6 +201,7 @@ impl Default for PlayaApp {
             timeline_hovered: false,
             project_hovered: false,
             attributes_state: AttributesState::default(),
+            node_editor_state: NodeEditorState::new(),
         }
     }
 }
@@ -867,10 +872,11 @@ impl PlayaApp {
         let mut dock_state = DockState::new(vec![DockTab::Viewport]);
 
         // Always split viewport and timeline vertically
+        // NodeEditor is a tab next to Timeline (same panel, tab switching)
         let [viewport, _timeline] = dock_state.main_surface_mut().split_below(
             NodeIndex::root(),
             0.65,
-            vec![DockTab::Timeline],
+            vec![DockTab::Timeline, DockTab::NodeEditor],
         );
 
         if show_project || show_attributes {
@@ -901,6 +907,31 @@ impl PlayaApp {
         }
 
         dock_state
+    }
+
+    /// Render node editor tab (composition as node graph).
+    ///
+    /// Uses egui-snarl for visual node/wire representation of comp hierarchy.
+    /// Source nodes (children) connect to Output node (current comp).
+    fn render_node_editor_tab(&mut self, ui: &mut egui::Ui) {
+        let Some(comp_uuid) = self.player.active_comp() else {
+            ui.centered_and_justified(|ui| {
+                ui.label("No composition selected");
+            });
+            return;
+        };
+
+        // Get comp reference and render node editor
+        if let Some(comp) = self.project.get_comp(comp_uuid) {
+            let emitter = self.event_bus.emitter();
+            render_node_editor(
+                ui,
+                &mut self.node_editor_state,
+                &self.project,
+                &comp,
+                |evt| emitter.emit_boxed(evt),
+            );
+        }
     }
 
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
@@ -1028,6 +1059,7 @@ impl<'a> TabViewer for DockTabs<'a> {
             DockTab::Timeline => "Timeline".into(),
             DockTab::Project => "Project".into(),
             DockTab::Attributes => "Attributes".into(),
+            DockTab::NodeEditor => "Node Editor".into(),
         }
     }
 
@@ -1037,6 +1069,7 @@ impl<'a> TabViewer for DockTabs<'a> {
             DockTab::Timeline => self.app.render_timeline_tab(ui),
             DockTab::Project => self.app.render_project_tab(ui),
             DockTab::Attributes => self.app.render_attributes_tab(ui),
+            DockTab::NodeEditor => self.app.render_node_editor_tab(ui),
         }
     }
 }

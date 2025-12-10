@@ -70,6 +70,45 @@ fn jump_to_edge(comp: &mut crate::entities::Comp, forward: bool) {
     }
 }
 
+/// Scan folder for image sequences using scanseq.
+/// Returns first frame of each detected sequence for Comp::detect_from_paths.
+fn scan_folder_for_media(root: &std::path::Path) -> Vec<PathBuf> {
+    use scanseq::core::{Scanner, scan_files, VIDEO_EXTS};
+
+    let mut all_paths: Vec<PathBuf> = Vec::new();
+
+    // Use scanseq for image sequences (min_len=5 to filter short sequences)
+    let scanner = Scanner::path(root)
+        .recursive(true)
+        .min_len(5)
+        .scan();
+
+    debug!("scanseq found {} sequences in {:.1}ms",
+        scanner.len(),
+        scanner.result.elapsed_ms
+    );
+
+    // Add first file of each sequence
+    for seq in scanner.iter() {
+        all_paths.push(PathBuf::from(seq.first_file()));
+    }
+
+    // Also scan for video files
+    match scan_files(&[root], true, VIDEO_EXTS) {
+        Ok(videos) => {
+            debug!("scanseq found {} video files", videos.len());
+            all_paths.extend(videos);
+        }
+        Err(e) => {
+            debug!("Failed to scan videos: {}", e);
+        }
+    }
+
+    // Sort for deterministic order
+    all_paths.sort();
+    all_paths
+}
+
 /// Adjust base FPS up or down
 fn adjust_fps_base(player: &mut Player, project: &mut Project, increase: bool) {
     if increase {
@@ -274,6 +313,18 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<AddClipsEvent>(&event) {
         result.load_sequences = Some(e.0.clone());
+        return Some(result);
+    }
+    // AddFolderEvent: scan directory recursively for media files
+    if let Some(e) = downcast_event::<AddFolderEvent>(&event) {
+        debug!("AddFolderEvent: scanning {}", e.0.display());
+        let media_files = scan_folder_for_media(&e.0);
+        if !media_files.is_empty() {
+            debug!("Found {} media files in folder", media_files.len());
+            result.load_sequences = Some(media_files);
+        } else {
+            debug!("No media files found in folder");
+        }
         return Some(result);
     }
     if let Some(e) = downcast_event::<AddCompEvent>(&event) {
