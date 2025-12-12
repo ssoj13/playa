@@ -855,8 +855,7 @@ pub fn handle_app_event(
                 for uuid in &comp.layer_selection {
                     if let Some(attrs) = comp.children_attrs_get(uuid) {
                         let source_uuid = attrs
-                            .get_str("uuid")
-                            .and_then(|s| Uuid::parse_str(s).ok())
+                            .get_uuid("uuid")
                             .unwrap_or(*uuid);
                         let original_start = attrs.get_i32("in").unwrap_or(0);
                         let name = attrs.get_str("name").unwrap_or("?");

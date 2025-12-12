@@ -1113,7 +1113,18 @@ impl eframe::App for PlayaApp {
         if let Some(comp_uuid) = self.player.active_comp() {
             let is_dirty = self.project.get_comp(comp_uuid)
                 .map(|comp| {
-                    comp.attrs.is_dirty() || comp.children.iter().any(|(_, attrs)| attrs.is_dirty())
+                    // Check comp attrs, children attrs, and source comps
+                    if comp.attrs.is_dirty() || comp.children.iter().any(|(_, attrs)| attrs.is_dirty()) {
+                        return true;
+                    }
+                    // Check source comps dirty
+                    let media = self.project.media.read().expect("media lock");
+                    comp.children.iter().any(|(_, attrs)| {
+                        attrs.get_uuid("uuid")
+                            .and_then(|source_uuid| media.get(&source_uuid))
+                            .map(|source_comp| source_comp.attrs.is_dirty())
+                            .unwrap_or(false)
+                    })
                 })
                 .unwrap_or(false);
 
@@ -1122,7 +1133,7 @@ impl eframe::App for PlayaApp {
                 self.viewport_state.request_refresh();
                 // Trigger preload for current position
                 self.enqueue_frame_loads_around_playhead(10);
-                // Clear dirty flags to prevent repeated preload
+                // Clear dirty flags (source comps clear their own on compose)
                 self.project.modify_comp(comp_uuid, |comp| {
                     comp.attrs.clear_dirty();
                     for (_, attrs) in &comp.children {

@@ -705,8 +705,7 @@ impl Comp {
         let attrs = self.children_attrs_get(&child_uuid)?;
 
         // Get source UUID
-        let source_uuid_str = attrs.get_str("uuid")?;
-        let source_uuid = Uuid::parse_str(source_uuid_str).ok()?;
+        let source_uuid = attrs.get_uuid("uuid")?;
 
         // Get source comp to find its start
         let source = project.get_comp(source_uuid)?;
@@ -894,8 +893,7 @@ impl Comp {
             // Collect (child_uuid, source_uuid) pairs without holding lock
             let child_sources: Vec<(Uuid, Uuid)> = self.children.iter()
                 .filter_map(|(child_uuid, attrs)| {
-                    attrs.get_str("uuid")
-                        .and_then(|s| Uuid::parse_str(s).ok())
+                    attrs.get_uuid("uuid")
                         .map(|source_uuid| (*child_uuid, source_uuid))
                 })
                 .collect();
@@ -1436,10 +1434,7 @@ impl Comp {
             );
 
             // Get source UUID from child attrs (child_uuid is now instance UUID)
-            let Some(source_uuid_str) = attrs.get_str("uuid") else {
-                continue;
-            };
-            let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) else {
+            let Some(source_uuid) = attrs.get_uuid("uuid") else {
                 continue;
             };
 
@@ -2317,16 +2312,10 @@ impl Comp {
 
     /// Find all children (instance UUIDs) that reference a specific source UUID
     pub fn find_children_by_source(&self, source_uuid: Uuid) -> Vec<Uuid> {
-        let source_str = source_uuid.to_string();
-        let mut result = Vec::new();
-        for (child_uuid, attrs) in &self.children {
-            if let Some(uuid) = attrs.get_str("uuid") {
-                if uuid == source_str {
-                    result.push(*child_uuid);
-                }
-            }
-        }
-        result
+        self.children.iter()
+            .filter(|(_, attrs)| attrs.get_uuid("uuid") == Some(source_uuid))
+            .map(|(child_uuid, _)| *child_uuid)
+            .collect()
     }
 
 }

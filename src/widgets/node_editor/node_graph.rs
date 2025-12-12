@@ -541,10 +541,8 @@ fn collect_tree_recursive(
     // Collect children UUIDs
     let mut children: Vec<(Uuid, Uuid)> = vec![];
     for (layer_uuid, attrs) in comp.get_children() {
-        if let Some(source_str) = attrs.get_str("uuid") {
-            if let Ok(child_uuid) = Uuid::parse_str(source_str) {
-                children.push((*layer_uuid, child_uuid));
-            }
+        if let Some(child_uuid) = attrs.get_uuid("uuid") {
+            children.push((*layer_uuid, child_uuid));
         }
     }
 

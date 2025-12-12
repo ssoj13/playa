@@ -14,6 +14,7 @@
   - Do not try to simplify things or take shortcuts or remove functionality, we need just the best practices: fast, compact and elegant, powerful code.
   - If you feel task is complex - ask questions, then just split it into sub-tasks, create a plan and follow it updating that plan on each step (setting checkboxes on what's done).
   - Create comprehensive report so you could "survive" after context compactification, re-read it and continue without losing details. Offer pro-grade solutions.
+  - From time to time do a git commits with meaningful explanatory comments into dev branch - important checkpoints.
 
 # Task:
   * нет *_events.rs для ae, node_editor, project. Они должны быть по соотв. подкаталогам. У нас ведь всё унифицировано и дедуплицировано, разложено по полочкам.
@@ -29,6 +30,7 @@
       - Controlled with Comp.get_frame()/set_frame()
     - Attrs:
       - frame
+      - 
 
     - compose()
     - children() 

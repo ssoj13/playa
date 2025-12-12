@@ -357,10 +357,8 @@ pub fn render_outline(
 
                         // Double-click: dive into source comp
                         if response.double_clicked() {
-                            if let Some(source_uuid_str) = attrs.get_str("uuid") {
-                                if let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) {
-                                    dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
-                                }
+                            if let Some(source_uuid) = attrs.get_uuid("uuid") {
+                                dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
                             }
                         }
                     },
@@ -656,8 +654,7 @@ pub fn render_canvas(
                             // Draw visible (trimmed) area with full color on top
                             if let Some(visible_bar_rect) = geom.visible_bar_rect {
                                 // Check if source is file comp (for hatching)
-                                let is_source_file = attrs.get_str("uuid")
-                                    .and_then(|s| Uuid::parse_str(s).ok())
+                                let is_source_file = attrs.get_uuid("uuid")
                                     .and_then(|source_uuid| project.get_comp(source_uuid))
                                     .map(|source| source.is_file_mode())
                                     .unwrap_or(false);
@@ -722,10 +719,8 @@ pub fn render_canvas(
                                 // Double-click: dive into source comp (check on full bar)
                                 if geom.full_bar_rect.contains(hover_pos) {
                                     if ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
-                                        if let Some(source_uuid_str) = attrs.get_str("uuid") {
-                                            if let Ok(source_uuid) = Uuid::parse_str(source_uuid_str) {
-                                                dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
-                                            }
+                                        if let Some(source_uuid) = attrs.get_uuid("uuid") {
+                                            dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
                                         }
                                     }
                                 }
