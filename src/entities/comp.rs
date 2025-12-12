@@ -1867,9 +1867,7 @@ impl Comp {
         if !hier {
             // Only check if potential_child is already a direct child
             return self.children.iter().any(|(_, attrs)| {
-                attrs.get_str(A_UUID)
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .map_or(false, |uuid| uuid == potential_child)
+                attrs.get_uuid(A_UUID) == Some(potential_child)
             });
         }
 
@@ -1889,10 +1887,8 @@ impl Comp {
 
             if let Some(comp) = media.get(&current) {
                 for (_, attrs) in &comp.children {
-                    if let Some(source_str) = attrs.get_str(A_UUID) {
-                        if let Ok(source_uuid) = Uuid::parse_str(source_str) {
-                            stack.push(source_uuid);
-                        }
+                    if let Some(source_uuid) = attrs.get_uuid(A_UUID) {
+                        stack.push(source_uuid);
                     }
                 }
             }
@@ -2410,10 +2406,8 @@ impl<'a> Iterator for CompDfsIter<'a> {
             // Push children in reverse order (first child processed first)
             if !is_leaf && self.max_depth.map_or(true, |m| depth < m) {
                 for (_, attrs) in comp.children.iter().rev() {
-                    if let Some(source_str) = attrs.get_str(A_UUID) {
-                        if let Ok(source_uuid) = Uuid::parse_str(source_str) {
-                            self.stack.push((source_uuid, depth + 1));
-                        }
+                    if let Some(source_uuid) = attrs.get_uuid(A_UUID) {
+                        self.stack.push((source_uuid, depth + 1));
                     }
                 }
             }

@@ -73,9 +73,7 @@ impl Layer {
 
     /// Get source comp UUID
     pub fn source_uuid(&self) -> Option<Uuid> {
-        self.attrs
-            .get_str(A_UUID)
-            .and_then(|s| Uuid::parse_str(s).ok())
+        self.attrs.get_uuid(A_UUID)
     }
 
     /// Get layer name
@@ -280,7 +278,7 @@ mod tests {
 
     fn make_layer(instance_uuid: Uuid, source_uuid: Uuid, in_frame: i32, src_len: i32) -> Layer {
         let mut attrs = Attrs::new();
-        attrs.set(A_UUID, AttrValue::Str(source_uuid.to_string()));
+        attrs.set_uuid(A_UUID, source_uuid);
         attrs.set(A_NAME, AttrValue::Str("Test".to_string()));
         attrs.set(A_IN, AttrValue::Int(in_frame));
         attrs.set(A_SRC_LEN, AttrValue::Int(src_len));
