@@ -360,9 +360,7 @@ impl PlayaApp {
                 if let Some(ref cache) = self.project.global_cache {
                     cache.clear_comp(e.0);
                 }
-                // 3. Invalidate parent comps that reference this one
-                self.project.invalidate_cascade(e.0);
-                // 4. Request viewport refresh
+                // 3. Request viewport refresh
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
             }

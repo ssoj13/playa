@@ -180,9 +180,8 @@ impl Comp {
         // === Playback ===
         attrs.set(A_SPEED, AttrValue::Float(1.0));
 
-        // === Relationships (always present, nil when unused) ===
+        // === Relationships ===
         attrs.set_uuid(A_SOURCE_UUID, Uuid::nil()); // nil = no source
-        attrs.set_uuid(A_PARENT, Uuid::nil()); // nil = root level
 
         // === File mode attrs (always present, empty when unused) ===
         attrs.set(A_FILE_MASK, AttrValue::Str(String::new())); // empty = no file
@@ -245,18 +244,6 @@ impl Comp {
 
     pub fn file_mask(&self) -> Option<String> {
         self.attrs.get_str(A_FILE_MASK).map(|s| s.to_string())
-    }
-
-    pub fn get_parent(&self) -> Option<Uuid> {
-        self.attrs.get_uuid(A_PARENT)
-    }
-
-    pub fn set_parent(&mut self, parent_uuid: Option<Uuid>) {
-        if let Some(uuid) = parent_uuid {
-            self.attrs.set_uuid(A_PARENT, uuid);
-        } else {
-            self.attrs.remove(A_PARENT);
-        }
     }
 
     // NOTE: Methods use underscore prefix (_in/_out) because `in` is a Rust keyword
@@ -1273,10 +1260,20 @@ impl Comp {
             return None; // Frame outside work area - don't compose
         }
 
-        // Check dirty flag on comp OR any child attrs OR cache miss
+        // Check dirty flag on comp, child attrs, source comps, or cache miss
         let any_child_dirty = self.children.iter().any(|(_, attrs)| attrs.is_dirty());
+        let any_source_dirty = {
+            let media = project.media.read().expect("media lock poisoned");
+            self.children.iter().any(|(_, attrs)| {
+                attrs.get_uuid("uuid")
+                    .and_then(|source_uuid| media.get(&source_uuid))
+                    .map(|source_comp| source_comp.attrs.is_dirty())
+                    .unwrap_or(false)
+            })
+        };
         let needs_recompose = self.attrs.is_dirty()
             || any_child_dirty
+            || any_source_dirty
             || project.global_cache.as_ref()
                 .map(|cache| !cache.contains(self.get_uuid(), frame_idx))
                 .unwrap_or(true);
@@ -1662,7 +1659,7 @@ impl Comp {
 
         // Create child attributes
         let mut attrs = Attrs::new();
-        attrs.set("uuid", AttrValue::Str(source_uuid.to_string()));
+        attrs.set_uuid("uuid", source_uuid);
         attrs.set("name", AttrValue::Str(name.to_string()));
         attrs.set("in", AttrValue::Int(start_frame));
         // Source length in source frames (invariant, doesn't change with speed)

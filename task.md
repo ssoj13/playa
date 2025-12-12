@@ -21,9 +21,17 @@
     - Сейчас это не работает.
     - Нужно сделать локальные кнопки F/A для timeline и Node editor и правильно их зароутить на emit events и проверить handlers.
   * Активная композиция не устанавливается в Node editor на восстановлении состояния - показывает 0 nodes пока не дабл-кликнешь на comp в проекте - Node editor должен использовать ту же Project.active_comp что и Timeline. Дедупликация. У нас же установка Active comp посылается сообщением? почему бы node editor не подписаться на него?
-  * Надо переработать систему своёв.
-    - Project.data
-    - 
+  * Надо переработать систему слоёв.
+    - Project.media содержит pub media: Arc<RwLock<HashMap<Uuid, Comp>>> - это основное хранилище композиций Comp, которые используются везде как Uuid - память передаётся по ref а не копируется.
+    - Все остальные конструкции в нашей системе ссылаются друг на друга.
+  * Comp:
+    - Functions:
+      - Controlled with Comp.get_frame()/set_frame()
+    - Attrs:
+      - frame
+
+    - compose()
+    - children() 
 
 
 ## Outputs:

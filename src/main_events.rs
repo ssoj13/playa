@@ -561,37 +561,19 @@ pub fn handle_app_event(
             }
         };
 
-        if add_result.is_ok() {
-            project.modify_comp(e.source_uuid, |child_comp| {
-                if child_comp.get_parent() != Some(e.comp_uuid) {
-                    child_comp.set_parent(Some(e.comp_uuid));
-                }
-            });
-        } else if let Err(err) = add_result {
+        if let Err(err) = add_result {
             log::error!("Failed to add layer: {}", err);
         }
         return Some(result);
     }
     if let Some(e) = downcast_event::<RemoveLayerEvent>(&event) {
-        let child_data = project.get_comp(e.comp_uuid).and_then(|comp| {
-            comp.get_children().get(e.layer_idx).map(|(child_uuid, attrs)| {
-                let source_uuid = attrs.get_str("uuid").and_then(|s| Uuid::parse_str(s).ok());
-                (*child_uuid, source_uuid)
-            })
+        let child_uuid = project.get_comp(e.comp_uuid).and_then(|comp| {
+            comp.get_children().get(e.layer_idx).map(|(child_uuid, _)| *child_uuid)
         });
 
-        if let Some((child_uuid, source_uuid_opt)) = child_data {
-            if let Some(source_uuid) = source_uuid_opt {
-                project.modify_comp(source_uuid, |child_comp| {
-                    if child_comp.get_parent() == Some(e.comp_uuid) {
-                        child_comp.set_parent(None);
-                    }
-                });
-            }
+        if let Some(child_uuid) = child_uuid {
             project.modify_comp(e.comp_uuid, |comp| {
-                if comp.has_child(child_uuid) {
-                    comp.remove_child(child_uuid);
-                }
+                comp.remove_child(child_uuid);
             });
         }
         return Some(result);

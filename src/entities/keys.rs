@@ -60,8 +60,6 @@ pub const A_SPEED: &str = "speed";
 // === Relationships ===
 /// Source comp UUID (for linked comps)
 pub const A_SOURCE_UUID: &str = "source_uuid";
-/// Parent comp UUID
-pub const A_PARENT: &str = "parent";
 /// Children list (Vec<Attrs>)
 pub const A_CHILDREN: &str = "children";
 
