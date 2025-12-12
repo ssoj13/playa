@@ -590,6 +590,7 @@ void main() {
 
             // Check FBO status
             if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
+                gl.delete_texture(output_texture); // Cleanup on error
                 return Err("Framebuffer incomplete".to_string());
             }
 

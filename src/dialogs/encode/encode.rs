@@ -901,6 +901,7 @@ pub fn encode_sequence_from_comp(
 
     // Check for cancellation
     if cancel_flag.load(Ordering::Relaxed) {
+        let _ = octx.write_trailer(); // Finalize partial file for playback
         return Err(EncodeError::Cancelled);
     }
 
@@ -910,6 +911,7 @@ pub fn encode_sequence_from_comp(
         total_frames,
         stage: EncodeStage::Encoding,
     }).is_err() {
+        let _ = octx.write_trailer(); // Finalize partial file for playback
         return Err(EncodeError::Cancelled);
     }
 
@@ -946,6 +948,7 @@ pub fn encode_sequence_from_comp(
     for frame_idx in play_range.0..=play_range.1 {
         // Check for cancellation
         if cancel_flag.load(Ordering::Relaxed) {
+            let _ = octx.write_trailer(); // Finalize partial file for playback
             return Err(EncodeError::Cancelled);
         }
 
@@ -976,6 +979,7 @@ pub fn encode_sequence_from_comp(
 
         // Check for cancellation after crop
         if cancel_flag.load(Ordering::Relaxed) {
+            let _ = octx.write_trailer(); // Finalize partial file for playback
             return Err(EncodeError::Cancelled);
         }
 
@@ -1007,6 +1011,7 @@ pub fn encode_sequence_from_comp(
 
         // Check for cancellation after tonemap
         if cancel_flag.load(Ordering::Relaxed) {
+            let _ = octx.write_trailer(); // Finalize partial file for playback
             return Err(EncodeError::Cancelled);
         }
 
@@ -1092,6 +1097,7 @@ pub fn encode_sequence_from_comp(
 
         // Check for cancellation after sending frame
         if cancel_flag.load(Ordering::Relaxed) {
+            let _ = octx.write_trailer(); // Finalize partial file for playback
             return Err(EncodeError::Cancelled);
         }
 
@@ -1100,6 +1106,7 @@ pub fn encode_sequence_from_comp(
         while encoder.receive_packet(&mut encoded).is_ok() {
             // Check for cancellation during packet receiving
             if cancel_flag.load(Ordering::Relaxed) {
+                let _ = octx.write_trailer(); // Finalize partial file for playback
                 return Err(EncodeError::Cancelled);
             }
             encoded.set_stream(0);
@@ -1150,6 +1157,7 @@ pub fn encode_sequence_from_comp(
             total_frames,
             stage: EncodeStage::Encoding,
         }).is_err() {
+            let _ = octx.write_trailer(); // Finalize partial file for playback
             return Err(EncodeError::Cancelled);
         }
 
@@ -1164,6 +1172,7 @@ pub fn encode_sequence_from_comp(
         total_frames,
         stage: EncodeStage::Flushing,
     }).is_err() {
+        let _ = octx.write_trailer(); // Finalize partial file for playback
         return Err(EncodeError::Cancelled);
     }
 
@@ -1179,6 +1188,7 @@ pub fn encode_sequence_from_comp(
     while encoder.receive_packet(&mut encoded).is_ok() {
         // Check for cancellation during flush
         if cancel_flag.load(Ordering::Relaxed) {
+            let _ = octx.write_trailer(); // Finalize partial file for playback
             return Err(EncodeError::Cancelled);
         }
 

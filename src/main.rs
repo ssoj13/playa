@@ -232,7 +232,7 @@ impl PlayaApp {
                 if comps.is_empty() {
                     let error_msg = "No valid sequences detected".to_string();
                     warn!("{}", error_msg);
-                    self.error_msg = Some(error_msg.clone());
+                    // Don't set self.error_msg here - caller handles Err display
                     return Err(error_msg);
                 }
 
@@ -268,7 +268,7 @@ impl PlayaApp {
             Err(e) => {
                 let error_msg = format!("Failed to load sequences: {}", e);
                 warn!("{}", error_msg);
-                self.error_msg = Some(error_msg.clone());
+                // Don't set self.error_msg here - caller handles Err display
                 Err(error_msg)
             }
         }

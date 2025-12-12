@@ -129,9 +129,10 @@ impl Player {
         self.attrs.get_float_or("fps_base", 24.0)
     }
 
-    /// Set base FPS
+    /// Set base FPS (clamped to valid range 0.001..=960.0)
     pub fn set_fps_base(&mut self, fps: f32) {
-        self.attrs.set("fps_base", AttrValue::Float(fps));
+        let clamped = fps.clamp(0.001, 960.0);
+        self.attrs.set("fps_base", AttrValue::Float(clamped));
     }
 
     /// Get playback FPS
@@ -139,9 +140,10 @@ impl Player {
         self.attrs.get_float_or("fps_play", 24.0)
     }
 
-    /// Set playback FPS
+    /// Set playback FPS (clamped to valid range 0.001..=960.0)
     pub fn set_fps_play(&mut self, fps: f32) {
-        self.attrs.set("fps_play", AttrValue::Float(fps));
+        let clamped = fps.clamp(0.001, 960.0);
+        self.attrs.set("fps_play", AttrValue::Float(clamped));
     }
 
     /// Check if loop is enabled
