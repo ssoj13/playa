@@ -7,7 +7,6 @@ pub mod event_bus;
 pub mod global_cache;
 pub mod player;
 pub mod player_events;
-pub mod project_events;
 pub mod workers;
 
 // Re-exports for convenience

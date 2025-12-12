@@ -16,11 +16,14 @@
   - Create comprehensive report so you could "survive" after context compactification, re-read it and continue without losing details. Offer pro-grade solutions.
 
 # Task:
-  1. нет *_events.rs для ae, node_editor, project. Они должны быть по соотв. подкаталогам. У нас ведь всё унифицировано и дедуплицировано, разложено по полочкам.
-  2. кнопки F и A похоже глобальные и работают на таймлайн даже если нажаты в node editor. И там и там они должны делать Fit All / Fit Selected, Но по-разному. Timeline делает это по времени, а Node editor - по выделенным или всем нодам, зумится на них.
+  * нет *_events.rs для ae, node_editor, project. Они должны быть по соотв. подкаталогам. У нас ведь всё унифицировано и дедуплицировано, разложено по полочкам.
+  * кнопки F и A похоже глобальные и работают на таймлайн даже если нажаты в node editor. И там и там они должны делать Fit All / Fit Selected, Но по-разному. Timeline делает это по времени, а Node editor - по выделенным или всем нодам, зумится на них.
     - Сейчас это не работает.
     - Нужно сделать локальные кнопки F/A для timeline и Node editor и правильно их зароутить на emit events и проверить handlers.
-  3. Активная композиция не устанавливается в Node editor на восстановлении состояния - показывает 0 nodes пока не дабл-кликнешь на comp в проекте - Node editor должен использовать ту же Project.active_comp что и Timeline. Дедупликация. У нас же установка Active comp посылается сообщением? почему бы node editor не подписаться на него?
+  * Активная композиция не устанавливается в Node editor на восстановлении состояния - показывает 0 nodes пока не дабл-кликнешь на comp в проекте - Node editor должен использовать ту же Project.active_comp что и Timeline. Дедупликация. У нас же установка Active comp посылается сообщением? почему бы node editor не подписаться на него?
+  * Надо переработать систему своёв.
+    - Project.data
+    - 
 
 
 ## Outputs:
