@@ -352,7 +352,7 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<RemoveMediaEvent>(&event) {
         let uuid = e.0;
         let was_active = player.active_comp() == Some(uuid);
-        project.remove_media_with_cleanup(uuid);
+        project.del_comp(uuid);
         if was_active {
             let first = project.comps_order().first().cloned();
             player.set_active_comp(first, project);
@@ -363,7 +363,7 @@ pub fn handle_app_event(
         let selection: Vec<Uuid> = project.selection();
         let active = player.active_comp();
         for uuid in selection {
-            project.remove_media_with_cleanup(uuid);
+            project.del_comp(uuid);
         }
         // Fix active if deleted
         if let Some(a) = active {

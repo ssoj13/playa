@@ -398,24 +398,6 @@ impl Project {
         format!("{}_{}", base, max_num + 1)
     }
 
-    /// Remove media and clean up all references to it in other comps
-    pub fn remove_media_with_cleanup(&mut self, uuid: Uuid) {
-        // Remove references from other comps (layers using this media as source)
-        {
-            let mut media = self.media.write().expect("media lock poisoned");
-            for (_comp_uuid, comp) in media.iter_mut() {
-                let children_to_remove = comp.find_children_by_source(uuid);
-                for child_uuid in children_to_remove {
-                    comp.remove_child(child_uuid);
-                }
-            }
-        }
-        // Remove the media itself
-        self.remove_media(uuid);
-        // Fix selection
-        self.retain_selection(|u| *u != uuid);
-    }
-
     /// Set CacheManager for project and all existing comps (call after deserialization)
     pub fn set_cache_manager(&mut self, manager: Arc<CacheManager>) {
         let media = self.media.read().expect("media lock poisoned");
@@ -438,23 +420,36 @@ impl Project {
     }
 
     /// Remove media (clip or comp) by UUID.
-    /// Automatically clears cached frames and cancels pending worker tasks.
-    pub fn remove_media(&mut self, uuid: Uuid) {
-        // 1. Increment epoch to cancel pending worker tasks for this media
-        // Why: Workers may still have tasks for this UUID; let them skip silently
+    /// Clears cache, cancels workers, removes references from other comps, fixes selection.
+    pub fn del_comp(&mut self, uuid: Uuid) {
+        // 1. Increment epoch to cancel pending worker tasks
         if let Some(ref manager) = self.cache_manager {
             manager.increment_epoch();
         }
 
-        // 2. Clear cached frames for this comp
+        // 2. Clear cached frames
         if let Some(ref cache) = self.global_cache {
             cache.clear_comp(uuid);
             log::debug!("Cleared cache for removed comp: {}", uuid);
         }
 
-        // 3. Remove from media pool and order
+        // 3. Remove references from other comps (layers using this media as source)
+        {
+            let mut media = self.media.write().expect("media lock poisoned");
+            for (_comp_uuid, comp) in media.iter_mut() {
+                let children_to_remove = comp.find_children_by_source(uuid);
+                for child_uuid in children_to_remove {
+                    comp.remove_child(child_uuid);
+                }
+            }
+        }
+
+        // 4. Remove from media pool and order
         self.media.write().expect("media lock poisoned").remove(&uuid);
         self.retain_comps_order(|u| *u != uuid);
+
+        // 5. Fix selection
+        self.retain_selection(|u| *u != uuid);
     }
 
     /// Cascade invalidation: mark all parent comps as dirty
