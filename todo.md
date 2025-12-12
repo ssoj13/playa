@@ -154,11 +154,11 @@ for item in project.iter_node(root, 1) { }    // direct children only
 ## Migration Steps
 
 ### Step 1: Create new files
-- [ ] `src/entities/node.rs` - Node trait + ComputeContext
-- [ ] `src/entities/file_node.rs` - FileNode struct + impl
-- [ ] `src/entities/comp_node.rs` - CompNode + Layer structs + impl
-- [ ] `src/entities/node_kind.rs` - NodeKind enum + impl Node
-- [ ] Update `src/entities/mod.rs` - export new modules
+- [x] `src/entities/node.rs` - Node trait + ComputeContext
+- [x] `src/entities/file_node.rs` - FileNode struct + impl
+- [x] `src/entities/comp_node.rs` - CompNode + Layer structs + impl
+- [x] `src/entities/node_kind.rs` - NodeKind enum + impl Node
+- [x] Update `src/entities/mod.rs` - export new modules
 
 ### Step 2: Migrate logic from Comp
 - [ ] `Comp::load_file_frame()` -> `FileNode::compute()`

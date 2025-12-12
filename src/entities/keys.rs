@@ -79,3 +79,7 @@ pub const A_WIDTH: &str = "width";
 /// Height in pixels (0 = auto-detect)
 pub const A_HEIGHT: &str = "height";
 
+// === Layer attributes ===
+/// Source length in frames (invariant, doesn't change with speed)
+pub const A_SRC_LEN: &str = "src_len";
+

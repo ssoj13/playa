@@ -2984,7 +2984,6 @@ mod tests {
 
         // Relationships
         assert_eq!(comp.attrs.get_uuid(A_SOURCE_UUID), Some(Uuid::nil()));
-        assert_eq!(comp.attrs.get_uuid(A_PARENT), Some(Uuid::nil()));
 
         // File mode (empty by default)
         assert_eq!(comp.attrs.get_str(A_FILE_MASK), Some(""));

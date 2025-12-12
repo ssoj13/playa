@@ -452,6 +452,100 @@ impl Project {
         self.retain_selection(|u| *u != uuid);
     }
 
+    // === Node iteration ===
+
+    /// Iterate node tree depth-first starting from root.
+    /// 
+    /// # Arguments
+    /// * `root` - Starting node UUID
+    /// * `depth` - Max depth to traverse (-1 = unlimited, 0 = root only, 1 = direct children, etc.)
+    /// 
+    /// # Returns
+    /// Iterator yielding NodeIterItem with uuid, depth, and is_leaf flag
+    pub fn iter_node(&self, root: Uuid, depth: i32) -> NodeIter<'_> {
+        NodeIter::new(self, root, depth)
+    }
+
+    /// Get all descendant UUIDs of a node (including the node itself)
+    pub fn descendants(&self, root: Uuid) -> Vec<Uuid> {
+        self.iter_node(root, -1).map(|item| item.uuid).collect()
+    }
+
+    /// Check if ancestor contains descendant (directly or indirectly)
+    pub fn is_ancestor(&self, ancestor: Uuid, descendant: Uuid) -> bool {
+        if ancestor == descendant {
+            return true;
+        }
+        self.iter_node(ancestor, -1)
+            .skip(1) // Skip root itself
+            .any(|item| item.uuid == descendant)
+    }
+}
+
+/// Item yielded by NodeIter
+#[derive(Debug, Clone)]
+pub struct NodeIterItem {
+    /// Node UUID
+    pub uuid: Uuid,
+    /// Depth from root (0 = root)
+    pub depth: i32,
+    /// True if node has no children
+    pub is_leaf: bool,
+}
+
+/// Depth-first iterator over node tree
+pub struct NodeIter<'a> {
+    project: &'a Project,
+    stack: Vec<(Uuid, i32)>, // (uuid, current_depth)
+    max_depth: i32,
+}
+
+impl<'a> NodeIter<'a> {
+    fn new(project: &'a Project, root: Uuid, max_depth: i32) -> Self {
+        Self {
+            project,
+            stack: vec![(root, 0)],
+            max_depth,
+        }
+    }
+}
+
+impl<'a> Iterator for NodeIter<'a> {
+    type Item = NodeIterItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (uuid, depth) = self.stack.pop()?;
+
+        // Get children from media pool
+        let children: Vec<Uuid> = {
+            let media = self.project.media.read().expect("media lock poisoned");
+            media.get(&uuid)
+                .map(|comp| {
+                    comp.get_children()
+                        .iter()
+                        .filter_map(|(_, attrs)| attrs.get_uuid("uuid"))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        let is_leaf = children.is_empty();
+
+        // Push children to stack if within depth limit
+        // depth=-1 means unlimited
+        if self.max_depth < 0 || depth < self.max_depth {
+            // Push in reverse order so first child is processed first
+            for child_uuid in children.into_iter().rev() {
+                self.stack.push((child_uuid, depth + 1));
+            }
+        }
+
+        Some(NodeIterItem {
+            uuid,
+            depth,
+            is_leaf,
+        })
+    }
 }
 
 // Serde helper for Arc<RwLock<HashMap<Uuid, Comp>>>
@@ -475,5 +569,69 @@ mod arc_rwlock_hashmap {
     {
         let map = HashMap::<Uuid, Comp>::deserialize(deserializer)?;
         Ok(Arc::new(RwLock::new(map)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::cache_man::CacheManager;
+
+    fn test_project() -> Project {
+        let cache_manager = Arc::new(CacheManager::new(0.75, 2.0));
+        Project::new(cache_manager)
+    }
+
+    #[test]
+    fn test_iter_node_empty() {
+        let project = test_project();
+        let fake_uuid = Uuid::new_v4();
+        
+        // Iterating non-existent node returns just the root (with is_leaf=true)
+        let items: Vec<_> = project.iter_node(fake_uuid, -1).collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].uuid, fake_uuid);
+        assert_eq!(items[0].depth, 0);
+        assert!(items[0].is_leaf);
+    }
+
+    #[test]
+    fn test_iter_node_depth_limit() {
+        let project = test_project();
+        let root = Uuid::new_v4();
+        
+        // depth=0 returns only root
+        let items: Vec<_> = project.iter_node(root, 0).collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].depth, 0);
+    }
+
+    #[test]
+    fn test_descendants() {
+        let project = test_project();
+        let root = Uuid::new_v4();
+        
+        let desc = project.descendants(root);
+        assert_eq!(desc.len(), 1);
+        assert_eq!(desc[0], root);
+    }
+
+    #[test]
+    fn test_is_ancestor_self() {
+        let project = test_project();
+        let uuid = Uuid::new_v4();
+        
+        // Node is ancestor of itself
+        assert!(project.is_ancestor(uuid, uuid));
+    }
+
+    #[test]
+    fn test_is_ancestor_different() {
+        let project = test_project();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        
+        // Unrelated nodes are not ancestors
+        assert!(!project.is_ancestor(a, b));
     }
 }

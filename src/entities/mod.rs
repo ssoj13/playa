@@ -27,4 +27,4 @@ pub use frame::{Frame, FrameStatus};
 pub use layer::{Layer, Track};
 pub use node::Node;
 pub use node_kind::NodeKind;
-pub use project::Project;
+pub use project::{Project, NodeIter, NodeIterItem};
