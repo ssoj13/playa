@@ -1886,7 +1886,7 @@ impl Comp {
             }
 
             if let Some(comp) = media.get(&current) {
-                for (_, attrs) in &comp.children {
+                for (_, attrs) in &comp.layers {
                     if let Some(source_uuid) = attrs.get_uuid(A_UUID) {
                         stack.push(source_uuid);
                     }
@@ -2401,11 +2401,11 @@ impl<'a> Iterator for CompDfsIter<'a> {
             }
 
             let comp = self.media.get(&uuid)?;
-            let is_leaf = comp.is_file_mode() || comp.children.is_empty();
+            let is_leaf = comp.is_file_mode() || comp.layers.is_empty();
 
             // Push children in reverse order (first child processed first)
             if !is_leaf && self.max_depth.map_or(true, |m| depth < m) {
-                for (_, attrs) in comp.children.iter().rev() {
+                for (_, attrs) in comp.layers.iter().rev() {
                     if let Some(source_uuid) = attrs.get_uuid(A_UUID) {
                         self.stack.push((source_uuid, depth + 1));
                     }
@@ -2801,13 +2801,13 @@ mod tests {
         for (idx, uuid) in sources.iter().enumerate() {
             comp.add_child_layer(*uuid, &format!("Src{}", idx), 0, 5, None, (100, 100)).unwrap();
             // Set opacity based on order
-            let child_uuid = comp.children.last().unwrap().0;
+            let child_uuid = comp.layers.last().unwrap().0;
             let opacity = match idx {
                 0 => 1.0,
                 1 => 0.5,
                 _ => 0.3,
             };
-            if let Some(attrs) = comp.children_attrs_get_mut(&child_uuid) {
+            if let Some(attrs) = comp.layers_attrs_get_mut(&child_uuid) {
                 attrs.set("opacity", AttrValue::Float(opacity));
             }
         }
@@ -2867,7 +2867,7 @@ mod tests {
     fn test_comp2local_basic() {
         let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
         let (child_uuid, child_attrs) = make_child_attrs_with_uuid(20, 80);
-        comp.children.push((child_uuid, child_attrs));
+        comp.layers.push((child_uuid, child_attrs));
 
         // comp_frame=50, child.in=20, speed=1.0
         // local = (50 - 20) * 1.0 = 30
@@ -2881,7 +2881,7 @@ mod tests {
         let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
         let (child_uuid, mut child_attrs) = make_child_attrs_with_uuid(20, 80);
         child_attrs.set(A_SPEED, AttrValue::Float(2.0));
-        comp.children.push((child_uuid, child_attrs));
+        comp.layers.push((child_uuid, child_attrs));
 
         // comp_frame=50, child.in=20, speed=2.0 (plays 2x faster)
         // local = (50 - 20) * 2.0 = 60
@@ -2892,7 +2892,7 @@ mod tests {
     fn test_local2comp_basic() {
         let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
         let (child_uuid, child_attrs) = make_child_attrs_with_uuid(20, 80);
-        comp.children.push((child_uuid, child_attrs));
+        comp.layers.push((child_uuid, child_attrs));
 
         // local_frame=30, child.in=20, speed=1.0
         // comp = 20 + 30 / 1.0 = 50
@@ -2904,7 +2904,7 @@ mod tests {
         let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
         let (child_uuid, mut child_attrs) = make_child_attrs_with_uuid(20, 80);
         child_attrs.set(A_SPEED, AttrValue::Float(2.0));
-        comp.children.push((child_uuid, child_attrs));
+        comp.layers.push((child_uuid, child_attrs));
 
         // local_frame=60, child.in=20, speed=2.0
         // comp = 20 + 60 / 2.0 = 50
@@ -2916,7 +2916,7 @@ mod tests {
         let mut comp = Comp::new_comp("Test", 0, 100, 24.0);
         let (child_uuid, child_attrs) = make_child_attrs_with_uuid(10, 90);
         // Use speed=1.0 for exact roundtrip (non-integer speeds have rounding errors)
-        comp.children.push((child_uuid, child_attrs));
+        comp.layers.push((child_uuid, child_attrs));
 
         for comp_frame in [10, 25, 50, 75, 90] {
             let local = comp.comp2local(child_uuid, comp_frame).unwrap();
@@ -2937,7 +2937,7 @@ mod tests {
     fn test_negative_frames() {
         let mut comp = Comp::new_comp("Test", -50, 50, 24.0);
         let (child_uuid, child_attrs) = make_child_attrs_with_uuid(-20, 30);
-        comp.children.push((child_uuid, child_attrs));
+        comp.layers.push((child_uuid, child_attrs));
 
         // child.in=-20, comp_frame=0 => local = (0 - (-20)) * 1.0 = 20
         assert_eq!(comp.comp2local(child_uuid, 0), Some(20));

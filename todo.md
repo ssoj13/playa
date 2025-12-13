@@ -161,11 +161,11 @@ for item in project.iter_node(root, 1) { }    // direct children only
 - [x] Update `src/entities/mod.rs` - export new modules
 
 ### Step 2: Migrate logic from Comp
-- [ ] `Comp::load_file_frame()` -> `FileNode::compute()`
-- [ ] `Comp::compose()` -> `CompNode::compute()`
-- [ ] `Comp::children` -> `CompNode::layers`
-- [ ] `Comp::get_frame()` routing logic -> `NodeKind::compute()`
-- [ ] Dirty tracking: `is_dirty()`, `mark_dirty()`, `clear_dirty()`
+- [x] `Comp::load_file_frame()` -> `FileNode::compute()`
+- [x] `Comp::compose()` -> `CompNode::compute()`
+- [x] `Comp::children` -> `CompNode::layers`
+- [x] `Comp::get_frame()` routing logic -> `NodeKind::compute()`
+- [x] Dirty tracking: `is_dirty()`, `mark_dirty()`, `clear_dirty()`
 
 ### Step 3: Update Project
 - [ ] Change `media: HashMap<Uuid, NodeKind>`
@@ -173,7 +173,9 @@ for item in project.iter_node(root, 1) { }    // direct children only
 - [ ] Update `add_comp()` -> `add_node()`
 - [ ] Update `del_comp()` -> `del_node()`
 - [ ] Update `modify_comp()` -> `modify_node()`
-- [ ] Add `iter_node(root, depth)` method
+- [x] Add `iter_node(root, depth)` method
+- [x] Add `descendants(root)` helper
+- [x] Add `is_ancestor(a, b)` helper
 - [ ] Remove old `CompIterator`
 
 ### Step 4: Update all Comp usages

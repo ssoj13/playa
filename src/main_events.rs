@@ -595,10 +595,10 @@ pub fn handle_app_event(
         project.modify_comp(e.comp_uuid, |comp| {
             let children = comp.get_children();
             if e.from_idx != e.to_idx && e.from_idx < children.len() && e.to_idx < children.len() {
-                let mut reordered = comp.children.clone();
+                let mut reordered = comp.layers.clone();
                 let child_uuid = reordered.remove(e.from_idx);
                 reordered.insert(e.to_idx, child_uuid);
-                comp.children = reordered;
+                comp.layers = reordered;
                 comp.attrs.mark_dirty();
             }
         });
@@ -607,15 +607,13 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
-            if comp.is_multi_selected(dragged_uuid) {
-                let dragged_in = comp.child_in(dragged_uuid);
-                let delta = e.new_start - dragged_in;
-                let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
-                let _ = comp.move_layers(&selection_indices, delta, Some(e.new_idx));
+            let dragged_in = comp.child_in(dragged_uuid).unwrap_or(0);
+            let delta = e.new_start - dragged_in;
+            if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
+                let selection = comp.layer_selection.clone();
+                comp.move_layers(&selection, delta);
             } else {
-                let dragged_in = comp.child_in(dragged_uuid);
-                let delta = e.new_start - dragged_in;
-                let _ = comp.move_layers(&[e.layer_idx], delta, Some(e.new_idx));
+                comp.move_layers(&[dragged_uuid], delta);
             }
         });
         return Some(result);
@@ -623,17 +621,13 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SetLayerPlayStartEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
-            if comp.is_multi_selected(dragged_uuid) {
-                let dragged_ps = comp.child_start(dragged_uuid);
-                let delta = e.new_play_start - dragged_ps;
-                let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
-                let _ = comp.trim_layers(&selection_indices, delta, true);
+            let dragged_ps = comp.child_start(dragged_uuid).unwrap_or(0);
+            let delta = e.new_play_start - dragged_ps;
+            if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
+                let selection = comp.layer_selection.clone();
+                comp.trim_layers(&selection, "in", delta);
             } else {
-                let current = comp.children.get(e.layer_idx)
-                    .map(|(_u, attrs)| attrs.layer_start())
-                    .unwrap_or(0);
-                let delta = e.new_play_start - current;
-                let _ = comp.trim_layers(&[e.layer_idx], delta, true);
+                comp.trim_layers(&[dragged_uuid], "in", delta);
             }
         });
         return Some(result);
@@ -641,17 +635,13 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SetLayerPlayEndEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
-            if comp.is_multi_selected(dragged_uuid) {
-                let dragged_pe = comp.child_end(dragged_uuid);
-                let delta = e.new_play_end - dragged_pe;
-                let selection_indices = comp.uuids_to_indices(&comp.layer_selection);
-                let _ = comp.trim_layers(&selection_indices, delta, false);
+            let dragged_pe = comp.child_end(dragged_uuid).unwrap_or(0);
+            let delta = e.new_play_end - dragged_pe;
+            if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
+                let selection = comp.layer_selection.clone();
+                comp.trim_layers(&selection, "out", delta);
             } else {
-                let current = comp.children.get(e.layer_idx)
-                    .map(|(_u, attrs)| attrs.layer_end())
-                    .unwrap_or(0);
-                let delta = e.new_play_end - current;
-                let _ = comp.trim_layers(&[e.layer_idx], delta, false);
+                comp.trim_layers(&[dragged_uuid], "out", delta);
             }
         });
         return Some(result);
@@ -663,7 +653,7 @@ pub fn handle_app_event(
             if let Some(uuid) = comp.idx_to_uuid(e.layer_idx) {
                 // Use set_child_attrs (not direct attrs.set) to emit AttrsChangedEvent
                 // which triggers cache invalidation via event bus
-                comp.set_child_attrs(&uuid, &[
+                comp.set_child_attrs(uuid, vec![
                     ("in", AttrValue::Int(e.new_in)),
                     ("trim_in", AttrValue::Int(e.new_trim_in)),
                     ("trim_out", AttrValue::Int(e.new_trim_out)),
@@ -681,11 +671,11 @@ pub fn handle_app_event(
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
             for layer_uuid in comp.layer_selection.clone() {
-                if let Some((_uuid, attrs)) = comp.children.iter_mut().find(|(u, _)| *u == layer_uuid) {
-                    let old_trim_in = attrs.get_i32_or_zero("trim_in");
-                    let old_trim_out = attrs.get_i32_or_zero("trim_out");
-                    attrs.set("trim_in", AttrValue::Int(0));
-                    attrs.set("trim_out", AttrValue::Int(0));
+                if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                    let old_trim_in = layer.attrs.get_i32_or_zero("trim_in");
+                    let old_trim_out = layer.attrs.get_i32_or_zero("trim_out");
+                    layer.attrs.set("trim_in", AttrValue::Int(0));
+                    layer.attrs.set("trim_out", AttrValue::Int(0));
                     log::debug!(
                         "[RESET TRIMS] layer {} -> trim_in: {} -> 0, trim_out: {} -> 0",
                         layer_uuid, old_trim_in, old_trim_out
@@ -703,7 +693,7 @@ pub fn handle_app_event(
             use crate::entities::AttrValue;
             // Apply to all targeted layers (multi-selection support)
             for layer_uuid in &e.layer_uuids {
-                comp.set_child_attrs(layer_uuid, &[
+                comp.set_child_attrs(*layer_uuid, vec![
                     ("visible", AttrValue::Bool(e.visible)),
                     ("opacity", AttrValue::Float(e.opacity)),
                     ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
@@ -721,7 +711,7 @@ pub fn handle_app_event(
                 .map(|(k, v)| (k.as_str(), v.clone()))
                 .collect();
             for layer_uuid in &e.layer_uuids {
-                comp.set_child_attrs(layer_uuid, &values);
+                comp.set_child_attrs(*layer_uuid, values.clone());
             }
         });
         return Some(result);
@@ -733,9 +723,9 @@ pub fn handle_app_event(
             for layer_uuid in selected {
                 let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
                 let (play_start, _) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
-                    (comp.child_start(layer_uuid), comp.child_end(layer_uuid))
+                    (comp.child_start(layer_uuid).unwrap_or(0), comp.child_end(layer_uuid).unwrap_or(0))
                 });
-                let layer_in = comp.child_in(layer_uuid);
+                let layer_in = comp.child_in(layer_uuid).unwrap_or(0);
                 let delta = current_frame - play_start;
                 let _ = comp.move_child(layer_idx, layer_in + delta);
             }
@@ -749,9 +739,9 @@ pub fn handle_app_event(
             for layer_uuid in selected {
                 let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
                 let (_, play_end) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
-                    (comp.child_start(layer_uuid), comp.child_end(layer_uuid))
+                    (comp.child_start(layer_uuid).unwrap_or(0), comp.child_end(layer_uuid).unwrap_or(0))
                 });
-                let layer_in = comp.child_in(layer_uuid);
+                let layer_in = comp.child_in(layer_uuid).unwrap_or(0);
                 let delta = current_frame - play_end;
                 let _ = comp.move_child(layer_idx, layer_in + delta);
             }
@@ -791,15 +781,15 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<DuplicateLayersEvent>(&event) {
         debug!("DuplicateLayersEvent: comp={}", e.comp_uuid);
         // Duplicate selected layers, insert copies above originals
-        let layers_to_dup: Vec<(Uuid, crate::entities::Attrs, i32)> = project
+        // Collect (layer_uuid, source_uuid, attrs_clone)
+        let layers_to_dup: Vec<(Uuid, Uuid, crate::entities::Attrs)> = project
             .get_comp(e.comp_uuid)
             .map(|comp| {
                 comp.layer_selection
                     .iter()
                     .filter_map(|uuid| {
-                        comp.children_attrs_get(uuid).map(|attrs| {
-                            let start = attrs.get_i32("in").unwrap_or(0);
-                            (*uuid, attrs.clone(), start)
+                        comp.get_layer(*uuid).map(|layer| {
+                            (*uuid, layer.source_uuid, layer.attrs.clone())
                         })
                     })
                     .collect()
@@ -813,7 +803,7 @@ pub fn handle_app_event(
             // Generate names before taking write lock
             let names: Vec<String> = layers_to_dup
                 .iter()
-                .map(|(_, attrs, _)| {
+                .map(|(_, _, attrs)| {
                     let src_name = attrs.get_str("name").unwrap_or("layer");
                     project.gen_name(src_name)
                 })
@@ -826,14 +816,19 @@ pub fn handle_app_event(
                 // Clear selection - will select only new layers
                 comp.layer_selection.clear();
 
-                for ((src_uuid, mut attrs, _start), new_name) in layers_to_dup.into_iter().zip(names) {
+                for ((orig_uuid, source_uuid, mut attrs), new_name) in layers_to_dup.into_iter().zip(names) {
                     // Find insert position (above original)
-                    let insert_idx = comp.uuid_to_idx(src_uuid).unwrap_or(0);
+                    let insert_idx = comp.uuid_to_idx(orig_uuid).unwrap_or(0);
                     // Update attrs with new name
                     attrs.set("name", crate::entities::AttrValue::Str(new_name.clone()));
-                    // Insert new layer
-                    let new_uuid = Uuid::new_v4();
-                    comp.children.insert(insert_idx, (new_uuid, attrs));
+                    // Create new Layer
+                    let new_layer = crate::entities::comp_node::Layer {
+                        uuid: Uuid::new_v4(),
+                        source_uuid,
+                        attrs,
+                    };
+                    let new_uuid = new_layer.uuid;
+                    comp.layers.insert(insert_idx, new_layer);
                     new_uuids.push(new_uuid);
                     debug!("  Duplicated -> {} at idx {}", new_name, insert_idx);
                 }
@@ -853,7 +848,7 @@ pub fn handle_app_event(
             } else {
                 let mut clipboard_items: Vec<crate::widgets::timeline::ClipboardLayer> = Vec::new();
                 for uuid in &comp.layer_selection {
-                    if let Some(attrs) = comp.children_attrs_get(uuid) {
+                    if let Some(attrs) = comp.layers_attrs_get(uuid) {
                         let source_uuid = attrs
                             .get_uuid("uuid")
                             .unwrap_or(*uuid);
@@ -913,9 +908,14 @@ pub fn handle_app_event(
                     let new_out = old_out + offset;
                     attrs.set("in", crate::entities::AttrValue::Int(new_in));
                     attrs.set("out", crate::entities::AttrValue::Int(new_out));
-                    // Insert at tracked position (maintains order)
-                    let new_uuid = Uuid::new_v4();
-                    comp.children.insert(insert_idx, (new_uuid, attrs));
+                    // Create and insert new Layer at tracked position
+                    let new_layer = crate::entities::comp_node::Layer {
+                        uuid: Uuid::new_v4(),
+                        source_uuid: item.source_uuid,
+                        attrs,
+                    };
+                    let new_uuid = new_layer.uuid;
+                    comp.layers.insert(insert_idx, new_layer);
                     insert_idx += 1; // Next layer goes after this one
                     // Select pasted layer
                     comp.layer_selection.push(new_uuid);
@@ -930,10 +930,10 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SelectAllLayersEvent>(&event) {
         debug!("SelectAllLayersEvent: comp={}", e.comp_uuid);
         project.modify_comp(e.comp_uuid, |comp| {
-            let all_uuids: Vec<Uuid> = comp.children.iter().map(|(u, _)| *u).collect();
+            let all_uuids: Vec<Uuid> = comp.layers.iter().map(|l| l.uuid).collect();
             debug!("Selecting all {} layers", all_uuids.len());
             comp.layer_selection = all_uuids;
-            comp.layer_selection_anchor = comp.children.first().map(|(u, _)| *u);
+            comp.layer_selection_anchor = comp.layers.first().map(|l| l.uuid);
         });
         return Some(result);
     }

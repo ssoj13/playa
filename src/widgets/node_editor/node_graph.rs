@@ -62,6 +62,7 @@ use uuid::Uuid;
 
 use crate::core::event_bus::BoxedEvent;
 use crate::entities::{AttrValue, Comp, Project};
+use crate::entities::node::Node;
 use egui_snarl::ui::get_selected_nodes;
 use crate::entities::Attrs;
 
@@ -84,7 +85,7 @@ struct CompNodeViewer<'a> {
 
 impl<'a> CompNodeViewer<'a> {
     fn get_comp(&self, source_uuid: Uuid) -> Option<Comp> {
-        self.project.media.read().ok()?.get(&source_uuid).cloned()
+        self.project.media.read().ok()?.get(&source_uuid).and_then(|n| n.as_comp()).cloned()
     }
 }
 
@@ -102,7 +103,7 @@ impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
 
     fn inputs(&mut self, node: &CompNode) -> usize {
         self.get_comp(node.source_uuid)
-            .map(|c| c.children_len())
+            .map(|c| c.layers.len())
             .unwrap_or(0)
     }
 
@@ -276,7 +277,7 @@ impl NodeEditorState {
 
         self.snarl = Snarl::new();
 
-        let root_uuid = comp.get_uuid();
+        let root_uuid = comp.uuid();
         let media = project.media.read().expect("media lock");
 
         log::debug!(
@@ -467,10 +468,10 @@ fn center_nodes(snarl: &mut Snarl<CompNode>, target: Pos2, nodes: &[NodeId]) {
 }
 
 fn load_node_pos(comp: &Comp, instance_uuid: Uuid, default: Pos2) -> Pos2 {
-    let maybe_attr = if instance_uuid == comp.get_uuid() {
+    let maybe_attr = if instance_uuid == comp.uuid() {
         comp.attrs.get("node_pos")
     } else {
-        comp.children_attrs_get(&instance_uuid)
+        comp.layers_attrs_get(&instance_uuid)
             .and_then(|a| a.get("node_pos"))
     };
 
@@ -501,7 +502,7 @@ fn collect_tree_recursive(
     instance_uuid: Uuid,
     source_uuid: Uuid,
     depth: usize,
-    media: &RwLockReadGuard<'_, HashMap<Uuid, Comp>>,
+    media: &RwLockReadGuard<'_, HashMap<Uuid, crate::entities::NodeKind>>,
     node_info: &mut HashMap<Uuid, NodeInfo>,
     ancestors: &mut Vec<Uuid>,
     max_depth: &mut usize,
@@ -523,8 +524,8 @@ fn collect_tree_recursive(
 
     *max_depth = (*max_depth).max(depth);
 
-    let Some(comp) = media.get(&source_uuid) else {
-        // Unknown comp - add minimal info
+    let Some(comp) = media.get(&source_uuid).and_then(|n| n.as_comp()) else {
+        // Unknown comp or FileNode - add minimal info
         node_info.insert(
             instance_uuid,
             NodeInfo {
@@ -542,7 +543,7 @@ fn collect_tree_recursive(
     let mut children: Vec<(Uuid, Uuid)> = vec![];
     for (layer_uuid, attrs) in comp.get_children() {
         if let Some(child_uuid) = attrs.get_uuid("uuid") {
-            children.push((*layer_uuid, child_uuid));
+            children.push((layer_uuid, child_uuid));
         }
     }
 
@@ -601,7 +602,7 @@ pub fn render_node_editor(
     let widget_id = ui.make_persistent_id("comp_node_editor");
 
     // Sync to current comp (sets needs_rebuild if comp changed)
-    state.set_comp(comp.get_uuid());
+    state.set_comp(comp.uuid());
 
     // Rebuild graph from Comp.children if needed
     if state.needs_rebuild {
@@ -675,7 +676,7 @@ pub fn render_node_editor(
     // Viewer with project reference for resolving comp data
     let mut viewer = CompNodeViewer {
         project,
-        output_uuid: comp.get_uuid(),
+        output_uuid: comp.uuid(),
     };
 
     // Render with default styling and detect node moves by comparing positions

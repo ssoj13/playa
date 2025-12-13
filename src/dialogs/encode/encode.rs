@@ -1340,8 +1340,8 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
-        // Build File-mode comp that always returns placeholder frames (no disk IO)
-        let mut comp = crate::entities::comp::Comp::new_file_comp(
+        // Build CompNode for testing (produces placeholder frames)
+        let mut comp = crate::entities::CompNode::new(
             "placeholder",
             play_start,
             play_end,
@@ -1349,9 +1349,9 @@ mod tests {
         );
         // Keep predictable dimensions for encoded video
         comp.attrs
-            .set("width", crate::entities::AttrValue::UInt(64));
+            .set(crate::entities::keys::A_WIDTH, crate::entities::AttrValue::UInt(64));
         comp.attrs
-            .set("height", crate::entities::AttrValue::UInt(64));
+            .set(crate::entities::keys::A_HEIGHT, crate::entities::AttrValue::UInt(64));
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let project = crate::entities::project::Project::new(manager);
 

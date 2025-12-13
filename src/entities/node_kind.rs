@@ -31,6 +31,38 @@ impl NodeKind {
         matches!(self, NodeKind::Comp(_))
     }
     
+    /// Play range (work area)
+    pub fn play_range(&self, use_work_area: bool) -> (i32, i32) {
+        match self {
+            NodeKind::File(n) => n.work_area_abs(),
+            NodeKind::Comp(n) => n.play_range(use_work_area),
+        }
+    }
+    
+    /// Frame count
+    pub fn frame_count(&self) -> i32 {
+        match self {
+            NodeKind::File(n) => n.frame_count(),
+            NodeKind::Comp(n) => n.frame_count(),
+        }
+    }
+    
+    /// Add child layer (only works on CompNode)
+    pub fn add_child_layer(
+        &mut self,
+        source_uuid: Uuid,
+        name: &str,
+        start_frame: i32,
+        duration: i32,
+        insert_idx: Option<usize>,
+        source_dim: (usize, usize),
+    ) -> anyhow::Result<Uuid> {
+        match self {
+            NodeKind::Comp(comp) => comp.add_child_layer(source_uuid, name, start_frame, duration, insert_idx, source_dim),
+            NodeKind::File(_) => anyhow::bail!("Cannot add child to FileNode"),
+        }
+    }
+    
     /// Get as FileNode reference
     pub fn as_file(&self) -> Option<&FileNode> {
         match self {
@@ -60,6 +92,58 @@ impl NodeKind {
         match self {
             NodeKind::Comp(n) => Some(n),
             _ => None,
+        }
+    }
+    
+    /// Check if this is a file-mode node (FileNode = true, CompNode = false)
+    pub fn is_file_mode(&self) -> bool {
+        matches!(self, NodeKind::File(_))
+    }
+    
+    /// Get FPS
+    pub fn fps(&self) -> f32 {
+        match self {
+            NodeKind::File(n) => n.fps(),
+            NodeKind::Comp(n) => n.fps(),
+        }
+    }
+    
+    /// Get file mask (only for FileNode)
+    pub fn file_mask(&self) -> Option<String> {
+        match self {
+            NodeKind::File(n) => n.file_mask().map(|s| s.to_string()),
+            NodeKind::Comp(_) => None,
+        }
+    }
+    
+    /// Get start frame (_in)
+    pub fn _in(&self) -> i32 {
+        match self {
+            NodeKind::File(n) => n._in(),
+            NodeKind::Comp(n) => n._in(),
+        }
+    }
+    
+    /// Get end frame (_out)
+    pub fn _out(&self) -> i32 {
+        match self {
+            NodeKind::File(n) => n._out(),
+            NodeKind::Comp(n) => n._out(),
+        }
+    }
+    
+    /// Get current frame (playhead)
+    pub fn frame(&self) -> i32 {
+        match self {
+            NodeKind::File(n) => n.frame(),
+            NodeKind::Comp(n) => n.frame(),
+        }
+    }
+    
+    /// Set event emitter (only affects CompNode)
+    pub fn set_event_emitter(&mut self, emitter: crate::core::event_bus::CompEventEmitter) {
+        if let NodeKind::Comp(n) = self {
+            n.set_event_emitter(emitter);
         }
     }
 }

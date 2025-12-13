@@ -105,7 +105,7 @@ pub fn render_timeline_panel(
             }
 
             let media = project.media.read().expect("media lock poisoned");
-            if let Some(comp) = media.get(&comp_uuid) {
+            if let Some(comp) = media.get(&comp_uuid).and_then(|n| n.as_comp()) {
                 let config = TimelineConfig::default();
 
                 // CRITICAL ORDER: Toolbar MUST be rendered BEFORE calculating splitter_height.

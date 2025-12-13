@@ -3,8 +3,8 @@
 //! and compositor produce `Frame` data that UI/encoding consume.
 
 pub mod attrs;
-pub mod comp;
-pub mod comp_events;
+// pub mod comp;  // DEPRECATED: replaced by comp_node
+pub mod comp_events;  // Events for comp/layer manipulation
 pub mod comp_node;
 pub mod compositor;
 pub mod file_node;
@@ -19,7 +19,8 @@ pub mod node_kind;
 pub mod project;
 
 pub use attrs::{AttrValue, Attrs};
-pub use comp::{Comp, CompDfsIter, CompIterItem};
+// Type alias for backwards compatibility
+pub type Comp = CompNode;
 pub use comp_node::{CompNode, Layer as NodeLayer};
 pub use compositor::CompositorType;
 pub use file_node::FileNode;

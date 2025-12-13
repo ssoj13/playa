@@ -26,6 +26,7 @@ use playa::dialogs::encode::EncodeDialog;
 use playa::dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
 use playa::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa::entities;
+use playa::entities::node::Node;
 use playa::entities::Frame;
 use playa::entities::Project;
 use playa::core::event_bus::{CompEventEmitter, EventBus, downcast_event};
@@ -235,25 +236,28 @@ impl PlayaApp {
     /// * `Ok(())` - Sequences loaded successfully
     /// * `Err(String)` - Detection or loading failed with error message
     fn load_sequences(&mut self, paths: Vec<PathBuf>) -> Result<(), String> {
-        match playa::entities::comp::Comp::detect_from_paths(paths) {
-            Ok(comps) => {
-                if comps.is_empty() {
+        use playa::entities::FileNode;
+        use playa::entities::node::Node;
+        
+        match FileNode::detect_from_paths(paths) {
+            Ok(nodes) => {
+                if nodes.is_empty() {
                     let error_msg = "No valid sequences detected".to_string();
                     warn!("{}", error_msg);
                     self.error_msg = Some(error_msg.clone());
                     return Err(error_msg);
                 }
 
-                // Add all detected sequences to unified media pool (File mode comps)
-                let comps_count = comps.len();
+                // Add all detected sequences to unified media pool
+                let nodes_count = nodes.len();
                 let mut first_uuid: Option<Uuid> = None;
-                for comp in comps {
-                    let uuid = comp.get_uuid();
-                    let name = comp.attrs.get_str("name").unwrap_or("Untitled").to_string();
-                    info!("Adding clip (File mode): {} ({})", name, uuid);
+                for node in nodes {
+                    let uuid = node.uuid();
+                    let name = node.name().to_string();
+                    info!("Adding FileNode: {} ({})", name, uuid);
 
-                    // add_comp() injects global_cache + cache_manager AND adds to comps_order
-                    self.project.add_comp(comp);
+                    // add_node() adds to media pool and comps_order
+                    self.project.add_node(node.into());
 
                     // Remember first sequence for activation
                     if self.player.active_comp().is_none() && first_uuid.is_none() {
@@ -272,7 +276,7 @@ impl PlayaApp {
                 }
 
                 self.error_msg = None;
-                info!("Loaded {} clip(s)", comps_count);
+                info!("Loaded {} clip(s)", nodes_count);
                 Ok(())
             }
             Err(e) => {
@@ -967,7 +971,7 @@ impl PlayaApp {
                 let mut common_keys: BTreeSet<String> = BTreeSet::new();
                 let mut first = true;
                 for uuid in &selection {
-                    if let Some(attrs) = comp.children_attrs_get(uuid) {
+                    if let Some(attrs) = comp.layers_attrs_get(uuid) {
                         let keys: BTreeSet<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
                         if first {
                             common_keys = keys;
@@ -986,7 +990,7 @@ impl PlayaApp {
                 let mut mixed_keys: HashSet<String> = HashSet::new();
 
                 if let Some(first_uuid) = selection.first() {
-                    if let Some(attrs) = comp.children_attrs_get(first_uuid) {
+                    if let Some(attrs) = comp.layers_attrs_get(first_uuid) {
                         for key in &common_keys {
                             if let Some(v) = attrs.get(key) {
                                 merged.set(key.clone(), v.clone());
@@ -998,7 +1002,7 @@ impl PlayaApp {
                 for key in &common_keys {
                     if let Some(base) = merged.get(key) {
                         for uuid in &selection {
-                            if let Some(attrs) = comp.children_attrs_get(uuid) {
+                            if let Some(attrs) = comp.layers_attrs_get(uuid) {
                                 if let Some(other) = attrs.get(key) {
                                     if other != base {
                                         mixed_keys.insert(key.clone());
@@ -1014,7 +1018,7 @@ impl PlayaApp {
             } else if let Some(layer_uuid) = selection.first() {
                 // Single layer
                 let layer_idx = comp.uuid_to_idx(*layer_uuid).unwrap_or(0);
-                if let Some(attrs) = comp.children_attrs_get(layer_uuid) {
+                if let Some(attrs) = comp.layers_attrs_get(layer_uuid) {
                     let name = attrs.get_str("name")
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("Layer {}", layer_idx));
@@ -1114,15 +1118,15 @@ impl eframe::App for PlayaApp {
             let is_dirty = self.project.get_comp(comp_uuid)
                 .map(|comp| {
                     // Check comp attrs, children attrs, and source comps
-                    if comp.attrs.is_dirty() || comp.children.iter().any(|(_, attrs)| attrs.is_dirty()) {
+                    if comp.attrs.is_dirty() || comp.layers.iter().any(|layer| layer.attrs.is_dirty()) {
                         return true;
                     }
                     // Check source comps dirty
                     let media = self.project.media.read().expect("media lock");
-                    comp.children.iter().any(|(_, attrs)| {
-                        attrs.get_uuid("uuid")
+                    comp.layers.iter().any(|layer| {
+                        layer.attrs.get_uuid("uuid")
                             .and_then(|source_uuid| media.get(&source_uuid))
-                            .map(|source_comp| source_comp.attrs.is_dirty())
+                            .map(|source_node| source_node.attrs().is_dirty())
                             .unwrap_or(false)
                     })
                 })
@@ -1136,8 +1140,8 @@ impl eframe::App for PlayaApp {
                 // Clear dirty flags (source comps clear their own on compose)
                 self.project.modify_comp(comp_uuid, |comp| {
                     comp.attrs.clear_dirty();
-                    for (_, attrs) in &comp.children {
-                        attrs.clear_dirty();
+                    for layer in &comp.layers {
+                        layer.attrs.clear_dirty();
                     }
                 });
                 ctx.request_repaint();
@@ -1294,7 +1298,8 @@ impl eframe::App for PlayaApp {
             let active_comp = self
                 .player
                 .active_comp()
-                .and_then(|uuid| media.get(&uuid));
+                .and_then(|uuid| media.get(&uuid))
+                .and_then(|node| node.as_comp());
             let should_stay_open = dialog.render(ctx, &self.project, active_comp);
 
             // Save dialog state (on every render - cheap clone)

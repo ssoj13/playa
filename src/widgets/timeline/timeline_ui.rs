@@ -191,7 +191,7 @@ pub fn render_outline(
     ui.add_space(20.0 + status_bar_height + 4.0);
 
     // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
-    let mut child_order: Vec<usize> = (0..comp.children.len()).collect();
+    let mut child_order: Vec<usize> = (0..comp.layers.len()).collect();
     let dnd_response = egui::ScrollArea::vertical()
         .id_salt("timeline_layers_scroll") // share scroll with canvas
         .max_height(ui.available_height())
@@ -202,7 +202,9 @@ pub fn render_outline(
                     &mut child_order,
                     |ui, child_idx, handle, _state| {
                         let idx = *child_idx;
-                        let (child_uuid, attrs) = &comp.children[idx];
+                        let layer = &comp.layers[idx];
+                        let child_uuid = layer.uuid;
+                        let attrs = &layer.attrs;
 
                         // In Split mode, use full available width (outline is in separate panel)
                         let row_width = if matches!(view_mode, super::TimelineViewMode::Split) {
@@ -321,10 +323,10 @@ pub fn render_outline(
 
                         if dirty {
                             // Apply to all selected layers if this layer is selected
-                            let targets = if comp.layer_selection.contains(child_uuid) {
+                            let targets = if comp.layer_selection.contains(&child_uuid) {
                                 comp.layer_selection.clone()
                             } else {
-                                vec![*child_uuid]
+                                vec![child_uuid]
                             };
                             dispatch(Box::new(LayerAttributesChangedEvent {
                                 comp_uuid: comp_id,
@@ -338,8 +340,8 @@ pub fn render_outline(
 
                         if response.clicked() {
                             let modifiers = ui.input(|i| i.modifiers);
-                            let clicked_uuid = *child_uuid;
-                            let children_uuids = comp.children_uuids_vec();
+                            let clicked_uuid = child_uuid;
+                            let children_uuids = comp.layers_uuids_vec();
                             let (selection, anchor) = compute_layer_selection(
                                 &comp.layer_selection,
                                 comp.layer_selection_anchor,
@@ -422,9 +424,9 @@ pub fn render_canvas(
     let comp_end = comp._out();
 
     // Calculate extended range to include all layer positions (even beyond comp bounds)
-    let (layers_min, layers_max) = comp.children.iter().fold((comp_start, comp_end), |(min, max), (_, attrs)| {
-        let start = attrs.full_bar_start();
-        let end = attrs.full_bar_end();
+    let (layers_min, layers_max) = comp.layers.iter().fold((comp_start, comp_end), |(min, max), layer| {
+        let start = layer.attrs.full_bar_start();
+        let end = layer.attrs.full_bar_end();
         (min.min(start), max.max(end))
     });
     // Large margin for smooth dragging - scales with visible area
@@ -548,8 +550,8 @@ pub fn render_canvas(
 
             // Simple row assignment: each layer gets its own row based on index
             // No "smart" packing - layer order in children = visual row order
-            let child_order_inner: Vec<usize> = (0..comp.children.len()).collect();
-            let num_layers = comp.children.len();
+            let child_order_inner: Vec<usize> = (0..comp.layers.len()).collect();
+            let num_layers = comp.layers.len();
             let total_height_inner = (num_layers.max(1) as f32) * config.layer_height;
 
             // Timeline bars - horizontal pan via state.pan_offset, vertical scroll via ScrollArea.
@@ -614,7 +616,9 @@ pub fn render_canvas(
                         // Second pass: draw layer bars
                         for (_display_idx, &original_idx) in child_order_inner.iter().enumerate() {
                             let idx = original_idx;
-                            let (child_uuid, attrs) = &comp.children[idx];
+                            let layer = &comp.layers[idx];
+                            let child_uuid = layer.uuid;
+                            let attrs = &layer.attrs;
 
                             // Get full bar start/end (computed from in + src_len/speed)
                             let child_start = attrs.full_bar_start();
@@ -641,7 +645,7 @@ pub fn render_canvas(
                             } else {
                                 Color32::from_gray(70)
                             };
-                            let is_selected = comp.layer_selection.contains(child_uuid);
+                            let is_selected = comp.layer_selection.contains(&child_uuid);
                             let gray_color = if is_selected {
                                 // Slightly brighter grey with a blue tint when selected
                                 Color32::from_rgba_unmultiplied(110, 140, 190, 130)
@@ -708,7 +712,9 @@ pub fn render_canvas(
                         // We need to do this in a second pass after drawing to ensure responses are on top
                         for (_display_idx, &original_idx) in child_order_inner.iter().enumerate() {
                             let idx = original_idx;
-                            let (child_uuid, attrs) = &comp.children[idx];
+                            let layer = &comp.layers[idx];
+                            let child_uuid = layer.uuid;
+                            let attrs = &layer.attrs;
 
                             // Use cached geometry from draw pass
                             let Some(&geom) = geom_cache.get(&idx) else { continue };
@@ -745,11 +751,11 @@ pub fn render_canvas(
                                             {
                                                 let modifiers = ui.ctx().input(|i| i.modifiers);
                                                 let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
-                                                if !multi && !comp.layer_selection.contains(child_uuid) {
+                                                if !multi && !comp.layer_selection.contains(&child_uuid) {
                                                     dispatch(Box::new(CompSelectionChangedEvent {
                                                         comp_uuid: comp_id,
-                                                        selection: vec![*child_uuid],
-                                                        anchor: Some(*child_uuid),
+                                                        selection: vec![child_uuid],
+                                                        anchor: Some(child_uuid),
                                                     }));
                                                 }
                                             }
@@ -799,11 +805,11 @@ pub fn render_canvas(
                                         // Calculate from display position, then convert to physical
                                         let current_display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
                                         let delta_children = (delta_y / config.layer_height).round() as i32;
-                                        let target_display_idx = (current_display_idx as i32 + delta_children).max(0).min(comp.children.len() as i32 - 1) as usize;
+                                        let target_display_idx = (current_display_idx as i32 + delta_children).max(0).min(comp.layers.len() as i32 - 1) as usize;
                                         let target_child = child_order_inner.get(target_display_idx).copied().unwrap_or(*layer_idx);
 
                                         // Visual feedback: draw ghost bars for all selected (or just dragged) layers
-                                        let dragged_uuid = comp.children.get(*layer_idx).map(|(u, _)| *u).unwrap_or_default();
+                                        let dragged_uuid = comp.layers.get(*layer_idx).map(|l| l.uuid).unwrap_or_default();
                                         let selection = if comp.layer_selection.contains(&dragged_uuid) {
                                             comp.layer_selection.clone()
                                         } else {
@@ -811,11 +817,11 @@ pub fn render_canvas(
                                         };
 
                                         for child_uuid in selection {
-                                            if let Some(attrs) = comp.children_attrs_get(&child_uuid) {
+                                            if let Some(attrs) = comp.layers_attrs_get(&child_uuid) {
                                                 let idx_sel = comp.uuid_to_idx(child_uuid).unwrap_or(0);
                                                 let current_row = idx_sel;  // row = layer index
                                                 let target_row = (current_row as i32 + delta_children)
-                                                    .clamp(0, comp.children.len().saturating_sub(1) as i32)
+                                                    .clamp(0, comp.layers.len().saturating_sub(1) as i32)
                                                     as usize;
 
                                                 let ghost_child_y = row_to_y(target_row, config, timeline_rect);
@@ -866,12 +872,12 @@ pub fn render_canvas(
                                         let new_play_start = *initial_play_start + delta_frames;
 
                                         // Visual feedback: draw ghost play range preview
-                                        if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
+                                        if let Some(layer) = comp.layers.get(*layer_idx) {
                                             // row = layer index
                                             let target_row = *layer_idx;
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let visual_start = new_play_start as f32;
-                                            let layer_end = attrs.full_bar_end() as f32;
+                                            let layer_end = layer.attrs.full_bar_end() as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
 
@@ -906,11 +912,11 @@ pub fn render_canvas(
                                         let new_play_end = *initial_play_end + delta_frames;
 
                                         // Visual feedback: draw ghost play range preview
-                                        if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
+                                        if let Some(layer) = comp.layers.get(*layer_idx) {
                                             // row = layer index
                                             let target_row = *layer_idx;
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let play_start = attrs.layer_start();
+                                            let play_start = layer.attrs.layer_start();
                                             let visual_start = play_start as f32;
                                             let visual_end = new_play_end as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
@@ -966,10 +972,10 @@ pub fn render_canvas(
                                         let new_trim_out = (*initial_trim_out + trim_delta).max(0);
 
                                         // Visual feedback: draw ghost full bar at new position
-                                        if let Some((_child_uuid, attrs)) = comp.children.get(*layer_idx) {
+                                        if let Some(layer) = comp.layers.get(*layer_idx) {
                                             let target_row = *layer_idx;  // row = layer index
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let src_len = attrs.src_len();
+                                            let src_len = layer.attrs.src_len();
                                             let new_full_bar_end = new_in + (src_len as f32 / speed).ceil() as i32 - 1;
                                             let ghost_x_start = frame_to_screen_x(new_in as f32, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x((new_full_bar_end + 1) as f32, timeline_rect.min.x, config, state);
@@ -1137,12 +1143,12 @@ pub fn render_canvas(
 
                         if let Some(idx) = clicked_layer {
                             let modifiers = ui.input(|i| i.modifiers);
-                            if let Some((clicked_uuid, _attrs)) = comp.children.get(idx) {
-                                let children_uuids = comp.children_uuids_vec();
+                            if let Some(layer) = comp.layers.get(idx) {
+                                let children_uuids = comp.layers_uuids_vec();
                                 let (selection, anchor) = compute_layer_selection(
                                     &comp.layer_selection,
                                     comp.layer_selection_anchor,
-                                    *clicked_uuid,
+                                    layer.uuid,
                                     idx,
                                     modifiers,
                                     &children_uuids,
@@ -1167,7 +1173,7 @@ pub fn render_canvas(
                             )));
 
                             // If click is BELOW all layers, clear selection
-                            let max_layer_y = comp.children.len() as f32 * config.layer_height + timeline_rect.min.y;
+                            let max_layer_y = comp.layers.len() as f32 * config.layer_height + timeline_rect.min.y;
                             if pos.y > max_layer_y && !comp.layer_selection.is_empty() {
                                 log::debug!("Canvas: click below layers at y={}, clearing selection", pos.y);
                                 dispatch(Box::new(CompSelectionChangedEvent {

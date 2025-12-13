@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::core::cache_man::CacheManager;
 use crate::dialogs::prefs::AppSettings;
-use crate::entities::{Comp, Project};
+use crate::entities::Project;
 use crate::core::event_bus::{CompEventEmitter, EventBus};
 use crate::core::global_cache::CacheStrategy;
 use crate::main_events::{handle_app_event, EventResult};
@@ -54,29 +54,44 @@ impl Shell {
 
     /// Load a sequence from path
     pub fn load_sequence(&mut self, path: &str) {
+        use crate::entities::FileNode;
+        use crate::entities::node::Node;
+        
         let path_buf = PathBuf::from(path);
         if !path_buf.exists() {
             self.error_msg = Some(format!("Test sequence not found: {}", path));
             log::warn!("Test sequence not found: {}", path);
             return;
         }
-
-        match Comp::detect_from_paths(vec![path_buf]) {
-            Ok(comps) => {
-                for mut comp in comps {
-                    comp.set_event_emitter(self.comp_emitter.clone());
-                    let uuid = comp.get_uuid();
-                    self.project.add_comp(comp);
-
-                    if self.player.active_comp().is_none() {
-                        self.player.set_active_comp(Some(uuid), &mut self.project);
+        
+        match FileNode::detect_from_paths(vec![path_buf]) {
+            Ok(nodes) => {
+                if nodes.is_empty() {
+                    self.error_msg = Some("No valid sequences detected".to_string());
+                    log::warn!("No valid sequences detected from: {}", path);
+                    return;
+                }
+                
+                let mut first_uuid = None;
+                for node in nodes {
+                    let uuid = node.uuid();
+                    log::info!("Adding FileNode: {} ({})", node.name(), uuid);
+                    self.project.add_node(node.into());
+                    if first_uuid.is_none() {
+                        first_uuid = Some(uuid);
                     }
                 }
-                log::info!("Loaded test sequence from {}", path);
+                
+                // Activate first loaded sequence
+                if let Some(uuid) = first_uuid {
+                    self.player.set_active_comp(Some(uuid), &mut self.project);
+                }
+                
+                self.error_msg = None;
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed to load: {}", e));
-                log::error!("Failed to load sequence: {}", e);
+                self.error_msg = Some(format!("Failed to load sequence: {}", e));
+                log::warn!("Failed to load sequence {}: {}", path, e);
             }
         }
     }

@@ -3,8 +3,11 @@
 //! Replaces the COMP_FILE mode from Comp. This node type has no inputs
 //! and produces frames by loading them from disk based on file_mask pattern.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use glob::glob;
+use log::info;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -90,6 +93,11 @@ impl FileNode {
     
     pub fn frame_count(&self) -> i32 {
         (self._out() - self._in() + 1).max(0)
+    }
+    
+    /// Current playhead frame (for FileNode, just returns start)
+    pub fn frame(&self) -> i32 {
+        self.attrs.get_i32(A_FRAME).unwrap_or(self._in())
     }
     
     /// Work area (trimmed range) in absolute frames
@@ -226,6 +234,245 @@ impl Node for FileNode {
     fn clear_dirty(&self) {
         self.attrs.clear_dirty()
     }
+}
+
+// --- Sequence Detection ---
+
+use super::loader::Loader;
+use super::loader_video;
+use crate::entities::frame::FrameError;
+
+impl FileNode {
+    /// Detect image/video sequences from paths and create FileNodes.
+    ///
+    /// Analyzes file paths to detect image sequences (by trailing frame numbers)
+    /// or video files, and creates appropriate FileNode instances.
+    pub fn detect_from_paths(paths: Vec<PathBuf>) -> Result<Vec<FileNode>, FrameError> {
+        let mut nodes = Vec::new();
+
+        for path in paths {
+            // Video file: create node from video metadata
+            if media::is_video(&path) {
+                nodes.push(create_video_node(&path)?);
+                continue;
+            }
+
+            // Try to detect if this is part of an image sequence
+            if let Some((prefix, _number, ext, padding)) = split_sequence_path(&path)? {
+                let pattern = format!("{}*.{}", prefix, ext);
+                match detect_sequence_from_pattern(&pattern, padding) {
+                    Ok(node) => nodes.push(node),
+                    Err(e) => {
+                        info!("Failed to detect sequence for {}: {}", path.display(), e);
+                        if let Ok(node) = create_single_file_node(&path) {
+                            nodes.push(node);
+                        }
+                    }
+                }
+            } else if let Ok(node) = create_single_file_node(&path) {
+                // Single file, not a sequence
+                nodes.push(node);
+            }
+        }
+
+        // Deduplicate nodes by file_mask
+        let mut unique: HashMap<String, FileNode> = HashMap::new();
+        for node in nodes {
+            if let Some(mask) = node.file_mask() {
+                unique.entry(mask).or_insert(node);
+            }
+        }
+
+        Ok(unique.into_values().collect())
+    }
+}
+
+/// Detect sequence from glob pattern.
+fn detect_sequence_from_pattern(pattern: &str, padding: usize) -> Result<FileNode, FrameError> {
+    let paths = glob_paths(pattern)?;
+    if paths.is_empty() {
+        return Err(FrameError::Image(format!(
+            "No files matched pattern: {}",
+            pattern
+        )));
+    }
+
+    // Group by (prefix, ext), storing (number, path, padding)
+    let mut groups: HashMap<(String, String), Vec<(usize, PathBuf, usize)>> = HashMap::new();
+
+    for path in paths {
+        if let Some((prefix, number, ext, pad)) = split_sequence_path(&path)? {
+            let key = (prefix, ext);
+            groups.entry(key).or_default().push((number, path, pad));
+        }
+    }
+
+    // Select largest group as main sequence
+    let (key, frames_data) = groups
+        .into_iter()
+        .max_by_key(|(_, v)| v.len())
+        .ok_or_else(|| FrameError::Image("No valid sequence files found".into()))?;
+
+    let (prefix, ext) = key;
+    let (min_frame, max_frame) = frames_data
+        .iter()
+        .fold((usize::MAX, 0usize), |(min_f, max_f), (num, _, _)| {
+            (min_f.min(*num), max_f.max(*num))
+        });
+
+    // Get frame dimensions from first frame
+    let first_path = &frames_data[0].1;
+    let attrs = Loader::header(first_path)?;
+    let width = attrs.get_u32(A_WIDTH).unwrap_or(64) as usize;
+    let height = attrs.get_u32(A_HEIGHT).unwrap_or(64) as usize;
+
+    // Create FileNode
+    let file_mask = format!("{}*.{}", prefix, ext);
+    let mut node = FileNode::new(file_mask.clone(), min_frame as i32, max_frame as i32, 24.0);
+
+    // Store dimensions and padding
+    node.attrs.set(A_WIDTH, AttrValue::UInt(width as u32));
+    node.attrs.set(A_HEIGHT, AttrValue::UInt(height as u32));
+    node.attrs.set("padding", AttrValue::UInt(padding as u32));
+
+    // Set name from first file
+    if let Some(filename) = first_path.file_stem().and_then(|s| s.to_str()) {
+        node.attrs.set(A_NAME, AttrValue::Str(filename.to_string()));
+    }
+
+    info!(
+        "Created sequence FileNode: {} ({} frames, {}x{})",
+        file_mask,
+        frames_data.len(),
+        width,
+        height
+    );
+
+    Ok(node)
+}
+
+/// Create FileNode from single image file.
+fn create_single_file_node(path: &Path) -> Result<FileNode, FrameError> {
+    if media::is_video(path) {
+        return create_video_node(path);
+    }
+
+    let attrs = Loader::header(path)?;
+    let width = attrs.get_u32(A_WIDTH).unwrap_or(64) as usize;
+    let height = attrs.get_u32(A_HEIGHT).unwrap_or(64) as usize;
+
+    let file_mask = path.to_string_lossy().to_string();
+    let mut node = FileNode::new(file_mask.clone(), 0, 0, 24.0);
+
+    node.attrs.set(A_WIDTH, AttrValue::UInt(width as u32));
+    node.attrs.set(A_HEIGHT, AttrValue::UInt(height as u32));
+
+    if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
+        node.attrs.set(A_NAME, AttrValue::Str(filename.to_string()));
+    }
+
+    info!(
+        "Created single file FileNode: {} ({}x{})",
+        file_mask, width, height
+    );
+
+    Ok(node)
+}
+
+/// Create FileNode from video file using FFmpeg metadata.
+fn create_video_node(path: &Path) -> Result<FileNode, FrameError> {
+    let meta = loader_video::VideoMetadata::from_file(path)?;
+    let last_frame = meta.frame_count.saturating_sub(1) as i32;
+    let mut node = FileNode::new(
+        path.to_string_lossy().to_string(),
+        0,
+        last_frame,
+        meta.fps as f32,
+    );
+
+    node.attrs.set(A_WIDTH, AttrValue::UInt(meta.width));
+    node.attrs.set(A_HEIGHT, AttrValue::UInt(meta.height));
+    node.attrs.set("padding", AttrValue::UInt(0));
+    node.attrs.set("frames", AttrValue::UInt(meta.frame_count as u32));
+    node.attrs.set(A_FPS, AttrValue::Float(meta.fps as f32));
+    node.attrs.set(
+        "format",
+        AttrValue::Str(format!("Video ({})", path.display())),
+    );
+
+    if let Some(filename) = path.file_stem().and_then(|s| s.to_str()) {
+        node.attrs.set(A_NAME, AttrValue::Str(filename.to_string()));
+    }
+
+    info!(
+        "Created video FileNode: {} ({} frames, {}x{})",
+        path.display(),
+        meta.frame_count,
+        meta.width,
+        meta.height
+    );
+
+    Ok(node)
+}
+
+/// Expand a glob pattern into a list of paths.
+fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
+    let mut paths = Vec::new();
+    for entry in glob(pattern)
+        .map_err(|e| FrameError::Image(format!("Glob error for pattern {}: {}", pattern, e)))?
+    {
+        match entry {
+            Ok(path) => paths.push(path),
+            Err(e) => return Err(FrameError::Image(format!("Glob entry error: {}", e))),
+        }
+    }
+    Ok(paths)
+}
+
+/// Split a sequence filename into (prefix, number, ext, padding).
+///
+/// Example: "/path/seq.0001.exr" -> ("/path/seq.", 1, "exr", 4)
+fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usize)>, FrameError> {
+    let ext = match path.extension().and_then(|s| s.to_str()) {
+        Some(e) => e.to_string(),
+        None => return Ok(None),
+    };
+
+    let stem = match path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    // Find trailing digits in stem
+    let mut digit_start = stem.len();
+    for (i, ch) in stem.char_indices().rev() {
+        if ch.is_ascii_digit() {
+            digit_start = i;
+        } else {
+            break;
+        }
+    }
+
+    if digit_start == stem.len() {
+        // No trailing digits -> not a sequence frame
+        return Ok(None);
+    }
+
+    let number_str = &stem[digit_start..];
+    let number = number_str
+        .parse::<usize>()
+        .map_err(|e| FrameError::Image(format!("Invalid frame number '{}': {}", number_str, e)))?;
+    let prefix_local = &stem[..digit_start];
+    let padding = number_str.len();
+
+    // Build full prefix including parent directory
+    let parent = path.parent().map(|p| p.to_string_lossy().to_string());
+    let full_prefix = match parent {
+        Some(p) if !p.is_empty() => format!("{}/{}", p, prefix_local),
+        _ => prefix_local.to_string(),
+    };
+
+    Ok(Some((full_prefix, number, ext, padding)))
 }
 
 #[cfg(test)]

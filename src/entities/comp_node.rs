@@ -186,6 +186,11 @@ impl CompNode {
         (w.max(1), h.max(1))
     }
     
+    /// Get comp name
+    pub fn name(&self) -> &str {
+        self.attrs.get_str(A_NAME).unwrap_or("Untitled")
+    }
+    
     pub fn frame_count(&self) -> i32 {
         (self._out() - self._in() + 1).max(0)
     }
@@ -196,7 +201,58 @@ impl CompNode {
         let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
         (self._in() + trim_in, self._out() - trim_out)
     }
-    
+
+    // --- Playback ---
+
+    /// Current playhead frame
+    pub fn frame(&self) -> i32 {
+        self.attrs.get_i32(A_FRAME).unwrap_or(self._in())
+    }
+
+    /// Set current playhead frame
+    pub fn set_frame(&mut self, frame: i32) {
+        self.attrs.set(A_FRAME, super::attrs::AttrValue::Int(frame));
+    }
+
+    /// Play range (work area) - returns (start, end)
+    pub fn play_range(&self, _use_work_area: bool) -> (i32, i32) {
+        self.work_area()
+    }
+
+    /// Number of frames in play range
+    pub fn play_frame_count(&self) -> i32 {
+        let (start, end) = self.play_range(true);
+        (end - start + 1).max(0)
+    }
+
+    /// Set play start (trim_in)
+    pub fn set_comp_play_start(&mut self, start: i32) {
+        let trim_in = (start - self._in()).max(0);
+        self.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int(trim_in));
+    }
+
+    /// Set play end (trim_out)
+    pub fn set_comp_play_end(&mut self, end: i32) {
+        let trim_out = (self._out() - end).max(0);
+        self.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int(trim_out));
+    }
+
+    /// Called when comp becomes active
+    pub fn on_activate(&mut self) {
+        // Currently a no-op, can be used for initialization
+    }
+
+    /// Get frame at given index (convenience wrapper around compute)
+    pub fn get_frame(&self, frame_idx: i32, project: &super::project::Project, _use_gpu: bool) -> Option<Frame> {
+        let cache = project.global_cache.as_ref()?;
+        let media = project.media.read().expect("media lock");
+        let ctx = super::node::ComputeContext {
+            cache: cache.as_ref(),
+            media: &media,
+        };
+        self.compute(frame_idx, &ctx)
+    }
+
     // --- Layer management ---
     
     /// Add layer at specified position (None = append)
@@ -233,7 +289,349 @@ impl CompNode {
     pub fn layers_by_source(&self, source_uuid: Uuid) -> Vec<&Layer> {
         self.layers.iter().filter(|l| l.source_uuid == source_uuid).collect()
     }
-    
+
+    // --- Compat methods (for migration from old Comp) ---
+
+    /// Alias for remove_layer
+    pub fn remove_child(&mut self, layer_uuid: Uuid) -> Option<Layer> {
+        self.remove_layer(layer_uuid)
+    }
+
+    /// Get children as (uuid, attrs) pairs - compat with old Comp
+    pub fn get_children(&self) -> Vec<(Uuid, &Attrs)> {
+        self.layers.iter().map(|l| (l.uuid, &l.attrs)).collect()
+    }
+
+    /// Set FPS
+    pub fn set_fps(&mut self, fps: f32) {
+        self.attrs.set(A_FPS, super::attrs::AttrValue::Float(fps));
+    }
+
+    /// Layer index to UUID
+    pub fn idx_to_uuid(&self, idx: usize) -> Option<Uuid> {
+        self.layers.get(idx).map(|l| l.uuid)
+    }
+
+    /// Layer UUID to index
+    pub fn uuid_to_idx(&self, uuid: Uuid) -> Option<usize> {
+        self.layers.iter().position(|l| l.uuid == uuid)
+    }
+
+    /// Check if multiple layers are selected
+    pub fn is_multi_selected(&self) -> bool {
+        self.layer_selection.len() > 1
+    }
+
+    /// UUIDs to indices
+    pub fn uuids_to_indices(&self, uuids: &[Uuid]) -> Vec<usize> {
+        uuids.iter().filter_map(|u| self.uuid_to_idx(*u)).collect()
+    }
+
+    /// Get layer start frame (in attr)
+    pub fn child_in(&self, layer_uuid: Uuid) -> Option<i32> {
+        self.get_layer(layer_uuid).and_then(|l| l.attrs.get_i32(A_IN))
+    }
+
+    /// Get layer visual start (same as child_in for now)
+    pub fn child_start(&self, layer_uuid: Uuid) -> Option<i32> {
+        self.child_in(layer_uuid)
+    }
+
+    /// Get layer end frame
+    pub fn child_end(&self, layer_uuid: Uuid) -> Option<i32> {
+        self.get_layer(layer_uuid).map(|l| l.end())
+    }
+
+    /// Get layer work area in absolute frames
+    pub fn child_work_area_abs(&self, layer_uuid: Uuid) -> Option<(i32, i32)> {
+        self.get_layer(layer_uuid).map(|l| l.work_area())
+    }
+
+    /// Set multiple attributes on a layer
+    pub fn set_child_attrs(&mut self, layer_uuid: Uuid, attrs: Vec<(&str, super::attrs::AttrValue)>) {
+        if let Some(layer) = self.get_layer_mut(layer_uuid) {
+            for (key, value) in attrs {
+                layer.attrs.set(key, value);
+            }
+            self.mark_dirty();
+        }
+    }
+
+    /// Move layers by delta frames
+    pub fn move_layers(&mut self, layer_uuids: &[Uuid], delta: i32) {
+        for uuid in layer_uuids {
+            if let Some(layer) = self.get_layer_mut(*uuid) {
+                let current_in = layer.attrs.get_i32(A_IN).unwrap_or(0);
+                layer.attrs.set(A_IN, super::attrs::AttrValue::Int(current_in + delta));
+            }
+        }
+        self.mark_dirty();
+    }
+
+    /// Trim layers (adjust trim_in/trim_out)
+    pub fn trim_layers(&mut self, layer_uuids: &[Uuid], edge: &str, delta: i32) {
+        for uuid in layer_uuids {
+            if let Some(layer) = self.get_layer_mut(*uuid) {
+                match edge {
+                    "in" | "start" => {
+                        let current = layer.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
+                        layer.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int((current + delta).max(0)));
+                    }
+                    "out" | "end" => {
+                        let current = layer.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
+                        layer.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int((current + delta).max(0)));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.mark_dirty();
+    }
+
+    /// Add child layer (compat with old Comp.add_child_layer)
+    pub fn add_child_layer(
+        &mut self,
+        source_uuid: Uuid,
+        name: &str,
+        start_frame: i32,
+        duration: i32,
+        insert_idx: Option<usize>,
+        source_dim: (usize, usize),
+    ) -> anyhow::Result<Uuid> {
+        let layer = Layer::new(source_uuid, name, start_frame, duration, source_dim);
+        let uuid = layer.uuid;
+        self.add_layer(layer, insert_idx);
+        Ok(uuid)
+    }
+
+    // --- Additional compat methods ---
+
+    /// Trim in value
+    pub fn trim_in(&self) -> i32 {
+        self.attrs.get_i32(A_TRIM_IN).unwrap_or(0)
+    }
+
+    /// Trim out value
+    pub fn trim_out(&self) -> i32 {
+        self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0)
+    }
+
+    /// CompNode is never file mode (that's FileNode)
+    pub fn is_file_mode(&self) -> bool {
+        false
+    }
+
+    /// Get layer UUIDs as vector
+    pub fn layers_uuids_vec(&self) -> Vec<Uuid> {
+        self.layers.iter().map(|l| l.uuid).collect()
+    }
+
+    /// Get layer attrs by UUID
+    pub fn layers_attrs_get(&self, uuid: &Uuid) -> Option<&Attrs> {
+        self.layers.iter().find(|l| l.uuid == *uuid).map(|l| &l.attrs)
+    }
+
+    /// Get mutable layer attrs by UUID
+    pub fn layers_attrs_get_mut(&mut self, uuid: &Uuid) -> Option<&mut Attrs> {
+        self.layers.iter_mut().find(|l| l.uuid == *uuid).map(|l| &mut l.attrs)
+    }
+
+    /// Get all layer edges (start, end) sorted by frame.
+    /// Returns (frame, is_start) pairs.
+    pub fn get_child_edges(&self) -> Vec<(i32, bool)> {
+        let mut edges = Vec::new();
+        for layer in &self.layers {
+            let start = layer.attrs.layer_start();
+            let end = layer.attrs.layer_end();
+            if start <= end {
+                edges.push((start, true));
+                edges.push((end, false));
+            }
+        }
+        edges.sort_by_key(|(frame, _)| *frame);
+        edges.dedup_by_key(|(frame, _)| *frame);
+        edges
+    }
+
+    /// Compute visual row for each layer (greedy non-overlapping layout)
+    pub fn compute_layer_rows(&self, child_order: &[usize]) -> std::collections::HashMap<usize, usize> {
+        use std::collections::HashMap;
+        let mut layer_rows: HashMap<usize, usize> = HashMap::new();
+        let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new();
+
+        for &idx in child_order {
+            let Some(layer) = self.layers.get(idx) else { continue };
+            let start = layer.attrs.full_bar_start();
+            let end = layer.attrs.full_bar_end();
+
+            let mut row = 0;
+            loop {
+                let mut row_free = true;
+                if let Some(ranges) = occupied_rows.get(&row) {
+                    for (occ_start, occ_end) in ranges {
+                        if start <= *occ_end && end >= *occ_start {
+                            row_free = false;
+                            break;
+                        }
+                    }
+                }
+                if row_free {
+                    occupied_rows.entry(row).or_default().push((start, end));
+                    layer_rows.insert(idx, row);
+                    break;
+                }
+                row += 1;
+            }
+        }
+        layer_rows
+    }
+
+    /// Find insert position for target row
+    fn find_insert_position_for_row(&self, target_row: usize) -> usize {
+        let child_order: Vec<usize> = (0..self.layers.len()).collect();
+        let layer_rows = self.compute_layer_rows(&child_order);
+        for idx in 0..self.layers.len() {
+            if let Some(&row) = layer_rows.get(&idx) {
+                if row >= target_row {
+                    return idx;
+                }
+            }
+        }
+        self.layers.len()
+    }
+
+    /// Calculate drop position (snap_frame, insert_idx) for new layer
+    pub fn calc_drop_on_track(
+        &self,
+        drop_frame: i32,
+        new_duration: i32,
+        target_row: usize,
+    ) -> (i32, usize) {
+        let child_order: Vec<usize> = (0..self.layers.len()).collect();
+        let layer_rows = self.compute_layer_rows(&child_order);
+
+        // Collect layers in target row
+        let mut layers_in_row: Vec<(usize, i32, i32)> = Vec::new();
+        for (&idx, &row) in &layer_rows {
+            if row == target_row {
+                if let Some(layer) = self.layers.get(idx) {
+                    let start = layer.attrs.full_bar_start();
+                    let end = layer.attrs.full_bar_end();
+                    layers_in_row.push((idx, start, end));
+                }
+            }
+        }
+
+        if layers_in_row.is_empty() {
+            let insert_pos = self.find_insert_position_for_row(target_row);
+            return (drop_frame, insert_pos);
+        }
+
+        layers_in_row.sort_by_key(|(_, start, _)| *start);
+
+        // Find nearest layer
+        let mut best_layer: Option<(usize, i32, i32)> = None;
+        let mut best_dist = i32::MAX;
+        for &(idx, start, end) in &layers_in_row {
+            let center = (start + end) / 2;
+            let dist = (drop_frame - center).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_layer = Some((idx, start, end));
+            }
+        }
+
+        let Some((layer_idx, layer_start, layer_end)) = best_layer else {
+            let insert_pos = self.find_insert_position_for_row(target_row);
+            return (drop_frame, insert_pos);
+        };
+
+        let layer_center = (layer_start + layer_end) / 2;
+        if drop_frame < layer_center {
+            (layer_start - new_duration, layer_idx)
+        } else {
+            (layer_end + 1, layer_idx + 1)
+        }
+    }
+
+    /// Check for cycle if potential_child is added
+    pub fn check_collisions(
+        &self,
+        potential_child: Uuid,
+        media: &std::collections::HashMap<Uuid, super::node_kind::NodeKind>,
+        hier: bool,
+    ) -> bool {
+        let my_uuid = self.uuid();
+        if potential_child == my_uuid {
+            return true;
+        }
+        if !hier {
+            return self.layers.iter().any(|l| l.source_uuid == potential_child);
+        }
+        // DFS check for cycles
+        let mut stack = vec![potential_child];
+        let mut visited = HashSet::new();
+        while let Some(current) = stack.pop() {
+            if current == my_uuid {
+                return true;
+            }
+            if !visited.insert(current) {
+                continue;
+            }
+            if let Some(node) = media.get(&current) {
+                for input in node.inputs() {
+                    stack.push(input);
+                }
+            }
+        }
+        false
+    }
+
+    /// Get frame cache statuses (stub - needs cache passed in)
+    pub fn cache_frame_statuses(&self) -> Option<Vec<FrameStatus>> {
+        // Return placeholder for all frames - actual caching is in Project/CacheManager
+        let duration = self.frame_count();
+        if duration <= 0 {
+            return None;
+        }
+        Some(vec![FrameStatus::Placeholder; duration as usize])
+    }
+
+    /// Move single layer to new start position
+    pub fn move_child(&mut self, layer_idx: usize, new_start: i32) -> anyhow::Result<()> {
+        let layer = self.layers.get_mut(layer_idx)
+            .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
+        layer.attrs.set(A_IN, AttrValue::Int(new_start));
+        self.mark_dirty();
+        Ok(())
+    }
+
+    /// Set layer play start (adjusts trim_in)
+    pub fn set_child_start(&mut self, layer_idx: usize, new_play_start: i32) -> anyhow::Result<()> {
+        let layer = self.layers.get_mut(layer_idx)
+            .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
+        let layer_in = layer.attrs.get_i32(A_IN).unwrap_or(0);
+        let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        // trim_in in source frames
+        let new_trim_in = ((new_play_start - layer_in) as f32 * speed) as i32;
+        layer.attrs.set(A_TRIM_IN, AttrValue::Int(new_trim_in.max(0)));
+        self.mark_dirty();
+        Ok(())
+    }
+
+    /// Set layer play end (adjusts trim_out)
+    pub fn set_child_end(&mut self, layer_idx: usize, new_play_end: i32) -> anyhow::Result<()> {
+        let layer = self.layers.get_mut(layer_idx)
+            .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
+        let layer_end = layer.end();
+        let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        // trim_out in source frames
+        let new_trim_out = ((layer_end - new_play_end) as f32 * speed) as i32;
+        layer.attrs.set(A_TRIM_OUT, AttrValue::Int(new_trim_out.max(0)));
+        self.mark_dirty();
+        Ok(())
+    }
+
     // --- Internal compose ---
     
     fn placeholder_frame(&self) -> Frame {
@@ -431,6 +829,31 @@ impl Node for CompNode {
         for layer in &self.layers {
             layer.attrs.clear_dirty();
         }
+    }
+}
+
+// --- Stubs for legacy API ---
+
+impl CompNode {
+    /// Stub: set event emitter (legacy API - not needed in new architecture)
+    pub fn set_event_emitter(&mut self, _emitter: crate::core::event_bus::CompEventEmitter) {
+        // No-op: events are handled through Project-level event bus
+    }
+    
+    /// Stub: emit attrs changed event (legacy API)
+    pub fn emit_attrs_changed(&self) {
+        // No-op: dirty flags handle this now
+        self.mark_dirty();
+    }
+    
+    /// Stub: signal preload (legacy API - handled by Project/CacheManager now)
+    pub fn signal_preload(
+        &self,
+        _workers: &crate::core::workers::Workers,
+        _project: &crate::entities::Project,
+        _range: Option<std::ops::Range<i32>>,
+    ) {
+        // No-op: preloading is triggered by Project/Player now
     }
 }
 
