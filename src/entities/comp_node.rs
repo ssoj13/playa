@@ -247,8 +247,10 @@ impl CompNode {
         let cache = project.global_cache.as_ref()?;
         let media = project.media.read().expect("media lock");
         let ctx = super::node::ComputeContext {
-            cache: cache.as_ref(),
+            cache,
             media: &media,
+            workers: None,
+            epoch: 0,
         };
         self.compute(frame_idx, &ctx)
     }
@@ -830,6 +832,46 @@ impl Node for CompNode {
             layer.attrs.clear_dirty();
         }
     }
+    
+    fn preload(&self, center: i32, ctx: &ComputeContext) {
+        if ctx.workers.is_none() {
+            return;
+        }
+        
+        let (play_start, play_end) = self.work_area();
+        if play_end < play_start {
+            return;
+        }
+        
+        debug!(
+            "CompNode::preload: comp={}, center={}, work_area=[{}..{}], layers={}",
+            self.name(), center, play_start, play_end, self.layers.len()
+        );
+        
+        // Collect source info
+        let source_info: Vec<(Uuid, i32)> = self.layers.iter()
+            .filter(|l| l.is_visible())
+            .map(|l| (l.source_uuid, l.parent_to_local(center)))
+            .collect();
+        
+        // Trigger preload for each source
+        for (source_uuid, local_center) in source_info {
+            let Some(source) = ctx.media.get(&source_uuid) else {
+                continue;
+            };
+            
+            match source {
+                super::node_kind::NodeKind::File(file_node) => {
+                    let source_center = file_node._in() + local_center;
+                    file_node.preload(source_center, ctx);
+                }
+                super::node_kind::NodeKind::Comp(comp_node) => {
+                    let source_center = comp_node._in() + local_center;
+                    comp_node.preload(source_center, ctx);
+                }
+            }
+        }
+    }
 }
 
 // --- Stubs for legacy API ---
@@ -846,14 +888,52 @@ impl CompNode {
         self.mark_dirty();
     }
     
-    /// Stub: signal preload (legacy API - handled by Project/CacheManager now)
+    /// Signal background preload for frames around current position.
+    ///
+    /// Triggers preload for all source FileNodes in layers.
+    /// Uses Node::preload() trait method which implements spiral/forward strategies.
     pub fn signal_preload(
         &self,
-        _workers: &crate::core::workers::Workers,
-        _project: &crate::entities::Project,
-        _range: Option<std::ops::Range<i32>>,
+        workers: &crate::core::workers::Workers,
+        project: &crate::entities::Project,
+        center_override: Option<std::ops::Range<i32>>,
     ) {
-        // No-op: preloading is triggered by Project/Player now
+        use super::node::ComputeContext;
+        
+        // Get cache and epoch
+        let global_cache = match &project.global_cache {
+            Some(cache) => cache,
+            None => return,
+        };
+        
+        let epoch = project.cache_manager()
+            .map(|m| m.current_epoch())
+            .unwrap_or(0);
+        
+        let center = center_override
+            .map(|r| r.start)
+            .unwrap_or_else(|| self.frame());
+        
+        let (play_start, play_end) = self.work_area();
+        if play_end < play_start {
+            return;
+        }
+        
+        debug!(
+            "signal_preload: comp={}, center={}, work_area=[{}..{}], layers={}",
+            self.name(), center, play_start, play_end, self.layers.len()
+        );
+        
+        // Build ComputeContext and delegate to preload()
+        let media = project.media.read().expect("media lock");
+        let ctx = ComputeContext {
+            cache: global_cache,
+            media: &media,
+            workers: Some(workers),
+            epoch,
+        };
+        
+        self.preload(center, &ctx);
     }
 }
 

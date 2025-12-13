@@ -7,18 +7,25 @@
 //! Each node can compute a frame at given time, has attributes,
 //! and participates in dirty tracking for efficient caching.
 
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::attrs::Attrs;
 use super::frame::Frame;
+use crate::core::global_cache::GlobalFrameCache;
+use crate::core::workers::Workers;
 
-/// Context passed to node compute functions.
+/// Context passed to node compute and preload functions.
 /// Contains references to project resources needed for computation.
 pub struct ComputeContext<'a> {
-    /// Reference to the global frame cache for retrieving cached frames
-    pub cache: &'a crate::core::global_cache::GlobalFrameCache,
+    /// Global frame cache (Arc for worker thread access in preload)
+    pub cache: &'a Arc<GlobalFrameCache>,
     /// Media pool for looking up source nodes
     pub media: &'a std::collections::HashMap<Uuid, super::node_kind::NodeKind>,
+    /// Worker pool for background loading (None during synchronous compute)
+    pub workers: Option<&'a Workers>,
+    /// Current epoch for cancelling stale preload requests
+    pub epoch: u64,
 }
 
 /// Base trait for all node types.
@@ -56,6 +63,13 @@ pub trait Node: Send + Sync {
     
     /// Clear dirty flag after successful computation
     fn clear_dirty(&self);
+    
+    /// Preload frames around center position for background loading.
+    /// Default implementation is no-op (for nodes without preload support).
+    /// FileNode/CompNode override this to enqueue frame loading via workers.
+    fn preload(&self, _center: i32, _ctx: &ComputeContext) {
+        // Default no-op
+    }
     
     // --- Convenience methods with default implementations ---
     

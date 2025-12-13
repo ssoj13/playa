@@ -227,6 +227,13 @@ impl Node for NodeKind {
             NodeKind::Comp(n) => n.clear_dirty(),
         }
     }
+    
+    fn preload(&self, center: i32, ctx: &ComputeContext) {
+        match self {
+            NodeKind::File(n) => n.preload(center, ctx),
+            NodeKind::Comp(n) => n.preload(center, ctx),
+        }
+    }
 }
 
 // Convenience From implementations

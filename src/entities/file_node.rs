@@ -234,6 +234,52 @@ impl Node for FileNode {
     fn clear_dirty(&self) {
         self.attrs.clear_dirty()
     }
+    
+    fn preload(&self, center: i32, ctx: &ComputeContext) {
+        use crate::utils::media;
+        
+        let Some(workers) = ctx.workers else {
+            return;
+        };
+        
+        let (play_start, play_end) = self.work_area_abs();
+        if play_end < play_start {
+            return;
+        }
+        
+        // Determine strategy: spiral for images, forward for video
+        let is_video = self.file_mask()
+            .map(|m| media::is_video(std::path::Path::new(&m)))
+            .unwrap_or(false);
+        
+        if is_video {
+            // Forward-only for video (expensive backward seeking)
+            let start = center.max(play_start);
+            for idx in start..=play_end {
+                self.enqueue_frame(workers, ctx.cache, ctx.epoch, idx);
+            }
+        } else {
+            // Spiral for image sequences (cheap bidirectional)
+            let offset_backward = center - play_start;
+            let offset_forward = play_end - center;
+            let max_offset = offset_backward.max(offset_forward).max(0);
+            
+            for offset in 0..=max_offset {
+                if center >= offset {
+                    let idx = center - offset;
+                    if idx >= play_start && idx <= play_end {
+                        self.enqueue_frame(workers, ctx.cache, ctx.epoch, idx);
+                    }
+                }
+                if offset > 0 {
+                    let idx = center + offset;
+                    if idx >= play_start && idx <= play_end {
+                        self.enqueue_frame(workers, ctx.cache, ctx.epoch, idx);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // --- Sequence Detection ---
@@ -473,6 +519,73 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usi
     };
 
     Ok(Some((full_prefix, number, ext, padding)))
+}
+
+// --- Preload ---
+
+use std::sync::Arc;
+use crate::core::workers::Workers;
+use crate::core::global_cache::GlobalFrameCache;
+use super::frame::FrameStatus;
+
+impl FileNode {
+    /// Enqueue frame loading for background worker.
+    ///
+    /// Creates Header frame in cache if not exists, then enqueues load() call.
+    /// Skips frames that are already Loaded, Loading, or Error.
+    pub fn enqueue_frame(
+        &self,
+        workers: &Workers,
+        global_cache: &Arc<GlobalFrameCache>,
+        epoch: u64,
+        frame_idx: i32,
+    ) {
+        let uuid = self.uuid();
+        
+        // Skip if already Loaded, Loading, or Error
+        if let Some(status) = global_cache.get_status(uuid, frame_idx) {
+            match status {
+                FrameStatus::Loaded | FrameStatus::Loading | FrameStatus::Error => return,
+                _ => {} // Header/Placeholder - proceed
+            }
+        }
+        
+        // Calculate sequence frame number
+        let comp_start = self._in();
+        let local_idx = frame_idx - comp_start;
+        let seq_start = self.file_start().unwrap_or(comp_start);
+        let seq_frame = seq_start.saturating_add(local_idx);
+        
+        // Get frame path
+        let frame_path = match self.resolve_frame_path(seq_frame) {
+            Some(path) => path,
+            None => return,
+        };
+        
+        let (w, h) = self.dim();
+        let cache = Arc::clone(global_cache);
+        
+        // Atomically get existing frame or create Header
+        let (frame, _was_inserted) = cache.get_or_insert(uuid, frame_idx, || {
+            let new_frame = Frame::new_unloaded(frame_path.clone());
+            new_frame.crop(w, h, CropAlign::LeftTop);
+            new_frame
+        });
+        
+        // Enqueue background load
+        workers.execute_with_epoch(epoch, move || {
+            match frame.load() {
+                Ok(_) => {
+                    // Re-insert to update memory tracking
+                    cache.insert(uuid, frame_idx, frame);
+                    log::trace!("Background load completed: node={}, frame={}", uuid, frame_idx);
+                }
+                Err(e) => {
+                    log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
+                }
+            }
+        });
+    }
 }
 
 #[cfg(test)]
