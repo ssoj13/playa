@@ -239,7 +239,54 @@ impl CompNode {
 
     /// Called when comp becomes active
     pub fn on_activate(&mut self) {
-        // Currently a no-op, can be used for initialization
+        self.rebound();
+    }
+    
+    /// Recalculate comp bounds based on layer extents.
+    /// Updates _in/_out to encompass all visible layers.
+    pub fn rebound(&mut self) {
+        if self.layers.is_empty() {
+            // Default span when no layers: 0..100 for a visible timeline
+            self.attrs.set(A_IN, AttrValue::Int(0));
+            self.attrs.set(A_OUT, AttrValue::Int(100));
+            return;
+        }
+        
+        let old_bounds = (self._in(), self._out());
+        let old_work = self.work_area();
+        
+        // Find min/max from all visible layers
+        let mut min_start = i32::MAX;
+        let mut max_end = i32::MIN;
+        
+        for layer in &self.layers {
+            if !layer.is_visible() {
+                continue;
+            }
+            let (layer_start, layer_end) = layer.work_area();
+            min_start = min_start.min(layer_start);
+            max_end = max_end.max(layer_end);
+        }
+        
+        let (new_start, new_end) = if min_start == i32::MAX || max_end == i32::MIN {
+            (0, 100) // No visible layers, use default
+        } else {
+            (min_start, max_end)
+        };
+        
+        self.attrs.set(A_IN, AttrValue::Int(new_start));
+        self.attrs.set(A_OUT, AttrValue::Int(new_end));
+        
+        // Keep work area in sync only if it used to match full bounds
+        if old_work == old_bounds {
+            self.attrs.set(A_TRIM_IN, AttrValue::Int(0));
+            self.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
+        }
+        
+        debug!(
+            "rebound: comp={}, old=[{}..{}], new=[{}..{}]",
+            self.name(), old_bounds.0, old_bounds.1, new_start, new_end
+        );
     }
 
     /// Get frame at given index (convenience wrapper around compute)
@@ -265,13 +312,16 @@ impl CompNode {
             self.layers.push(layer);
         }
         self.mark_dirty();
+        self.rebound();
     }
     
     /// Remove layer by UUID
     pub fn remove_layer(&mut self, layer_uuid: Uuid) -> Option<Layer> {
         if let Some(idx) = self.layers.iter().position(|l| l.uuid == layer_uuid) {
+            let layer = self.layers.remove(idx);
             self.mark_dirty();
-            Some(self.layers.remove(idx))
+            self.rebound();
+            Some(layer)
         } else {
             None
         }
