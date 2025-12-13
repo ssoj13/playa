@@ -84,6 +84,10 @@ struct CompNodeViewer<'a> {
 }
 
 impl<'a> CompNodeViewer<'a> {
+    fn get_node(&self, source_uuid: Uuid) -> Option<crate::entities::NodeKind> {
+        self.project.media.read().ok()?.get(&source_uuid).cloned()
+    }
+    
     fn get_comp(&self, source_uuid: Uuid) -> Option<Comp> {
         self.project.media.read().ok()?.get(&source_uuid).and_then(|n| n.as_comp()).cloned()
     }
@@ -92,8 +96,8 @@ impl<'a> CompNodeViewer<'a> {
 #[allow(refining_impl_trait)]
 impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
     fn title(&mut self, node: &CompNode) -> String {
-        self.get_comp(node.source_uuid)
-            .map(|c| c.name().to_string())
+        self.get_node(node.source_uuid)
+            .map(|n| n.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string())
     }
 
@@ -102,6 +106,7 @@ impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
     }
 
     fn inputs(&mut self, node: &CompNode) -> usize {
+        // FileNodes have no inputs, CompNodes have layers as inputs
         self.get_comp(node.source_uuid)
             .map(|c| c.layers.len())
             .unwrap_or(0)

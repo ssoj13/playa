@@ -47,6 +47,14 @@ impl NodeKind {
         }
     }
     
+    /// Dimensions (width, height)
+    pub fn dim(&self) -> (usize, usize) {
+        match self {
+            NodeKind::File(n) => n.dim(),
+            NodeKind::Comp(n) => n.dim(),
+        }
+    }
+    
     /// Add child layer (only works on CompNode)
     pub fn add_child_layer(
         &mut self,

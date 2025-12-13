@@ -657,10 +657,10 @@ pub fn render_canvas(
 
                             // Draw visible (trimmed) area with full color on top
                             if let Some(visible_bar_rect) = geom.visible_bar_rect {
-                                // Check if source is file comp (for hatching)
+                                // Check if source is file node (for hatching)
                                 let is_source_file = attrs.get_uuid("uuid")
-                                    .and_then(|source_uuid| project.get_comp(source_uuid))
-                                    .map(|source| source.is_file_mode())
+                                    .and_then(|source_uuid| project.get_node(source_uuid))
+                                    .map(|source| source.is_file())
                                     .unwrap_or(false);
 
                                 if is_source_file {

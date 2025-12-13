@@ -36,6 +36,7 @@ use uuid::Uuid;
 
 use crate::dialogs::encode::EncodeDialog;
 use crate::entities::Project;
+use crate::entities::node::Node;
 use crate::core::event_bus::{BoxedEvent, downcast_event};
 use crate::core::player::Player;
 use crate::core::player_events::*;
@@ -546,7 +547,8 @@ pub fn handle_app_event(
     // === Layer Operations ===
     if let Some(e) = downcast_event::<AddLayerEvent>(&event) {
         // Get source info and generate name BEFORE write lock
-        let source_info = project.get_comp(e.source_uuid).map(|s| {
+        // Use get_node() to handle both FileNode and CompNode
+        let source_info = project.get_node(e.source_uuid).map(|s| {
             let name = project.gen_name(s.name());
             (s.frame_count(), s.dim(), name)
         });
