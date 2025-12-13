@@ -639,14 +639,31 @@ impl CompNode {
         false
     }
 
-    /// Get frame cache statuses (stub - needs cache passed in)
-    pub fn cache_frame_statuses(&self) -> Option<Vec<FrameStatus>> {
-        // Return placeholder for all frames - actual caching is in Project/CacheManager
+    /// Get frame cache statuses from global cache.
+    /// Returns status for each frame in the comp's range.
+    pub fn cache_frame_statuses(&self, global_cache: Option<&std::sync::Arc<crate::core::global_cache::GlobalFrameCache>>) -> Option<Vec<FrameStatus>> {
         let duration = self.frame_count();
         if duration <= 0 {
             return None;
         }
-        Some(vec![FrameStatus::Placeholder; duration as usize])
+        
+        let Some(cache) = global_cache else {
+            return Some(vec![FrameStatus::Placeholder; duration as usize]);
+        };
+        
+        let comp_uuid = self.uuid();
+        let comp_start = self._in();
+        let mut statuses = Vec::with_capacity(duration as usize);
+        
+        for frame_offset in 0..duration {
+            let frame_idx = comp_start + frame_offset;
+            let status = cache
+                .get_status(comp_uuid, frame_idx)
+                .unwrap_or(FrameStatus::Placeholder);
+            statuses.push(status);
+        }
+        
+        Some(statuses)
     }
 
     /// Move single layer to new start position

@@ -183,11 +183,7 @@ pub fn render_outline(
     // Match the top padding of the timeline canvas (ruler + status bar + spacing)
     // Must be OUTSIDE ScrollArea to stay in sync with canvas
     // Note: Both panels now use Frame::none() so no offset compensation needed
-    let status_bar_height = comp
-        .cache_frame_statuses()
-        .as_ref()
-        .map(|_| 2.0)
-        .unwrap_or(0.0);
+    let status_bar_height = 2.0; // Status strip is always shown
     ui.add_space(20.0 + status_bar_height + 4.0);
 
     // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
@@ -467,8 +463,8 @@ pub fn render_canvas(
         timeline_width,
         ui.available_width()
     );
-    let status_strip = comp.cache_frame_statuses();
-    let status_bar_height = status_strip.as_ref().map(|_| 2.0).unwrap_or(0.0);
+    let status_strip = comp.cache_frame_statuses(project.global_cache.as_ref());
+    let status_bar_height = 2.0; // Status strip is always shown
 
     // Options + time ruler row (always visible)
     let mut ruler_rect: Option<Rect> = None;
