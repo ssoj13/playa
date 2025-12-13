@@ -26,7 +26,6 @@ use playa::dialogs::encode::EncodeDialog;
 use playa::dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
 use playa::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa::entities;
-use playa::entities::node::Node;
 use playa::entities::Frame;
 use playa::entities::Project;
 use playa::core::event_bus::{CompEventEmitter, EventBus, downcast_event};
@@ -1112,41 +1111,8 @@ impl eframe::App for PlayaApp {
 
         // NOTE: Events processed after player.update() to catch events from player too
         // (handle_events() called once at line ~1100)
-
-        // Centralized dirty check: if any attrs changed, invalidate and preload
-        if let Some(comp_uuid) = self.player.active_comp() {
-            let is_dirty = self.project.get_comp(comp_uuid)
-                .map(|comp| {
-                    // Check comp attrs, children attrs, and source comps
-                    if comp.attrs.is_dirty() || comp.layers.iter().any(|layer| layer.attrs.is_dirty()) {
-                        return true;
-                    }
-                    // Check source comps dirty
-                    let media = self.project.media.read().expect("media lock");
-                    comp.layers.iter().any(|layer| {
-                        layer.attrs.get_uuid("uuid")
-                            .and_then(|source_uuid| media.get(&source_uuid))
-                            .map(|source_node| source_node.attrs().is_dirty())
-                            .unwrap_or(false)
-                    })
-                })
-                .unwrap_or(false);
-
-            if is_dirty {
-                // Reset viewport tracking to force re-render
-                self.viewport_state.request_refresh();
-                // Trigger preload for current position
-                self.enqueue_frame_loads_around_playhead(10);
-                // Clear dirty flags (source comps clear their own on compose)
-                self.project.modify_comp(comp_uuid, |comp| {
-                    comp.attrs.clear_dirty();
-                    for layer in &comp.layers {
-                        layer.attrs.clear_dirty();
-                    }
-                });
-                ctx.request_repaint();
-            }
-        }
+        // NOTE: Dirty checking is handled automatically by CompNode::compute()
+        // which checks attrs.is_dirty() and recomputes if needed
 
         // Periodic cache statistics logging (every 10 seconds)
         let current_time = ctx.input(|i| i.time);

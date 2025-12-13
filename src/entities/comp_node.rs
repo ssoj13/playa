@@ -764,6 +764,7 @@ impl CompNode {
                 
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
+                debug!("compose_internal: layer opacity={}, blend={:?}", opacity, blend);
                 source_frames.push((frame, opacity, blend));
                 
                 let idx = source_frames.len() - 1;
@@ -859,10 +860,19 @@ impl Node for CompNode {
                 .map(|n| n.is_dirty())
                 .unwrap_or(false)
         });
+        let cache_has = ctx.cache.contains(self.uuid(), frame_idx);
         let needs_recompute = self.attrs.is_dirty()
             || any_layer_dirty
             || any_source_dirty
-            || !ctx.cache.contains(self.uuid(), frame_idx);
+            || !cache_has;
+        
+        // Debug: log dirty state
+        if any_layer_dirty || self.attrs.is_dirty() {
+            debug!(
+                "compute() dirty: comp={}, frame={}, self_dirty={}, layer_dirty={}, source_dirty={}, cache_has={}, needs_recompute={}",
+                self.name(), frame_idx, self.attrs.is_dirty(), any_layer_dirty, any_source_dirty, cache_has, needs_recompute
+            );
+        }
         
         if !needs_recompute {
             if let Some(frame) = ctx.cache.get(self.uuid(), frame_idx) {
