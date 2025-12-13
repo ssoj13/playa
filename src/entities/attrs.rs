@@ -91,10 +91,17 @@ impl Attrs {
         }
     }
 
-    /// Set attribute value and mark as dirty
+    /// Set attribute value and mark as dirty (triggers cache invalidation)
     pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
         self.map.insert(key.into(), value);
-        self.dirty.store(true, Ordering::Relaxed); // Mark as dirty for cache invalidation
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+    
+    /// Set attribute value WITHOUT marking dirty.
+    /// Use for playhead position, selection state, etc. that don't affect rendering.
+    pub fn set_silent(&mut self, key: impl Into<String>, value: AttrValue) {
+        self.map.insert(key.into(), value);
+        // Don't mark dirty - this change doesn't require cache invalidation
     }
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {

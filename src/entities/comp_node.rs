@@ -212,9 +212,10 @@ impl CompNode {
         self.attrs.get_i32(A_FRAME).unwrap_or(self._in())
     }
 
-    /// Set current playhead frame
+    /// Set current playhead frame.
+    /// Uses set_silent() - changing playhead doesn't invalidate cache.
     pub fn set_frame(&mut self, frame: i32) {
-        self.attrs.set(A_FRAME, super::attrs::AttrValue::Int(frame));
+        self.attrs.set_silent(A_FRAME, super::attrs::AttrValue::Int(frame));
     }
 
     /// Play range (work area) - returns (start, end)

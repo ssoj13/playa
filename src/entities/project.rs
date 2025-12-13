@@ -379,9 +379,11 @@ impl Project {
     {
         if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
             if let Some(comp) = node.as_comp_mut() {
+                let was_dirty = comp.attrs.is_dirty();
                 f(comp);
-                // Auto-emit if comp is dirty after modification
-                if comp.attrs.is_dirty() {
+                // Auto-emit only if comp BECAME dirty (not if it was already dirty)
+                // This prevents constant cache invalidation from repeated modify_comp calls
+                if !was_dirty && comp.attrs.is_dirty() {
                     if let Some(ref emitter) = self.event_emitter {
                         emitter.emit(AttrsChangedEvent(uuid));
                     }
