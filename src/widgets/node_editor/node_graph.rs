@@ -274,7 +274,8 @@ impl NodeEditorState {
     /// # Cycle Detection
     ///
     /// Uses visited set to prevent infinite loops from cyclic references.
-    pub fn rebuild_from_comp(&mut self, comp: &Comp, project: &Project) {
+    /// Rebuild graph from comp hierarchy. Takes comp_uuid to avoid holding locks.
+    pub fn rebuild_from_comp(&mut self, comp_uuid: Uuid, project: &Project) {
         if !self.needs_rebuild {
             return;
         }
@@ -282,12 +283,17 @@ impl NodeEditorState {
 
         self.snarl = Snarl::new();
 
-        let root_uuid = comp.uuid();
+        let root_uuid = comp_uuid;
         let media = project.media.read().expect("media lock");
+
+        // Get comp name for logging (if available)
+        let comp_name = media.get(&root_uuid)
+            .map(|n| n.name().to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
 
         log::trace!(
             "NodeEditor: rebuilding for comp '{}' ({}), media has {} items",
-            comp.name(),
+            comp_name,
             root_uuid,
             media.len()
         );
@@ -315,6 +321,9 @@ impl NodeEditorState {
             max_depth
         );
 
+        // Drop media lock before Phase 2 - load_node_pos needs to acquire it
+        drop(media);
+
         // Phase 2: Calculate Y positions for each depth level
         let mut depth_slots: HashMap<usize, usize> = HashMap::new();
         let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
@@ -330,7 +339,7 @@ impl NodeEditorState {
             let default_y = slot as f32 * VERTICAL_SPACING + 50.0;
             let default_pos = Pos2::new(default_x, default_y);
 
-            let pos = load_node_pos(comp, info.instance_uuid, default_pos);
+            let pos = load_node_pos(project, comp_uuid, info.instance_uuid, default_pos);
 
             log::trace!(
                 "NodeEditor: creating node {} (src {}) at ({}, {})",
@@ -472,19 +481,23 @@ fn center_nodes(snarl: &mut Snarl<CompNode>, target: Pos2, nodes: &[NodeId]) {
     }
 }
 
-fn load_node_pos(comp: &Comp, instance_uuid: Uuid, default: Pos2) -> Pos2 {
-    let maybe_attr = if instance_uuid == comp.uuid() {
-        comp.attrs.get("node_pos")
-    } else {
-        comp.layers_attrs_get(&instance_uuid)
-            .and_then(|a| a.get("node_pos"))
-    };
-
-    if let Some(AttrValue::Vec3([x, y, _])) = maybe_attr {
-        Pos2::new(*x, *y)
-    } else {
-        default
-    }
+fn load_node_pos(project: &Project, comp_uuid: Uuid, instance_uuid: Uuid, default: Pos2) -> Pos2 {
+    // Load node position from comp attrs (root) or layer attrs (children)
+    let maybe_pos = project.with_comp(comp_uuid, |comp| {
+        let maybe_attr = if instance_uuid == comp.uuid() {
+            comp.attrs.get("node_pos")
+        } else {
+            comp.layers_attrs_get(&instance_uuid)
+                .and_then(|a| a.get("node_pos"))
+        };
+        if let Some(AttrValue::Vec3([x, y, _])) = maybe_attr {
+            Some(Pos2::new(*x, *y))
+        } else {
+            None
+        }
+    }).flatten();
+    
+    maybe_pos.unwrap_or(default)
 }
 
 fn set_node_pos(attrs: &mut Attrs, pos: Pos2) -> bool {
@@ -609,11 +622,8 @@ pub fn render_node_editor(
     state.set_comp(comp_uuid);
 
     // Rebuild graph from Comp.children if needed
-    // Clone comp to release read lock before potential write operations
     if state.needs_rebuild {
-        if let Some(comp) = project.with_comp(comp_uuid, |c| c.clone()) {
-            state.rebuild_from_comp(&comp, project);
-        }
+        state.rebuild_from_comp(comp_uuid, project);
     }
 
     // Handle fit/layout requests from events
