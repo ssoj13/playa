@@ -395,6 +395,11 @@ impl CompNode {
         self.layers.iter().map(|l| (l.uuid, &l.attrs)).collect()
     }
 
+    /// Get children as (layer_uuid, source_uuid) pairs - for node editor
+    pub fn get_children_sources(&self) -> Vec<(Uuid, Uuid)> {
+        self.layers.iter().map(|l| (l.uuid, l.source_uuid)).collect()
+    }
+
     /// Set FPS
     pub fn set_fps(&mut self, fps: f32) {
         self.attrs.set(A_FPS, super::attrs::AttrValue::Float(fps));

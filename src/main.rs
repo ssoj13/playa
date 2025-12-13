@@ -939,20 +939,20 @@ impl PlayaApp {
             return;
         };
 
-        // Get comp reference and render node editor
+        // Render node editor - pass comp_uuid, let it handle locking internally
+        // IMPORTANT: Don't use with_comp here! render_node_editor calls modify_comp
+        // which needs write lock, causing deadlock if we hold read lock from with_comp
         let emitter = self.event_bus.emitter();
-        let hovered = self.project.with_comp(comp_uuid, |comp| {
-            render_node_editor(
-                ui,
-                &mut self.node_editor_state,
-                &self.project,
-                comp,
-                |evt| emitter.emit_boxed(evt),
-            )
-        });
+        let hovered = render_node_editor(
+            ui,
+            &mut self.node_editor_state,
+            &self.project,
+            comp_uuid,
+            |evt| emitter.emit_boxed(evt),
+        );
 
         // Hover tracking for input routing
-        self.node_editor_hovered = hovered.unwrap_or(false);
+        self.node_editor_hovered = hovered;
     }
 
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {

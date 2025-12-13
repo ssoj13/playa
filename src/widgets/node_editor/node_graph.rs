@@ -544,13 +544,8 @@ fn collect_tree_recursive(
         return;
     };
 
-    // Collect children UUIDs
-    let mut children: Vec<(Uuid, Uuid)> = vec![];
-    for (layer_uuid, attrs) in comp.get_children() {
-        if let Some(child_uuid) = attrs.get_uuid("uuid") {
-            children.push((layer_uuid, child_uuid));
-        }
-    }
+    // Collect children UUIDs - use get_children_sources() for (layer_uuid, source_uuid) pairs
+    let children: Vec<(Uuid, Uuid)> = comp.get_children_sources();
 
     node_info.insert(
         instance_uuid,
@@ -597,21 +592,28 @@ fn collect_tree_recursive(
 /// 4. Renders via egui-snarl with default styling
 ///
 /// Currently read-only. Future: dispatch LayerAddedEvent etc on graph edits.
+/// 
+/// IMPORTANT: Takes comp_uuid instead of &Comp to avoid deadlock.
+/// This function calls modify_comp() internally which needs write lock,
+/// so caller must NOT hold a read lock (e.g., from with_comp).
 pub fn render_node_editor(
     ui: &mut Ui,
     state: &mut NodeEditorState,
     project: &Project,
-    comp: &Comp,
+    comp_uuid: Uuid,
     mut dispatch: impl FnMut(BoxedEvent),
 ) -> bool {
     let widget_id = ui.make_persistent_id("comp_node_editor");
 
     // Sync to current comp (sets needs_rebuild if comp changed)
-    state.set_comp(comp.uuid());
+    state.set_comp(comp_uuid);
 
     // Rebuild graph from Comp.children if needed
+    // Clone comp to release read lock before potential write operations
     if state.needs_rebuild {
-        state.rebuild_from_comp(comp, project);
+        if let Some(comp) = project.with_comp(comp_uuid, |c| c.clone()) {
+            state.rebuild_from_comp(&comp, project);
+        }
     }
 
     // Handle fit/layout requests from events
@@ -681,7 +683,7 @@ pub fn render_node_editor(
     // Viewer with project reference for resolving comp data
     let mut viewer = CompNodeViewer {
         project,
-        output_uuid: comp.uuid(),
+        output_uuid: comp_uuid,
     };
 
     // Render with default styling and detect node moves by comparing positions
