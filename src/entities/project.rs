@@ -125,7 +125,8 @@ impl Project {
         }
     }
 
-    /// Set event emitter for auto-emitting AttrsChangedEvent on comp modifications
+    /// Set event emitter for auto-emitting AttrsChangedEvent on comp modifications.
+    /// Called once during App initialization to enable automatic cache invalidation.
     pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
         self.event_emitter = Some(emitter);
     }
@@ -378,10 +379,9 @@ impl Project {
     {
         if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
             if let Some(comp) = node.as_comp_mut() {
-                let was_dirty = comp.attrs.is_dirty();
                 f(comp);
-                // Auto-emit if comp became dirty
-                if !was_dirty && comp.attrs.is_dirty() {
+                // Auto-emit if comp is dirty after modification
+                if comp.attrs.is_dirty() {
                     if let Some(ref emitter) = self.event_emitter {
                         emitter.emit(AttrsChangedEvent(uuid));
                     }

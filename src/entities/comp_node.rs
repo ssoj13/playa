@@ -79,23 +79,25 @@ impl Layer {
         start + ((src_len as f32 / speed) as i32) - 1
     }
     
-    /// Work area (trimmed range) in absolute frames
+    /// Work area (trimmed range) in absolute frames.
+    /// Layer trim_in/trim_out are OFFSETS in SOURCE frames, scaled by speed for parent timeline.
     pub fn work_area(&self) -> (i32, i32) {
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
-        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
+        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);   // offset in source frames
+        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0); // offset in source frames
         let speed = self.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
-        let trim_in_scaled = (trim_in as f32 / speed) as i32;
+        let trim_in_scaled = (trim_in as f32 / speed) as i32;  // convert to parent timeline frames
         let trim_out_scaled = (trim_out as f32 / speed) as i32;
         (self.start() + trim_in_scaled, self.end() - trim_out_scaled)
     }
     
-    /// Convert parent frame to source local frame
+    /// Convert parent timeline frame to source local frame.
+    /// Accounts for layer start position, speed, and trim_in offset.
     pub fn parent_to_local(&self, parent_frame: i32) -> i32 {
         let start = self.start();
         let speed = self.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
+        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0); // offset in source frames
         let offset = parent_frame - start;
-        trim_in + (offset as f32 * speed) as i32
+        trim_in + (offset as f32 * speed) as i32 // source frame = trim_in + scaled_offset
     }
     
     pub fn is_visible(&self) -> bool {
@@ -195,10 +197,11 @@ impl CompNode {
         (self._out() - self._in() + 1).max(0)
     }
     
-    /// Work area (trimmed range) in absolute frames
+    /// Work area (trimmed range) in absolute frames.
+    /// trim_in/trim_out are OFFSETS: work_start = _in + trim_in, work_end = _out - trim_out
     pub fn work_area(&self) -> (i32, i32) {
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
-        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
+        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);  // offset from _in
+        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0); // offset from _out
         (self._in() + trim_in, self._out() - trim_out)
     }
 
@@ -225,15 +228,17 @@ impl CompNode {
         (end - start + 1).max(0)
     }
 
-    /// Set play start (trim_in)
+    /// Set play start by adjusting trim_in offset.
+    /// trim_in is OFFSET from _in: trim_in = desired_start - _in
     pub fn set_comp_play_start(&mut self, start: i32) {
-        let trim_in = (start - self._in()).max(0);
+        let trim_in = (start - self._in()).max(0); // offset from _in
         self.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int(trim_in));
     }
 
-    /// Set play end (trim_out)
+    /// Set play end by adjusting trim_out offset.
+    /// trim_out is OFFSET from _out: trim_out = _out - desired_end
     pub fn set_comp_play_end(&mut self, end: i32) {
-        let trim_out = (self._out() - end).max(0);
+        let trim_out = (self._out() - end).max(0); // offset from _out
         self.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int(trim_out));
     }
 
@@ -278,9 +283,10 @@ impl CompNode {
         self.attrs.set(A_OUT, AttrValue::Int(new_end));
         
         // Keep work area in sync only if it used to match full bounds
+        // trim_in/trim_out are OFFSETS from _in/_out, not absolute values
         if old_work == old_bounds {
-            self.attrs.set(A_TRIM_IN, AttrValue::Int(new_start));
-            self.attrs.set(A_TRIM_OUT, AttrValue::Int(new_end));
+            self.attrs.set(A_TRIM_IN, AttrValue::Int(0));
+            self.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         }
         
         trace!(
@@ -458,14 +464,14 @@ impl CompNode {
 
     // --- Additional compat methods ---
 
-    /// Trim in value (falls back to comp _in if not set)
+    /// Trim in OFFSET (0 = no trim). Returns absolute frame if not set (legacy fallback).
     pub fn trim_in(&self) -> i32 {
-        self.attrs.get_i32(A_TRIM_IN).unwrap_or_else(|| self._in())
+        self.attrs.get_i32(A_TRIM_IN).unwrap_or(0)
     }
 
-    /// Trim out value (falls back to comp _out if not set)
+    /// Trim out OFFSET (0 = no trim). Returns absolute frame if not set (legacy fallback).
     pub fn trim_out(&self) -> i32 {
-        self.attrs.get_i32(A_TRIM_OUT).unwrap_or_else(|| self._out())
+        self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0)
     }
 
     /// CompNode is never file mode (that's FileNode)
@@ -764,7 +770,6 @@ impl CompNode {
                 
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
-                debug!("compose_internal: layer opacity={}, blend={:?}", opacity, blend);
                 source_frames.push((frame, opacity, blend));
                 
                 let idx = source_frames.len() - 1;

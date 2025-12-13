@@ -1481,11 +1481,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Recreate Player runtime (no longer owns project)
             let mut player = Player::new();
 
-            // Rebuild runtime + set cache manager (unified, lost during clone)
+            // Rebuild runtime + set cache manager (unified, lost during clone/deserialization)
             app.project.rebuild_with_manager(
                 Arc::clone(&app.cache_manager),
                 Some(app.comp_event_emitter.clone()),
             );
+            // Restore event emitter (lost during serde deserialization - #[serde(skip)])
+            // This enables auto-emit of AttrsChangedEvent when comp attributes change
+            app.project.set_event_emitter(app.event_bus.emitter());
 
             // Restore active from project or ensure default
             let active_uuid = app.project.active().or_else(|| {
