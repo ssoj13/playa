@@ -2,6 +2,36 @@
 //!
 //! Replaces the COMP_NORMAL mode from Comp. This node composites
 //! frames from input layers with blend modes, opacity, transforms.
+//!
+//! # Dirty Flag & Caching
+//!
+//! CompNode uses dirty flags to avoid unnecessary recomposition:
+//!
+//! - **`is_dirty()`** - returns true if comp attrs OR any layer attrs are dirty
+//! - **`clear_dirty()`** - clears dirty on comp AND all layers (called after compute)
+//! - **`mark_dirty()`** - marks comp dirty (called by layer mutations)
+//!
+//! ## Key Methods
+//!
+//! - **`set_frame()`** - uses `set_silent()`, does NOT mark dirty (playhead position)
+//! - **`set_child_attrs()`**, **`move_layers()`**, etc. - use `set()`, mark dirty
+//!
+//! ## Trim Values (IMPORTANT)
+//!
+//! `trim_in` and `trim_out` are **OFFSETS**, not absolute frame numbers:
+//!
+//! - For CompNode: `work_start = _in + trim_in`, `work_end = _out - trim_out`
+//! - For Layer: offsets in SOURCE frames, scaled by speed for parent timeline
+//! - Value of 0 = no trim (full range)
+//!
+//! ## Layer Order
+//!
+//! `layers` vector stores layers from **bottom to top** (render order):
+//! - `layers[0]` = bottom layer (rendered first, background)
+//! - `layers[N-1]` = top layer (rendered last, foreground)
+//!
+//! In compose_internal(), layers are iterated with `.rev()` so that
+//! bottom layers are added to source_frames first (correct blend order).
 
 use std::cell::RefCell;
 use std::collections::HashSet;

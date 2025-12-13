@@ -3,6 +3,34 @@
 //! Holds clips (MediaPool) and compositions (Comps) that reference clips.
 //! Project is the unit of serialization: scenes are saved and loaded via
 //! `Project::to_json` / `Project::from_json`.
+//!
+//! # Auto-Emit & Cache Invalidation
+//!
+//! Project has an `event_emitter` field (runtime-only, `#[serde(skip)]`) that
+//! enables automatic cache invalidation when comp attributes change.
+//!
+//! ## `modify_comp()` Pattern
+//!
+//! All comp modifications should go through `modify_comp()` which:
+//! 1. Captures `was_dirty` before the closure
+//! 2. Executes the closure (may call `attrs.set()` → dirty=true)
+//! 3. If `!was_dirty && is_dirty` → emits `AttrsChangedEvent`
+//!
+//! ```text
+//! project.modify_comp(uuid, |comp| {
+//!     comp.set_child_attrs(...);  // attrs.set() → dirty=true
+//! });
+//! // Auto-emits AttrsChangedEvent if comp became dirty
+//! // → triggers cache.clear_comp() and viewport refresh
+//! ```
+//!
+//! ## Important: Event Emitter Restoration
+//!
+//! Since `event_emitter` has `#[serde(skip)]`, it's lost during deserialization.
+//! Must call `project.set_event_emitter()` after:
+//! - `Project::from_json()` (load project)
+//! - eframe's persisted state deserialization
+//! - Any clone/rebuild operation
 
 use std::collections::HashMap;
 use std::fs;

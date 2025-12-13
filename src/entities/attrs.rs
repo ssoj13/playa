@@ -1,7 +1,33 @@
 //! Generic attribute storage shared across core types.
 //!
 //! Used by Frame, Clip, Layer, Comp, Project.
-//! Hashing notes:
+//!
+//! # Dirty Flag & Cache Invalidation
+//!
+//! Each `Attrs` instance has an atomic `dirty` flag used for cache invalidation:
+//!
+//! - **`set()`** - sets attribute AND marks dirty. Use for attributes that affect
+//!   rendering (opacity, transforms, layer timing, etc.). Triggers cache invalidation.
+//!
+//! - **`set_silent()`** - sets attribute WITHOUT marking dirty. Use for state that
+//!   doesn't affect rendering (playhead position, selection, UI state).
+//!
+//! ## Dataflow
+//!
+//! ```text
+//! User changes opacity → attrs.set() → dirty=true
+//!   → modify_comp() detects !was_dirty && is_dirty
+//!   → emits AttrsChangedEvent
+//!   → cache.clear_comp() invalidates frames
+//!   → compute() recomposes → clear_dirty()
+//!
+//! Playback advances frame → attrs.set_silent() → dirty unchanged
+//!   → modify_comp() sees was_dirty == is_dirty
+//!   → NO event emitted → cache stays valid
+//! ```
+//!
+//! # Hashing
+//!
 //! - `hash_all()` and `hash_filtered()` hash keys in sorted order for determinism.
 //! - `AttrValue` hashes floats via `to_bits`; matrices/vectors are flattened.
 //! - `Attrs` hashing is used by `Comp::compute_comp_hash` to invalidate cached frames
