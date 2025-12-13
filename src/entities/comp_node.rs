@@ -37,7 +37,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 
 use half::f16;
-use log::{debug, trace};
+use log::trace;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -416,18 +416,25 @@ impl CompNode {
         uuids.iter().filter_map(|u| self.uuid_to_idx(*u)).collect()
     }
 
-    /// Get layer start frame (in attr)
+    /// Get layer "in" frame (full bar start, ignores trims)
     pub fn child_in(&self, layer_uuid: Uuid) -> Option<i32> {
         self.get_layer(layer_uuid).and_then(|l| l.attrs.get_i32(A_IN))
     }
 
-    /// Get layer visual start (same as child_in for now)
+    /// Get layer visual start (play_start = in + trim_in/speed)
+    /// This is where the VISIBLE content begins on timeline.
     pub fn child_start(&self, layer_uuid: Uuid) -> Option<i32> {
-        self.child_in(layer_uuid)
+        self.get_layer(layer_uuid).map(|l| l.work_area().0)
     }
 
-    /// Get layer end frame
+    /// Get layer visual end (play_end, accounts for trims)
+    /// This is where the VISIBLE content ends on timeline.
     pub fn child_end(&self, layer_uuid: Uuid) -> Option<i32> {
+        self.get_layer(layer_uuid).map(|l| l.work_area().1)
+    }
+
+    /// Get layer full bar end (ignores trims, = in + src_len/speed - 1)
+    pub fn child_full_end(&self, layer_uuid: Uuid) -> Option<i32> {
         self.get_layer(layer_uuid).map(|l| l.end())
     }
 
@@ -458,17 +465,28 @@ impl CompNode {
     }
 
     /// Trim layers (adjust trim_in/trim_out)
+    ///
+    /// delta is in TIMELINE frames, will be converted to SOURCE frames via speed.
+    /// For "in": positive delta = trim more from start (play_start moves right)
+    /// For "out": negative delta = trim more from end (play_end moves left)
     pub fn trim_layers(&mut self, layer_uuids: &[Uuid], edge: &str, delta: i32) {
         for uuid in layer_uuids {
             if let Some(layer) = self.get_layer_mut(*uuid) {
+                // Convert timeline delta to source frames
+                let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+                let delta_source = (delta as f32 * speed).round() as i32;
+
                 match edge {
                     "in" | "start" => {
+                        // Positive delta_source increases trim_in (visible start moves right)
                         let current = layer.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
-                        layer.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int((current + delta).max(0)));
+                        layer.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int((current + delta_source).max(0)));
                     }
                     "out" | "end" => {
+                        // Negative delta means user dragged left -> MORE trim_out
+                        // So we SUBTRACT delta_source (which is negative) -> adds to trim_out
                         let current = layer.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
-                        layer.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int((current + delta).max(0)));
+                        layer.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int((current - delta_source).max(0)));
                     }
                     _ => {}
                 }
