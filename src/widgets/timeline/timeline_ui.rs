@@ -355,9 +355,8 @@ pub fn render_outline(
 
                         // Double-click: dive into source comp
                         if response.double_clicked() {
-                            if let Some(source_uuid) = attrs.get_uuid("uuid") {
-                                dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
-                            }
+                            // source_uuid is a field on Layer, not in attrs
+                            dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid)));
                         }
                     },
                 )
@@ -720,9 +719,8 @@ pub fn render_canvas(
                                 // Double-click: dive into source comp (check on full bar)
                                 if geom.full_bar_rect.contains(hover_pos) {
                                     if ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
-                                        if let Some(source_uuid) = attrs.get_uuid("uuid") {
-                                            dispatch(Box::new(ProjectActiveChangedEvent(source_uuid)));
-                                        }
+                                        // source_uuid is a field on Layer, not in attrs
+                                        dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid)));
                                     }
                                 }
 

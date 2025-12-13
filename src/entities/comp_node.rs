@@ -121,13 +121,17 @@ impl Layer {
     }
     
     /// Convert parent timeline frame to source local frame.
-    /// Accounts for layer start position, speed, and trim_in offset.
+    /// Accounts for layer start position and speed.
+    ///
+    /// NOTE: Don't add trim_in here! The offset from layer.start() (which is "in")
+    /// already accounts for trim via the timeline position.
+    /// When playhead is at play_start (= in + trim_in/speed), offset = trim_in/speed,
+    /// so local_frame = trim_in - exactly the first visible source frame.
     pub fn parent_to_local(&self, parent_frame: i32) -> i32 {
-        let start = self.start();
+        let start = self.start(); // = "in" (full bar start)
         let speed = self.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0); // offset in source frames
         let offset = parent_frame - start;
-        trim_in + (offset as f32 * speed) as i32 // source frame = trim_in + scaled_offset
+        (offset as f32 * speed) as i32
     }
     
     pub fn is_visible(&self) -> bool {
