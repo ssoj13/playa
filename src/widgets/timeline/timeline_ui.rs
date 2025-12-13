@@ -381,7 +381,7 @@ pub fn render_outline(
         );
         // Only left-click clears selection (not right-click for context menu)
         if empty_response.clicked_by(egui::PointerButton::Primary) {
-            log::debug!("Empty area clicked, clearing {} selected layers", comp.layer_selection.len());
+            log::trace!("Empty area clicked, clearing {} selected layers", comp.layer_selection.len());
             dispatch(Box::new(CompSelectionChangedEvent {
                 comp_uuid: comp_id,
                 selection: vec![],
@@ -655,8 +655,7 @@ pub fn render_canvas(
                             if let Some(visible_bar_rect) = geom.visible_bar_rect {
                                 // Check if source is file node (for hatching)
                                 let is_source_file = attrs.get_uuid("uuid")
-                                    .and_then(|source_uuid| project.get_node(source_uuid))
-                                    .map(|source| source.is_file())
+                                    .and_then(|source_uuid| project.with_node(source_uuid, |n| n.is_file()))
                                     .unwrap_or(false);
 
                                 if is_source_file {
@@ -739,7 +738,7 @@ pub fn render_canvas(
 
                                         // On mouse press, create appropriate drag state
                                         if ui.ctx().input(|i| i.pointer.primary_pressed()) {
-                                            log::debug!(
+                                            log::trace!(
                                                 "[TIMELINE] Creating drag state: {:?} for layer {}",
                                                 tool, idx
                                             );
@@ -758,7 +757,7 @@ pub fn render_canvas(
                                             {
                                                 state.drag_state =
                                                     Some(tool.to_drag_state(idx, attrs, hover_pos));
-                                                log::debug!(
+                                                log::trace!(
                                                     "[TIMELINE] Drag state created successfully"
                                                 );
                                             }
@@ -847,7 +846,7 @@ pub fn render_canvas(
                                             let has_horizontal_move = new_start != *initial_start;
                                             let has_vertical_move = target_child != *layer_idx;
 
-                                            log::debug!("[TIMELINE] Layer drag released: h_move={}, v_move={}, layer_idx={}, new_start={}, new_idx={}",
+                                            log::trace!("[TIMELINE] Layer drag released: h_move={}, v_move={}, layer_idx={}, new_start={}, new_idx={}",
                                                 has_horizontal_move, has_vertical_move, layer_idx, new_start, target_child);
 
                                             if has_horizontal_move || has_vertical_move {
@@ -857,7 +856,7 @@ pub fn render_canvas(
                                                     new_start,
                                                     new_idx: target_child,
                                                 }));
-                                                log::debug!("[TIMELINE] Emitting MoveAndReorderLayer action");
+                                                log::trace!("[TIMELINE] Emitting MoveAndReorderLayer action");
                                             }
                                             state.drag_state = None;
                                         }
@@ -991,7 +990,7 @@ pub fn render_canvas(
                                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
 
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            log::debug!(
+                                            log::trace!(
                                                 "[SLIDE COMMIT] delta={}, in: {}→{}, trim_in: {}→{}, trim_out: {}→{}",
                                                 delta_frames, initial_in, new_in,
                                                 initial_trim_in, new_trim_in, initial_trim_out, new_trim_out
@@ -1171,7 +1170,7 @@ pub fn render_canvas(
                             // If click is BELOW all layers, clear selection
                             let max_layer_y = comp.layers.len() as f32 * config.layer_height + timeline_rect.min.y;
                             if pos.y > max_layer_y && !comp.layer_selection.is_empty() {
-                                log::debug!("Canvas: click below layers at y={}, clearing selection", pos.y);
+                                log::trace!("Canvas: click below layers at y={}, clearing selection", pos.y);
                                 dispatch(Box::new(CompSelectionChangedEvent {
                                     comp_uuid: comp_id,
                                     selection: vec![],

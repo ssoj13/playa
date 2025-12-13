@@ -136,15 +136,15 @@ impl EncodeDialog {
 
     /// Load dialog state from AppSettings (called when opening dialog)
     pub fn load_from_settings(settings: &crate::dialogs::encode::EncodeDialogSettings) -> Self {
-        log::debug!("========== LOADING ENCODE DIALOG SETTINGS ==========");
-        log::debug!("  Output: {}", settings.output_path.display());
-        log::debug!(
+        log::trace!("========== LOADING ENCODE DIALOG SETTINGS ==========");
+        log::trace!("  Output: {}", settings.output_path.display());
+        log::trace!(
             "  Container: {:?}, FPS: {}, Codec: {:?}",
             settings.container,
             settings.fps,
             settings.selected_codec
         );
-        log::debug!(
+        log::trace!(
             "  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             settings.codec_settings.h264.encoder_impl,
             settings.codec_settings.h264.quality_mode,
@@ -152,7 +152,7 @@ impl EncodeDialog {
             settings.codec_settings.h264.preset,
             settings.codec_settings.h264.profile
         );
-        log::debug!(
+        log::trace!(
             "  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             settings.codec_settings.h265.encoder_impl,
             settings.codec_settings.h265.quality_mode,
@@ -160,18 +160,18 @@ impl EncodeDialog {
             settings.codec_settings.h265.preset,
             settings.codec_settings.h265.profile
         );
-        log::debug!(
+        log::trace!(
             "  ProRes: profile={:?}",
             settings.codec_settings.prores.profile
         );
-        log::debug!(
+        log::trace!(
             "  AV1: impl={:?}, mode={:?}, value={}, preset={}",
             settings.codec_settings.av1.encoder_impl,
             settings.codec_settings.av1.quality_mode,
             settings.codec_settings.av1.quality_value,
             settings.codec_settings.av1.preset
         );
-        log::debug!("  Tonemap: {:?}", settings.tonemap_mode);
+        log::trace!("  Tonemap: {:?}", settings.tonemap_mode);
 
         Self {
             output_path: settings.output_path.clone(),
@@ -192,15 +192,15 @@ impl EncodeDialog {
 
     /// Save current dialog state to AppSettings (called when closing dialog or starting encode)
     pub fn save_to_settings(&self) -> crate::dialogs::encode::EncodeDialogSettings {
-        log::debug!("========== SAVING ENCODE DIALOG SETTINGS ==========");
-        log::debug!("  Output: {}", self.output_path.display());
-        log::debug!(
+        log::trace!("========== SAVING ENCODE DIALOG SETTINGS ==========");
+        log::trace!("  Output: {}", self.output_path.display());
+        log::trace!(
             "  Container: {:?}, FPS: {}, Codec: {:?}",
             self.container,
             self.fps,
             self.selected_codec
         );
-        log::debug!(
+        log::trace!(
             "  H.264: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             self.codec_settings.h264.encoder_impl,
             self.codec_settings.h264.quality_mode,
@@ -208,7 +208,7 @@ impl EncodeDialog {
             self.codec_settings.h264.preset,
             self.codec_settings.h264.profile
         );
-        log::debug!(
+        log::trace!(
             "  H.265: impl={:?}, mode={:?}, value={}, preset={}, profile={}",
             self.codec_settings.h265.encoder_impl,
             self.codec_settings.h265.quality_mode,
@@ -216,15 +216,15 @@ impl EncodeDialog {
             self.codec_settings.h265.preset,
             self.codec_settings.h265.profile
         );
-        log::debug!("  ProRes: profile={:?}", self.codec_settings.prores.profile);
-        log::debug!(
+        log::trace!("  ProRes: profile={:?}", self.codec_settings.prores.profile);
+        log::trace!(
             "  AV1: impl={:?}, mode={:?}, value={}, preset={}",
             self.codec_settings.av1.encoder_impl,
             self.codec_settings.av1.quality_mode,
             self.codec_settings.av1.quality_value,
             self.codec_settings.av1.preset
         );
-        log::debug!("  Tonemap: {:?}", self.tonemap_mode);
+        log::trace!("  Tonemap: {:?}", self.tonemap_mode);
 
         crate::dialogs::encode::EncodeDialogSettings {
             output_path: self.output_path.clone(),

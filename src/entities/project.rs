@@ -13,10 +13,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{Attrs, CompositorType};
-use super::node::Node;
+use super::node::{Node, ComputeContext};
 use super::node_kind::NodeKind;
 use super::comp_node::CompNode;
 use super::file_node::FileNode;
+use super::frame::Frame;
 use super::keys::*;
 use crate::core::cache_man::CacheManager;
 use crate::core::global_cache::{CacheStrategy, GlobalFrameCache};
@@ -283,19 +284,46 @@ impl Project {
 
     // === Node access methods ===
 
-    /// Get cloned node by UUID
-    pub fn get_node(&self, uuid: Uuid) -> Option<NodeKind> {
-        self.media.read().expect("media lock poisoned").get(&uuid).cloned()
+    /// Access node by reference via closure (no clone)
+    pub fn with_node<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
+    where
+        F: FnOnce(&NodeKind) -> R,
+    {
+        let media = self.media.read().expect("media lock poisoned");
+        media.get(&uuid).map(f)
     }
 
-    /// Get CompNode by UUID (convenience)
-    pub fn get_comp(&self, uuid: Uuid) -> Option<CompNode> {
-        self.get_node(uuid).and_then(|n| n.as_comp().cloned())
+    /// Access CompNode by reference via closure (no clone)
+    pub fn with_comp<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
+    where
+        F: FnOnce(&CompNode) -> R,
+    {
+        let media = self.media.read().expect("media lock poisoned");
+        media.get(&uuid).and_then(|n| n.as_comp()).map(f)
     }
 
-    /// Get FileNode by UUID (convenience)
-    pub fn get_file(&self, uuid: Uuid) -> Option<FileNode> {
-        self.get_node(uuid).and_then(|n| n.as_file().cloned())
+    /// Access FileNode by reference via closure (no clone)
+    pub fn with_file<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
+    where
+        F: FnOnce(&FileNode) -> R,
+    {
+        let media = self.media.read().expect("media lock poisoned");
+        media.get(&uuid).and_then(|n| n.as_file()).map(f)
+    }
+
+    /// Compute frame for comp (single lock, no double-lock issue)
+    /// Use this instead of with_comp + comp.get_frame which would deadlock.
+    pub fn compute_frame(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
+        let cache = self.global_cache.as_ref()?;
+        let media = self.media.read().expect("media lock poisoned");
+        let comp = media.get(&comp_uuid)?.as_comp()?;
+        let ctx = ComputeContext {
+            cache,
+            media: &media,
+            workers: None,
+            epoch: 0,
+        };
+        comp.compute(frame_idx, &ctx)
     }
 
     /// Update node in media pool
@@ -432,7 +460,7 @@ impl Project {
         // 2. Clear cached frames
         if let Some(ref cache) = self.global_cache {
             cache.clear_comp(uuid);
-            log::debug!("Cleared cache for removed node: {}", uuid);
+            log::trace!("Cleared cache for removed node: {}", uuid);
         }
 
         // 3. Remove layer references from CompNodes

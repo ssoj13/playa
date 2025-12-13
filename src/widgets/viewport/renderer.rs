@@ -2,7 +2,7 @@ use super::ViewportState;
 use super::shaders::Shaders;
 use crate::entities::frame::{PixelBuffer, PixelFormat};
 use eframe::glow::{self, HasContext};
-use log::{debug, error, info};
+use log::{error, info, trace};
 
 /// OpenGL renderer for viewport
 pub struct ViewportRenderer {
@@ -274,7 +274,7 @@ impl ViewportRenderer {
             self.pbo_width = width;
             self.pbo_height = height;
             self.pbo_pixel_format = pixel_format;
-            debug!(
+            trace!(
                 "Recreated PBOs for size {}x{} format {:?} (buffer_size: {} bytes)",
                 width, height, pixel_format, buffer_size
             );
@@ -377,7 +377,7 @@ impl ViewportRenderer {
 
                 self.texture_width = width;
                 self.texture_height = height;
-                debug!(
+                trace!(
                     "Recreated texture for size {}x{} format {:?}",
                     width, height, pixel_format
                 );

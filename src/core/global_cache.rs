@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::hash::{Hash, Hasher};
 use indexmap::IndexSet;
-use log::{debug, trace};
+use log::trace;
 use uuid::Uuid;
 
 use crate::core::cache_man::CacheManager;
@@ -121,7 +121,7 @@ impl GlobalFrameCache {
     pub fn new(capacity: usize, manager: Arc<CacheManager>, strategy: CacheStrategy) -> Self {
         let capacity = capacity.max(100); // Min 100 frames
 
-        debug!(
+        trace!(
             "GlobalFrameCache created: capacity={}, strategy={:?} (nested HashMap)",
             capacity, strategy
         );
@@ -297,7 +297,7 @@ impl GlobalFrameCache {
                     cache.remove(&key.comp_uuid);
                 }
 
-                debug!(
+                trace!(
                     "LRU evicted: {}:{} (freed {} MB)",
                     key.comp_uuid,
                     key.frame_idx,
@@ -326,7 +326,7 @@ impl GlobalFrameCache {
             let key = CacheKey { comp_uuid, frame_idx };
             lru.shift_remove(&key);
 
-            log::debug!(
+            log::trace!(
                 "Cleared single frame {}:{} ({} bytes freed)",
                 comp_uuid, frame_idx, size
             );
@@ -353,7 +353,7 @@ impl GlobalFrameCache {
             // Remove from LRU queue
             lru.retain(|k| k.comp_uuid != comp_uuid);
 
-            debug!(
+            trace!(
                 "Cleared comp {}: {} frames, {} MB freed",
                 comp_uuid,
                 frames.len(),
@@ -402,7 +402,7 @@ impl GlobalFrameCache {
         }
 
         if count > 0 {
-            debug!(
+            trace!(
                 "Cleared range {}:[{}..{}]: {} frames, {} MB freed",
                 comp_uuid, start, end, count, total_freed / 1024 / 1024
             );
@@ -424,14 +424,14 @@ impl GlobalFrameCache {
         cache.clear();
         lru.clear();
 
-        debug!("Cleared entire cache");
+        trace!("Cleared entire cache");
     }
 
     /// Change caching strategy
     pub fn set_strategy(&self, strategy: CacheStrategy) {
         let mut current = self.strategy.lock().unwrap_or_else(|e| e.into_inner());
         if *current != strategy {
-            debug!("Cache strategy: {:?} -> {:?}", *current, strategy);
+            trace!("Cache strategy: {:?} -> {:?}", *current, strategy);
             *current = strategy;
 
             // If switching to LastOnly, clear all

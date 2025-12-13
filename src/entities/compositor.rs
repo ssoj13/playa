@@ -232,8 +232,8 @@ impl CpuCompositor {
         frames: Vec<(Frame, f32, BlendMode)>,
         dim: (usize, usize),
     ) -> Option<Frame> {
-        use log::debug;
-        debug!(
+        use log::trace;
+        trace!(
             "CpuCompositor::blend_with_dim() called with {} frames into {}x{}",
             frames.len(),
             dim.0,
@@ -241,7 +241,7 @@ impl CpuCompositor {
         );
 
         if frames.is_empty() {
-            debug!("  -> empty frames, returning None");
+            trace!("  -> empty frames, returning None");
             return None;
         }
 
@@ -259,7 +259,7 @@ impl CpuCompositor {
             })
             .unwrap_or(FrameStatus::Placeholder);
 
-        debug!("  -> min_status from inputs: {:?}", min_status);
+        trace!("  -> min_status from inputs: {:?}", min_status);
 
         let (width, height) = dim;
         // Start with first frame cropped to canvas

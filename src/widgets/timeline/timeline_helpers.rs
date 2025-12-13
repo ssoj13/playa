@@ -59,7 +59,7 @@ impl LayerTool {
                 let initial_trim_in = attrs.get_i32_or_zero("trim_in");
                 let initial_trim_out = attrs.get_i32_or_zero("trim_out");
                 let speed = attrs.get_float_or("speed", 1.0);
-                log::debug!(
+                log::trace!(
                     "[SLIDE START] in={}, trim_in={}, trim_out={}, speed={}",
                     initial_in, initial_trim_in, initial_trim_out, speed
                 );

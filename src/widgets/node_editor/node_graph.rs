@@ -285,13 +285,13 @@ impl NodeEditorState {
         let root_uuid = comp.uuid();
         let media = project.media.read().expect("media lock");
 
-        log::debug!(
+        log::trace!(
             "NodeEditor: rebuilding for comp '{}' ({}), media has {} items",
             comp.name(),
             root_uuid,
             media.len()
         );
-        log::debug!("NodeEditor: comp is in media? {}", media.contains_key(&root_uuid));
+        log::trace!("NodeEditor: comp is in media? {}", media.contains_key(&root_uuid));
 
         // Phase 1: Collect all nodes recursively with their depth and children count
         let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
@@ -308,7 +308,7 @@ impl NodeEditorState {
             &mut max_depth,
         );
 
-        log::debug!(
+        log::trace!(
             "NodeEditor rebuild: root={}, nodes={}, max_depth={}",
             root_uuid,
             node_info.len(),
@@ -332,7 +332,7 @@ impl NodeEditorState {
 
             let pos = load_node_pos(comp, info.instance_uuid, default_pos);
 
-            log::debug!(
+            log::trace!(
                 "NodeEditor: creating node {} (src {}) at ({}, {})",
                 info.instance_uuid,
                 info.source_uuid,

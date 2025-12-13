@@ -5,7 +5,7 @@
 //!
 //! **Used by**: App (global singleton), Comp (per-comp cache tracking)
 
-use log::{debug, info};
+use log::{info, trace};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use sysinfo::System;
@@ -76,7 +76,7 @@ impl CacheManager {
     /// Call this when current time changes to cancel all pending preload requests.
     pub fn increment_epoch(&self) -> u64 {
         let new_epoch = self.current_epoch.fetch_add(1, Ordering::Relaxed) + 1;
-        debug!("Epoch incremented: {}", new_epoch);
+        trace!("Epoch incremented: {}", new_epoch);
         new_epoch
     }
 
@@ -118,7 +118,7 @@ impl CacheManager {
         let new_usage = self.memory_usage.fetch_add(bytes, Ordering::Relaxed) + bytes;
         let limit = self.max_memory_bytes.load(Ordering::Relaxed);
         if new_usage > limit {
-            debug!(
+            trace!(
                 "Memory limit exceeded: {} MB / {} MB",
                 new_usage / 1024 / 1024,
                 limit / 1024 / 1024

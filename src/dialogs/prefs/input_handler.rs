@@ -174,19 +174,19 @@ impl HotkeyHandler {
             // Handle egui's semantic Copy/Cut/Paste events (Ctrl+C/X/V are converted to these)
             match event {
                 egui::Event::Copy => {
-                    log::debug!("Event::Copy (window={:?})", self.focused_window);
+                    log::trace!("Event::Copy (window={:?})", self.focused_window);
                     if let Some(ev) = self.handle_key("Ctrl+C") {
                         return Some(ev);
                     }
                 }
                 egui::Event::Cut => {
-                    log::debug!("Event::Cut (window={:?})", self.focused_window);
+                    log::trace!("Event::Cut (window={:?})", self.focused_window);
                     if let Some(ev) = self.handle_key("Ctrl+X") {
                         return Some(ev);
                     }
                 }
                 egui::Event::Paste(_) => {
-                    log::debug!("Event::Paste (window={:?})", self.focused_window);
+                    log::trace!("Event::Paste (window={:?})", self.focused_window);
                     if let Some(ev) = self.handle_key("Ctrl+V") {
                         return Some(ev);
                     }
@@ -212,12 +212,12 @@ impl HotkeyHandler {
                         modifiers.shift,
                         modifiers.alt,
                     ) {
-                        log::debug!("Hotkey matched: {} (window={:?})", combo, self.focused_window);
+                        log::trace!("Hotkey matched: {} (window={:?})", combo, self.focused_window);
                         return Some(ev);
                     }
                     if !modifiers.any() {
                         if let Some(ev) = self.handle_key(&key_str) {
-                            log::debug!("Hotkey matched (no mod): {} (window={:?})", key_str, self.focused_window);
+                            log::trace!("Hotkey matched (no mod): {} (window={:?})", key_str, self.focused_window);
                             return Some(ev);
                         }
                     }

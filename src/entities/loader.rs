@@ -6,7 +6,7 @@
 //! - Feature "openexr": openexr-rs (C++ bindings, full DWAA/DWAB support)
 
 use half::f16 as F16;
-use log::debug;
+use log::trace;
 use std::path::Path;
 
 use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
@@ -89,7 +89,7 @@ impl Loader {
 
     #[cfg(feature = "openexr")]
     fn header_exr(path: &Path) -> Result<Attrs, FrameError> {
-        debug!("Reading EXR header with openexr: {}", path.display());
+        trace!("Reading EXR header with openexr: {}", path.display());
 
         use openexr::prelude::*;
 
@@ -115,7 +115,7 @@ impl Loader {
 
     #[cfg(not(feature = "openexr"))]
     fn header_exr(path: &Path) -> Result<Attrs, FrameError> {
-        debug!("Reading EXR header with image crate: {}", path.display());
+        trace!("Reading EXR header with image crate: {}", path.display());
 
         // Use image crate for header reading (it uses exrs internally)
         let reader = image::ImageReader::open(path)
@@ -157,7 +157,7 @@ impl Loader {
 
     #[cfg(feature = "openexr")]
     fn load_exr(path: &Path) -> Result<Frame, FrameError> {
-        debug!("Loading EXR with openexr: {}", path.display());
+        trace!("Loading EXR with openexr: {}", path.display());
 
         use openexr::prelude::*;
 
@@ -210,7 +210,7 @@ impl Loader {
 
     #[cfg(not(feature = "openexr"))]
     fn load_exr(path: &Path) -> Result<Frame, FrameError> {
-        debug!("Loading EXR with image crate: {}", path.display());
+        trace!("Loading EXR with image crate: {}", path.display());
 
         let img = image::open(path).map_err(|e| {
             let err_str = e.to_string();
@@ -247,7 +247,7 @@ impl Loader {
     // ===== Generic Image Loading (PNG, JPEG, TIFF, etc.) =====
 
     fn header_generic(path: &Path) -> Result<Attrs, FrameError> {
-        debug!("Reading generic image header: {}", path.display());
+        trace!("Reading generic image header: {}", path.display());
 
         let reader = image::ImageReader::open(path)
             .map_err(|e| FrameError::Image(format!("Failed to open image: {}", e)))?;
@@ -278,7 +278,7 @@ impl Loader {
     }
 
     fn load_generic(path: &Path) -> Result<Frame, FrameError> {
-        debug!("Loading generic image: {}", path.display());
+        trace!("Loading generic image: {}", path.display());
 
         let img =
             image::open(path).map_err(|e| FrameError::Image(format!("Image load error: {}", e)))?;

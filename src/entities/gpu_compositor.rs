@@ -184,7 +184,7 @@
 //!     let result = project.compositor.borrow_mut().blend_with_dim(source_frames, dim);
 //!     let elapsed = start.elapsed();
 //!
-//!     debug!("Compositor took: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+//!     trace!("Compositor took: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
 //!
 //!     result
 //! }
@@ -193,7 +193,7 @@
 use super::compositor::BlendMode;
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
 use eframe::glow::{self, HasContext};
-use log::{debug, warn};
+use log::{trace, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -249,7 +249,7 @@ pub struct GpuCompositor {
 impl GpuCompositor {
     /// Create new GPU compositor with OpenGL context
     pub fn new(gl: Arc<glow::Context>) -> Self {
-        debug!("GpuCompositor::new() - initializing");
+        trace!("GpuCompositor::new() - initializing");
         Self {
             gl,
             fbo: None,
@@ -267,7 +267,7 @@ impl GpuCompositor {
             return Ok(());
         }
 
-        debug!("GpuCompositor::ensure_initialized() - creating OpenGL resources");
+        trace!("GpuCompositor::ensure_initialized() - creating OpenGL resources");
 
         unsafe {
             let gl = &self.gl;
@@ -320,7 +320,7 @@ impl GpuCompositor {
                 .map_err(|e| format!("Failed to create FBO: {}", e))?;
             self.fbo = Some(fbo);
 
-            debug!("GpuCompositor initialized successfully");
+            trace!("GpuCompositor initialized successfully");
             Ok(())
         }
     }
@@ -429,7 +429,7 @@ void main() {
             gl.delete_shader(vertex_shader);
             gl.delete_shader(fragment_shader);
 
-            debug!("Blend shader compiled successfully");
+            trace!("Blend shader compiled successfully");
             Ok(program)
         }
     }
@@ -751,7 +751,7 @@ void main() {
         let height = first_frame.height();
         let format = first_frame.pixel_format();
 
-        debug!(
+        trace!(
             "GPU blend: {} frames, {}x{}, format: {:?}, min_status: {:?}",
             frames.len(),
             width,
@@ -799,7 +799,7 @@ void main() {
         // This happens automatically - no manual cleanup needed
         drop(guard);
 
-        debug!("GPU blend completed successfully with status: {:?}", min_status);
+        trace!("GPU blend completed successfully with status: {:?}", min_status);
         Ok(result_frame)
     }
 
@@ -843,6 +843,6 @@ impl Drop for GpuCompositor {
                 self.gl.delete_framebuffer(fbo);
             }
         }
-        debug!("GpuCompositor dropped and resources cleaned up");
+        trace!("GpuCompositor dropped and resources cleaned up");
     }
 }

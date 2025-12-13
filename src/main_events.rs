@@ -30,7 +30,7 @@
 //!
 //! See `event_bus.rs::downcast_event()` for the corrected implementation.
 
-use log::debug;
+use log::trace;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -85,7 +85,7 @@ fn scan_folder_for_media(root: &std::path::Path) -> Vec<PathBuf> {
         .min_len(5)
         .scan();
 
-    debug!("scanseq found {} sequences in {:.1}ms",
+    trace!("scanseq found {} sequences in {:.1}ms",
         scanner.len(),
         scanner.result.elapsed_ms
     );
@@ -98,11 +98,11 @@ fn scan_folder_for_media(root: &std::path::Path) -> Vec<PathBuf> {
     // Also scan for video files
     match scan_files(&[root], true, VIDEO_EXTS) {
         Ok(videos) => {
-            debug!("scanseq found {} video files", videos.len());
+            trace!("scanseq found {} video files", videos.len());
             all_paths.extend(videos);
         }
         Err(e) => {
-            debug!("Failed to scan videos: {}", e);
+            trace!("Failed to scan videos: {}", e);
         }
     }
 
@@ -188,10 +188,10 @@ pub fn handle_app_event(
         let was_playing = player.is_playing();
         player.set_is_playing(!was_playing);
         if player.is_playing() {
-            debug!("TogglePlayPause: starting playback at frame {}", player.current_frame(project));
+            trace!("TogglePlayPause: starting playback at frame {}", player.current_frame(project));
             player.last_frame_time = Some(std::time::Instant::now());
         } else {
-            debug!("TogglePlayPause: pausing at frame {}", player.current_frame(project));
+            trace!("TogglePlayPause: pausing at frame {}", player.current_frame(project));
             player.last_frame_time = None;
             player.set_fps_play(player.fps_base());
         }
@@ -202,7 +202,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<SetFrameEvent>(&event) {
-        debug!("SetFrame: moving to frame {}", e.0);
+        trace!("SetFrame: moving to frame {}", e.0);
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 comp.set_frame(e.0);
@@ -268,7 +268,7 @@ pub fn handle_app_event(
 
     // === Play Range Control ===
     if downcast_event::<SetPlayRangeStartEvent>(&event).is_some() {
-        log::debug!("[B] SetPlayRangeStartEvent received, active_comp={:?}", player.active_comp());
+        log::trace!("[B] SetPlayRangeStartEvent received, active_comp={:?}", player.active_comp());
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 let current = comp.frame();
@@ -278,7 +278,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<SetPlayRangeEndEvent>(&event).is_some() {
-        log::debug!("[N] SetPlayRangeEndEvent received, active_comp={:?}", player.active_comp());
+        log::trace!("[N] SetPlayRangeEndEvent received, active_comp={:?}", player.active_comp());
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 let current = comp.frame();
@@ -320,13 +320,13 @@ pub fn handle_app_event(
     }
     // AddFolderEvent: scan directory recursively for media files
     if let Some(e) = downcast_event::<AddFolderEvent>(&event) {
-        debug!("AddFolderEvent: scanning {}", e.0.display());
+        trace!("AddFolderEvent: scanning {}", e.0.display());
         let media_files = scan_folder_for_media(&e.0);
         if !media_files.is_empty() {
-            debug!("Found {} media files in folder", media_files.len());
+            trace!("Found {} media files in folder", media_files.len());
             result.load_sequences = Some(media_files);
         } else {
-            debug!("No media files found in folder");
+            trace!("No media files found in folder");
         }
         return Some(result);
     }
@@ -439,7 +439,7 @@ pub fn handle_app_event(
     if downcast_event::<ToggleEncodeDialogEvent>(&event).is_some() {
         *show_encode_dialog = !*show_encode_dialog;
         if *show_encode_dialog && encode_dialog.is_none() {
-            debug!("[ToggleEncodeDialog] Opening encode dialog");
+            trace!("[ToggleEncodeDialog] Opening encode dialog");
             *encode_dialog = Some(EncodeDialog::load_from_settings(&settings.encode_dialog));
         }
         return Some(result);
@@ -547,8 +547,7 @@ pub fn handle_app_event(
     // === Layer Operations ===
     if let Some(e) = downcast_event::<AddLayerEvent>(&event) {
         // Get source info and generate name BEFORE write lock
-        // Use get_node() to handle both FileNode and CompNode
-        let source_info = project.get_node(e.source_uuid).map(|s| {
+        let source_info = project.with_node(e.source_uuid, |s| {
             let name = project.gen_name(s.name());
             (s.frame_count(), s.dim(), name)
         });
@@ -569,9 +568,9 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<RemoveLayerEvent>(&event) {
-        let child_uuid = project.get_comp(e.comp_uuid).and_then(|comp| {
+        let child_uuid = project.with_comp(e.comp_uuid, |comp| {
             comp.get_children().get(e.layer_idx).map(|(child_uuid, _)| *child_uuid)
-        });
+        }).flatten();
 
         if let Some(child_uuid) = child_uuid {
             project.modify_comp(e.comp_uuid, |comp| {
@@ -660,7 +659,7 @@ pub fn handle_app_event(
                     ("trim_in", AttrValue::Int(e.new_trim_in)),
                     ("trim_out", AttrValue::Int(e.new_trim_out)),
                 ]);
-                log::debug!(
+                log::trace!(
                     "[SLIDE] layer {} -> in={}, trim_in={}, trim_out={}",
                     e.layer_idx, e.new_in, e.new_trim_in, e.new_trim_out
                 );
@@ -678,7 +677,7 @@ pub fn handle_app_event(
                     let old_trim_out = layer.attrs.get_i32_or_zero("trim_out");
                     layer.attrs.set("trim_in", AttrValue::Int(0));
                     layer.attrs.set("trim_out", AttrValue::Int(0));
-                    log::debug!(
+                    log::trace!(
                         "[RESET TRIMS] layer {} -> trim_in: {} -> 0, trim_out: {} -> 0",
                         layer_uuid, old_trim_in, old_trim_out
                     );
@@ -781,12 +780,11 @@ pub fn handle_app_event(
 
     // === Layer Clipboard Operations ===
     if let Some(e) = downcast_event::<DuplicateLayersEvent>(&event) {
-        debug!("DuplicateLayersEvent: comp={}", e.comp_uuid);
+        trace!("DuplicateLayersEvent: comp={}", e.comp_uuid);
         // Duplicate selected layers, insert copies above originals
         // Collect (layer_uuid, source_uuid, attrs_clone)
         let layers_to_dup: Vec<(Uuid, Uuid, crate::entities::Attrs)> = project
-            .get_comp(e.comp_uuid)
-            .map(|comp| {
+            .with_comp(e.comp_uuid, |comp| {
                 comp.layer_selection
                     .iter()
                     .filter_map(|uuid| {
@@ -799,9 +797,9 @@ pub fn handle_app_event(
             .unwrap_or_default();
 
         if layers_to_dup.is_empty() {
-            debug!("Duplicate: no layers selected");
+            trace!("Duplicate: no layers selected");
         } else {
-            debug!("Duplicating {} layers", layers_to_dup.len());
+            trace!("Duplicating {} layers", layers_to_dup.len());
             // Generate names before taking write lock
             let names: Vec<String> = layers_to_dup
                 .iter()
@@ -832,7 +830,7 @@ pub fn handle_app_event(
                     let new_uuid = new_layer.uuid;
                     comp.layers.insert(insert_idx, new_layer);
                     new_uuids.push(new_uuid);
-                    debug!("  Duplicated -> {} at idx {}", new_name, insert_idx);
+                    trace!("  Duplicated -> {} at idx {}", new_name, insert_idx);
                 }
                 // Select only the new duplicated layers
                 comp.layer_selection = new_uuids;
@@ -842,48 +840,48 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<CopyLayersEvent>(&event) {
-        debug!("CopyLayersEvent: comp={}", e.comp_uuid);
+        trace!("CopyLayersEvent: comp={}", e.comp_uuid);
         // Copy selected layers to clipboard
-        if let Some(comp) = project.get_comp(e.comp_uuid) {
+        let clipboard_items = project.with_comp(e.comp_uuid, |comp| {
             if comp.layer_selection.is_empty() {
-                debug!("Copy: no layers selected");
-            } else {
-                let mut clipboard_items: Vec<crate::widgets::timeline::ClipboardLayer> = Vec::new();
-                for uuid in &comp.layer_selection {
-                    if let Some(attrs) = comp.layers_attrs_get(uuid) {
-                        let source_uuid = attrs
-                            .get_uuid("uuid")
-                            .unwrap_or(*uuid);
-                        let original_start = attrs.get_i32("in").unwrap_or(0);
-                        let name = attrs.get_str("name").unwrap_or("?");
-                        debug!("  Copy layer '{}' at frame {}", name, original_start);
-                        clipboard_items.push(crate::widgets::timeline::ClipboardLayer {
-                            source_uuid,
-                            attrs: attrs.clone(),
-                            original_start,
-                        });
-                    }
-                }
-                // Sort by original_start for consistent paste order
-                clipboard_items.sort_by_key(|item| item.original_start);
-                timeline_state.clipboard = clipboard_items;
-                debug!("Copied {} layers to clipboard", timeline_state.clipboard.len());
+                trace!("Copy: no layers selected");
+                return Vec::new();
             }
+            let mut items: Vec<crate::widgets::timeline::ClipboardLayer> = Vec::new();
+            for uuid in &comp.layer_selection {
+                if let Some(attrs) = comp.layers_attrs_get(uuid) {
+                    let source_uuid = attrs.get_uuid("uuid").unwrap_or(*uuid);
+                    let original_start = attrs.get_i32("in").unwrap_or(0);
+                    let name = attrs.get_str("name").unwrap_or("?");
+                    trace!("  Copy layer '{}' at frame {}", name, original_start);
+                    items.push(crate::widgets::timeline::ClipboardLayer {
+                        source_uuid,
+                        attrs: attrs.clone(),
+                        original_start,
+                    });
+                }
+            }
+            items.sort_by_key(|item| item.original_start);
+            items
+        });
+        if let Some(items) = clipboard_items {
+            trace!("Copied {} layers to clipboard", items.len());
+            timeline_state.clipboard = items;
         } else {
-            debug!("Copy: comp not found");
+            trace!("Copy: comp not found");
         }
         return Some(result);
     }
     if let Some(e) = downcast_event::<PasteLayersEvent>(&event) {
-        debug!("PasteLayersEvent: comp={}, frame={}", e.comp_uuid, e.target_frame);
+        trace!("PasteLayersEvent: comp={}, frame={}", e.comp_uuid, e.target_frame);
         // Paste layers from clipboard at target frame
         if timeline_state.clipboard.is_empty() {
-            debug!("Paste: clipboard is empty");
+            trace!("Paste: clipboard is empty");
         } else {
             // Calculate offset from first layer's original position
             let first_start = timeline_state.clipboard.first().map(|l| l.original_start).unwrap_or(0);
             let offset = e.target_frame - first_start;
-            debug!("Pasting {} layers with offset {}", timeline_state.clipboard.len(), offset);
+            trace!("Pasting {} layers with offset {}", timeline_state.clipboard.len(), offset);
 
             // Generate names before taking write lock
             let names: Vec<String> = timeline_state
@@ -921,28 +919,28 @@ pub fn handle_app_event(
                     insert_idx += 1; // Next layer goes after this one
                     // Select pasted layer
                     comp.layer_selection.push(new_uuid);
-                    debug!("  Pasted '{}' at frames {}..{}", new_name, new_in, new_out);
+                    trace!("  Pasted '{}' at frames {}..{}", new_name, new_in, new_out);
                 }
                 comp.attrs.mark_dirty();
             });
-            debug!("Paste complete: {} layers", timeline_state.clipboard.len());
+            trace!("Paste complete: {} layers", timeline_state.clipboard.len());
         }
         return Some(result);
     }
     if let Some(e) = downcast_event::<SelectAllLayersEvent>(&event) {
-        debug!("SelectAllLayersEvent: comp={}", e.comp_uuid);
+        trace!("SelectAllLayersEvent: comp={}", e.comp_uuid);
         project.modify_comp(e.comp_uuid, |comp| {
             let all_uuids: Vec<Uuid> = comp.layers.iter().map(|l| l.uuid).collect();
-            debug!("Selecting all {} layers", all_uuids.len());
+            trace!("Selecting all {} layers", all_uuids.len());
             comp.layer_selection = all_uuids;
             comp.layer_selection_anchor = comp.layers.first().map(|l| l.uuid);
         });
         return Some(result);
     }
     if let Some(e) = downcast_event::<ClearLayerSelectionEvent>(&event) {
-        debug!("ClearLayerSelectionEvent: comp={}", e.comp_uuid);
+        trace!("ClearLayerSelectionEvent: comp={}", e.comp_uuid);
         project.modify_comp(e.comp_uuid, |comp| {
-            debug!("Clearing {} selected layers", comp.layer_selection.len());
+            trace!("Clearing {} selected layers", comp.layer_selection.len());
             comp.layer_selection.clear();
             comp.layer_selection_anchor = None;
         });

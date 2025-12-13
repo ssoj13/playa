@@ -8,7 +8,7 @@
 //! Epoch mechanism allows cancelling stale requests during fast timeline scrubbing.
 
 use crossbeam::deque::{Injector, Worker};
-use log::debug;
+use log::trace;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -70,7 +70,7 @@ impl Workers {
             let handle = thread::Builder::new()
                 .name(format!("playa-worker-{}", worker_id))
                 .spawn(move || {
-                    debug!("Worker {} started", worker_id);
+                    trace!("Worker {} started", worker_id);
 
                     // Work-stealing loop
                     loop {
@@ -110,14 +110,14 @@ impl Workers {
                         thread::sleep(std::time::Duration::from_millis(1));
                     }
 
-                    debug!("Worker {} stopped", worker_id);
+                    trace!("Worker {} stopped", worker_id);
                 })
                 .expect("Failed to spawn worker thread");
 
             handles.push(handle);
         }
 
-        debug!("Workers initialized: {} threads (work-stealing)", num_threads);
+        trace!("Workers initialized: {} threads (work-stealing)", num_threads);
 
         Self {
             injector,
@@ -188,16 +188,16 @@ impl Workers {
 
 impl Drop for Workers {
     fn drop(&mut self) {
-        debug!("Workers shutting down ({} threads)...", self.handles.len());
+        trace!("Workers shutting down ({} threads)...", self.handles.len());
         // Signal all workers to stop
         self.shutdown.store(true, Ordering::SeqCst);
         
         // Join all worker threads to ensure clean shutdown
         for handle in self.handles.drain(..) {
             if let Err(e) = handle.join() {
-                debug!("Worker thread panicked during shutdown: {:?}", e);
+                trace!("Worker thread panicked during shutdown: {:?}", e);
             }
         }
-        debug!("All workers stopped");
+        trace!("All workers stopped");
     }
 }

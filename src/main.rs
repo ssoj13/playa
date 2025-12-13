@@ -42,7 +42,7 @@ use playa::core::workers::Workers;
 use clap::Parser;
 use eframe::{egui, glow};
 use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
-use log::{debug, error, info, warn};
+use log::{error, info, trace, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -298,16 +298,14 @@ impl PlayaApp {
     fn enqueue_frame_loads_around_playhead(&self, _radius: usize) {
         // Get active comp
         let Some(comp_uuid) = self.player.active_comp() else {
-            debug!("No active comp for frame loading");
-            return;
-        };
-        let Some(comp) = self.project.get_comp(comp_uuid) else {
-            debug!("Active comp {} not found in media", comp_uuid);
+            trace!("No active comp for frame loading");
             return;
         };
 
         // Trigger preload (works for both File and Layer modes)
-        comp.signal_preload(&self.workers, &self.project, None);
+        self.project.with_comp(comp_uuid, |comp| {
+            comp.signal_preload(&self.workers, &self.project, None);
+        });
     }
 
     /// Handle events from event bus.
@@ -329,12 +327,12 @@ impl PlayaApp {
 
             // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
-                debug!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
+                trace!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
                 self.enqueue_frame_loads_around_playhead(10);
                 continue;
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
-                debug!("Comp {} layers changed (range: {:?})", e.comp_uuid, e.affected_range);
+                trace!("Comp {} layers changed (range: {:?})", e.comp_uuid, e.affected_range);
                 // 1. Increment epoch to cancel all pending worker tasks
                 // Why: Old tasks may write stale data to cache, causing eviction loops
                 if let Some(manager) = self.project.cache_manager() {
@@ -354,7 +352,7 @@ impl PlayaApp {
             // Handles attribute changes from: timeline outline, Attribute Editor, programmatic
             // See comp_events.rs and comp.rs for event architecture documentation
             if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
-                debug!("Comp {} attrs changed - triggering cascade invalidation", e.0);
+                trace!("Comp {} attrs changed - triggering cascade invalidation", e.0);
                 // 1. Increment epoch to cancel pending worker tasks (stale data prevention)
                 if let Some(manager) = self.project.cache_manager() {
                     manager.increment_epoch();
@@ -369,7 +367,7 @@ impl PlayaApp {
             }
             // ViewportRefreshEvent - force viewport to re-fetch current frame
             if downcast_event::<ViewportRefreshEvent>(&event).is_some() {
-                debug!("ViewportRefreshEvent - forcing frame refresh");
+                trace!("ViewportRefreshEvent - forcing frame refresh");
                 self.viewport_state.request_refresh();
                 continue;
             }
@@ -609,38 +607,37 @@ impl PlayaApp {
                 }
                 // Layer clipboard operations
                 if downcast_event::<DuplicateLayersEvent>(&event).is_some() {
-                    log::debug!("Hotkey: Ctrl-D -> DuplicateLayersEvent");
+                    log::trace!("Hotkey: Ctrl-D -> DuplicateLayersEvent");
                     self.event_bus.emit(DuplicateLayersEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
                 if downcast_event::<CopyLayersEvent>(&event).is_some() {
-                    log::debug!("Hotkey: Ctrl-C -> CopyLayersEvent");
+                    log::trace!("Hotkey: Ctrl-C -> CopyLayersEvent");
                     self.event_bus.emit(CopyLayersEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
                 if downcast_event::<PasteLayersEvent>(&event).is_some() {
                     // Get current playhead position for paste target
-                    let target_frame = self.project.get_comp(active_comp_uuid)
-                        .map(|c| c.frame())
+                    let target_frame = self.project.with_comp(active_comp_uuid, |c| c.frame())
                         .unwrap_or(0);
-                    log::debug!("Hotkey: Ctrl-V -> PasteLayersEvent at frame {}", target_frame);
+                    log::trace!("Hotkey: Ctrl-V -> PasteLayersEvent at frame {}", target_frame);
                     self.event_bus.emit(PasteLayersEvent { comp_uuid: active_comp_uuid, target_frame });
                     return;
                 }
                 // Selection operations
                 if downcast_event::<SelectAllLayersEvent>(&event).is_some() {
-                    log::debug!("Hotkey: Ctrl-A -> SelectAllLayersEvent");
+                    log::trace!("Hotkey: Ctrl-A -> SelectAllLayersEvent");
                     self.event_bus.emit(SelectAllLayersEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
                 if downcast_event::<ClearLayerSelectionEvent>(&event).is_some() {
-                    log::debug!("Hotkey: F2 -> ClearLayerSelectionEvent");
+                    log::trace!("Hotkey: F2 -> ClearLayerSelectionEvent");
                     self.event_bus.emit(ClearLayerSelectionEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
                 // Trim operations
                 if downcast_event::<ResetTrimsEvent>(&event).is_some() {
-                    log::debug!("Hotkey: Ctrl-R -> ResetTrimsEvent");
+                    log::trace!("Hotkey: Ctrl-R -> ResetTrimsEvent");
                     self.event_bus.emit(ResetTrimsEvent { comp_uuid: active_comp_uuid });
                     return;
                 }
@@ -652,7 +649,7 @@ impl PlayaApp {
 
         // Debug: log when F or A is pressed but no event
         if input.key_pressed(egui::Key::F) || input.key_pressed(egui::Key::A) {
-            log::debug!(
+            log::trace!(
                 "F/A pressed but no event. focused_window: {:?}, viewport_hovered: {}, timeline_hovered: {}",
                 focused_window,
                 self.viewport_hovered,
@@ -938,21 +935,19 @@ impl PlayaApp {
         };
 
         // Get comp reference and render node editor
-        if let Some(comp) = self.project.get_comp(comp_uuid) {
-            let emitter = self.event_bus.emitter();
-            let hovered = render_node_editor(
+        let emitter = self.event_bus.emitter();
+        let hovered = self.project.with_comp(comp_uuid, |comp| {
+            render_node_editor(
                 ui,
                 &mut self.node_editor_state,
                 &self.project,
-                &comp,
+                comp,
                 |evt| emitter.emit_boxed(evt),
-            );
+            )
+        });
 
-            // Hover tracking for input routing
-            self.node_editor_hovered = hovered;
-        } else {
-            self.node_editor_hovered = false;
-        }
+        // Hover tracking for input routing
+        self.node_editor_hovered = hovered.unwrap_or(false);
     }
 
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
@@ -961,7 +956,7 @@ impl PlayaApp {
         let Some(active) = self.player.active_comp() else { return };
 
         // Gather data from comp (read-only)
-        let render_data = self.project.get_comp(active).map(|comp| {
+        let render_data = self.project.with_comp(active, |comp| {
             let selection: Vec<Uuid> = comp.layer_selection.clone();
 
             if selection.len() > 1 {
@@ -1272,7 +1267,7 @@ impl eframe::App for PlayaApp {
             self.settings.encode_dialog = dialog.save_to_settings();
 
             if !should_stay_open {
-                debug!("Encode dialog closed, settings saved to AppSettings");
+                trace!("Encode dialog closed, settings saved to AppSettings");
                 self.show_encode_dialog = false;
             }
         }
@@ -1290,7 +1285,7 @@ impl eframe::App for PlayaApp {
         // Serialize and save app settings
         if let Ok(json) = serde_json::to_string(self) {
             storage.set_string(eframe::APP_KEY, json);
-            debug!(
+            trace!(
                 "App state saved: FPS={}, Loop={}, Shader={}",
                 self.settings.fps_base, self.settings.loop_enabled, self.settings.current_shader
             );
@@ -1302,7 +1297,7 @@ impl eframe::App for PlayaApp {
         if let Some(gl) = gl {
             let mut renderer = self.viewport_renderer.lock().unwrap();
             renderer.destroy(gl);
-            debug!("ViewportRenderer resources cleaned up");
+            trace!("ViewportRenderer resources cleaned up");
         }
     }
 }
@@ -1394,7 +1389,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     info!("Playa Image Sequence Player starting...");
-    debug!("Command-line args: {:?}", args);
+    trace!("Command-line args: {:?}", args);
 
     // Log application paths
     info!(

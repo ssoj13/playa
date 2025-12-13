@@ -18,7 +18,7 @@
 //! Call `request_refresh()` to force re-render (resets both tracking values).
 
 use eframe::egui;
-use log::{debug, info};
+use log::{info, trace};
 
 /// Scrubber line color when inside image bounds (white, 50% transparent)
 const SCRUB_NORMAL: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.5);
@@ -183,7 +183,7 @@ impl ViewportState {
         cursor_to_center.y = -cursor_to_center.y;
         self.pan = cursor_to_center - (cursor_to_center - self.pan) * zoom_ratio;
 
-        debug!(
+        trace!(
             "Zoom: {:.2}x, Pan: ({:.1}, {:.1})",
             self.zoom, self.pan.x, self.pan.y
         );
@@ -193,7 +193,7 @@ impl ViewportState {
     pub fn handle_pan(&mut self, delta: egui::Vec2) {
         self.mode = ViewportMode::Manual;
         self.pan += egui::vec2(delta.x, -delta.y);
-        debug!("Pan: ({:.1}, {:.1})", self.pan.x, self.pan.y);
+        trace!("Pan: ({:.1}, {:.1})", self.pan.x, self.pan.y);
     }
 
     /// Get image bounds in screen space

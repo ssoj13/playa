@@ -36,7 +36,7 @@
 
 use crate::entities::{Attrs, AttrValue, Project};
 use crate::entities::frame::Frame;
-use log::{debug, info};
+use log::{info, trace};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use uuid::Uuid;
@@ -177,18 +177,15 @@ impl Player {
     /// Get total frames of active comp (play_frame_count - work area)
     pub fn total_frames(&self, project: &Project) -> i32 {
         self.active_comp()
-            .and_then(|uuid| project.get_comp(uuid))
-            .map(|c| c.play_frame_count())
+            .and_then(|uuid| project.with_comp(uuid, |c| c.play_frame_count()))
             .unwrap_or(0)
     }
 
     /// Get current play range of active comp (start, end), or (0, 0) if none.
     pub fn play_range(&self, project: &Project) -> (i32, i32) {
-        if let Some(comp) = self.active_comp().and_then(|uuid| project.get_comp(uuid)) {
-            comp.play_range(true)
-        } else {
-            (0, 0)
-        }
+        self.active_comp()
+            .and_then(|uuid| project.with_comp(uuid, |c| c.play_range(true)))
+            .unwrap_or((0, 0))
     }
 
     /// Set play range of active comp in global comp frame indices (inclusive).
@@ -227,8 +224,7 @@ impl Player {
     /// Get current frame index from active comp
     pub fn current_frame(&self, project: &Project) -> i32 {
         self.active_comp()
-            .and_then(|uuid| project.get_comp(uuid))
-            .map(|c| c.frame())
+            .and_then(|uuid| project.with_comp(uuid, |c| c.frame()))
             .unwrap_or(0)
     }
 
@@ -236,9 +232,8 @@ impl Player {
     /// Uses GPU compositor (main thread only)
     pub fn get_current_frame(&self, project: &Project) -> Option<Frame> {
         let comp_uuid = self.active_comp()?;
-        let comp = project.get_comp(comp_uuid)?;
-        let frame_idx = comp.frame();
-        comp.get_frame(frame_idx, project, true) // use_gpu=true for main thread display
+        let frame_idx = project.with_comp(comp_uuid, |c| c.frame())?;
+        project.compute_frame(comp_uuid, frame_idx)
     }
 
     /// Switch to a different composition by UUID.
@@ -354,10 +349,10 @@ impl Player {
                     let next = current + 1;
                     if next > play_end {
                         if loop_enabled {
-                            debug!("Frame loop: {} -> {}", current, play_start);
+                            trace!("Frame loop: {} -> {}", current, play_start);
                             comp.set_frame(play_start);
                         } else {
-                            debug!("Reached play range end, stopping");
+                            trace!("Reached play range end, stopping");
                             comp.set_frame(play_end);
                             should_stop = true;
                         }
@@ -368,10 +363,10 @@ impl Player {
                     // Backward
                     if current <= play_start {
                         if loop_enabled {
-                            debug!("Frame loop: {} -> {}", current, play_end);
+                            trace!("Frame loop: {} -> {}", current, play_end);
                             comp.set_frame(play_end);
                         } else {
-                            debug!("Reached play range start, stopping");
+                            trace!("Reached play range start, stopping");
                             should_stop = true;
                         }
                     } else {
@@ -390,7 +385,7 @@ impl Player {
     pub fn stop(&mut self) {
         if self.is_playing() {
             self.set_is_playing(false);
-            debug!("Playback stopped");
+            trace!("Playback stopped");
             self.last_frame_time = None;
             // Reset fps_play to fps_base on stop
             self.set_fps_play(self.fps_base());
@@ -400,7 +395,7 @@ impl Player {
     /// Rewind to start
     pub fn to_start(&mut self, project: &mut Project) {
         let (start, _) = self.play_range(project);
-        debug!("Rewinding to frame {}", start);
+        trace!("Rewinding to frame {}", start);
         if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 comp.set_frame(start);
@@ -412,7 +407,7 @@ impl Player {
     /// Skip to end
     pub fn to_end(&mut self, project: &mut Project) {
         let (_, end) = self.play_range(project);
-        debug!("Skipping to end: frame {}", end);
+        trace!("Skipping to end: frame {}", end);
         if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 comp.set_frame(end);
@@ -535,7 +530,7 @@ impl Player {
             if !self.is_playing() {
                 self.set_fps_play(new_fps);
             }
-            debug!("Base FPS increased to {}", new_fps);
+            trace!("Base FPS increased to {}", new_fps);
         }
     }
 
@@ -550,7 +545,7 @@ impl Player {
             if !self.is_playing() {
                 self.set_fps_play(new_fps);
             }
-            debug!("Base FPS decreased to {}", new_fps);
+            trace!("Base FPS decreased to {}", new_fps);
         }
     }
 
@@ -562,7 +557,7 @@ impl Player {
         {
             let new_fps = FPS_PRESETS[idx + 1];
             self.set_fps_play(new_fps);
-            debug!("Play FPS increased to {}", new_fps);
+            trace!("Play FPS increased to {}", new_fps);
         }
     }
 

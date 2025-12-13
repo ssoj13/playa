@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 
 use half::f16;
-use log::debug;
+use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -283,7 +283,7 @@ impl CompNode {
             self.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         }
         
-        debug!(
+        trace!(
             "rebound: comp={}, old=[{}..{}], new=[{}..{}]",
             self.name(), old_bounds.0, old_bounds.1, new_start, new_end
         );
@@ -797,7 +797,7 @@ impl CompNode {
         let base = create_base_frame(dim, target_format);
         source_frames.insert(0, (base, 1.0, BlendMode::Normal));
         
-        debug!(
+        trace!(
             "CompNode::compose {} frames, dim={}x{}, all_loaded={}",
             source_frames.len(), dim.0, dim.1, all_loaded
         );
@@ -860,22 +860,29 @@ impl Node for CompNode {
                 .map(|n| n.is_dirty())
                 .unwrap_or(false)
         });
-        let cache_has = ctx.cache.contains(self.uuid(), frame_idx);
+        // Check cache - if has Loaded frame and no dirty, return cached
+        // If cached frame is Loading, recompute to check if sources are now Loaded
+        let cached_frame = ctx.cache.get(self.uuid(), frame_idx);
+        let cache_is_loading = cached_frame.as_ref()
+            .map(|f| f.status() != FrameStatus::Loaded)
+            .unwrap_or(false);
+
         let needs_recompute = self.attrs.is_dirty()
             || any_layer_dirty
             || any_source_dirty
-            || !cache_has;
-        
-        // Debug: log dirty state
-        if any_layer_dirty || self.attrs.is_dirty() {
-            debug!(
-                "compute() dirty: comp={}, frame={}, self_dirty={}, layer_dirty={}, source_dirty={}, cache_has={}, needs_recompute={}",
-                self.name(), frame_idx, self.attrs.is_dirty(), any_layer_dirty, any_source_dirty, cache_has, needs_recompute
+            || cached_frame.is_none()
+            || cache_is_loading;
+
+        // Trace dirty state for debugging
+        if self.attrs.is_dirty() || any_layer_dirty {
+            trace!(
+                "compute() dirty: comp={}, frame={}, self={}, layer={}, source={}, cache_loading={}",
+                self.name(), frame_idx, self.attrs.is_dirty(), any_layer_dirty, any_source_dirty, cache_is_loading
             );
         }
-        
+
         if !needs_recompute {
-            if let Some(frame) = ctx.cache.get(self.uuid(), frame_idx) {
+            if let Some(frame) = cached_frame {
                 return Some(frame);
             }
         }
@@ -883,13 +890,14 @@ impl Node for CompNode {
         // Compose
         let composed = self.compose_internal(frame_idx, ctx)?;
         
-        // Cache if fully loaded
+        // Cache result (even if Loading - will be replaced when sources finish)
         ctx.cache.insert(self.uuid(), frame_idx, composed.clone());
-        if composed.status() == FrameStatus::Loaded {
-            self.attrs.clear_dirty();
-            for layer in &self.layers {
-                layer.attrs.clear_dirty();
-            }
+
+        // Always clear dirty after compose - dirty means "attrs changed", not "frame loaded"
+        // Frame status (Loading vs Loaded) is tracked separately via FrameStatus
+        self.attrs.clear_dirty();
+        for layer in &self.layers {
+            layer.attrs.clear_dirty();
         }
         
         Some(composed)
@@ -920,7 +928,7 @@ impl Node for CompNode {
             return;
         }
         
-        debug!(
+        trace!(
             "CompNode::preload: comp={}, center={}, work_area=[{}..{}], layers={}",
             self.name(), center, play_start, play_end, self.layers.len()
         );
@@ -996,7 +1004,7 @@ impl CompNode {
             return;
         }
         
-        debug!(
+        trace!(
             "signal_preload: comp={}, center={}, work_area=[{}..{}], layers={}",
             self.name(), center, play_start, play_end, self.layers.len()
         );

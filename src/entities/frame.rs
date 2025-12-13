@@ -25,7 +25,7 @@
 //! Uses `InputFile + Frame<f32>` API for native f32 reading (no f16 intermediate).
 //! Critical for ACES/linear workflows where precision matters.
 
-use log::{debug, info};
+use log::{info, trace};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -442,7 +442,7 @@ impl Frame {
             data.height = height;
             data.status = FrameStatus::Header;
 
-            debug!("Loaded video header: {}x{}", width, height);
+            trace!("Loaded video header: {}x{}", width, height);
             return Ok(0);
         }
 
@@ -459,7 +459,7 @@ impl Frame {
         data.attrs = attrs;
 
         let attr_count = data.attrs.len();
-        debug!("Loaded header: {}x{} ({} attrs)", width, height, attr_count);
+        trace!("Loaded header: {}x{} ({} attrs)", width, height, attr_count);
         Ok(0)
     }
 
@@ -548,7 +548,7 @@ impl Frame {
 
     /// Load EXR file - delegate to unified Loader
     fn load_exr<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
-        debug!("Loading EXR: {}", path.as_ref().display());
+        trace!("Loading EXR: {}", path.as_ref().display());
 
         // Load via unified Loader
         let frame = super::loader::Loader::load(path.as_ref())?;
@@ -571,7 +571,7 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        debug!(
+        trace!(
             "Loaded EXR: {}x{} ({:?}), {} bytes",
             width, height, pixel_format, mem_size
         );
@@ -580,7 +580,7 @@ impl Frame {
 
     /// Load Radiance HDR format
     fn load_hdr<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
-        debug!("Loading HDR: {}", path.as_ref().display());
+        trace!("Loading HDR: {}", path.as_ref().display());
 
         let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
 
@@ -618,7 +618,7 @@ impl Frame {
 
     /// Load standard image formats
     fn load_image<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
-        debug!("Loading image: {}", path.as_ref().display());
+        trace!("Loading image: {}", path.as_ref().display());
 
         let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
 
@@ -640,7 +640,7 @@ impl Frame {
 
     /// Load video frame
     fn load_video<P: AsRef<Path>>(&self, path: P, frame_num: usize) -> Result<usize, FrameError> {
-        debug!(
+        trace!(
             "Loading video frame {}: {}",
             frame_num,
             path.as_ref().display()
@@ -663,7 +663,7 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        debug!(
+        trace!(
             "Loaded video frame {}: {}x{}, {} bytes",
             frame_num, width, height, mem_size
         );
@@ -729,7 +729,7 @@ impl Frame {
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
-                debug!(
+                trace!(
                     "Unloaded frame to Header: {}x{}, freed {} bytes",
                     data.width, data.height, freed_bytes
                 );
@@ -765,7 +765,7 @@ impl Frame {
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
-                debug!("Reset error to Header: {}x{}", data.width, data.height);
+                trace!("Reset error to Header: {}x{}", data.width, data.height);
                 Ok(0)
             }
 
@@ -774,7 +774,7 @@ impl Frame {
             (FrameStatus::Loading, FrameStatus::Header) => {
                 let mut data = self.data.lock().unwrap();
                 data.status = FrameStatus::Header;
-                debug!("Cancelled loading, marked as Header");
+                trace!("Cancelled loading, marked as Header");
                 Ok(0)
             }
 
