@@ -20,7 +20,9 @@ use super::file_node::FileNode;
 use super::frame::Frame;
 use super::keys::*;
 use crate::core::cache_man::CacheManager;
+use crate::core::event_bus::EventEmitter;
 use crate::core::global_cache::{CacheStrategy, GlobalFrameCache};
+use super::comp_events::AttrsChangedEvent;
 
 /// Top-level project / scene.
 ///
@@ -61,6 +63,10 @@ pub struct Project {
     /// Last save path for quick save (runtime-only)
     #[serde(skip)]
     last_save_path: Option<std::path::PathBuf>,
+
+    /// Event emitter for auto-emitting AttrsChangedEvent (runtime-only)
+    #[serde(skip)]
+    event_emitter: Option<EventEmitter>,
 }
 
 impl Clone for Project {
@@ -76,6 +82,7 @@ impl Clone for Project {
             cache_manager: self.cache_manager.clone(),
             global_cache: self.global_cache.clone(),
             last_save_path: self.last_save_path.clone(),
+            event_emitter: self.event_emitter.clone(),
         }
     }
 }
@@ -114,7 +121,13 @@ impl Project {
             cache_manager: Some(cache_manager),
             global_cache: Some(global_cache),
             last_save_path: None,
+            event_emitter: None,
         }
+    }
+
+    /// Set event emitter for auto-emitting AttrsChangedEvent on comp modifications
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
     }
 
     // === Accessor methods for attrs fields ===
@@ -355,14 +368,24 @@ impl Project {
         }
     }
 
-    /// Modify CompNode in-place via closure
+    /// Modify CompNode in-place via closure.
+    ///
+    /// Auto-emits `AttrsChangedEvent` if comp becomes dirty during modification,
+    /// triggering cache invalidation and viewport refresh.
     pub fn modify_comp<F>(&self, uuid: Uuid, f: F) -> bool
     where
         F: FnOnce(&mut CompNode),
     {
         if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
             if let Some(comp) = node.as_comp_mut() {
+                let was_dirty = comp.attrs.is_dirty();
                 f(comp);
+                // Auto-emit if comp became dirty
+                if !was_dirty && comp.attrs.is_dirty() {
+                    if let Some(ref emitter) = self.event_emitter {
+                        emitter.emit(AttrsChangedEvent(uuid));
+                    }
+                }
                 return true;
             }
         }

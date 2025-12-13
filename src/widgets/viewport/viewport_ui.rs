@@ -99,15 +99,9 @@ pub fn render(
         handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
         // Get play range for scrubbing (trim_in..trim_out)
-        let active = player.active_comp();
-        let (play_start, play_end) = active
+        let (play_start, play_end) = player.active_comp()
             .and_then(|uuid| project.with_comp(uuid, |c| (c.trim_in(), c.trim_out())))
             .unwrap_or((0, 0));
-
-        // Debug: log if scrubbing values look wrong
-        if play_start == 0 && play_end == 0 && active.is_some() {
-            log::warn!("Viewport scrub: active_comp={:?} but play_range=(0,0)", active);
-        }
 
         if let Some(frame_idx) =
             viewport_state.handle_scrubbing(&response, double_clicked, play_start, play_end)

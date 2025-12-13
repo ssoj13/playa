@@ -174,7 +174,10 @@ impl Default for PlayaApp {
             settings: AppSettings::default(),
             project: {
                 let settings = AppSettings::default();
-                Project::new_with_strategy(Arc::clone(&cache_manager), settings.cache_strategy)
+                let mut project = Project::new_with_strategy(Arc::clone(&cache_manager), settings.cache_strategy);
+                // Set event emitter for auto-emit of AttrsChangedEvent on comp modifications
+                project.set_event_emitter(event_bus.emitter());
+                project
             },
             show_help: true,
             show_playlist: true,
@@ -502,6 +505,8 @@ impl PlayaApp {
                     Arc::clone(&self.cache_manager),
                     Some(self.comp_event_emitter.clone()),
                 );
+                // Set event emitter for auto-emit of AttrsChangedEvent
+                project.set_event_emitter(self.event_bus.emitter());
 
                 self.project = project;
                 // Restore active comp from project (also sync selection)
@@ -1553,6 +1558,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 Arc::clone(&app.cache_manager),
                                 Some(app.comp_event_emitter.clone()),
                             );
+                            // Set event emitter for auto-emit of AttrsChangedEvent
+                            project.set_event_emitter(app.event_bus.emitter());
 
                             app.project = project;
                             info!("Playlist loaded via Project");

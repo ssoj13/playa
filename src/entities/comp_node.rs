@@ -173,7 +173,7 @@ impl CompNode {
     }
     
     pub fn _out(&self) -> i32 {
-        self.attrs.get_i32(A_OUT).unwrap_or(0)
+        self.attrs.get_i32(A_OUT).unwrap_or(100)
     }
     
     pub fn fps(&self) -> f32 {
@@ -279,8 +279,8 @@ impl CompNode {
         
         // Keep work area in sync only if it used to match full bounds
         if old_work == old_bounds {
-            self.attrs.set(A_TRIM_IN, AttrValue::Int(0));
-            self.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
+            self.attrs.set(A_TRIM_IN, AttrValue::Int(new_start));
+            self.attrs.set(A_TRIM_OUT, AttrValue::Int(new_end));
         }
         
         trace!(
@@ -458,14 +458,14 @@ impl CompNode {
 
     // --- Additional compat methods ---
 
-    /// Trim in value
+    /// Trim in value (falls back to comp _in if not set)
     pub fn trim_in(&self) -> i32 {
-        self.attrs.get_i32(A_TRIM_IN).unwrap_or(0)
+        self.attrs.get_i32(A_TRIM_IN).unwrap_or_else(|| self._in())
     }
 
-    /// Trim out value
+    /// Trim out value (falls back to comp _out if not set)
     pub fn trim_out(&self) -> i32 {
-        self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0)
+        self.attrs.get_i32(A_TRIM_OUT).unwrap_or_else(|| self._out())
     }
 
     /// CompNode is never file mode (that's FileNode)

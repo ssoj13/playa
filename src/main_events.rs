@@ -134,6 +134,7 @@ pub struct EventResult {
     pub enqueue_frames: Option<usize>,
     pub quick_save: bool,
     pub show_open_dialog: bool,
+
 }
 
 impl EventResult {
@@ -159,6 +160,7 @@ impl EventResult {
         // Bool flags: set to true if any event sets them
         self.quick_save |= other.quick_save;
         self.show_open_dialog |= other.show_open_dialog;
+
     }
 }
 
@@ -597,12 +599,13 @@ pub fn handle_app_event(
             let children = comp.get_children();
             if e.from_idx != e.to_idx && e.from_idx < children.len() && e.to_idx < children.len() {
                 let mut reordered = comp.layers.clone();
-                let child_uuid = reordered.remove(e.from_idx);
-                reordered.insert(e.to_idx, child_uuid);
+                let layer = reordered.remove(e.from_idx);
+                reordered.insert(e.to_idx, layer);
                 comp.layers = reordered;
                 comp.attrs.mark_dirty();
             }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(&event) {
@@ -616,7 +619,16 @@ pub fn handle_app_event(
             } else {
                 comp.move_layers(&[dragged_uuid], delta);
             }
+            // Vertical reorder: move layer to new index
+            if e.layer_idx != e.new_idx && e.new_idx < comp.layers.len() {
+                let layer = comp.layers.remove(e.layer_idx);
+                // Insert at target position (clamped to valid range after removal)
+                let insert_idx = e.new_idx.min(comp.layers.len());
+                comp.layers.insert(insert_idx, layer);
+                comp.attrs.mark_dirty();
+            }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<SetLayerPlayStartEvent>(&event) {
@@ -631,6 +643,7 @@ pub fn handle_app_event(
                 comp.trim_layers(&[dragged_uuid], "in", delta);
             }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<SetLayerPlayEndEvent>(&event) {
@@ -645,6 +658,7 @@ pub fn handle_app_event(
                 comp.trim_layers(&[dragged_uuid], "out", delta);
             }
         });
+
         return Some(result);
     }
     // Slide layer: move "in" while compensating trim_in/trim_out
@@ -652,8 +666,6 @@ pub fn handle_app_event(
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
             if let Some(uuid) = comp.idx_to_uuid(e.layer_idx) {
-                // Use set_child_attrs (not direct attrs.set) to emit AttrsChangedEvent
-                // which triggers cache invalidation via event bus
                 comp.set_child_attrs(uuid, vec![
                     ("in", AttrValue::Int(e.new_in)),
                     ("trim_in", AttrValue::Int(e.new_trim_in)),
@@ -665,6 +677,7 @@ pub fn handle_app_event(
                 );
             }
         });
+
         return Some(result);
     }
     // Reset trims to zero for selected layers (Ctrl+R)
@@ -683,7 +696,9 @@ pub fn handle_app_event(
                     );
                 }
             }
+            comp.attrs.mark_dirty();
         });
+
         return Some(result);
     }
     // NOTE: SelectAllLayersEvent and ClearLayerSelectionEvent handlers
@@ -702,6 +717,8 @@ pub fn handle_app_event(
                 ]);
             }
         });
+        // Emit AttrsChangedEvent to trigger cache invalidation
+
         return Some(result);
     }
     // Generic layer attrs change (from Attribute Editor)
@@ -715,6 +732,7 @@ pub fn handle_app_event(
                 comp.set_child_attrs(*layer_uuid, values.clone());
             }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<AlignLayersStartEvent>(&event) {
@@ -731,6 +749,7 @@ pub fn handle_app_event(
                 let _ = comp.move_child(layer_idx, layer_in + delta);
             }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<AlignLayersEndEvent>(&event) {
@@ -747,6 +766,7 @@ pub fn handle_app_event(
                 let _ = comp.move_child(layer_idx, layer_in + delta);
             }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<TrimLayersStartEvent>(&event) {
@@ -758,6 +778,7 @@ pub fn handle_app_event(
                 let _ = comp.set_child_start(layer_idx, current_frame);
             }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<TrimLayersEndEvent>(&event) {
@@ -769,12 +790,14 @@ pub fn handle_app_event(
                 let _ = comp.set_child_end(layer_idx, current_frame);
             }
         });
+
         return Some(result);
     }
     if let Some(e) = downcast_event::<MoveLayerEvent>(&event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let _ = comp.move_child(e.layer_idx, e.new_start);
         });
+
         return Some(result);
     }
 
