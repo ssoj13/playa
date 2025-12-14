@@ -1055,8 +1055,9 @@ pub fn render_canvas(
                                     let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y) / config.layer_height).floor() as i32;
                                     let mouse_row = mouse_row_raw.max(0) as usize;
 
-                                    // Use calc_drop_on_track to snap before/after existing layers
-                                    let (snap_frame, insert_idx) = comp.calc_drop_on_track(raw_drop_frame, dur, mouse_row);
+                                    // Drop at cursor position, insert at mouse row
+                                    let drop_frame = raw_drop_frame;
+                                    let insert_idx = mouse_row.min(comp.layers.len());
 
                                     // Check for cyclic dependency
                                     let is_cycle = {
@@ -1074,7 +1075,7 @@ pub fn render_canvas(
 
                                     draw_drop_preview(
                                         ui.painter(),
-                                        snap_frame,
+                                        drop_frame,
                                         row_y,
                                         dur,
                                         timeline_rect,
@@ -1088,7 +1089,7 @@ pub fn render_canvas(
                                         dispatch(Box::new(AddLayerEvent {
                                             comp_uuid: comp_id,
                                             source_uuid,
-                                            start_frame: snap_frame,
+                                            start_frame: drop_frame,
                                             insert_idx: Some(insert_idx),
                                         }));
                                         ui.ctx().data_mut(|data| {
