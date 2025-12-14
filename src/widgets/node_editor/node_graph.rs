@@ -456,46 +456,6 @@ struct NodeInfo {
     children: Vec<(Uuid, Uuid)>, // (instance_uuid, source_uuid)
 }
 
-fn nodes_bounding_box(snarl: &Snarl<CompNode>, nodes: &[NodeId]) -> Option<(Pos2, Pos2)> {
-    let mut min = Pos2::new(f32::INFINITY, f32::INFINITY);
-    let mut max = Pos2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
-
-    for node_id in nodes {
-        if let Some(node) = snarl.get_node_info(*node_id) {
-            min.x = min.x.min(node.pos.x);
-            min.y = min.y.min(node.pos.y);
-            max.x = max.x.max(node.pos.x);
-            max.y = max.y.max(node.pos.y);
-        }
-    }
-
-    if min.x.is_finite() && min.y.is_finite() && max.x.is_finite() && max.y.is_finite() {
-        Some((min, max))
-    } else {
-        None
-    }
-}
-
-/// Center nodes around origin (0,0) in world coordinates.
-/// This works because egui-snarl's viewport typically shows origin at center.
-/// Note: This moves nodes, not viewport - egui-snarl doesn't expose viewport API.
-fn center_nodes(snarl: &mut Snarl<CompNode>, nodes: &[NodeId]) {
-    if nodes.is_empty() {
-        return;
-    }
-    if let Some((min, max)) = nodes_bounding_box(snarl, nodes) {
-        let center = Pos2::new((min.x + max.x) * 0.5, (min.y + max.y) * 0.5);
-        // Center around origin (0,0) - viewport typically centers there
-        let delta = Pos2::ZERO - center;
-        log::info!("[NODE_EDITOR] center_nodes: bbox=({:?},{:?}), center={:?}, delta={:?}", min, max, center, delta);
-        for node_id in nodes {
-            if let Some(node) = snarl.get_node_info_mut(*node_id) {
-                node.pos += delta;
-            }
-        }
-    }
-}
-
 fn load_node_pos(project: &Project, comp_uuid: Uuid, instance_uuid: Uuid, default: Pos2) -> Pos2 {
     // Load node position from comp attrs (root) or layer attrs (children)
     let maybe_pos = project.with_comp(comp_uuid, |comp| {
@@ -676,10 +636,10 @@ pub fn render_node_editor(
         // F - fit selected (or all if none selected)
         if ui
             .button("F")
-            .on_hover_text("Fit - zoom to selected nodes (or all)")
+            .on_hover_text("Fit Selected - zoom to selected nodes (or all)")
             .clicked()
         {
-            state.fit_all_requested = true;
+            state.fit_selected_requested = true;
         }
 
         // L - Layout nodes
