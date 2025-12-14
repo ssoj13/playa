@@ -239,11 +239,13 @@ impl Node for FileNode {
         use crate::utils::media;
         
         let Some(workers) = ctx.workers else {
+            log::debug!("[PRELOAD] FileNode::preload - no workers");
             return;
         };
         
         let (play_start, play_end) = self.work_area_abs();
         if play_end < play_start {
+            log::debug!("[PRELOAD] FileNode::preload - invalid range [{}, {}]", play_start, play_end);
             return;
         }
         
@@ -252,17 +254,25 @@ impl Node for FileNode {
             .map(|m| media::is_video(std::path::Path::new(&m)))
             .unwrap_or(false);
         
+        log::debug!("[PRELOAD] FileNode::preload: name={}, center={}, range=[{}, {}], is_video={}", 
+            self.name(), center, play_start, play_end, is_video);
+        
         if is_video {
             // Forward-only for video (expensive backward seeking)
             let start = center.max(play_start);
+            log::debug!("[PRELOAD] video forward: start={}, end={}", start, play_end);
             for idx in start..=play_end {
                 self.enqueue_frame(workers, ctx.cache, ctx.epoch, idx);
             }
         } else {
             // Spiral for image sequences (cheap bidirectional)
-            let offset_backward = center - play_start;
-            let offset_forward = play_end - center;
+            // Clamp center to valid range
+            let clamped_center = center.clamp(play_start, play_end);
+            let offset_backward = clamped_center - play_start;
+            let offset_forward = play_end - clamped_center;
             let max_offset = offset_backward.max(offset_forward).max(0);
+            log::debug!("[PRELOAD] spiral: center={}->{}, offset_back={}, offset_fwd={}, max_offset={}", 
+                center, clamped_center, offset_backward, offset_forward, max_offset);
             
             for offset in 0..=max_offset {
                 if center >= offset {
@@ -545,10 +555,14 @@ impl FileNode {
         // Skip if already Loaded, Loading, or Error
         if let Some(status) = global_cache.get_status(uuid, frame_idx) {
             match status {
-                FrameStatus::Loaded | FrameStatus::Loading | FrameStatus::Error => return,
+                FrameStatus::Loaded | FrameStatus::Loading | FrameStatus::Error => {
+                    log::debug!("[PRELOAD] enqueue_frame SKIP: frame={}, status={:?}", frame_idx, status);
+                    return;
+                }
                 _ => {} // Header/Placeholder - proceed
             }
         }
+        log::debug!("[PRELOAD] enqueue_frame: name={}, frame={}", self.name(), frame_idx);
         
         // Calculate sequence frame number
         let comp_start = self._in();

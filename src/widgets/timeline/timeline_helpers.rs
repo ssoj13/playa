@@ -190,50 +190,58 @@ pub(super) fn draw_frame_ruler(
         }
 
         let effective_ppf = config.pixels_per_frame * state.zoom;
-        let frame_step = if effective_ppf > 10.0 {
-            1
-        } else if effective_ppf > 2.0 {
-            5
-        } else if effective_ppf > 0.5 {
-            10
+        
+        // Linear formula: keep labels ~60px apart, tick marks ~15px apart
+        let target_label_px = 60.0;
+        let target_tick_px = 15.0;
+        
+        // Raw step values
+        let raw_label_step = (target_label_px / effective_ppf).ceil() as usize;
+        let raw_tick_step = (target_tick_px / effective_ppf).ceil() as usize;
+        
+        // Round to nice numbers (1, 2, 5, 10, 20, 50, 100, ...)
+        fn round_to_nice(n: usize) -> usize {
+            if n <= 1 { return 1; }
+            let pow = 10_usize.pow((n as f32).log10().floor() as u32);
+            let norm = n / pow;
+            let nice = if norm < 2 { 1 } else if norm < 5 { 2 } else { 5 };
+            nice * pow
+        }
+        
+        let label_step = round_to_nice(raw_label_step).max(1) as i32;
+        let frame_step = round_to_nice(raw_tick_step).max(1).min(label_step as usize) as i32;
+
+        // Use rect.width() for visible range - allow negative frames
+        let visible_start = state.pan_offset.floor() as i32;
+        let visible_end = (state.pan_offset + (rect.width() / effective_ppf)).ceil() as i32;
+        
+        // Align start_frame to frame_step grid (works with negatives)
+        let start_frame = if visible_start >= 0 {
+            (visible_start / frame_step) * frame_step
         } else {
-            50
+            ((visible_start - frame_step + 1) / frame_step) * frame_step
         };
 
-        let label_step = if effective_ppf > 50.0 {
-            10
-        } else if effective_ppf > 20.0 {
-            5
-        } else {
-            (frame_step * 2).max(frame_step)
-        };
-
-        // Use rect.width() for visible range, not timeline_width
-        let visible_start = state.pan_offset.max(0.0) as usize;
-        let visible_end =
-            (state.pan_offset + (rect.width() / effective_ppf)).min(total_frames as f32) as usize;
-        let start_frame = (visible_start / frame_step.max(1)) * frame_step.max(1);
-
-        for frame in (start_frame..=visible_end).step_by(frame_step.max(1)) {
+        let mut frame = start_frame;
+        while frame <= visible_end {
             let x = frame_to_screen_x(frame as f32, rect.min.x, config, state);
-            if x < rect.min.x || x > rect.max.x {
-                continue;
-            }
-
-            painter.line_segment(
-                [Pos2::new(x, rect.max.y - 5.0), Pos2::new(x, rect.max.y)],
-                (1.0, Color32::from_gray(100)),
-            );
-
-            if frame % label_step == 0 {
-                painter.text(
-                    Pos2::new(x, rect.min.y + 2.0),
-                    egui::Align2::CENTER_TOP,
-                    format!("{}", frame),
-                    egui::FontId::monospace(9.0),
-                    Color32::from_gray(150),
+            if x >= rect.min.x && x <= rect.max.x {
+                painter.line_segment(
+                    [Pos2::new(x, rect.max.y - 5.0), Pos2::new(x, rect.max.y)],
+                    (1.0, Color32::from_gray(100)),
                 );
+
+                if frame % label_step == 0 {
+                    painter.text(
+                        Pos2::new(x, rect.min.y + 2.0),
+                        egui::Align2::CENTER_TOP,
+                        format!("{}", frame),
+                        egui::FontId::monospace(9.0),
+                        Color32::from_gray(150),
+                    );
+                }
             }
+            frame += frame_step;
         }
 
         let is_middle_down = ui

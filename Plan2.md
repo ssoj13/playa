@@ -19,28 +19,18 @@ let label_step = if effective_ppf > 50.0 { 10 }
 ```
 
 ### Solution
-Improve thresholds and add more granular steps:
-1. Calculate text width for current font (9pt monospace, ~6px per digit)
-2. Base `label_step` on actual text width vs available space
-3. Add intermediate zoom levels (1, 2, 5, 10, 25, 50, 100, 250, 500...)
-4. Consider showing timecode (MM:SS:FF) at very low zooms instead of raw frames
+Simple linear formula based on effective pixels per frame:
 
-### Implementation
 ```rust
-// Calculate min spacing between labels (text width + padding)
-let digit_width = 6.0; // ~6px per digit at 9pt monospace
-let max_label_digits = (total_frames as f32).log10().ceil() as usize + 1;
-let min_label_spacing = (max_label_digits as f32 * digit_width) + 20.0; // +20px padding
+// Linear formula: at very low zoom, show fewer labels
+// MIN_LABEL_WIDTH_PX = minimum pixels between labels (~40px for readability)
+const MIN_LABEL_WIDTH_PX: f32 = 40.0;
 
-// Determine label_step based on actual pixel density
-let frames_per_label_space = min_label_spacing / effective_ppf;
-let label_step = nice_step(frames_per_label_space.ceil() as i32);
-
-fn nice_step(min: i32) -> i32 {
-    const STEPS: [i32; 12] = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
-    STEPS.iter().find(|&&s| s >= min).copied().unwrap_or(min)
-}
+let label_step = (MIN_LABEL_WIDTH_PX / effective_ppf).ceil() as i32;
+let label_step = label_step.max(1);  // At least every frame at high zoom
 ```
+
+This automatically scales: when `effective_ppf = 2.0`, we need `40/2 = 20` frame step.
 
 ---
 
@@ -108,7 +98,8 @@ if has_solo && !layer.is_solo() {
 ```
 
 #### 3. Add UI Checkbox
-`timeline_ui.rs` - add "S" button next to visibility eye icon in layer row.
+`timeline_ui.rs` - add "S" checkbox next to visibility eye icon in layer row.
+Use `ui.checkbox()` styled small, similar to visibility toggle.
 
 #### 4. Add Event
 ```rust
@@ -163,7 +154,7 @@ if comp.is_dirty() {
 #### 3. Configurable Radius
 Add to config:
 ```rust
-preload_radius: i32 = 10,  // frames before/after current
+preload_radius: i32 = 100,  // frames before/after current
 ```
 
 ---
@@ -201,25 +192,55 @@ let dim = earliest
 - If comp has no layers visible at frame N, placeholder dimensions are used
 - But when layers ARE visible, source frame dimensions are used
 
-### Recommended Fix
+### Investigation Plan (before fixing)
 
-#### Option 1: Always Use Comp Dimensions (Recommended)
-```rust
-// In compose_internal():
-let dim = self.dim();  // Always use comp's declared dimensions
-// Then scale/fit source frames to this dimension
-```
-
-This matches After Effects behavior - comp has fixed dimensions.
-
-#### Option 2: Debug Logging
-Add detailed logging to identify exactly when/why dimensions change:
+#### Step 1: Add Debug Logging
+Add detailed dimension logging to `compose_internal()`:
 ```rust
 log::debug!(
-    "compose frame={}: earliest_layer={:?}, dim={:?}, comp_dim={:?}",
-    frame_idx, earliest, dim, self.dim()
+    "[DIM] compose comp={} frame={}: earliest={:?}, result_dim={:?}, comp_dim={:?}",
+    self.name(), frame_idx, earliest, dim, self.dim()
+);
+
+// Also log each source frame dimension:
+log::debug!(
+    "[DIM]   layer={} source_dim={}x{} opacity={}",
+    layer_name, frame.width(), frame.height(), opacity
 );
 ```
+
+#### Step 2: Clean Up Existing Logs
+- Convert verbose `log::debug!` to `log::trace!` in hot paths
+- Keep important structural logs as `debug`
+- Focus logging on dimension-related code
+
+#### Step 3: Questions to Answer
+1. PAL D1 = 720x576? FullHD = 1920x1080?
+2. What are the declared dimensions of the nested comps?
+3. What is the FileNode source resolution?
+4. On which frame does the problem start? Is there a pattern (layer boundary)?
+5. Is the black frame a placeholder or empty composition result?
+
+#### Potential Causes (to verify with logs)
+- [ ] "Earliest" layer changes at certain frames
+- [ ] Placeholder frame uses comp.dim() while real frames use source dim
+- [ ] Cache returning frame from wrong comp
+- [ ] Layer visibility changes causing different source to be "earliest"
+
+### Key Finding
+
+**comp.dim()** reads stored A_WIDTH/A_HEIGHT which are NEVER updated after creation!
+
+**compose_internal** takes dimensions from "earliest" layer (smallest start()), NOT max(children).
+
+Expected behavior: Parent comp = max(children.size)
+
+Current behavior: Output dim = earliest_layer.frame.size()
+
+**Likely Fix:** Either:
+1. Always use `self.dim()` in compose_internal (but comp.dim() must be updated when layers change)
+2. OR compute max(source_frames.dimensions) instead of earliest
+3. OR add `rebind_dimensions()` like `rebound()` to update comp dims when layers change
 
 ---
 

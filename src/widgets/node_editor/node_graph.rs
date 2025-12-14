@@ -633,7 +633,7 @@ pub fn render_node_editor(
         
         // Increment counter to force viewport reset (egui-snarl will auto-center on all nodes)
         state.viewport_reset_counter += 1;
-        log::info!("[NODE_EDITOR] fit viewport requested, reset_counter={}", state.viewport_reset_counter);
+        log::trace!("[NODE_EDITOR] fit viewport requested, reset_counter={}", state.viewport_reset_counter);
     }
 
     // Handle layout request

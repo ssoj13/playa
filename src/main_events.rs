@@ -523,12 +523,12 @@ pub fn handle_app_event(
 
     // === Node Editor State ===
     if downcast_event::<NodeEditorFitAllEvent>(event).is_some() {
-        log::info!("[EVENT] NodeEditorFitAllEvent → setting fit_all_requested=true");
+        log::trace!("[EVENT] NodeEditorFitAllEvent → setting fit_all_requested=true");
         node_editor_state.fit_all_requested = true;
         return Some(result);
     }
     if downcast_event::<NodeEditorFitSelectedEvent>(event).is_some() {
-        log::info!("[EVENT] NodeEditorFitSelectedEvent → setting fit_selected_requested=true");
+        log::trace!("[EVENT] NodeEditorFitSelectedEvent → setting fit_selected_requested=true");
         node_editor_state.fit_selected_requested = true;
         return Some(result);
     }
@@ -575,6 +575,8 @@ pub fn handle_app_event(
 
         if let Err(err) = add_result {
             log::error!("Failed to add layer: {}", err);
+        } else {
+            node_editor_state.mark_dirty();
         }
         return Some(result);
     }
@@ -587,6 +589,7 @@ pub fn handle_app_event(
             project.modify_comp(e.comp_uuid, |comp| {
                 comp.remove_child(child_uuid);
             });
+            node_editor_state.mark_dirty();
         }
         return Some(result);
     }
@@ -600,6 +603,7 @@ pub fn handle_app_event(
                 comp.layer_selection.clear();
                 comp.layer_selection_anchor = None;
             });
+            node_editor_state.mark_dirty();
         }
         return Some(result);
     }
@@ -614,7 +618,7 @@ pub fn handle_app_event(
                 comp.attrs.mark_dirty();
             }
         });
-
+        // Note: Reorder doesn't change graph structure, no mark_dirty() needed
         return Some(result);
     }
     if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(event) {
@@ -641,7 +645,7 @@ pub fn handle_app_event(
                 comp.attrs.mark_dirty();
             }
         });
-
+        // Note: Move/reorder doesn't change graph structure, no mark_dirty() needed
         return Some(result);
     }
     if let Some(e) = downcast_event::<SetLayerPlayStartEvent>(event) {
@@ -717,13 +721,14 @@ pub fn handle_app_event(
     // NOTE: SelectAllLayersEvent and ClearLayerSelectionEvent handlers
     // are below (after clipboard events) with proper layer_selection_anchor handling
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(event) {
-        log::info!("[LayerAttrsChanged] comp={}, layers={:?}, opacity={}", e.comp_uuid, e.layer_uuids, e.opacity);
+        log::trace!("[LayerAttrsChanged] comp={}, layers={:?}, opacity={}", e.comp_uuid, e.layer_uuids, e.opacity);
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
             // Apply to all targeted layers (multi-selection support)
             for layer_uuid in &e.layer_uuids {
                 comp.set_child_attrs(*layer_uuid, vec![
                     ("visible", AttrValue::Bool(e.visible)),
+                    ("solo", AttrValue::Bool(e.solo)),
                     ("opacity", AttrValue::Float(e.opacity)),
                     ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
                     ("speed", AttrValue::Float(e.speed)),
@@ -736,7 +741,7 @@ pub fn handle_app_event(
     }
     // Generic layer attrs change (from Attribute Editor)
     if let Some(e) = downcast_event::<SetLayerAttrsEvent>(event) {
-        log::info!("[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}", e.comp_uuid, e.layer_uuids, e.attrs);
+        log::trace!("[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}", e.comp_uuid, e.layer_uuids, e.attrs);
         project.modify_comp(e.comp_uuid, |comp| {
             let values: Vec<(&str, crate::entities::AttrValue)> = e.attrs.iter()
                 .map(|(k, v)| (k.as_str(), v.clone()))

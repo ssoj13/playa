@@ -225,6 +225,7 @@ pub fn render_outline(
                         let _ = handle;
 
                         let mut visible = attrs.get_bool("visible").unwrap_or(true);
+                        let mut solo = attrs.get_bool("solo").unwrap_or(false);
                         let mut opacity = attrs.get_float("opacity").unwrap_or(1.0);
                         let prev_blend = attrs
                             .get_str("blend_mode")
@@ -234,12 +235,30 @@ pub fn render_outline(
                         let mut speed = attrs.get_float("speed").unwrap_or(1.0);
                         let mut dirty = false;
 
-                        // Fixed-width checkbox (20px)
+                        // Visible checkbox (20px)
                         row_ui.allocate_ui_with_layout(
                             egui::Vec2::new(20.0, config.layer_height),
                             egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                             |ui| {
                                 if ui.checkbox(&mut visible, "").changed() {
+                                    dirty = true;
+                                }
+                            },
+                        );
+                        // Solo checkbox (20px) - yellow when active
+                        row_ui.allocate_ui_with_layout(
+                            egui::Vec2::new(20.0, config.layer_height),
+                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                            |ui| {
+                                let resp = ui.checkbox(&mut solo, "");
+                                if solo {
+                                    ui.painter().rect_filled(
+                                        resp.rect.shrink(2.0),
+                                        2.0,
+                                        egui::Color32::from_rgb(200, 180, 50),
+                                    );
+                                }
+                                if resp.changed() {
                                     dirty = true;
                                 }
                             },
@@ -328,6 +347,7 @@ pub fn render_outline(
                                 comp_uuid: comp_id,
                                 layer_uuids: targets,
                                 visible,
+                                solo,
                                 opacity,
                                 blend_mode: blend,
                                 speed,

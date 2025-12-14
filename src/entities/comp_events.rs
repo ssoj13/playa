@@ -135,6 +135,7 @@ pub struct LayerAttributesChangedEvent {
     pub comp_uuid: Uuid,
     pub layer_uuids: Vec<Uuid>,  // Multiple layers for multi-selection support
     pub visible: bool,
+    pub solo: bool,
     pub opacity: f32,
     pub blend_mode: String,
     pub speed: f32,

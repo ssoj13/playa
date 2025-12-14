@@ -302,7 +302,7 @@ impl PlayaApp {
     ///
     /// # Arguments
     /// * `_radius` - Hint for how many frames around playhead to preload (TODO: implement)
-    fn enqueue_frame_loads_around_playhead(&self, _radius: usize) {
+    fn enqueue_frame_loads_around_playhead(&self, radius: usize) {
         // Get active comp
         let Some(comp_uuid) = self.player.active_comp() else {
             trace!("No active comp for frame loading");
@@ -310,6 +310,7 @@ impl PlayaApp {
         };
 
         // Trigger preload (works for both File and Layer modes)
+        log::debug!("[PRELOAD] enqueue_frame_loads: comp={}, radius={}", comp_uuid, radius);
         self.project.with_comp(comp_uuid, |comp| {
             comp.signal_preload(&self.workers, &self.project, None);
         });
@@ -368,7 +369,9 @@ impl PlayaApp {
                 if let Some(ref cache) = self.project.global_cache {
                     cache.clear_comp(e.0);
                 }
-                // 3. Request viewport refresh
+                // 3. Preload 100 frames around playhead after cache clear
+                self.enqueue_frame_loads_around_playhead(100);
+                // 4. Request viewport refresh
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
             }
@@ -454,6 +457,8 @@ impl PlayaApp {
                     if let Some(ref cache) = self.project.global_cache {
                         cache.clear_comp(e.0);
                     }
+                    // Preload 100 frames around playhead after cache clear
+                    self.enqueue_frame_loads_around_playhead(100);
                     self.event_bus.emit(ViewportRefreshEvent);
                     continue;
                 }
@@ -1097,7 +1102,7 @@ impl PlayaApp {
             );
 
             if !changed.is_empty() {
-                log::info!("[AE] Emitting SetLayerAttrsEvent: layers={:?}, attrs={:?}", selection, changed);
+                log::trace!("[AE] Emitting SetLayerAttrsEvent: layers={:?}, attrs={:?}", selection, changed);
                 self.event_bus.emit_boxed(Box::new(SetLayerAttrsEvent {
                     comp_uuid: active,
                     layer_uuids: selection,

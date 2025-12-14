@@ -85,6 +85,7 @@ impl Layer {
         attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         attrs.set(A_OPACITY, AttrValue::Float(1.0));
         attrs.set(A_VISIBLE, AttrValue::Bool(true));
+        attrs.set(A_SOLO, AttrValue::Bool(false));
         attrs.set(A_BLEND_MODE, AttrValue::Str("normal".to_string()));
         attrs.set(A_SPEED, AttrValue::Float(1.0));
         attrs.set(A_WIDTH, AttrValue::UInt(dim.0 as u32));
@@ -336,8 +337,31 @@ impl CompNode {
         }
     }
     
-    /// Recalculate comp bounds based on layer extents.
+    /// Get dimensions of the first visible layer (by work_area start).
+    /// Used to determine comp output size.
+    pub fn get_first_size(&self) -> Option<(usize, usize)> {
+        let mut earliest: Option<(i32, &Layer)> = None;
+        
+        for layer in &self.layers {
+            if !layer.is_visible() {
+                continue;
+            }
+            let (start, _) = layer.work_area();
+            if earliest.is_none_or(|(s, _)| start < s) {
+                earliest = Some((start, layer));
+            }
+        }
+        
+        earliest.map(|(_, layer)| {
+            let w = layer.attrs.get_u32(A_WIDTH).unwrap_or(64) as usize;
+            let h = layer.attrs.get_u32(A_HEIGHT).unwrap_or(64) as usize;
+            (w.max(1), h.max(1))
+        })
+    }
+    
+    /// Recalculate comp bounds and dimensions based on layer extents.
     /// Updates _in/_out to encompass all visible layers.
+    /// Updates width/height from first visible layer.
     pub fn rebound(&mut self) {
         let old_bounds = (self._in(), self._out());
         let old_work = self.work_area();
@@ -346,6 +370,12 @@ impl CompNode {
         
         self.attrs.set(A_IN, AttrValue::Int(new_start));
         self.attrs.set(A_OUT, AttrValue::Int(new_end));
+        
+        // Update dimensions from first visible layer
+        if let Some((w, h)) = self.get_first_size() {
+            self.attrs.set(A_WIDTH, AttrValue::UInt(w as u32));
+            self.attrs.set(A_HEIGHT, AttrValue::UInt(h as u32));
+        }
         
         // Keep work area in sync only if it used to match full bounds
         // trim_in/trim_out are OFFSETS from _in/_out, not absolute values
@@ -763,9 +793,11 @@ impl CompNode {
         }
         
         let mut source_frames: Vec<(Frame, f32, BlendMode)> = Vec::new();
-        let mut earliest: Option<(i32, usize)> = None;
         let mut target_format = PixelFormat::Rgba8;
         let mut all_loaded = true;
+        
+        // Check if any layer has solo enabled
+        let has_solo = self.layers.iter().any(|l| l.attrs.get_bool(A_SOLO).unwrap_or(false));
         
         // Collect frames from layers (reverse order: last = bottom, first = top)
         for (_, layer) in self.layers.iter().rev().enumerate() {
@@ -778,6 +810,11 @@ impl CompNode {
             
             // Skip invisible
             if !layer.is_visible() {
+                continue;
+            }
+            
+            // Solo mode: skip non-solo layers when any layer is solo'd
+            if has_solo && !layer.attrs.get_bool(A_SOLO).unwrap_or(false) {
                 continue;
             }
             
@@ -800,16 +837,11 @@ impl CompNode {
                 
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
+                
                 source_frames.push((frame, opacity, blend));
                 
-                let idx = source_frames.len() - 1;
-                let start = layer.start();
-                if earliest.is_none_or(|(s, _)| start < s) {
-                    earliest = Some((start, idx));
-                }
-                
                 // Track highest precision
-                target_format = match (target_format, source_frames[idx].0.pixel_format()) {
+                target_format = match (target_format, source_frames.last().unwrap().0.pixel_format()) {
                     (PixelFormat::RgbaF32, _) | (_, PixelFormat::RgbaF32) => PixelFormat::RgbaF32,
                     (PixelFormat::RgbaF16, _) | (_, PixelFormat::RgbaF16) => PixelFormat::RgbaF16,
                     _ => PixelFormat::Rgba8,
@@ -817,11 +849,8 @@ impl CompNode {
             }
         }
         
-        // Determine output dimensions
-        let dim = earliest
-            .and_then(|(_, idx)| source_frames.get(idx))
-            .map(|(f, _, _)| (f.width().max(1), f.height().max(1)))
-            .unwrap_or_else(|| self.dim());
+        // Use first visible layer's dimensions, fallback to comp dims
+        let dim = self.get_first_size().unwrap_or_else(|| self.dim());
         
         // Promote frames to target format
         for (frame, _, _) in source_frames.iter_mut() {
