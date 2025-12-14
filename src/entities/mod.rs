@@ -11,7 +11,6 @@ pub mod file_node;
 pub mod frame;
 pub mod gpu_compositor;
 pub mod keys;
-pub mod layer;
 pub mod loader;
 pub mod loader_video;
 pub mod node;
@@ -25,7 +24,7 @@ pub use comp_node::{CompNode, Layer as NodeLayer};
 pub use compositor::CompositorType;
 pub use file_node::FileNode;
 pub use frame::{Frame, FrameStatus};
-pub use layer::{Layer, Track};
+// Layer is now only in comp_node.rs (pub use comp_node::Layer as NodeLayer above)
 pub use node::Node;
 pub use node_kind::NodeKind;
 pub use project::{Project, NodeIter, NodeIterItem};

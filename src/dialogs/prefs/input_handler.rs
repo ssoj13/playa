@@ -44,11 +44,10 @@ impl HotkeyHandler {
             return Some(factory());
         }
         // Fallback: try Global
-        if self.focused_window != HotkeyWindow::Global {
-            if let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
+        if self.focused_window != HotkeyWindow::Global
+            && let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
                 return Some(factory());
             }
-        }
         None
     }
 
@@ -215,12 +214,11 @@ impl HotkeyHandler {
                         log::trace!("Hotkey matched: {} (window={:?})", combo, self.focused_window);
                         return Some(ev);
                     }
-                    if !modifiers.any() {
-                        if let Some(ev) = self.handle_key(&key_str) {
+                    if !modifiers.any()
+                        && let Some(ev) = self.handle_key(&key_str) {
                             log::trace!("Hotkey matched (no mod): {} (window={:?})", key_str, self.focused_window);
                             return Some(ev);
                         }
-                    }
                 }
                 _ => {}
             }

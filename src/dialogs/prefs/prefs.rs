@@ -30,16 +30,13 @@ impl SettingsCategory {
 
 /// Compositor backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub enum CompositorBackend {
+    #[default]
     Cpu,
     Gpu,
 }
 
-impl Default for CompositorBackend {
-    fn default() -> Self {
-        CompositorBackend::Cpu // Default to CPU for compatibility
-    }
-}
 
 /// Application settings
 #[derive(serde::Deserialize, serde::Serialize)]

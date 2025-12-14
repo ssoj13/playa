@@ -554,19 +554,25 @@ impl PlayaApp {
             return HotkeyWindow::Viewport;
         }
 
-        // Priority 4: Node editor hover
+        // Priority 4: Node editor hover (must be before Timeline default)
         if self.node_editor_hovered {
             return HotkeyWindow::NodeEditor;
         }
 
-        // Priority 4: Default to timeline when a comp is active (no mouse gating)
-        if self.player.active_comp().is_some() {
+        // Priority 5: Explicit timeline hover
+        if self.timeline_hovered {
             return HotkeyWindow::Timeline;
         }
 
-        // Priority 5: Project hover (if no active comp)
+        // Priority 6: Project hover
         if self.project_hovered {
             return HotkeyWindow::Project;
+        }
+
+        // Priority 7: Default to timeline when a comp is active (keyboard fallback)
+        // This allows playback hotkeys (Space, arrows) to work without explicit hover
+        if self.player.active_comp().is_some() {
+            return HotkeyWindow::Timeline;
         }
 
         // Fallback to Global
@@ -655,10 +661,12 @@ impl PlayaApp {
         // Debug: log when F or A is pressed but no event
         if input.key_pressed(egui::Key::F) || input.key_pressed(egui::Key::A) {
             log::trace!(
-                "F/A pressed but no event. focused_window: {:?}, viewport_hovered: {}, timeline_hovered: {}",
+                "F/A pressed but no event. focused_window: {:?}, viewport: {}, timeline: {}, node_editor: {}, project: {}",
                 focused_window,
                 self.viewport_hovered,
-                self.timeline_hovered
+                self.timeline_hovered,
+                self.node_editor_hovered,
+                self.project_hovered
             );
         }
 

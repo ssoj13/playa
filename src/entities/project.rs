@@ -405,20 +405,18 @@ impl Project {
     where
         F: FnOnce(&mut CompNode),
     {
-        if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
-            if let Some(comp) = node.as_comp_mut() {
+        if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid)
+            && let Some(comp) = node.as_comp_mut() {
                 let was_dirty = comp.attrs.is_dirty();
                 f(comp);
                 // Auto-emit only if comp BECAME dirty (not if it was already dirty)
                 // This prevents constant cache invalidation from repeated modify_comp calls
-                if !was_dirty && comp.attrs.is_dirty() {
-                    if let Some(ref emitter) = self.event_emitter {
+                if !was_dirty && comp.attrs.is_dirty()
+                    && let Some(ref emitter) = self.event_emitter {
                         emitter.emit(AttrsChangedEvent(uuid));
                     }
-                }
                 return true;
             }
-        }
         false
     }
 
@@ -473,14 +471,13 @@ impl Project {
             // Check layer names for CompNode
             if let Some(comp) = node.as_comp() {
                 for layer in &comp.layers {
-                    if let Some(name) = layer.attrs.get_str(A_NAME) {
-                        if name.starts_with(base) {
+                    if let Some(name) = layer.attrs.get_str(A_NAME)
+                        && name.starts_with(base) {
                             let suffix = name[base.len()..].trim_start_matches('_');
                             if let Ok(n) = suffix.parse::<u32>() {
                                 max_num = max_num.max(n);
                             }
                         }
-                    }
                 }
             }
         }

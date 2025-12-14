@@ -186,7 +186,7 @@ pub fn handle_app_event(
 ) -> Option<EventResult> {
     let mut result = EventResult::default();
     // === Playback Control ===
-    if downcast_event::<TogglePlayPauseEvent>(&event).is_some() {
+    if downcast_event::<TogglePlayPauseEvent>(event).is_some() {
         let was_playing = player.is_playing();
         player.set_is_playing(!was_playing);
         if player.is_playing() {
@@ -199,11 +199,11 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<StopEvent>(&event).is_some() {
+    if downcast_event::<StopEvent>(event).is_some() {
         player.stop();
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SetFrameEvent>(&event) {
+    if let Some(e) = downcast_event::<SetFrameEvent>(event) {
         trace!("SetFrame: moving to frame {}", e.0);
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
@@ -213,63 +213,63 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<StepForwardEvent>(&event).is_some() {
+    if downcast_event::<StepForwardEvent>(event).is_some() {
         player.step(1, project);
         return Some(result);
     }
-    if downcast_event::<StepBackwardEvent>(&event).is_some() {
+    if downcast_event::<StepBackwardEvent>(event).is_some() {
         player.step(-1, project);
         return Some(result);
     }
-    if downcast_event::<StepForwardLargeEvent>(&event).is_some() {
+    if downcast_event::<StepForwardLargeEvent>(event).is_some() {
         player.step(crate::core::player::FRAME_JUMP_STEP, project);
         return Some(result);
     }
-    if downcast_event::<StepBackwardLargeEvent>(&event).is_some() {
+    if downcast_event::<StepBackwardLargeEvent>(event).is_some() {
         player.step(-crate::core::player::FRAME_JUMP_STEP, project);
         return Some(result);
     }
-    if downcast_event::<JumpToStartEvent>(&event).is_some() {
+    if downcast_event::<JumpToStartEvent>(event).is_some() {
         player.to_start(project);
         return Some(result);
     }
-    if downcast_event::<JumpToEndEvent>(&event).is_some() {
+    if downcast_event::<JumpToEndEvent>(event).is_some() {
         player.to_end(project);
         return Some(result);
     }
-    if downcast_event::<JumpToPrevEdgeEvent>(&event).is_some() {
+    if downcast_event::<JumpToPrevEdgeEvent>(event).is_some() {
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| jump_to_edge(comp, false));
         }
         return Some(result);
     }
-    if downcast_event::<JumpToNextEdgeEvent>(&event).is_some() {
+    if downcast_event::<JumpToNextEdgeEvent>(event).is_some() {
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| jump_to_edge(comp, true));
         }
         return Some(result);
     }
-    if downcast_event::<JogForwardEvent>(&event).is_some() {
+    if downcast_event::<JogForwardEvent>(event).is_some() {
         player.jog_forward();
         return Some(result);
     }
-    if downcast_event::<JogBackwardEvent>(&event).is_some() {
+    if downcast_event::<JogBackwardEvent>(event).is_some() {
         player.jog_backward();
         return Some(result);
     }
 
     // === FPS Control ===
-    if downcast_event::<IncreaseFPSBaseEvent>(&event).is_some() {
+    if downcast_event::<IncreaseFPSBaseEvent>(event).is_some() {
         adjust_fps_base(player, project, true);
         return Some(result);
     }
-    if downcast_event::<DecreaseFPSBaseEvent>(&event).is_some() {
+    if downcast_event::<DecreaseFPSBaseEvent>(event).is_some() {
         adjust_fps_base(player, project, false);
         return Some(result);
     }
 
     // === Play Range Control ===
-    if downcast_event::<SetPlayRangeStartEvent>(&event).is_some() {
+    if downcast_event::<SetPlayRangeStartEvent>(event).is_some() {
         log::trace!("[B] SetPlayRangeStartEvent received, active_comp={:?}", player.active_comp());
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
@@ -279,7 +279,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<SetPlayRangeEndEvent>(&event).is_some() {
+    if downcast_event::<SetPlayRangeEndEvent>(event).is_some() {
         log::trace!("[N] SetPlayRangeEndEvent received, active_comp={:?}", player.active_comp());
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
@@ -289,7 +289,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<ResetPlayRangeEvent>(&event).is_some() {
+    if downcast_event::<ResetPlayRangeEvent>(event).is_some() {
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 let start = comp._in();
@@ -300,28 +300,28 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<ToggleLoopEvent>(&event).is_some() {
+    if downcast_event::<ToggleLoopEvent>(event).is_some() {
         settings.loop_enabled = !settings.loop_enabled;
         player.set_loop_enabled(settings.loop_enabled);
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SetLoopEvent>(&event) {
+    if let Some(e) = downcast_event::<SetLoopEvent>(event) {
         settings.loop_enabled = e.0;
         player.set_loop_enabled(e.0);
         return Some(result);
     }
 
     // === Project Management ===
-    if let Some(e) = downcast_event::<AddClipEvent>(&event) {
+    if let Some(e) = downcast_event::<AddClipEvent>(event) {
         result.load_sequences = Some(vec![e.0.clone()]);
         return Some(result);
     }
-    if let Some(e) = downcast_event::<AddClipsEvent>(&event) {
+    if let Some(e) = downcast_event::<AddClipsEvent>(event) {
         result.load_sequences = Some(e.0.clone());
         return Some(result);
     }
     // AddFolderEvent: scan directory recursively for media files
-    if let Some(e) = downcast_event::<AddFolderEvent>(&event) {
+    if let Some(e) = downcast_event::<AddFolderEvent>(event) {
         trace!("AddFolderEvent: scanning {}", e.0.display());
         let media_files = scan_folder_for_media(&e.0);
         if !media_files.is_empty() {
@@ -332,66 +332,72 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if let Some(e) = downcast_event::<AddCompEvent>(&event) {
+    if let Some(e) = downcast_event::<AddCompEvent>(event) {
         result.new_comp = Some((e.name.clone(), e.fps));
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SaveProjectEvent>(&event) {
+    if let Some(e) = downcast_event::<SaveProjectEvent>(event) {
         result.save_project = Some(e.0.clone());
         return Some(result);
     }
-    if let Some(e) = downcast_event::<LoadProjectEvent>(&event) {
+    if let Some(e) = downcast_event::<LoadProjectEvent>(event) {
         result.load_project = Some(e.0.clone());
         return Some(result);
     }
-    if downcast_event::<QuickSaveEvent>(&event).is_some() {
+    if downcast_event::<QuickSaveEvent>(event).is_some() {
         result.quick_save = true;
         return Some(result);
     }
-    if downcast_event::<OpenProjectDialogEvent>(&event).is_some() {
+    if downcast_event::<OpenProjectDialogEvent>(event).is_some() {
         result.show_open_dialog = true;
         return Some(result);
     }
-    if let Some(e) = downcast_event::<RemoveMediaEvent>(&event) {
+    if let Some(e) = downcast_event::<RemoveMediaEvent>(event) {
         let uuid = e.0;
         let was_active = player.active_comp() == Some(uuid);
         project.del_comp(uuid);
         if was_active {
             let first = project.comps_order().first().cloned();
             player.set_active_comp(first, project);
+            if let Some(f) = first {
+                node_editor_state.set_comp(f);
+            }
         }
         return Some(result);
     }
-    if downcast_event::<RemoveSelectedMediaEvent>(&event).is_some() {
+    if downcast_event::<RemoveSelectedMediaEvent>(event).is_some() {
         let selection: Vec<Uuid> = project.selection();
         let active = player.active_comp();
         for uuid in selection {
             project.del_comp(uuid);
         }
         // Fix active if deleted
-        if let Some(a) = active {
-            if !project.media.read().expect("media lock poisoned").contains_key(&a) {
+        if let Some(a) = active
+            && !project.media.read().expect("media lock poisoned").contains_key(&a) {
                 let first = project.comps_order().first().cloned();
                 player.set_active_comp(first, project);
+                if let Some(f) = first {
+                    node_editor_state.set_comp(f);
+                }
             }
-        }
         return Some(result);
     }
-    if downcast_event::<ClearAllMediaEvent>(&event).is_some() {
+    if downcast_event::<ClearAllMediaEvent>(event).is_some() {
         project.media.write().expect("media lock poisoned").clear();
         project.set_comps_order(Vec::new());
         project.set_selection(Vec::new());
         player.set_active_comp(None, project);
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SelectMediaEvent>(&event) {
+    if let Some(e) = downcast_event::<SelectMediaEvent>(event) {
         player.set_active_comp(Some(e.0), project); // also resets selection
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
+        node_editor_state.set_comp(e.0);
         return Some(result);
     }
 
     // === Selection ===
-    if let Some(e) = downcast_event::<ProjectSelectionChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<ProjectSelectionChangedEvent>(event) {
         project.set_selection(e.selection.clone());
         project.selection_anchor = e.anchor.or_else(|| {
             let sel = project.selection();
@@ -400,20 +406,21 @@ pub fn handle_app_event(
         });
         return Some(result);
     }
-    if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(event) {
         player.set_active_comp(Some(e.0), project); // also resets selection
         project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
         node_editor_state.set_comp(e.0);
         return Some(result);
     }
-    if downcast_event::<ProjectPreviousCompEvent>(&event).is_some() {
+    if downcast_event::<ProjectPreviousCompEvent>(event).is_some() {
         if let Some(prev) = player.previous_comp() {
             player.set_active_comp(Some(prev), project);
             project.selection_anchor = project.comps_order().iter().position(|u| *u == prev);
+            node_editor_state.set_comp(prev);
         }
         return Some(result);
     }
-    if let Some(e) = downcast_event::<CompSelectionChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<CompSelectionChangedEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             comp.layer_selection = e.selection.clone();
             comp.layer_selection_anchor = e.anchor;
@@ -422,23 +429,23 @@ pub fn handle_app_event(
     }
 
     // === UI State ===
-    if downcast_event::<ToggleHelpEvent>(&event).is_some() {
+    if downcast_event::<ToggleHelpEvent>(event).is_some() {
         *show_help = !*show_help;
         return Some(result);
     }
-    if downcast_event::<TogglePlaylistEvent>(&event).is_some() {
+    if downcast_event::<TogglePlaylistEvent>(event).is_some() {
         *show_playlist = !*show_playlist;
         return Some(result);
     }
-    if downcast_event::<ToggleSettingsEvent>(&event).is_some() {
+    if downcast_event::<ToggleSettingsEvent>(event).is_some() {
         *show_settings = !*show_settings;
         return Some(result);
     }
-    if downcast_event::<ToggleAttributeEditorEvent>(&event).is_some() {
+    if downcast_event::<ToggleAttributeEditorEvent>(event).is_some() {
         *show_attributes_editor = !*show_attributes_editor;
         return Some(result);
     }
-    if downcast_event::<ToggleEncodeDialogEvent>(&event).is_some() {
+    if downcast_event::<ToggleEncodeDialogEvent>(event).is_some() {
         *show_encode_dialog = !*show_encode_dialog;
         if *show_encode_dialog && encode_dialog.is_none() {
             trace!("[ToggleEncodeDialog] Opening encode dialog");
@@ -446,38 +453,38 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<ToggleFullscreenEvent>(&event).is_some() {
+    if downcast_event::<ToggleFullscreenEvent>(event).is_some() {
         *is_fullscreen = !*is_fullscreen;
         *fullscreen_dirty = true;
         return Some(result);
     }
-    if downcast_event::<ToggleFrameNumbersEvent>(&event).is_some() {
+    if downcast_event::<ToggleFrameNumbersEvent>(event).is_some() {
         settings.show_frame_numbers = !settings.show_frame_numbers;
         return Some(result);
     }
-    if downcast_event::<ResetSettingsEvent>(&event).is_some() {
+    if downcast_event::<ResetSettingsEvent>(event).is_some() {
         *reset_settings_pending = true;
         return Some(result);
     }
 
     // === Timeline State ===
-    if let Some(e) = downcast_event::<TimelineZoomChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<TimelineZoomChangedEvent>(event) {
         timeline_state.zoom = e.0.clamp(0.1, 20.0);
         return Some(result);
     }
-    if let Some(e) = downcast_event::<TimelinePanChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<TimelinePanChangedEvent>(event) {
         timeline_state.pan_offset = e.0;
         return Some(result);
     }
-    if let Some(e) = downcast_event::<TimelineSnapChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<TimelineSnapChangedEvent>(event) {
         timeline_state.snap_enabled = e.0;
         return Some(result);
     }
-    if let Some(e) = downcast_event::<TimelineLockWorkAreaChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<TimelineLockWorkAreaChangedEvent>(event) {
         timeline_state.lock_work_area = e.0;
         return Some(result);
     }
-    if let Some(e) = downcast_event::<TimelineFitAllEvent>(&event) {
+    if let Some(e) = downcast_event::<TimelineFitAllEvent>(event) {
         if let Some(comp_uuid) = player.active_comp() {
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
@@ -492,7 +499,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<TimelineFitEvent>(&event).is_some() {
+    if downcast_event::<TimelineFitEvent>(event).is_some() {
         let canvas_width = timeline_state.last_canvas_width;
         // Recursive call via TimelineFitAllEvent
         if let Some(comp_uuid) = player.active_comp() {
@@ -509,45 +516,45 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<TimelineResetZoomEvent>(&event).is_some() {
+    if downcast_event::<TimelineResetZoomEvent>(event).is_some() {
         timeline_state.zoom = 1.0;
         return Some(result);
     }
 
     // === Node Editor State ===
-    if downcast_event::<NodeEditorFitAllEvent>(&event).is_some() {
+    if downcast_event::<NodeEditorFitAllEvent>(event).is_some() {
         node_editor_state.fit_all_requested = true;
         return Some(result);
     }
-    if downcast_event::<NodeEditorFitSelectedEvent>(&event).is_some() {
+    if downcast_event::<NodeEditorFitSelectedEvent>(event).is_some() {
         node_editor_state.fit_selected_requested = true;
         return Some(result);
     }
-    if downcast_event::<NodeEditorLayoutEvent>(&event).is_some() {
+    if downcast_event::<NodeEditorLayoutEvent>(event).is_some() {
         node_editor_state.layout_requested = true;
         return Some(result);
     }
 
     // === Viewport State ===
-    if let Some(e) = downcast_event::<ZoomViewportEvent>(&event) {
+    if let Some(e) = downcast_event::<ZoomViewportEvent>(event) {
         viewport_state.zoom *= e.0;
         return Some(result);
     }
-    if downcast_event::<ResetViewportEvent>(&event).is_some() {
+    if downcast_event::<ResetViewportEvent>(event).is_some() {
         viewport_state.reset();
         return Some(result);
     }
-    if downcast_event::<FitViewportEvent>(&event).is_some() {
+    if downcast_event::<FitViewportEvent>(event).is_some() {
         viewport_state.set_mode_fit();
         return Some(result);
     }
-    if downcast_event::<Viewport100Event>(&event).is_some() {
+    if downcast_event::<Viewport100Event>(event).is_some() {
         viewport_state.set_mode_100();
         return Some(result);
     }
 
     // === Layer Operations ===
-    if let Some(e) = downcast_event::<AddLayerEvent>(&event) {
+    if let Some(e) = downcast_event::<AddLayerEvent>(event) {
         // Get source info and generate name BEFORE write lock
         let source_info = project.with_node(e.source_uuid, |s| {
             let name = project.gen_name(s.name());
@@ -569,7 +576,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if let Some(e) = downcast_event::<RemoveLayerEvent>(&event) {
+    if let Some(e) = downcast_event::<RemoveLayerEvent>(event) {
         let child_uuid = project.with_comp(e.comp_uuid, |comp| {
             comp.get_children().get(e.layer_idx).map(|(child_uuid, _)| *child_uuid)
         }).flatten();
@@ -581,7 +588,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<RemoveSelectedLayerEvent>(&event).is_some() {
+    if downcast_event::<RemoveSelectedLayerEvent>(event).is_some() {
         if let Some(active_uuid) = player.active_comp() {
             project.modify_comp(active_uuid, |comp| {
                 let to_remove: Vec<Uuid> = comp.layer_selection.clone();
@@ -594,7 +601,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if let Some(e) = downcast_event::<ReorderLayerEvent>(&event) {
+    if let Some(e) = downcast_event::<ReorderLayerEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let children = comp.get_children();
             if e.from_idx != e.to_idx && e.from_idx < children.len() && e.to_idx < children.len() {
@@ -608,7 +615,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(&event) {
+    if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
             let dragged_in = comp.child_in(dragged_uuid).unwrap_or(0);
@@ -631,7 +638,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SetLayerPlayStartEvent>(&event) {
+    if let Some(e) = downcast_event::<SetLayerPlayStartEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
             let dragged_ps = comp.child_start(dragged_uuid).unwrap_or(0);
@@ -646,7 +653,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SetLayerPlayEndEvent>(&event) {
+    if let Some(e) = downcast_event::<SetLayerPlayEndEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
             let dragged_pe = comp.child_end(dragged_uuid).unwrap_or(0);
@@ -662,7 +669,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     // Slide layer: move "in" while compensating trim_in/trim_out
-    if let Some(e) = downcast_event::<SlideLayerEvent>(&event) {
+    if let Some(e) = downcast_event::<SlideLayerEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
             if let Some(uuid) = comp.idx_to_uuid(e.layer_idx) {
@@ -681,7 +688,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     // Reset trims to zero for selected layers (Ctrl+R)
-    if let Some(e) = downcast_event::<ResetTrimsEvent>(&event) {
+    if let Some(e) = downcast_event::<ResetTrimsEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
             for layer_uuid in comp.layer_selection.clone() {
@@ -703,7 +710,7 @@ pub fn handle_app_event(
     }
     // NOTE: SelectAllLayersEvent and ClearLayerSelectionEvent handlers
     // are below (after clipboard events) with proper layer_selection_anchor handling
-    if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(&event) {
+    if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(event) {
         log::info!("[LayerAttrsChanged] comp={}, layers={:?}, opacity={}", e.comp_uuid, e.layer_uuids, e.opacity);
         project.modify_comp(e.comp_uuid, |comp| {
             use crate::entities::AttrValue;
@@ -722,7 +729,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     // Generic layer attrs change (from Attribute Editor)
-    if let Some(e) = downcast_event::<SetLayerAttrsEvent>(&event) {
+    if let Some(e) = downcast_event::<SetLayerAttrsEvent>(event) {
         log::info!("[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}", e.comp_uuid, e.layer_uuids, e.attrs);
         project.modify_comp(e.comp_uuid, |comp| {
             let values: Vec<(&str, crate::entities::AttrValue)> = e.attrs.iter()
@@ -735,7 +742,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<AlignLayersStartEvent>(&event) {
+    if let Some(e) = downcast_event::<AlignLayersStartEvent>(event) {
         project.modify_comp(e.0, |comp| {
             let current_frame = comp.frame();
             let selected = comp.layer_selection.clone();
@@ -752,7 +759,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<AlignLayersEndEvent>(&event) {
+    if let Some(e) = downcast_event::<AlignLayersEndEvent>(event) {
         project.modify_comp(e.0, |comp| {
             let current_frame = comp.frame();
             let selected = comp.layer_selection.clone();
@@ -769,7 +776,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<TrimLayersStartEvent>(&event) {
+    if let Some(e) = downcast_event::<TrimLayersStartEvent>(event) {
         project.modify_comp(e.0, |comp| {
             let current_frame = comp.frame();
             let selected = comp.layer_selection.clone();
@@ -781,7 +788,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<TrimLayersEndEvent>(&event) {
+    if let Some(e) = downcast_event::<TrimLayersEndEvent>(event) {
         project.modify_comp(e.0, |comp| {
             let current_frame = comp.frame();
             let selected = comp.layer_selection.clone();
@@ -793,7 +800,7 @@ pub fn handle_app_event(
 
         return Some(result);
     }
-    if let Some(e) = downcast_event::<MoveLayerEvent>(&event) {
+    if let Some(e) = downcast_event::<MoveLayerEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             let _ = comp.move_child(e.layer_idx, e.new_start);
         });
@@ -802,7 +809,7 @@ pub fn handle_app_event(
     }
 
     // === Layer Clipboard Operations ===
-    if let Some(e) = downcast_event::<DuplicateLayersEvent>(&event) {
+    if let Some(e) = downcast_event::<DuplicateLayersEvent>(event) {
         trace!("DuplicateLayersEvent: comp={}", e.comp_uuid);
         // Duplicate selected layers, insert copies above originals
         // Collect (layer_uuid, source_uuid, attrs_clone)
@@ -862,7 +869,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if let Some(e) = downcast_event::<CopyLayersEvent>(&event) {
+    if let Some(e) = downcast_event::<CopyLayersEvent>(event) {
         trace!("CopyLayersEvent: comp={}", e.comp_uuid);
         // Copy selected layers to clipboard
         let clipboard_items = project.with_comp(e.comp_uuid, |comp| {
@@ -895,7 +902,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if let Some(e) = downcast_event::<PasteLayersEvent>(&event) {
+    if let Some(e) = downcast_event::<PasteLayersEvent>(event) {
         trace!("PasteLayersEvent: comp={}, frame={}", e.comp_uuid, e.target_frame);
         // Paste layers from clipboard at target frame
         if timeline_state.clipboard.is_empty() {
@@ -950,7 +957,7 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SelectAllLayersEvent>(&event) {
+    if let Some(e) = downcast_event::<SelectAllLayersEvent>(event) {
         trace!("SelectAllLayersEvent: comp={}", e.comp_uuid);
         project.modify_comp(e.comp_uuid, |comp| {
             let all_uuids: Vec<Uuid> = comp.layers.iter().map(|l| l.uuid).collect();
@@ -960,7 +967,7 @@ pub fn handle_app_event(
         });
         return Some(result);
     }
-    if let Some(e) = downcast_event::<ClearLayerSelectionEvent>(&event) {
+    if let Some(e) = downcast_event::<ClearLayerSelectionEvent>(event) {
         trace!("ClearLayerSelectionEvent: comp={}", e.comp_uuid);
         project.modify_comp(e.comp_uuid, |comp| {
             trace!("Clearing {} selected layers", comp.layer_selection.len());
@@ -971,19 +978,19 @@ pub fn handle_app_event(
     }
 
     // === Comp Play Area ===
-    if let Some(e) = downcast_event::<SetCompPlayStartEvent>(&event) {
+    if let Some(e) = downcast_event::<SetCompPlayStartEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             comp.set_comp_play_start(e.frame);
         });
         return Some(result);
     }
-    if let Some(e) = downcast_event::<SetCompPlayEndEvent>(&event) {
+    if let Some(e) = downcast_event::<SetCompPlayEndEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
             comp.set_comp_play_end(e.frame);
         });
         return Some(result);
     }
-    if let Some(e) = downcast_event::<ResetCompPlayAreaEvent>(&event) {
+    if let Some(e) = downcast_event::<ResetCompPlayAreaEvent>(event) {
         project.modify_comp(e.0, |comp| {
             let start = comp._in();
             let end = comp._out();

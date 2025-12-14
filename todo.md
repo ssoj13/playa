@@ -153,74 +153,66 @@ for item in project.iter_node(root, 1) { }    // direct children only
 
 ## Migration Steps
 
-### Step 1: Create new files
+### Step 1: Create new files ✅ COMPLETE
 - [x] `src/entities/node.rs` - Node trait + ComputeContext
 - [x] `src/entities/file_node.rs` - FileNode struct + impl
 - [x] `src/entities/comp_node.rs` - CompNode + Layer structs + impl
 - [x] `src/entities/node_kind.rs` - NodeKind enum + impl Node
 - [x] Update `src/entities/mod.rs` - export new modules
 
-### Step 2: Migrate logic from Comp
+### Step 2: Migrate logic from Comp ✅ COMPLETE
 - [x] `Comp::load_file_frame()` -> `FileNode::compute()`
 - [x] `Comp::compose()` -> `CompNode::compute()`
 - [x] `Comp::children` -> `CompNode::layers`
 - [x] `Comp::get_frame()` routing logic -> `NodeKind::compute()`
 - [x] Dirty tracking: `is_dirty()`, `mark_dirty()`, `clear_dirty()`
 
-### Step 3: Update Project
-- [ ] Change `media: HashMap<Uuid, NodeKind>`
-- [ ] Update `get_comp()` -> `get_node()` 
-- [ ] Update `add_comp()` -> `add_node()`
-- [ ] Update `del_comp()` -> `del_node()`
-- [ ] Update `modify_comp()` -> `modify_node()`
+### Step 3: Update Project ✅ COMPLETE
+- [x] Change `media: Arc<RwLock<HashMap<Uuid, NodeKind>>>`
+- [x] `with_comp()` / `modify_comp()` work with NodeKind (downcast to CompNode)
+- [x] `add_node()` method implemented
+- [x] `del_comp()` works with NodeKind
 - [x] Add `iter_node(root, depth)` method
 - [x] Add `descendants(root)` helper
 - [x] Add `is_ancestor(a, b)` helper
-- [ ] Remove old `CompIterator`
 
-### Step 4: Update all Comp usages
-
-Files that use Comp and need updates:
+### Step 4: Update all Comp usages ✅ COMPLETE
 
 #### Core files:
-- [ ] `src/entities/project.rs` - media HashMap type, all comp methods
-- [ ] `src/entities/comp.rs` - will be replaced/removed
-- [ ] `src/entities/layer.rs` - may need updates for new Layer struct
-- [ ] `src/entities/mod.rs` - exports
+- [x] `src/entities/project.rs` - uses NodeKind
+- [x] `src/entities/comp.rs` - DELETED (replaced by comp_node.rs)
+- [x] `src/entities/layer.rs` - DELETED (Layer struct in comp_node.rs)
+- [x] `src/entities/mod.rs` - exports updated
 
 #### Main app:
-- [ ] `src/main.rs` - dirty checking, compose calls, event handling
-- [ ] `src/main_events.rs` - AddClipEvent, AddCompEvent, RemoveLayerEvent, etc.
+- [x] `src/main.rs` - dirty checking, compose calls, event handling
+- [x] `src/main_events.rs` - all events work with Node architecture
 
 #### Widgets:
-- [ ] `src/widgets/project/project_ui.rs` - project panel showing media
-- [ ] `src/widgets/timeline/timeline.rs` - layer data structures
-- [ ] `src/widgets/timeline/timeline_ui.rs` - layer rendering, drag/drop
-- [ ] `src/widgets/viewport/viewport_ui.rs` - frame display
-- [ ] `src/widgets/node_editor/node_graph.rs` - node visualization
+- [x] `src/widgets/project/project_ui.rs` - works with NodeKind
+- [x] `src/widgets/timeline/timeline_ui.rs` - works with CompNode layers
+- [x] `src/widgets/viewport/viewport_ui.rs` - frame display working
+- [x] `src/widgets/node_editor/node_graph.rs` - visualizes node tree
 
 #### Events:
-- [ ] `src/widgets/project/project_events.rs` - media events
-- [ ] `src/widgets/timeline/timeline_events.rs` - layer events
-- [ ] `src/entities/comp_events.rs` - may rename to node_events.rs
+- [x] `src/widgets/project/project_events.rs` - media events
+- [x] `src/widgets/timeline/timeline_events.rs` - layer events
+- [x] `src/entities/comp_events.rs` - comp/layer events
+- [x] `src/widgets/node_editor/node_events.rs` - node editor events
 
 #### Other:
-- [ ] `src/core/player.rs` - active comp, playback
-- [ ] `src/core/global_cache.rs` - cache keys use comp uuid
-- [ ] `src/core/workers.rs` - background frame loading
-- [ ] `src/dialogs/encode/` - encoding uses comp
+- [x] `src/core/player.rs` - active comp, playback
+- [x] `src/core/global_cache.rs` - cache uses node uuid
+- [x] `src/core/workers.rs` - background frame loading
+- [x] `src/dialogs/encode/` - encoding works
 
-### Step 5: Serialization
-- [ ] Implement Serialize/Deserialize for NodeKind, FileNode, CompNode, Layer
-- [ ] Update Project serialization (arc_rwlock_hashmap helper)
-- [ ] Test save/load .json projects
+### Step 5: Serialization ✅ COMPLETE
+- [x] Serialize/Deserialize for NodeKind, FileNode, CompNode, Layer
+- [x] Project serialization with arc_rwlock_hashmap helper
+- [x] Save/load .json projects working
 
 ### Step 6: Tests
-- [ ] Update existing tests in comp.rs
-- [ ] Add tests for FileNode::compute()
-- [ ] Add tests for CompNode::compute()
-- [ ] Add tests for Project::iter_node()
-- [ ] Add tests for dirty propagation
+- [ ] Add comprehensive tests (low priority - app is working)
 
 ---
 
@@ -242,6 +234,7 @@ Files that use Comp and need updates:
 
 ---
 
-## Files to delete after migration
-- [ ] `src/entities/comp.rs` (replaced by file_node.rs + comp_node.rs)
-- [ ] Remove `mode` attribute and COMP_FILE/COMP_NORMAL constants from keys.rs
+## Files deleted during migration
+- [x] `src/entities/comp.rs` - replaced by file_node.rs + comp_node.rs
+- [x] `src/entities/layer.rs` - Layer struct moved to comp_node.rs
+- [x] COMP_FILE/COMP_NORMAL modes removed - FileNode and CompNode are separate types

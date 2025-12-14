@@ -219,7 +219,7 @@ impl CpuCompositor {
     /// Blend frames bottom-to-top with opacity.
     pub(crate) fn blend(&self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
         // Default to using first frame size
-        if let Some((first, _, _)) = frames.get(0) {
+        if let Some((first, _, _)) = frames.first() {
             let dim = (first.width(), first.height());
             return self.blend_with_dim(frames, dim);
         }

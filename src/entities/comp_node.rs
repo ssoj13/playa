@@ -49,7 +49,7 @@ use super::node::{ComputeContext, Node};
 
 // Thread-local compositor and cycle detection
 thread_local! {
-    static THREAD_COMPOSITOR: RefCell<CpuCompositor> = RefCell::new(CpuCompositor);
+    static THREAD_COMPOSITOR: RefCell<CpuCompositor> = const { RefCell::new(CpuCompositor) };
     static COMPOSE_STACK: RefCell<HashSet<Uuid>> = RefCell::new(HashSet::new());
 }
 
@@ -607,11 +607,10 @@ impl CompNode {
         let child_order: Vec<usize> = (0..self.layers.len()).collect();
         let layer_rows = self.compute_layer_rows(&child_order);
         for idx in 0..self.layers.len() {
-            if let Some(&row) = layer_rows.get(&idx) {
-                if row >= target_row {
+            if let Some(&row) = layer_rows.get(&idx)
+                && row >= target_row {
                     return idx;
                 }
-            }
         }
         self.layers.len()
     }
@@ -629,13 +628,12 @@ impl CompNode {
         // Collect layers in target row
         let mut layers_in_row: Vec<(usize, i32, i32)> = Vec::new();
         for (&idx, &row) in &layer_rows {
-            if row == target_row {
-                if let Some(layer) = self.layers.get(idx) {
+            if row == target_row
+                && let Some(layer) = self.layers.get(idx) {
                     let start = layer.attrs.full_bar_start();
                     let end = layer.attrs.full_bar_end();
                     layers_in_row.push((idx, start, end));
                 }
-            }
         }
 
         if layers_in_row.is_empty() {
@@ -832,7 +830,7 @@ impl CompNode {
                 
                 let idx = source_frames.len() - 1;
                 let start = layer.start();
-                if earliest.map_or(true, |(s, _)| start < s) {
+                if earliest.is_none_or(|(s, _)| start < s) {
                     earliest = Some((start, idx));
                 }
                 
@@ -876,11 +874,10 @@ impl CompNode {
         });
         
         // Mark incomplete if not all loaded
-        result.map(|frame| {
+        result.inspect(|frame| {
             if !all_loaded {
                 let _ = frame.set_status(FrameStatus::Loading);
             }
-            frame
         })
     }
 }
@@ -944,11 +941,10 @@ impl Node for CompNode {
             );
         }
 
-        if !needs_recompute {
-            if let Some(frame) = cached_frame {
+        if !needs_recompute
+            && let Some(frame) = cached_frame {
                 return Some(frame);
             }
-        }
         
         // Compose
         let composed = self.compose_internal(frame_idx, ctx)?;

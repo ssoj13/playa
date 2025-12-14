@@ -277,8 +277,8 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 }
 
                 // Drag handling
-                if response.drag_started() {
-                    if let Some(_pos) = response.interact_pointer_pos() {
+                if response.drag_started()
+                    && let Some(_pos) = response.interact_pointer_pos() {
                         ui.ctx().data_mut(|data| {
                             data.insert_temp(
                                 egui::Id::new("global_drag_state"),
@@ -289,7 +289,6 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                             );
                         });
                     }
-                }
 
                 if response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -302,13 +301,11 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
         });
 
     // Double-click on empty area opens file dialog (same as Add Clip button)
-    if panel_response.double_clicked() {
-        if let Some(paths) = create_image_dialog("Add Media Files").pick_files() {
-            if !paths.is_empty() {
+    if panel_response.double_clicked()
+        && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
+            && !paths.is_empty() {
                 actions.send(AddClipsEvent(paths));
             }
-        }
-    }
 
     // Set hover state for input routing
     actions.hovered = panel_response.hovered();

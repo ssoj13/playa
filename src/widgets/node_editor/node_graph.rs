@@ -329,7 +329,7 @@ impl NodeEditorState {
         let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
 
         // Create all nodes with layout positions (prefer stored positions)
-        for (_, info) in &node_info {
+        for info in node_info.values() {
             let depth = info.depth;
             let slot = *depth_slots.get(&depth).unwrap_or(&0);
             depth_slots.insert(depth, slot + 1);

@@ -516,11 +516,10 @@ impl EncodeDialog {
                             if !ready_to_encode {
                                 button = button.on_disabled_hover_text("No active comp");
                             }
-                            if button.clicked() {
-                                if let Some(comp) = active_comp {
+                            if button.clicked()
+                                && let Some(comp) = active_comp {
                                     self.start_encoding(comp, project);
                                 }
-                            }
                         });
                     }
                 });
@@ -1044,10 +1043,9 @@ impl Drop for EncodeDialog {
             }
         }
         // Also join the active thread if any
-        if let Some(handle) = self.encode_thread.take() {
-            if let Err(e) = handle.join() {
+        if let Some(handle) = self.encode_thread.take()
+            && let Err(e) = handle.join() {
                 info!("Encode thread panicked during dialog close: {:?}", e);
             }
-        }
     }
 }

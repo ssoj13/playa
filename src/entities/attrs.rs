@@ -324,16 +324,14 @@ impl Attrs {
 
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for key in keys {
-            if let Some(ref inc) = include_set {
-                if !inc.contains(key.as_str()) {
+            if let Some(ref inc) = include_set
+                && !inc.contains(key.as_str()) {
                     continue;
                 }
-            }
-            if let Some(ref exc) = exclude_set {
-                if exc.contains(key.as_str()) {
+            if let Some(ref exc) = exclude_set
+                && exc.contains(key.as_str()) {
                     continue;
                 }
-            }
             key.hash(&mut hasher);
             if let Some(val) = self.map.get(key) {
                 val.hash(&mut hasher);

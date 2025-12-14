@@ -126,6 +126,12 @@ pub struct Shaders {
     pub current_shader: String,
 }
 
+impl Default for Shaders {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Shaders {
     pub fn new() -> Self {
         let mut manager = Self {

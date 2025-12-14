@@ -70,12 +70,11 @@ pub fn render(
 
     if double_clicked {
         info!("Double-click detected, opening file dialog");
-        if let Some(paths) = create_image_dialog("Select Media Files").pick_files() {
-            if !paths.is_empty() {
+        if let Some(paths) = create_image_dialog("Select Media Files").pick_files()
+            && !paths.is_empty() {
                 info!("Files selected: {:?}", paths);
                 actions.send(crate::widgets::project::project_events::AddClipsEvent(paths));
             }
-        }
     }
 
     if let Some(error) = error_msg {
@@ -133,7 +132,7 @@ pub fn render(
                 let gl = painter.gl();
                 let mut renderer = renderer.lock().unwrap();
                 if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
-                    renderer.upload_texture(gl, w, h, &*pixels, *pixel_format);
+                    renderer.upload_texture(gl, w, h, pixels, *pixel_format);
                 }
                 renderer.render(gl, &state);
             })),
@@ -199,11 +198,10 @@ pub fn render(
         });
 
     // If shader changed, recompile in renderer immediately
-    if shader_manager.current_shader != old_shader {
-        if let Ok(mut renderer) = viewport_renderer.lock() {
+    if shader_manager.current_shader != old_shader
+        && let Ok(mut renderer) = viewport_renderer.lock() {
             renderer.update_shader(shader_manager);
         }
-    }
 
     // Track hover state for input routing
     actions.hovered = response.hovered();

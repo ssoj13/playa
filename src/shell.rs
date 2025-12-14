@@ -235,13 +235,11 @@ impl Shell {
         }
 
         // Quick save
-        if result.quick_save {
-            if let Some(path) = self.project.last_save_path() {
-                if let Err(e) = self.project.to_json(&path) {
+        if result.quick_save
+            && let Some(path) = self.project.last_save_path()
+                && let Err(e) = self.project.to_json(&path) {
                     self.error_msg = Some(format!("Quick save failed: {}", e));
                 }
-            }
-        }
     }
 }
 

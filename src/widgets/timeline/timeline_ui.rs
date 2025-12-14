@@ -492,25 +492,22 @@ pub fn render_canvas(
         }
 
         // Middle-drag pan on ruler - initialize only, processing is in main loop
-        if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO)) {
-            if ui
+        if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO))
+            && ui
                 .ctx()
                 .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
                 && state.drag_state.is_none()
-            {
-                if let Some(pos) = ui.ctx().pointer_hover_pos() {
+                && let Some(pos) = ui.ctx().pointer_hover_pos() {
                     state.drag_state = Some(GlobalDragState::TimelinePan {
                         drag_start_pos: pos,
                         initial_pan_offset: state.pan_offset,
                     });
                 }
-            }
-        }
     });
 
     // Status strip (if present) - draw inside horizontal layout to align with ruler
-    if let Some(statuses) = &status_strip {
-        if let Some(ruler) = ruler_rect {
+    if let Some(statuses) = &status_strip
+        && let Some(ruler) = ruler_rect {
             ui.horizontal(|ui| {
                 // Add left spacer only in OutlineOnly mode (same as ruler)
                 if matches!(view_mode, super::TimelineViewMode::OutlineOnly) {
@@ -529,7 +526,6 @@ pub fn render_canvas(
                 draw_status_strip(ui, status_rect, statuses, comp_start, total_frames, ruler, config, state);
             });
         }
-    }
 
     ui.add_space(4.0);
 
@@ -561,25 +557,22 @@ pub fn render_canvas(
         timeline_hovered = timeline_response.hovered();
 
         // If mouse is over ruler or canvas rects, mark timeline hovered (hotkeys context)
-        if let Some(pos) = ui.ctx().pointer_hover_pos() {
-            if ruler_rect.map(|r| r.contains(pos)).unwrap_or(false)
-                || timeline_rect.contains(pos)
+        if let Some(pos) = ui.ctx().pointer_hover_pos()
+            && (ruler_rect.map(|r| r.contains(pos)).unwrap_or(false)
+                || timeline_rect.contains(pos))
             {
                 timeline_hovered = true;
             }
-        }
 
         // Middle-drag pan on canvas - initialize only if not already dragging
-        if timeline_response.hovered() && state.drag_state.is_none() {
-            if ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-                if let Some(pos) = ui.ctx().pointer_hover_pos() {
+        if timeline_response.hovered() && state.drag_state.is_none()
+            && ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle))
+                && let Some(pos) = ui.ctx().pointer_hover_pos() {
                     state.drag_state = Some(GlobalDragState::TimelinePan {
                         drag_start_pos: pos,
                         initial_pan_offset: state.pan_offset,
                     });
                 }
-            }
-        }
 
         // Scroll wheel horizontal pan
         let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
@@ -609,7 +602,7 @@ pub fn render_canvas(
                         }
 
                         // Second pass: draw layer bars
-                        for (_display_idx, &original_idx) in child_order_inner.iter().enumerate() {
+                        for &original_idx in child_order_inner.iter() {
                             let idx = original_idx;
                             let layer = &comp.layers[idx];
                             let child_uuid = layer.uuid;
@@ -704,7 +697,7 @@ pub fn render_canvas(
 
                         // Handle child bar interactions using proper response system
                         // We need to do this in a second pass after drawing to ensure responses are on top
-                        for (_display_idx, &original_idx) in child_order_inner.iter().enumerate() {
+                        for &original_idx in child_order_inner.iter() {
                             let idx = original_idx;
                             let layer = &comp.layers[idx];
                             let child_uuid = layer.uuid;
@@ -717,16 +710,15 @@ pub fn render_canvas(
                             let edge_threshold = 8.0;
                             if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
                                 // Double-click: dive into source comp (check on full bar)
-                                if geom.full_bar_rect.contains(hover_pos) {
-                                    if ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                                if geom.full_bar_rect.contains(hover_pos)
+                                    && ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
                                         // source_uuid is a field on Layer, not in attrs
                                         dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid)));
                                     }
-                                }
 
                                 // Tool detection with geometry-aware function (supports Slide in trim zones)
-                                if state.drag_state.is_none() {
-                                    if let Some(tool) = detect_layer_tool_with_geom(
+                                if state.drag_state.is_none()
+                                    && let Some(tool) = detect_layer_tool_with_geom(
                                         hover_pos,
                                         geom.full_bar_rect,
                                         geom.visible_bar_rect,
@@ -761,7 +753,6 @@ pub fn render_canvas(
                                             }
                                         }
                                     }
-                                }
                             }
                         }
 
@@ -792,7 +783,7 @@ pub fn render_canvas(
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_y = current_pos.y - drag_start_y;
                                         let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
-                                        let new_start = *initial_start as i32 + delta_frames;  // Allow negative values
+                                        let new_start = *initial_start + delta_frames;  // Allow negative values
 
                                         // Determine target child index from vertical position
                                         // Calculate from display position, then convert to physical
@@ -825,7 +816,7 @@ pub fn render_canvas(
                                                 let ghost_start = child_start + delta_frames;
 
                                                 draw_drop_preview(
-                                                    &painter,
+                                                    painter,
                                                     ghost_start,
                                                     ghost_child_y,
                                                     duration,
@@ -1051,8 +1042,8 @@ pub fn render_canvas(
 
                         if let Some(GlobalDragState::ProjectItem { source_uuid, duration, .. }) = global_drag {
                             // Use mouse Y position directly, adjust only for time overlap
-                            if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
-                                if hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
+                            if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos())
+                                && hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
                                     let raw_drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
                                     let dur = duration.unwrap_or(10).max(1);
 
@@ -1078,7 +1069,7 @@ pub fn render_canvas(
                                     };
 
                                     draw_drop_preview(
-                                        &ui.painter(),
+                                        ui.painter(),
                                         snap_frame,
                                         row_y,
                                         dur,
@@ -1107,19 +1098,17 @@ pub fn render_canvas(
                                         log::warn!("Blocked cyclic dependency: {} -> {}", source_uuid, comp_id);
                                     }
                                 }
-                            }
             } else if state.drag_state.is_none() && global_drag.is_none() {
                 // Handle click/drag interaction only if no active drag state
                 if (timeline_response.clicked() || timeline_response.dragged())
                     && !ui
                         .ctx()
                         .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
-                {
-                    if let Some(pos) = timeline_response.interact_pointer_pos() {
+                    && let Some(pos) = timeline_response.interact_pointer_pos() {
                         // If click is within any layer row, select that layer;
                         // otherwise treat it as a frame scrub on empty space.
                         let mut clicked_layer: Option<usize> = None;
-                        for (_display_idx, &original_idx) in child_order_inner.iter().enumerate() {
+                        for &original_idx in child_order_inner.iter() {
                             // row = layer index
                             let row = original_idx;
                             let layer_y = row_to_y(row, config, timeline_rect);
@@ -1177,7 +1166,6 @@ pub fn render_canvas(
                             }
                         }
                     }
-                }
             }
         });
     });
@@ -1208,11 +1196,10 @@ pub fn render_canvas(
     }
 
     // Treat entire tab rect as timeline hover for hotkey routing
-    if let Some(pointer) = ui.ctx().pointer_hover_pos() {
-        if tab_rect.contains(pointer) {
+    if let Some(pointer) = ui.ctx().pointer_hover_pos()
+        && tab_rect.contains(pointer) {
             timeline_hovered = true;
         }
-    }
 
     // Return actions with hover state
     super::timeline::TimelineActions {
