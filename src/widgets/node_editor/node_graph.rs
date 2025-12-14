@@ -187,6 +187,9 @@ const VERTICAL_SPACING: f32 = 70.0;
 
 /// Persistent state for node editor panel.
 ///
+/// Helper for serde default
+fn default_true() -> bool { true }
+
 /// # Serialization
 ///
 /// Only `comp_uuid` is serialized. The `snarl` graph is rebuilt from Comp
@@ -210,12 +213,14 @@ pub struct NodeEditorState {
     pub snarl: Snarl<CompNode>,
 
     /// UUID of the comp currently displayed in node view.
-    /// Persisted to restore view on app restart.
+    /// Not persisted - always syncs from player.active_comp() like timeline.
+    #[serde(skip)]
     pub comp_uuid: Option<Uuid>,
 
     /// Internal flag: true means graph needs rebuild from Comp.
     /// Set by `set_comp()` or `mark_dirty()`, cleared by `rebuild_from_comp()`.
-    #[serde(skip)]
+    /// Defaults to true so graph rebuilds after deserialization (snarl is skipped).
+    #[serde(skip, default = "default_true")]
     needs_rebuild: bool,
 
     /// Flag to trigger fit-all on next frame

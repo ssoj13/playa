@@ -41,13 +41,16 @@ impl HotkeyHandler {
     pub fn handle_key(&self, key: &str) -> Option<BoxedEvent> {
         // Try current focused window first
         if let Some(factory) = self.bindings.get(&(self.focused_window, key.to_string())) {
+            log::trace!("Hotkey: ({:?}, {}) -> matched", self.focused_window, key);
             return Some(factory());
         }
         // Fallback: try Global
         if self.focused_window != HotkeyWindow::Global
             && let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
+                log::trace!("Hotkey: (Global, {}) -> matched (fallback)", key);
                 return Some(factory());
             }
+        log::trace!("Hotkey: ({:?}, {}) -> NO MATCH", self.focused_window, key);
         None
     }
 

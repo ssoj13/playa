@@ -137,6 +137,9 @@ struct PlayaApp {
     project_hovered: bool,
     #[serde(skip)]
     node_editor_hovered: bool,
+    /// True when NodeEditor tab is the active/visible tab (for hotkey routing)
+    #[serde(skip)]
+    node_editor_tab_active: bool,
     attributes_state: AttributesState,
     /// Node editor state (snarl graph for composition visualization)
     node_editor_state: NodeEditorState,
@@ -206,6 +209,7 @@ impl Default for PlayaApp {
             timeline_hovered: false,
             project_hovered: false,
             node_editor_hovered: false,
+            node_editor_tab_active: false,
             attributes_state: AttributesState::default(),
             node_editor_state: NodeEditorState::new(),
         }
@@ -554,8 +558,8 @@ impl PlayaApp {
             return HotkeyWindow::Viewport;
         }
 
-        // Priority 4: Node editor hover (must be before Timeline default)
-        if self.node_editor_hovered {
+        // Priority 4: Node editor - active tab OR hover (must be before Timeline default)
+        if self.node_editor_tab_active || self.node_editor_hovered {
             return HotkeyWindow::NodeEditor;
         }
 
@@ -660,11 +664,12 @@ impl PlayaApp {
 
         // Debug: log when F or A is pressed but no event
         if input.key_pressed(egui::Key::F) || input.key_pressed(egui::Key::A) {
-            log::trace!(
-                "F/A pressed but no event. focused_window: {:?}, viewport: {}, timeline: {}, node_editor: {}, project: {}",
+            log::info!(
+                "F/A pressed NO EVENT. focused={:?} vp={} tl={} ne_tab={} ne_hover={} pj={}",
                 focused_window,
                 self.viewport_hovered,
                 self.timeline_hovered,
+                self.node_editor_tab_active,
                 self.node_editor_hovered,
                 self.project_hovered
             );
@@ -1093,7 +1098,10 @@ impl<'a> TabViewer for DockTabs<'a> {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
-        if !matches!(tab, DockTab::NodeEditor) {
+        // Track which tab is active for hotkey routing
+        if matches!(tab, DockTab::NodeEditor) {
+            self.app.node_editor_tab_active = true;
+        } else {
             // Ensure node editor hover does not linger when tab not drawn
             self.app.node_editor_hovered = false;
         }
@@ -1109,8 +1117,9 @@ impl<'a> TabViewer for DockTabs<'a> {
 
 impl eframe::App for PlayaApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Reset hover flag for node editor each frame to avoid stale focus when tab not rendered
+        // Reset node editor flags each frame - will be set if tab is rendered
         self.node_editor_hovered = false;
+        self.node_editor_tab_active = false;
 
         // Get GL context and update compositor backend
         if let Some(gl) = frame.gl() {
