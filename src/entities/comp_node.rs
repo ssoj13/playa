@@ -505,6 +505,7 @@ impl CompNode {
             }
         }
         self.mark_dirty();
+        self.rebound();
         log::trace!("move_layers: comp marked dirty, is_dirty={}", self.is_dirty());
     }
 
@@ -537,6 +538,7 @@ impl CompNode {
             }
         }
         self.mark_dirty();
+        self.rebound();
     }
 
     /// Add child layer (compat with old Comp.add_child_layer)
@@ -769,6 +771,7 @@ impl CompNode {
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         layer.attrs.set(A_IN, AttrValue::Int(new_start));
         self.mark_dirty();
+        self.rebound();
         Ok(())
     }
 
@@ -782,6 +785,7 @@ impl CompNode {
         let new_trim_in = ((new_play_start - layer_in) as f32 * speed) as i32;
         layer.attrs.set(A_TRIM_IN, AttrValue::Int(new_trim_in.max(0)));
         self.mark_dirty();
+        self.rebound();
         Ok(())
     }
 
@@ -795,6 +799,7 @@ impl CompNode {
         let new_trim_out = ((layer_end - new_play_end) as f32 * speed) as i32;
         layer.attrs.set(A_TRIM_OUT, AttrValue::Int(new_trim_out.max(0)));
         self.mark_dirty();
+        self.rebound();
         Ok(())
     }
 
