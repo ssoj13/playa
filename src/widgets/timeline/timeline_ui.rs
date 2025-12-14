@@ -708,9 +708,10 @@ pub fn render_canvas(
 
                             // Tool detection with full geometry support (including Slide in trim zones)
                             let edge_threshold = 8.0;
-                            if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos()) {
+                            // Use interact_pos which is in local UI coordinates (accounts for scroll)
+                            if let Some(local_pos) = ui.input(|i| i.pointer.interact_pos()) {
                                 // Double-click: dive into source comp (check on full bar)
-                                if geom.full_bar_rect.contains(hover_pos)
+                                if geom.full_bar_rect.contains(local_pos)
                                     && ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
                                         // source_uuid is a field on Layer, not in attrs
                                         dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid)));
@@ -719,7 +720,7 @@ pub fn render_canvas(
                                 // Tool detection with geometry-aware function (supports Slide in trim zones)
                                 if state.drag_state.is_none()
                                     && let Some(tool) = detect_layer_tool_with_geom(
-                                        hover_pos,
+                                        local_pos,
                                         geom.full_bar_rect,
                                         geom.visible_bar_rect,
                                         edge_threshold,
@@ -746,7 +747,7 @@ pub fn render_canvas(
                                             }
                                             {
                                                 state.drag_state =
-                                                    Some(tool.to_drag_state(idx, attrs, hover_pos));
+                                                    Some(tool.to_drag_state(idx, attrs, local_pos));
                                                 log::trace!(
                                                     "[TIMELINE] Drag state created successfully"
                                                 );

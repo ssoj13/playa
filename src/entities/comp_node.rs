@@ -464,13 +464,18 @@ impl CompNode {
 
     /// Move layers by delta frames
     pub fn move_layers(&mut self, layer_uuids: &[Uuid], delta: i32) {
+        log::trace!("move_layers: uuids={:?}, delta={}", layer_uuids, delta);
         for uuid in layer_uuids {
             if let Some(layer) = self.get_layer_mut(*uuid) {
                 let current_in = layer.attrs.get_i32(A_IN).unwrap_or(0);
                 layer.attrs.set(A_IN, super::attrs::AttrValue::Int(current_in + delta));
+                log::trace!("move_layers: moved layer {} from {} to {}", uuid, current_in, current_in + delta);
+            } else {
+                log::warn!("move_layers: layer {} not found!", uuid);
             }
         }
         self.mark_dirty();
+        log::trace!("move_layers: comp marked dirty, is_dirty={}", self.is_dirty());
     }
 
     /// Trim layers (adjust trim_in/trim_out)

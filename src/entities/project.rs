@@ -12,15 +12,14 @@
 //! ## `modify_comp()` Pattern
 //!
 //! All comp modifications should go through `modify_comp()` which:
-//! 1. Captures `was_dirty` before the closure
-//! 2. Executes the closure (may call `attrs.set()` → dirty=true)
-//! 3. If `!was_dirty && is_dirty` → emits `AttrsChangedEvent`
+//! 1. Executes the closure (may call `attrs.set()` → dirty=true)
+//! 2. If comp or any layer is dirty → emits `AttrsChangedEvent`
 //!
 //! ```text
 //! project.modify_comp(uuid, |comp| {
 //!     comp.set_child_attrs(...);  // attrs.set() → dirty=true
 //! });
-//! // Auto-emits AttrsChangedEvent if comp became dirty
+//! // Auto-emits AttrsChangedEvent if comp/layers dirty
 //! // → triggers cache.clear_comp() and viewport refresh
 //! ```
 //!
@@ -399,7 +398,7 @@ impl Project {
 
     /// Modify CompNode in-place via closure.
     ///
-    /// Auto-emits `AttrsChangedEvent` if comp becomes dirty during modification,
+    /// Auto-emits `AttrsChangedEvent` if comp or any layer is dirty after modification,
     /// triggering cache invalidation and viewport refresh.
     pub fn modify_comp<F>(&self, uuid: Uuid, f: F) -> bool
     where
@@ -407,14 +406,16 @@ impl Project {
     {
         if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid)
             && let Some(comp) = node.as_comp_mut() {
-                let was_dirty = comp.attrs.is_dirty();
                 f(comp);
-                // Auto-emit only if comp BECAME dirty (not if it was already dirty)
-                // This prevents constant cache invalidation from repeated modify_comp calls
-                if !was_dirty && comp.attrs.is_dirty()
-                    && let Some(ref emitter) = self.event_emitter {
-                        emitter.emit(AttrsChangedEvent(uuid));
-                    }
+                // Emit event if comp or any layer is dirty after modification.
+                // This ensures ALL changes that affect render trigger cache invalidation,
+                // even when multiple modify_comp calls happen before next render.
+                let dirty = comp.is_dirty();
+                log::trace!("modify_comp: uuid={}, is_dirty={}", uuid, dirty);
+                if dirty && let Some(ref emitter) = self.event_emitter {
+                    log::trace!("modify_comp: emitting AttrsChangedEvent for {}", uuid);
+                    emitter.emit(AttrsChangedEvent(uuid));
+                }
                 return true;
             }
         false

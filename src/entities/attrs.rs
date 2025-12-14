@@ -16,13 +16,13 @@
 //!
 //! ```text
 //! User changes opacity → attrs.set() → dirty=true
-//!   → modify_comp() detects !was_dirty && is_dirty
+//!   → modify_comp() detects is_dirty()
 //!   → emits AttrsChangedEvent
 //!   → cache.clear_comp() invalidates frames
 //!   → compute() recomposes → clear_dirty()
 //!
 //! Playback advances frame → attrs.set_silent() → dirty unchanged
-//!   → modify_comp() sees was_dirty == is_dirty
+//!   → modify_comp() sees !is_dirty()
 //!   → NO event emitted → cache stays valid
 //! ```
 //!

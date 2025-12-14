@@ -423,6 +423,48 @@ impl PlayaApp {
             }
         }
 
+        // === DERIVED EVENTS LOOP - DO NOT REMOVE! ===
+        // 
+        // WHY THIS EXISTS:
+        // When handle_app_event() processes MoveAndReorderLayerEvent (or similar), it calls
+        // modify_comp() which emits AttrsChangedEvent. But since we're INSIDE the main
+        // `for event in poll()` loop, this new event goes into the queue and would only
+        // be processed on the NEXT frame - causing a 1-frame delay before cache invalidation.
+        // 
+        // Without this loop: layer move -> render uses stale cache -> next frame clears cache
+        // With this loop:    layer move -> derived events processed -> cache cleared -> fresh render
+        //
+        // This keeps everything through EventBus (no direct calls) while ensuring same-frame response.
+        // Max iterations (10) prevents infinite loops if there's ever an event cycle.
+        //
+        // DO NOT REFACTOR THIS INTO THE MAIN LOOP - the main loop has already drained poll().
+        // DO NOT USE DIRECT CALLS - we need EventBus for decoupling and traceability.
+        for _ in 0..10 {
+            let derived = self.event_bus.poll();
+            if derived.is_empty() {
+                break;
+            }
+            for event in derived {
+                if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
+                    trace!("(derived) Comp {} attrs changed", e.0);
+                    if let Some(manager) = self.project.cache_manager() {
+                        manager.increment_epoch();
+                    }
+                    if let Some(ref cache) = self.project.global_cache {
+                        cache.clear_comp(e.0);
+                    }
+                    self.event_bus.emit(ViewportRefreshEvent);
+                    continue;
+                }
+                if downcast_event::<ViewportRefreshEvent>(&event).is_some() {
+                    trace!("(derived) ViewportRefreshEvent");
+                    self.viewport_state.request_refresh();
+                    continue;
+                }
+                // Other derived events are ignored (processed next frame)
+            }
+        }
+
         // Execute deferred actions outside the event loop (to avoid borrow conflicts)
         if let Some(path) = deferred_load_project {
             self.load_project(path);
