@@ -236,10 +236,10 @@ impl Node for NodeKind {
         }
     }
     
-    fn preload(&self, center: i32, ctx: &ComputeContext) {
+    fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
         match self {
-            NodeKind::File(n) => n.preload(center, ctx),
-            NodeKind::Comp(n) => n.preload(center, ctx),
+            NodeKind::File(n) => n.preload(center, radius, ctx),
+            NodeKind::Comp(n) => n.preload(center, radius, ctx),
         }
     }
 }

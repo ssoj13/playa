@@ -390,13 +390,28 @@ impl CompNode {
         );
     }
 
-    /// Get frame at given index (convenience wrapper around compute)
-    pub fn get_frame(&self, frame_idx: i32, project: &super::project::Project, _use_gpu: bool) -> Option<Frame> {
+    /// Get frame at given index.
+    /// - `blocking=false`: cache lookup only (for viewport)
+    /// - `blocking=true`: compute if not in cache (for encode)
+    pub fn get_frame(&self, frame_idx: i32, project: &super::project::Project, blocking: bool) -> Option<Frame> {
         let cache = project.global_cache.as_ref()?;
+        
+        // Try cache first
+        if let Some(frame) = cache.get(self.uuid(), frame_idx) {
+            return Some(frame);
+        }
+        
+        // Cache miss
+        if !blocking {
+            return None;
+        }
+        
+        // Blocking mode: compute now
         let media = project.media.read().expect("media lock");
         let ctx = super::node::ComputeContext {
             cache,
             media: &media,
+            media_arc: None,
             workers: None,
             epoch: 0,
         };
@@ -980,41 +995,72 @@ impl Node for CompNode {
         }
     }
     
-    fn preload(&self, center: i32, ctx: &ComputeContext) {
-        if ctx.workers.is_none() {
+    fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
+        use super::frame::FrameStatus;
+
+        let Some(workers) = ctx.workers else {
             return;
-        }
-        
+        };
+
         let (play_start, play_end) = self.work_area();
         if play_end < play_start {
             return;
         }
-        
+
         trace!(
             "CompNode::preload: comp={}, center={}, work_area=[{}..{}], layers={}",
             self.name(), center, play_start, play_end, self.layers.len()
         );
-        
-        // Collect source info
-        let source_info: Vec<(Uuid, i32)> = self.layers.iter()
-            .filter(|l| l.is_visible())
-            .map(|l| (l.source_uuid(), l.parent_to_local(center)))
-            .collect();
-        
-        // Trigger preload for each source
-        for (source_uuid, local_center) in source_info {
-            let Some(source) = ctx.media.get(&source_uuid) else {
-                continue;
-            };
-            
-            match source {
-                super::node_kind::NodeKind::File(file_node) => {
-                    let source_center = file_node._in() + local_center;
-                    file_node.preload(source_center, ctx);
+
+        // Helper to enqueue compute for a frame
+        let enqueue_compute = |frame_idx: i32| {
+            let uuid = self.uuid();
+
+            // Skip if already loaded or loading
+            if let Some(status) = ctx.cache.get_status(uuid, frame_idx) {
+                if matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
+                    return;
                 }
-                super::node_kind::NodeKind::Comp(comp_node) => {
-                    let source_center = comp_node._in() + local_center;
-                    comp_node.preload(source_center, ctx);
+            }
+
+            // Clone data for worker
+            let Some(media_arc) = &ctx.media_arc else {
+                log::warn!("preload: no media_arc in context");
+                return;
+            };
+            let node = self.clone();
+            let cache = std::sync::Arc::clone(ctx.cache);
+            let media = std::sync::Arc::clone(media_arc);
+            let epoch = ctx.epoch;
+
+            workers.execute_with_epoch(epoch, move || {
+                let media_guard = media.read().expect("media lock");
+                let compute_ctx = ComputeContext {
+                    cache: &cache,
+                    media: &media_guard,
+                    media_arc: None,
+                    workers: None,
+                    epoch,
+                };
+                // compute() handles everything: cache check, compose, insert
+                node.compute(frame_idx, &compute_ctx);
+            });
+        };
+
+        // Spiral from center up to radius
+        let max_offset = radius.min(play_end - play_start);
+
+        for offset in 0..=max_offset {
+            if center >= offset {
+                let idx = center - offset;
+                if idx >= play_start && idx <= play_end {
+                    enqueue_compute(idx);
+                }
+            }
+            if offset > 0 {
+                let idx = center + offset;
+                if idx >= play_start && idx <= play_end {
+                    enqueue_compute(idx);
                 }
             }
         }
@@ -1043,7 +1089,7 @@ impl CompNode {
         &self,
         workers: &crate::core::workers::Workers,
         project: &crate::entities::Project,
-        center_override: Option<std::ops::Range<i32>>,
+        radius: i32,
     ) {
         use super::node::ComputeContext;
         
@@ -1057,9 +1103,7 @@ impl CompNode {
             .map(|m| m.current_epoch())
             .unwrap_or(0);
         
-        let center = center_override
-            .map(|r| r.start)
-            .unwrap_or_else(|| self.frame());
+        let center = self.frame();
         
         let (play_start, play_end) = self.work_area();
         if play_end < play_start {
@@ -1076,11 +1120,12 @@ impl CompNode {
         let ctx = ComputeContext {
             cache: global_cache,
             media: &media,
+            media_arc: Some(std::sync::Arc::clone(&project.media)),
             workers: Some(workers),
             epoch,
         };
-        
-        self.preload(center, &ctx);
+
+        self.preload(center, radius, &ctx);
     }
 }
 

@@ -37,6 +37,12 @@ pub enum CompositorBackend {
     Gpu,
 }
 
+/// Event emitted when compositor backend changes
+#[derive(Debug, Clone)]
+pub struct CompositorBackendChangedEvent {
+    pub backend: CompositorBackend,
+}
+
 
 /// Application settings
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -172,15 +178,28 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 }
 
 /// Render Compositing settings category
-fn render_compositing_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
+fn render_compositing_settings(
+    ui: &mut egui::Ui,
+    settings: &mut AppSettings,
+    event_bus: Option<&crate::core::event_bus::EventBus>,
+) {
     ui.heading("Backend");
     ui.add_space(8.0);
 
+    let prev_backend = settings.compositor_backend;
     ui.horizontal(|ui| {
         ui.label("Compositor:");
         ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Cpu, "CPU");
         ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Gpu, "GPU");
     });
+    // Emit event if changed
+    if settings.compositor_backend != prev_backend {
+        if let Some(bus) = event_bus {
+            bus.emit(CompositorBackendChangedEvent {
+                backend: settings.compositor_backend,
+            });
+        }
+    }
     ui.label("GPU compositor uses OpenGL for 10-50x faster multi-layer blending.");
     ui.label("Requires OpenGL 3.0+. Falls back to CPU on errors.");
 
@@ -196,6 +215,7 @@ pub fn render_settings_window(
     ctx: &egui::Context,
     show_settings: &mut bool,
     settings: &mut AppSettings,
+    event_bus: Option<&crate::core::event_bus::EventBus>,
 ) {
     // Get selected category from settings or use default
     let mut selected = settings
@@ -252,7 +272,7 @@ pub fn render_settings_window(
                             match selected {
                                 SettingsCategory::General => render_general_settings(ui, settings),
                                 SettingsCategory::UI => render_ui_settings(ui, settings),
-                                SettingsCategory::Compositing => render_compositing_settings(ui, settings),
+                                SettingsCategory::Compositing => render_compositing_settings(ui, settings, event_bus),
                             }
                         });
                     });

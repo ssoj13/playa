@@ -88,7 +88,7 @@ impl eframe::App for PrefsApp {
         let prev_cache_percent = self.settings.cache_memory_percent;
 
         // Render the actual settings window (it appears as overlay)
-        render_settings_window(ctx, &mut self.show_settings, &mut self.settings);
+        render_settings_window(ctx, &mut self.show_settings, &mut self.settings, None);
 
         // Detect changes by comparing individual fields
         if self.settings.dark_mode != prev_dark_mode

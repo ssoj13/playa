@@ -209,13 +209,18 @@ impl Node for FileNode {
             return Some(frame);
         }
 
-        // Cache miss: load frame from disk
+        // Cache miss: create frame
         let frame_path = self.resolve_frame_path(seq_frame).unwrap_or_default();
         if frame_path.as_os_str().is_empty() {
             return Some(self.placeholder_frame());
         }
 
         let frame = self.frame_from_path(frame_path);
+
+        // Load pixels from disk (compute() is always called from workers)
+        if let Err(e) = frame.load() {
+            log::warn!("Failed to load frame {}: {:?}", frame_idx, e);
+        }
 
         // Insert into cache
         ctx.cache.insert(my_uuid, frame_idx, frame.clone());
@@ -235,56 +240,86 @@ impl Node for FileNode {
         self.attrs.clear_dirty()
     }
     
-    fn preload(&self, center: i32, ctx: &ComputeContext) {
+    fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
         use crate::utils::media;
-        
+        use super::frame::FrameStatus;
+
         let Some(workers) = ctx.workers else {
             log::debug!("[PRELOAD] FileNode::preload - no workers");
             return;
         };
-        
+
         let (play_start, play_end) = self.work_area_abs();
         if play_end < play_start {
             log::debug!("[PRELOAD] FileNode::preload - invalid range [{}, {}]", play_start, play_end);
             return;
         }
-        
+
         // Determine strategy: spiral for images, forward for video
         let is_video = self.file_mask()
             .map(|m| media::is_video(std::path::Path::new(&m)))
             .unwrap_or(false);
-        
-        log::debug!("[PRELOAD] FileNode::preload: name={}, center={}, range=[{}, {}], is_video={}", 
+
+        log::debug!("[PRELOAD] FileNode::preload: name={}, center={}, range=[{}, {}], is_video={}",
             self.name(), center, play_start, play_end, is_video);
-        
+
+        // Helper to enqueue compute for a frame
+        let enqueue_compute = |frame_idx: i32| {
+            let uuid = self.uuid();
+
+            // Skip if already loaded or loading
+            if let Some(status) = ctx.cache.get_status(uuid, frame_idx) {
+                if matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
+                    return;
+                }
+            }
+
+            // Clone data for worker
+            let node = self.clone();
+            let cache = std::sync::Arc::clone(ctx.cache);
+            let epoch = ctx.epoch;
+
+            workers.execute_with_epoch(epoch, move || {
+                // Build minimal context (no media needed for FileNode)
+                let empty_media = std::collections::HashMap::new();
+                let compute_ctx = ComputeContext {
+                    cache: &cache,
+                    media: &empty_media,
+                    media_arc: None,
+                    workers: None,
+                    epoch,
+                };
+                // compute() will load from disk and insert into cache
+                node.compute(frame_idx, &compute_ctx);
+            });
+        };
+
         if is_video {
             // Forward-only for video (expensive backward seeking)
             let start = center.max(play_start);
-            log::debug!("[PRELOAD] video forward: start={}, end={}", start, play_end);
-            for idx in start..=play_end {
-                self.enqueue_frame(workers, ctx.cache, ctx.epoch, idx);
+            let end = (start + radius).min(play_end);
+            log::debug!("[PRELOAD] video forward: start={}, end={}", start, end);
+            for idx in start..=end {
+                enqueue_compute(idx);
             }
         } else {
             // Spiral for image sequences (cheap bidirectional)
-            // Clamp center to valid range
             let clamped_center = center.clamp(play_start, play_end);
-            let offset_backward = clamped_center - play_start;
-            let offset_forward = play_end - clamped_center;
-            let max_offset = offset_backward.max(offset_forward).max(0);
-            log::debug!("[PRELOAD] spiral: center={}->{}, offset_back={}, offset_fwd={}, max_offset={}", 
-                center, clamped_center, offset_backward, offset_forward, max_offset);
-            
+            let max_offset = radius.min(play_end - play_start);
+            log::debug!("[PRELOAD] spiral: center={}->{}, max_offset={}",
+                center, clamped_center, max_offset);
+
             for offset in 0..=max_offset {
                 if center >= offset {
                     let idx = center - offset;
                     if idx >= play_start && idx <= play_end {
-                        self.enqueue_frame(workers, ctx.cache, ctx.epoch, idx);
+                        enqueue_compute(idx);
                     }
                 }
                 if offset > 0 {
                     let idx = center + offset;
                     if idx >= play_start && idx <= play_end {
-                        self.enqueue_frame(workers, ctx.cache, ctx.epoch, idx);
+                        enqueue_compute(idx);
                     }
                 }
             }
@@ -531,76 +566,6 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usi
     Ok(Some((full_prefix, number, ext, padding)))
 }
 
-// --- Preload ---
-
-use std::sync::Arc;
-use crate::core::workers::Workers;
-use crate::core::global_cache::GlobalFrameCache;
-use super::frame::FrameStatus;
-
-impl FileNode {
-    /// Enqueue frame loading for background worker.
-    ///
-    /// Creates Header frame in cache if not exists, then enqueues load() call.
-    /// Skips frames that are already Loaded, Loading, or Error.
-    pub fn enqueue_frame(
-        &self,
-        workers: &Workers,
-        global_cache: &Arc<GlobalFrameCache>,
-        epoch: u64,
-        frame_idx: i32,
-    ) {
-        let uuid = self.uuid();
-        
-        // Skip if already Loaded, Loading, or Error
-        if let Some(status) = global_cache.get_status(uuid, frame_idx) {
-            match status {
-                FrameStatus::Loaded | FrameStatus::Loading | FrameStatus::Error => {
-                    log::debug!("[PRELOAD] enqueue_frame SKIP: frame={}, status={:?}", frame_idx, status);
-                    return;
-                }
-                _ => {} // Header/Placeholder - proceed
-            }
-        }
-        log::debug!("[PRELOAD] enqueue_frame: name={}, frame={}", self.name(), frame_idx);
-        
-        // Calculate sequence frame number
-        let comp_start = self._in();
-        let local_idx = frame_idx - comp_start;
-        let seq_start = self.file_start().unwrap_or(comp_start);
-        let seq_frame = seq_start.saturating_add(local_idx);
-        
-        // Get frame path
-        let frame_path = match self.resolve_frame_path(seq_frame) {
-            Some(path) => path,
-            None => return,
-        };
-        
-        let (w, h) = self.dim();
-        let cache = Arc::clone(global_cache);
-        
-        // Atomically get existing frame or create Header
-        let (frame, _was_inserted) = cache.get_or_insert(uuid, frame_idx, || {
-            let new_frame = Frame::new_unloaded(frame_path.clone());
-            new_frame.crop(w, h, CropAlign::LeftTop);
-            new_frame
-        });
-        
-        // Enqueue background load
-        workers.execute_with_epoch(epoch, move || {
-            match frame.load() {
-                Ok(_) => {
-                    // Re-insert to update memory tracking
-                    cache.insert(uuid, frame_idx, frame);
-                    log::trace!("Background load completed: node={}, frame={}", uuid, frame_idx);
-                }
-                Err(e) => {
-                    log::warn!("Background load failed for frame {}: {:?}", frame_idx, e);
-                }
-            }
-        });
-    }
-}
 
 #[cfg(test)]
 mod tests {

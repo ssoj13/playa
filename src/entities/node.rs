@@ -22,6 +22,8 @@ pub struct ComputeContext<'a> {
     pub cache: &'a Arc<GlobalFrameCache>,
     /// Media pool for looking up source nodes
     pub media: &'a std::collections::HashMap<Uuid, super::node_kind::NodeKind>,
+    /// Media pool Arc for worker thread access in preload
+    pub media_arc: Option<std::sync::Arc<std::sync::RwLock<std::collections::HashMap<Uuid, super::node_kind::NodeKind>>>>,
     /// Worker pool for background loading (None during synchronous compute)
     pub workers: Option<&'a Workers>,
     /// Current epoch for cancelling stale preload requests
@@ -67,7 +69,8 @@ pub trait Node: Send + Sync {
     /// Preload frames around center position for background loading.
     /// Default implementation is no-op (for nodes without preload support).
     /// FileNode/CompNode override this to enqueue frame loading via workers.
-    fn preload(&self, _center: i32, _ctx: &ComputeContext) {
+    /// `radius` - max number of frames to preload around center
+    fn preload(&self, _center: i32, _radius: i32, _ctx: &ComputeContext) {
         // Default no-op
     }
     

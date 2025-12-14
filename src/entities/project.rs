@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{Attrs, CompositorType};
-use super::node::{Node, ComputeContext};
+use super::node::Node;
 use super::node_kind::NodeKind;
 use super::comp_node::CompNode;
 use super::file_node::FileNode;
@@ -352,19 +352,11 @@ impl Project {
         media.get(&uuid).and_then(|n| n.as_file()).map(f)
     }
 
-    /// Compute frame for comp (single lock, no double-lock issue)
-    /// Use this instead of with_comp + comp.get_frame which would deadlock.
+    /// Get cached frame for comp (non-blocking, returns None if not in cache)
+    /// Viewport uses this - actual computation happens in workers via preload.
     pub fn compute_frame(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
         let cache = self.global_cache.as_ref()?;
-        let media = self.media.read().expect("media lock poisoned");
-        let comp = media.get(&comp_uuid)?.as_comp()?;
-        let ctx = ComputeContext {
-            cache,
-            media: &media,
-            workers: None,
-            epoch: 0,
-        };
-        comp.compute(frame_idx, &ctx)
+        cache.get(comp_uuid, frame_idx)
     }
 
     /// Update node in media pool

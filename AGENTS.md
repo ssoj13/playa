@@ -466,26 +466,164 @@ This triggers `rebuild_from_comp()` on next frame which:
 
 ## Preload System
 
-Background frame loading for smooth playback:
+Background frame loading for smooth playback.
+
+### Data Flow (SetFrameEvent)
+
+```
+User scrubs timeline / presses arrow keys
+    │
+    ▼
+Widget emits SetFrameEvent(frame)
+    │
+    ▼
+main_events.rs handler (line ~206):
+  - comp.set_frame(frame)              // Updates playhead position
+  - result.enqueue_frames = Some(10)   // Request preload
+    │
+    ▼
+main.rs handle_events() collects deferred_enqueue_frames
+    │
+    ▼
+enqueue_frame_loads_around_playhead(radius)  // line ~305
+    │
+    ▼
+project.with_comp(uuid, |comp| {
+    comp.signal_preload(&workers, &project, None);
+});
+    │
+    ▼
+signal_preload() in comp_node.rs:
+  - Gets epoch from cache_manager.current_epoch()
+  - Builds ComputeContext { cache, media, workers, epoch }
+  - Calls self.preload(center, &ctx)
+    │
+    ▼
+CompNode::preload() iterates visible layers:
+  - For each layer: source.preload(local_center, &ctx)
+    │
+    ▼
+FileNode::preload() implements strategy:
+  - Video: forward-only (expensive backward seeking)
+  - Images: spiral from center (cheap bidirectional)
+  - Calls enqueue_frame() for each frame in range
+    │
+    ▼
+enqueue_frame() in file_node.rs:
+  1. Skip if status is Loaded/Loading/Error
+  2. Create Header frame via cache.get_or_insert()
+  3. workers.execute_with_epoch(epoch, || frame.load())
+    │
+    ▼
+Worker thread executes job:
+  - Check if epoch still matches (stale check)
+  - If match: frame.load() → cache.insert()
+  - If mismatch: silently skip (job is stale)
+```
+
+### Epoch-based Cancellation
 
 ```rust
-// FileNode preload strategies:
-// - Video: forward-only (expensive backward seeking)
-// - Images: spiral from center (cheap bidirectional)
-
-comp.signal_preload(&workers, &project, center_frame);  // Triggers preload
-
-// In file_node.rs:
-fn preload(&self, center: i32, ctx: &ComputeContext) {
-    if is_video {
-        // Forward only: center → play_end
-    } else {
-        // Spiral: center ± offset for offset in 0..max
-    }
+// In workers.rs
+pub fn execute_with_epoch<F>(&self, epoch: u64, f: F) {
+    let current_epoch = Arc::clone(&self.current_epoch);
+    let wrapped = move || {
+        if current_epoch.load(Ordering::Relaxed) == epoch {
+            f();  // Execute only if epoch unchanged
+        }
+        // Otherwise silently skip - request is stale
+    };
+    self.injector.push(Box::new(wrapped));
 }
 ```
 
-**Epoch-based cancellation**: When timeline scrubs fast, `cache_manager.increment_epoch()` cancels all pending preload jobs.
+**When epoch increments** (cancels ALL pending preload jobs):
+- `LayersChangedEvent` - layer structure changed
+- `AttrsChangedEvent` - layer attributes changed
+- `del_node()` - node deleted from media pool
+
+**When epoch does NOT increment**:
+- Frame change (scrubbing, playback) - preload jobs remain valid
+- Pan/zoom timeline - purely visual change
+
+### CurrentFrameChangedEvent (DEAD CODE)
+
+**WARNING**: `CurrentFrameChangedEvent` is defined in `comp_events.rs` but **never emitted anywhere**!
+
+```rust
+// comp_events.rs:34 - DEFINED
+pub struct CurrentFrameChangedEvent {
+    pub comp_uuid: Uuid,
+    pub old_frame: i32,
+    pub new_frame: i32,
+}
+
+// main.rs:337 - HANDLER EXISTS
+if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
+    self.enqueue_frame_loads_around_playhead(10);  // Never called!
+    continue;
+}
+
+// player.rs docstring LIES - says "emits CurrentFrameChanged" but code doesn't
+```
+
+This is dead code - preload is triggered via `SetFrameEvent.enqueue_frames` instead.
+
+### Frame Status Colors (Timeline Status Strip)
+
+```rust
+// timeline_ui.rs - status_bar_height = 2.0 pixels
+match status {
+    Placeholder => Color32::from_gray(40),      // Dark gray - not started
+    Header      => Color32::from_rgb(60,60,80), // Blue-gray - metadata only
+    Loading     => Color32::from_rgb(80,80,40), // Yellow-ish - in progress
+    Composing   => Color32::from_rgb(60,80,60), // Green-ish - compositing
+    Loaded      => Color32::from_rgb(40,80,40), // Green - ready
+    Error       => Color32::from_rgb(120,40,40),// Red - failed
+}
+```
+
+### Cache Architecture: Source vs Composed Frames
+
+**Two levels of caching with different UUIDs**:
+
+```
+GlobalFrameCache: HashMap<Uuid, HashMap<i32, Frame>>
+
+┌────────────────────────────────────────────────────────────┐
+│  FileNode (UUID-A)                                          │
+│  ├─ frame 0: Frame { status: Loaded, pixels: [...] }       │
+│  ├─ frame 1: Frame { status: Loading }                      │
+│  └─ frame 2: Frame { status: Placeholder }                  │
+├────────────────────────────────────────────────────────────┤
+│  CompNode (UUID-B) - references FileNode UUID-A via layer  │
+│  ├─ frame 0: Frame { status: Loaded, composed_pixels }     │
+│  └─ frame 1: Frame { status: Placeholder }                  │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Preload flow** (unified for all nodes):
+1. `enqueue_frame_loads_around_playhead()` → `comp.signal_preload()`
+2. `CompNode::preload()` enqueues `compute()` calls to Workers
+3. Workers execute `compute()` in parallel (epoch-cancellable)
+4. `compute()` checks cache → miss → load/compose → insert into cache
+5. FileNode: loads from disk, caches under FileNode UUID
+6. CompNode: recursively calls source compute(), composes, caches under CompNode UUID
+
+**Key insight**: preload doesn't load directly - it schedules compute() tasks.
+This is a universal mechanism for all node types.
+
+**ComputeContext** carries:
+- `cache`: Arc<GlobalFrameCache> for cache access
+- `media`: HashMap reference to media pool
+- `media_arc`: Arc<RwLock<HashMap>> for worker thread access
+- `workers`: Option for nested preload (None in worker context)
+- `epoch`: u64 for stale task cancellation
+
+**Status strip** (cache_frame_statuses):
+- Queries **CompNode UUID** (composed frames)
+- Shows Loaded/Loading/Placeholder status
+- Preload now fills composed frame cache directly
 
 ---
 

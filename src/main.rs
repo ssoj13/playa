@@ -312,7 +312,7 @@ impl PlayaApp {
         // Trigger preload (works for both File and Layer modes)
         log::debug!("[PRELOAD] enqueue_frame_loads: comp={}, radius={}", comp_uuid, radius);
         self.project.with_comp(comp_uuid, |comp| {
-            comp.signal_preload(&self.workers, &self.project, None);
+            comp.signal_preload(&self.workers, &self.project, radius as i32);
         });
     }
 
@@ -774,26 +774,29 @@ impl PlayaApp {
         use entities::compositor::{CompositorType, CpuCompositor};
         use entities::gpu_compositor::GpuCompositor;
 
-        let desired_backend = match self.settings.compositor_backend {
-            dialogs::prefs::CompositorBackend::Cpu => CompositorType::Cpu(CpuCompositor),
-            dialogs::prefs::CompositorBackend::Gpu => {
-                CompositorType::Gpu(GpuCompositor::new(gl.clone()))
-            }
-        };
-
-        // Check if compositor type changed
+        // Check current backend type first (cheap)
         let current_is_cpu = matches!(
             *self.project.compositor.lock().unwrap_or_else(|e| e.into_inner()),
             CompositorType::Cpu(_)
         );
-        let desired_is_cpu = matches!(desired_backend, CompositorType::Cpu(_));
+        let desired_is_cpu = matches!(
+            self.settings.compositor_backend,
+            dialogs::prefs::CompositorBackend::Cpu
+        );
 
+        // Only create new compositor if we need to switch
         if current_is_cpu != desired_is_cpu {
             info!(
                 "Switching compositor to: {:?}",
                 self.settings.compositor_backend
             );
-            self.project.set_compositor(desired_backend);
+            let new_backend = match self.settings.compositor_backend {
+                dialogs::prefs::CompositorBackend::Cpu => CompositorType::Cpu(CpuCompositor),
+                dialogs::prefs::CompositorBackend::Gpu => {
+                    CompositorType::Gpu(GpuCompositor::new(gl.clone()))
+                }
+            };
+            self.project.set_compositor(new_backend);
         }
     }
 
@@ -1308,7 +1311,7 @@ impl eframe::App for PlayaApp {
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
             let old_strategy = self.settings.cache_strategy;
-            render_settings_window(ctx, &mut self.show_settings, &mut self.settings);
+            render_settings_window(ctx, &mut self.show_settings, &mut self.settings, Some(&self.event_bus));
 
             // Apply cache strategy changes immediately
             if self.settings.cache_strategy != old_strategy {
