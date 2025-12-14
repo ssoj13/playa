@@ -391,8 +391,9 @@ impl NodeEditorState {
         self.fit_all_requested = true;
     }
 
-    /// Re-layout existing nodes in a clean tree arrangement
-    pub fn relayout(&mut self, project: &Project) {
+    /// Re-layout existing nodes in a clean tree arrangement.
+    /// Persists new positions via EventBus so they survive comp switching.
+    pub fn relayout(&mut self, project: &Project, dispatch: &mut impl FnMut(BoxedEvent)) {
         // Check if we have any nodes
         if self.snarl.node_ids().next().is_none() {
             return;
@@ -405,7 +406,7 @@ impl NodeEditorState {
         }
 
         // Find root - use the comp_uuid from state
-        let Some(root_uuid) = self.comp_uuid else { return };
+        let Some(comp_uuid) = self.comp_uuid else { return };
         let media = project.media.read().expect("media lock");
 
         // Collect tree info
@@ -414,14 +415,15 @@ impl NodeEditorState {
         let mut max_depth = 0;
 
         collect_tree_recursive(
-            root_uuid,
-            root_uuid,
+            comp_uuid,
+            comp_uuid,
             0,
             &media,
             &mut node_info,
             &mut ancestors,
             &mut max_depth,
         );
+        drop(media); // Release lock before dispatching events
 
         // Build new positions map
         let mut new_positions: HashMap<Uuid, Pos2> = HashMap::new();
@@ -437,10 +439,30 @@ impl NodeEditorState {
             new_positions.insert(instance_uuid, Pos2::new(x, y));
         }
 
-        // Apply new positions using nodes_info_mut (gives &mut Node with pub pos field)
+        // Apply new positions to snarl nodes
         for node in self.snarl.nodes_info_mut() {
             if let Some(&new_pos) = new_positions.get(&node.value.uuid) {
                 node.pos = new_pos;
+            }
+        }
+
+        // Persist positions (so they survive comp switching)
+        // Root node - direct modify (same as drag handling)
+        if let Some(&pos) = new_positions.get(&comp_uuid) {
+            project.modify_comp(comp_uuid, |c| {
+                set_node_pos(&mut c.attrs, pos);
+                c.attrs.clear_dirty(); // node_pos is UI-only
+            });
+        }
+
+        // Layer positions - via events
+        for (&instance_uuid, &pos) in &new_positions {
+            if instance_uuid != comp_uuid {
+                dispatch(Box::new(crate::entities::comp_events::SetLayerAttrsEvent {
+                    comp_uuid,
+                    layer_uuids: vec![instance_uuid],
+                    attrs: vec![("node_pos".to_string(), AttrValue::Vec3([pos.x, pos.y, 0.0]))],
+                }));
             }
         }
 
@@ -617,7 +639,7 @@ pub fn render_node_editor(
     // Handle layout request
     if state.layout_requested {
         state.layout_requested = false;
-        state.relayout(project);
+        state.relayout(project, &mut dispatch);
     }
 
     // Toolbar
