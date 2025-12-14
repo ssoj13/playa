@@ -11,10 +11,27 @@
 //! - **`clear_dirty()`** - clears dirty on comp AND all layers (called after compute)
 //! - **`mark_dirty()`** - marks comp dirty (called by layer mutations)
 //!
-//! ## Key Methods
+//! ## Methods that AUTO mark_dirty() (no need to call manually):
 //!
-//! - **`set_frame()`** - uses `set_silent()`, does NOT mark dirty (playhead position)
-//! - **`set_child_attrs()`**, **`move_layers()`**, etc. - use `set()`, mark dirty
+//! - **`add_layer()`**, **`remove_layer()`** - layer add/remove
+//! - **`move_layers()`** - horizontal layer move
+//! - **`trim_layers()`** - trim adjustments
+//! - **`set_child_attrs()`** - batch attr changes
+//! - **`set_layer_in()`**, **`set_layer_play_start()`**, **`set_layer_play_end()`**
+//!
+//! ## Methods that DO NOT mark_dirty() (silent updates):
+//!
+//! - **`set_frame()`** - playhead position (uses `set_silent()`)
+//!
+//! ## Direct field changes REQUIRE explicit mark_dirty():
+//!
+//! ```text
+//! comp.layers = reordered;           // Direct assignment
+//! comp.layers.insert(idx, layer);    // Direct insert
+//! comp.layers.remove(idx);           // Direct remove
+//! layer.attrs.set(...);              // Direct layer attr change
+//! // After any of these → call comp.attrs.mark_dirty()
+//! ```
 //!
 //! ## Trim Values (IMPORTANT)
 //!

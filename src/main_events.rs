@@ -1,5 +1,30 @@
 //! Application event handling - extracted from main.rs for clarity.
 //!
+//! # Dirty Tracking & Event Architecture
+//!
+//! This app uses event-driven architecture. UI never computes frames directly.
+//! Instead, changes emit events that trigger background work in workers.
+//!
+//! ## Two separate `mark_dirty()` systems:
+//!
+//! 1. **`comp.attrs.mark_dirty()`** - marks CompNode for recomputation.
+//!    Called inside `project.modify_comp()` closures after changing comp data.
+//!    `modify_comp()` then checks `is_dirty()` and emits `AttrsChangedEvent`
+//!    which invalidates frame cache and triggers re-render.
+//!
+//! 2. **`node_editor_state.mark_dirty()`** - marks graph editor UI for redraw.
+//!    Completely separate system, only affects node graph visualization.
+//!    Does NOT affect frame computation or caching.
+//!
+//! ## When to use `comp.attrs.mark_dirty()` inside `modify_comp()`:
+//!
+//! - Direct field changes: `comp.layers = ...`, `comp.layers.insert/remove`
+//! - Direct layer attr changes: `layer.attrs.set(...)`
+//!
+//! NOT needed when using CompNode methods that already call mark_dirty():
+//! - `comp.move_layers()`, `comp.trim_layers()`, `comp.set_child_attrs()`
+//! - `comp.add_layer()`, `comp.remove_layer()`
+//!
 //! # Layer Attribute Changes
 //!
 //! The [`LayerAttributesChangedEvent`] is emitted by the timeline outline panel
@@ -576,6 +601,7 @@ pub fn handle_app_event(
         if let Err(err) = add_result {
             log::error!("Failed to add layer: {}", err);
         } else {
+            // Graph editor UI redraw (NOT comp dirty - add_layer() handles that)
             node_editor_state.mark_dirty();
         }
         return Some(result);
@@ -587,8 +613,10 @@ pub fn handle_app_event(
 
         if let Some(child_uuid) = child_uuid {
             project.modify_comp(e.comp_uuid, |comp| {
+                // remove_child() calls mark_dirty() internally
                 comp.remove_child(child_uuid);
             });
+            // Graph editor UI redraw (separate from comp dirty)
             node_editor_state.mark_dirty();
         }
         return Some(result);
@@ -603,6 +631,7 @@ pub fn handle_app_event(
                 comp.layer_selection.clear();
                 comp.layer_selection_anchor = None;
             });
+            // Graph editor UI redraw (separate from comp dirty)
             node_editor_state.mark_dirty();
         }
         return Some(result);
@@ -615,10 +644,12 @@ pub fn handle_app_event(
                 let layer = reordered.remove(e.from_idx);
                 reordered.insert(e.to_idx, layer);
                 comp.layers = reordered;
+                // Direct field change requires explicit mark_dirty().
+                // modify_comp() will then emit AttrsChangedEvent.
                 comp.attrs.mark_dirty();
             }
         });
-        // Note: Reorder doesn't change graph structure, no mark_dirty() needed
+        // No node_editor_state.mark_dirty() - reorder doesn't change graph structure
         return Some(result);
     }
     if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(event) {
@@ -632,6 +663,7 @@ pub fn handle_app_event(
             let delta = e.new_start - dragged_in;
             if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
                 let selection = comp.layer_selection.clone();
+                // move_layers() calls mark_dirty() internally
                 comp.move_layers(&selection, delta);
             } else {
                 comp.move_layers(&[dragged_uuid], delta);
@@ -639,13 +671,14 @@ pub fn handle_app_event(
             // Vertical reorder: move layer to new index
             if e.layer_idx != e.new_idx && e.new_idx < comp.layers.len() {
                 let layer = comp.layers.remove(e.layer_idx);
-                // Insert at target position (clamped to valid range after removal)
                 let insert_idx = e.new_idx.min(comp.layers.len());
                 comp.layers.insert(insert_idx, layer);
+                // Direct field change (layers.remove/insert) requires explicit mark_dirty().
+                // Note: move_layers() above already marked dirty, but this is for the reorder part.
                 comp.attrs.mark_dirty();
             }
         });
-        // Note: Move/reorder doesn't change graph structure, no mark_dirty() needed
+        // No node_editor_state.mark_dirty() - doesn't change graph structure
         return Some(result);
     }
     if let Some(e) = downcast_event::<SetLayerPlayStartEvent>(event) {
@@ -705,6 +738,7 @@ pub fn handle_app_event(
                 if let Some(layer) = comp.get_layer_mut(layer_uuid) {
                     let old_trim_in = layer.attrs.get_i32_or_zero("trim_in");
                     let old_trim_out = layer.attrs.get_i32_or_zero("trim_out");
+                    // Direct layer.attrs.set() doesn't mark comp dirty
                     layer.attrs.set("trim_in", AttrValue::Int(0));
                     layer.attrs.set("trim_out", AttrValue::Int(0));
                     log::trace!(
@@ -713,6 +747,8 @@ pub fn handle_app_event(
                     );
                 }
             }
+            // Direct layer.attrs.set() requires explicit mark_dirty() on comp.
+            // modify_comp() will then emit AttrsChangedEvent.
             comp.attrs.mark_dirty();
         });
 
@@ -865,12 +901,15 @@ pub fn handle_app_event(
                     // Create new Layer using from_attrs
                     let new_layer = crate::entities::comp_node::Layer::from_attrs(source_uuid, attrs);
                     let new_uuid = new_layer.uuid();
+                    // Direct layers.insert() doesn't mark dirty
                     comp.layers.insert(insert_idx, new_layer);
                     new_uuids.push(new_uuid);
                     trace!("  Duplicated -> {} at idx {}", new_name, insert_idx);
                 }
                 // Select only the new duplicated layers
                 comp.layer_selection = new_uuids;
+                // Direct field changes (layers.insert, layer_selection) require explicit mark_dirty().
+                // modify_comp() will then emit AttrsChangedEvent.
                 comp.attrs.mark_dirty();
             });
         }
@@ -949,12 +988,14 @@ pub fn handle_app_event(
                     // Create and insert new Layer at tracked position
                     let new_layer = crate::entities::comp_node::Layer::from_attrs(item.source_uuid, attrs);
                     let new_uuid = new_layer.uuid();
+                    // Direct layers.insert() doesn't mark dirty
                     comp.layers.insert(insert_idx, new_layer);
-                    insert_idx += 1; // Next layer goes after this one
-                    // Select pasted layer
+                    insert_idx += 1;
                     comp.layer_selection.push(new_uuid);
                     trace!("  Pasted '{}' at frames {}..{}", new_name, new_in, new_out);
                 }
+                // Direct field changes (layers.insert, layer_selection) require explicit mark_dirty().
+                // modify_comp() will then emit AttrsChangedEvent.
                 comp.attrs.mark_dirty();
             });
             trace!("Paste complete: {} layers", timeline_state.clipboard.len());

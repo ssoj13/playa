@@ -506,13 +506,28 @@ impl Project {
             log::trace!("Cleared cache for removed node: {}", uuid);
         }
 
-        // 3. Remove layer references from CompNodes
+        // 3. Remove layer references from CompNodes and collect affected comps.
+        //    Direct comp.layers.retain() requires explicit mark_dirty() + event emit.
+        //    Can't use modify_comp() here because we have &mut self.
+        let mut affected_comps = Vec::new();
         {
             let mut media = self.media.write().expect("media lock poisoned");
-            for node in media.values_mut() {
+            for (comp_uuid, node) in media.iter_mut() {
                 if let Some(comp) = node.as_comp_mut() {
+                    let before = comp.layers.len();
                     comp.layers.retain(|layer| layer.source_uuid() != uuid);
+                    if comp.layers.len() != before {
+                        // Direct field change → explicit mark_dirty()
+                        comp.mark_dirty();
+                        affected_comps.push(*comp_uuid);
+                    }
                 }
+            }
+        }
+        // Emit AttrsChangedEvent for each affected comp (like modify_comp() does)
+        if let Some(ref emitter) = self.event_emitter {
+            for comp_uuid in affected_comps {
+                emitter.emit(AttrsChangedEvent(comp_uuid));
             }
         }
 
