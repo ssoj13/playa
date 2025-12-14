@@ -39,6 +39,14 @@ impl NodeKind {
         }
     }
     
+    /// Actual content bounds (for zoom-to-fit)
+    pub fn bounds(&self, use_trim: bool) -> (i32, i32) {
+        match self {
+            NodeKind::File(n) => n.work_area_abs(),
+            NodeKind::Comp(n) => n.bounds(use_trim),
+        }
+    }
+    
     /// Frame count
     pub fn frame_count(&self) -> i32 {
         match self {

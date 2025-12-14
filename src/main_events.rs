@@ -488,7 +488,7 @@ pub fn handle_app_event(
         if let Some(comp_uuid) = player.active_comp() {
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
-                let (min_frame, max_frame) = comp.play_range(true);
+                let (min_frame, max_frame) = comp.bounds(true);
                 let duration = (max_frame - min_frame + 1).max(1);
                 let pixels_per_frame = e.0 / duration as f32;
                 let default_ppf = 2.0;
@@ -501,11 +501,11 @@ pub fn handle_app_event(
     }
     if downcast_event::<TimelineFitEvent>(event).is_some() {
         let canvas_width = timeline_state.last_canvas_width;
-        // Recursive call via TimelineFitAllEvent
+        // Uses bounds() to calculate actual layer extents
         if let Some(comp_uuid) = player.active_comp() {
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
-                let (min_frame, max_frame) = comp.play_range(true);
+                let (min_frame, max_frame) = comp.bounds(true);
                 let duration = (max_frame - min_frame + 1).max(1);
                 let pixels_per_frame = canvas_width / duration as f32;
                 let default_ppf = 2.0;

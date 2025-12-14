@@ -302,20 +302,17 @@ impl CompNode {
         self.rebound();
     }
     
-    /// Recalculate comp bounds based on layer extents.
-    /// Updates _in/_out to encompass all visible layers.
-    pub fn rebound(&mut self) {
+    /// Calculate actual bounds from all visible layers (read-only).
+    ///
+    /// - `use_trim=true`: uses layer.work_area() (visible/trimmed range)
+    /// - `use_trim=false`: uses layer.start()/end() (full bar range)
+    ///
+    /// Returns (min_frame, max_frame) or (0, 100) if no visible layers.
+    pub fn bounds(&self, use_trim: bool) -> (i32, i32) {
         if self.layers.is_empty() {
-            // Default span when no layers: 0..100 for a visible timeline
-            self.attrs.set(A_IN, AttrValue::Int(0));
-            self.attrs.set(A_OUT, AttrValue::Int(100));
-            return;
+            return (0, 100);
         }
         
-        let old_bounds = (self._in(), self._out());
-        let old_work = self.work_area();
-        
-        // Find min/max from all visible layers
         let mut min_start = i32::MAX;
         let mut max_end = i32::MIN;
         
@@ -323,16 +320,29 @@ impl CompNode {
             if !layer.is_visible() {
                 continue;
             }
-            let (layer_start, layer_end) = layer.work_area();
-            min_start = min_start.min(layer_start);
-            max_end = max_end.max(layer_end);
+            let (start, end) = if use_trim {
+                layer.work_area()
+            } else {
+                (layer.start(), layer.end())
+            };
+            min_start = min_start.min(start);
+            max_end = max_end.max(end);
         }
         
-        let (new_start, new_end) = if min_start == i32::MAX || max_end == i32::MIN {
-            (0, 100) // No visible layers, use default
+        if min_start == i32::MAX || max_end == i32::MIN {
+            (0, 100) // No visible layers
         } else {
             (min_start, max_end)
-        };
+        }
+    }
+    
+    /// Recalculate comp bounds based on layer extents.
+    /// Updates _in/_out to encompass all visible layers.
+    pub fn rebound(&mut self) {
+        let old_bounds = (self._in(), self._out());
+        let old_work = self.work_area();
+        
+        let (new_start, new_end) = self.bounds(true);
         
         self.attrs.set(A_IN, AttrValue::Int(new_start));
         self.attrs.set(A_OUT, AttrValue::Int(new_end));
