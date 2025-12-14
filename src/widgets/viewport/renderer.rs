@@ -402,7 +402,6 @@ impl ViewportRenderer {
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
 
             let write_pbo_index = self.pbo_index;
-            let transfer_pbo_index = (self.pbo_index + 1) % 2;
 
             // --- Step 1: Write current frame's data to the "write" PBO ---
             if let Some(write_pbo) = self.pbos[write_pbo_index] {
@@ -431,42 +430,23 @@ impl ViewportRenderer {
             }
 
             // --- Step 2: Transfer data to texture ---
-            if is_initial_upload {
-                // On the first upload, we do a synchronous transfer from the PBO we just wrote to.
-                // This populates the texture immediately.
-                if let Some(write_pbo) = self.pbos[write_pbo_index] {
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(write_pbo));
-                    gl.tex_sub_image_2d(
-                        glow::TEXTURE_2D,
-                        0,
-                        0,
-                        0,
-                        width as i32,
-                        height as i32,
-                        gl_format,
-                        gl_type,
-                        glow::PixelUnpackData::BufferOffset(0),
-                    );
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
-                }
-            } else {
-                // On subsequent frames, we do an asynchronous transfer from the *other* PBO
-                // (which contains the data from the previous frame).
-                if let Some(transfer_pbo) = self.pbos[transfer_pbo_index] {
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(transfer_pbo));
-                    gl.tex_sub_image_2d(
-                        glow::TEXTURE_2D,
-                        0,
-                        0,
-                        0,
-                        width as i32,
-                        height as i32,
-                        gl_format,
-                        gl_type,
-                        glow::PixelUnpackData::BufferOffset(0),
-                    );
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
-                }
+            // Always use synchronous upload from write_pbo (the one we just wrote to).
+            // Double-buffered async upload (using transfer_pbo) causes 1-frame delay which
+            // breaks immediate visual feedback when composition is edited.
+            if let Some(write_pbo) = self.pbos[write_pbo_index] {
+                gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(write_pbo));
+                gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    width as i32,
+                    height as i32,
+                    gl_format,
+                    gl_type,
+                    glow::PixelUnpackData::BufferOffset(0),
+                );
+                gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
             }
 
             gl.bind_texture(glow::TEXTURE_2D, None);
