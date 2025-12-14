@@ -553,27 +553,26 @@ impl PlayaApp {
             return HotkeyWindow::Global; // Return Global but will be filtered later
         }
 
-        // Priority 3: Explicit viewport hover
+        // Priority 3: Explicit hover (hover takes precedence over active tab)
         if self.viewport_hovered {
             return HotkeyWindow::Viewport;
         }
-
-        // Priority 4: Node editor - active tab OR hover (must be before Timeline default)
-        if self.node_editor_tab_active || self.node_editor_hovered {
+        if self.node_editor_hovered {
             return HotkeyWindow::NodeEditor;
         }
-
-        // Priority 5: Explicit timeline hover
         if self.timeline_hovered {
             return HotkeyWindow::Timeline;
         }
-
-        // Priority 6: Project hover
         if self.project_hovered {
             return HotkeyWindow::Project;
         }
 
-        // Priority 7: Default to timeline when a comp is active (keyboard fallback)
+        // Priority 4: Active tab (when nothing is explicitly hovered)
+        if self.node_editor_tab_active {
+            return HotkeyWindow::NodeEditor;
+        }
+
+        // Priority 5: Default to timeline when a comp is active (keyboard fallback)
         // This allows playback hotkeys (Space, arrows) to work without explicit hover
         if self.player.active_comp().is_some() {
             return HotkeyWindow::Timeline;
@@ -1099,11 +1098,11 @@ impl<'a> TabViewer for DockTabs<'a> {
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {
         // Track which tab is active for hotkey routing
+        // Note: Don't reset node_editor_hovered here - it's reset at frame start
+        // and set by render_node_editor_tab. Resetting here would break when
+        // multiple tabs are rendered in same frame (dock splits).
         if matches!(tab, DockTab::NodeEditor) {
             self.app.node_editor_tab_active = true;
-        } else {
-            // Ensure node editor hover does not linger when tab not drawn
-            self.app.node_editor_hovered = false;
         }
         match tab {
             DockTab::Viewport => self.app.render_viewport_tab(ui),

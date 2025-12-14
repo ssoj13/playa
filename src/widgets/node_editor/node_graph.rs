@@ -63,7 +63,7 @@ use uuid::Uuid;
 use crate::core::event_bus::BoxedEvent;
 use crate::entities::{AttrValue, Comp, Project};
 use crate::entities::node::Node;
-use egui_snarl::ui::get_selected_nodes;
+// Note: get_selected_nodes could be used for fit-selected in future
 use crate::entities::Attrs;
 
 /// Node in the composition graph - just a UUID reference to Comp.
@@ -234,6 +234,10 @@ pub struct NodeEditorState {
     /// Flag to trigger re-layout on next frame
     #[serde(skip)]
     pub layout_requested: bool,
+
+    /// Counter to force viewport reset (changing snarl id forces re-init)
+    #[serde(skip)]
+    viewport_reset_counter: u64,
 }
 
 impl NodeEditorState {
@@ -245,6 +249,7 @@ impl NodeEditorState {
             fit_all_requested: false,
             fit_selected_requested: false,
             layout_requested: false,
+            viewport_reset_counter: 0,
         }
     }
 
@@ -471,13 +476,18 @@ fn nodes_bounding_box(snarl: &Snarl<CompNode>, nodes: &[NodeId]) -> Option<(Pos2
     }
 }
 
-fn center_nodes(snarl: &mut Snarl<CompNode>, target: Pos2, nodes: &[NodeId]) {
+/// Center nodes around origin (0,0) in world coordinates.
+/// This works because egui-snarl's viewport typically shows origin at center.
+/// Note: This moves nodes, not viewport - egui-snarl doesn't expose viewport API.
+fn center_nodes(snarl: &mut Snarl<CompNode>, nodes: &[NodeId]) {
     if nodes.is_empty() {
         return;
     }
     if let Some((min, max)) = nodes_bounding_box(snarl, nodes) {
         let center = Pos2::new((min.x + max.x) * 0.5, (min.y + max.y) * 0.5);
-        let delta = target - center;
+        // Center around origin (0,0) - viewport typically centers there
+        let delta = Pos2::ZERO - center;
+        log::info!("[NODE_EDITOR] center_nodes: bbox=({:?},{:?}), center={:?}, delta={:?}", min, max, center, delta);
         for node_id in nodes {
             if let Some(node) = snarl.get_node_info_mut(*node_id) {
                 node.pos += delta;
@@ -621,7 +631,8 @@ pub fn render_node_editor(
     comp_uuid: Uuid,
     mut dispatch: impl FnMut(BoxedEvent),
 ) -> bool {
-    let widget_id = ui.make_persistent_id("comp_node_editor");
+    // widget_id could be used for get_selected_nodes in future
+    let _widget_id = ui.make_persistent_id("comp_node_editor");
 
     // Sync to current comp (sets needs_rebuild if comp changed)
     state.set_comp(comp_uuid);
@@ -631,22 +642,16 @@ pub fn render_node_editor(
         state.rebuild_from_comp(comp_uuid, project);
     }
 
-    // Handle fit/layout requests from events
-    if state.fit_all_requested {
+    // Handle fit requests - reset viewport by incrementing counter
+    // This changes the snarl widget id, forcing egui-snarl to recalculate viewport
+    // Note: This does NOT move nodes - just resets viewport to show all nodes
+    if state.fit_all_requested || state.fit_selected_requested {
         state.fit_all_requested = false;
-        let all_nodes: Vec<NodeId> = state.snarl.node_ids().map(|(id, _)| id).collect();
-        center_nodes(&mut state.snarl, ui.max_rect().center(), &all_nodes);
-    }
-    if state.fit_selected_requested {
-        // Center selected nodes if any, otherwise fallback to all nodes
-        let selected_nodes = get_selected_nodes(widget_id, ui.ctx());
-        if !selected_nodes.is_empty() {
-            center_nodes(&mut state.snarl, ui.max_rect().center(), &selected_nodes);
-        } else {
-            let all_nodes: Vec<NodeId> = state.snarl.node_ids().map(|(id, _)| id).collect();
-            center_nodes(&mut state.snarl, ui.max_rect().center(), &all_nodes);
-        }
         state.fit_selected_requested = false;
+        
+        // Increment counter to force viewport reset (egui-snarl will auto-center on all nodes)
+        state.viewport_reset_counter += 1;
+        log::info!("[NODE_EDITOR] fit viewport requested, reset_counter={}", state.viewport_reset_counter);
     }
 
     // Handle layout request
@@ -701,17 +706,22 @@ pub fn render_node_editor(
         output_uuid: comp_uuid,
     };
 
-    // Render with default styling and detect node moves by comparing positions
-    let style = SnarlStyle::default();
+    // Render with centering enabled (double-click centers viewport)
+    let style = SnarlStyle {
+        centering: Some(true),
+        ..Default::default()
+    };
     let before_positions: HashMap<NodeId, Pos2> = state
         .snarl
         .nodes_pos_ids()
         .map(|(id, pos, _)| (id, pos))
         .collect();
 
+    // Use counter in id to force viewport reset when fit is requested
+    let snarl_id = format!("comp_node_editor_{}", state.viewport_reset_counter);
     state
         .snarl
-        .show(&mut viewer, &style, "comp_node_editor", ui);
+        .show(&mut viewer, &style, &snarl_id, ui);
 
     // Persist moved nodes via event bus (comp root uses direct attr update)
     if let Some(comp_uuid) = state.comp_uuid {

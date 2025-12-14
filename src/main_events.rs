@@ -523,10 +523,12 @@ pub fn handle_app_event(
 
     // === Node Editor State ===
     if downcast_event::<NodeEditorFitAllEvent>(event).is_some() {
+        log::info!("[EVENT] NodeEditorFitAllEvent → setting fit_all_requested=true");
         node_editor_state.fit_all_requested = true;
         return Some(result);
     }
     if downcast_event::<NodeEditorFitSelectedEvent>(event).is_some() {
+        log::info!("[EVENT] NodeEditorFitSelectedEvent → setting fit_selected_requested=true");
         node_editor_state.fit_selected_requested = true;
         return Some(result);
     }
@@ -616,6 +618,10 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(event) {
+        log::trace!(
+            "[EVENT] MoveAndReorder received: layer_idx={} new_start={} new_idx={}",
+            e.layer_idx, e.new_start, e.new_idx
+        );
         project.modify_comp(e.comp_uuid, |comp| {
             let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
             let dragged_in = comp.child_in(dragged_uuid).unwrap_or(0);

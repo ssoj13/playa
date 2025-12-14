@@ -839,13 +839,16 @@ pub fn render_canvas(
                                                 has_horizontal_move, has_vertical_move, layer_idx, new_start, target_child);
 
                                             if has_horizontal_move || has_vertical_move {
+                                                log::trace!(
+                                                    "[TIMELINE] DRAG: layer_idx={} -> new_start={}, new_idx={} (h={}, v={})",
+                                                    layer_idx, new_start, target_child, has_horizontal_move, has_vertical_move
+                                                );
                                                 dispatch(Box::new(MoveAndReorderLayerEvent {
                                                     comp_uuid: comp_id,
                                                     layer_idx: *layer_idx,
                                                     new_start,
                                                     new_idx: target_child,
                                                 }));
-                                                log::trace!("[TIMELINE] Emitting MoveAndReorderLayer action");
                                             }
                                             state.drag_state = None;
                                         }

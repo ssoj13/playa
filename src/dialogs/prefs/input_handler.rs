@@ -214,14 +214,18 @@ impl HotkeyHandler {
                         modifiers.shift,
                         modifiers.alt,
                     ) {
-                        log::trace!("Hotkey matched: {} (window={:?})", combo, self.focused_window);
+                        log::info!("[HOTKEY] matched: {} (window={:?})", combo, self.focused_window);
                         return Some(ev);
                     }
                     if !modifiers.any()
                         && let Some(ev) = self.handle_key(&key_str) {
-                            log::trace!("Hotkey matched (no mod): {} (window={:?})", key_str, self.focused_window);
+                            log::info!("[HOTKEY] matched (no mod): {} (window={:?})", key_str, self.focused_window);
                             return Some(ev);
                         }
+                    // Debug: log F/A when NOT matched
+                    if !modifiers.any() && (key_str == "F" || key_str == "A") {
+                        log::info!("[HOTKEY] F/A NOT matched: key={} window={:?}", key_str, self.focused_window);
+                    }
                 }
                 _ => {}
             }
