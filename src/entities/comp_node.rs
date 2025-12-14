@@ -57,13 +57,15 @@ thread_local! {
 ///
 /// Layer is an INSTANCE of a source node. Changing source node attrs
 /// affects ALL layers referencing it. Layer attrs are local to this instance.
+///
+/// All data stored in `attrs`:
+/// - `uuid`: Instance UUID (unique per layer)
+/// - `source_uuid`: Source node UUID in project.media
+/// - `name`, `in`, `src_len`, `trim_in`, `trim_out`, `opacity`, `visible`, `blend_mode`, `speed`
+/// - `width`, `height`, `position`, `rotation`, `scale`, `pivot`
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Layer {
-    /// Instance UUID of this layer (unique per layer)
-    pub uuid: Uuid,
-    /// Source node UUID in project.media
-    pub source_uuid: Uuid,
-    /// Instance attributes: in, src_len, trim_in, trim_out, opacity, visible, blend_mode, speed, transform
+    /// All layer attributes stored uniformly
     pub attrs: Attrs,
 }
 
@@ -71,6 +73,10 @@ impl Layer {
     /// Create new layer instance referencing a source node.
     pub fn new(source_uuid: Uuid, name: &str, start: i32, duration: i32, dim: (usize, usize)) -> Self {
         let mut attrs = Attrs::new();
+        
+        // Identity
+        attrs.set_uuid(A_UUID, Uuid::new_v4());
+        attrs.set_uuid("source_uuid", source_uuid);
         
         attrs.set(A_NAME, AttrValue::Str(name.to_string()));
         attrs.set(A_IN, AttrValue::Int(start));
@@ -89,11 +95,25 @@ impl Layer {
         attrs.set(A_SCALE, AttrValue::Vec3([1.0, 1.0, 1.0]));
         attrs.set(A_PIVOT, AttrValue::Vec3([0.0, 0.0, 0.0]));
         
-        Self {
-            uuid: Uuid::new_v4(),
-            source_uuid,
-            attrs,
-        }
+        Self { attrs }
+    }
+    
+    /// Get layer instance UUID
+    pub fn uuid(&self) -> Uuid {
+        self.attrs.get_uuid(A_UUID).unwrap_or_else(Uuid::nil)
+    }
+    
+    /// Get source node UUID
+    pub fn source_uuid(&self) -> Uuid {
+        self.attrs.get_uuid("source_uuid").unwrap_or_else(Uuid::nil)
+    }
+    
+    /// Create layer from existing attrs (for duplication/paste).
+    /// Sets new uuid, keeps source_uuid from attrs.
+    pub fn from_attrs(source_uuid: Uuid, mut attrs: Attrs) -> Self {
+        attrs.set_uuid(A_UUID, Uuid::new_v4());
+        attrs.set_uuid("source_uuid", source_uuid);
+        Self { attrs }
     }
     
     /// Layer start frame in parent timeline
@@ -358,7 +378,7 @@ impl CompNode {
     
     /// Remove layer by UUID
     pub fn remove_layer(&mut self, layer_uuid: Uuid) -> Option<Layer> {
-        if let Some(idx) = self.layers.iter().position(|l| l.uuid == layer_uuid) {
+        if let Some(idx) = self.layers.iter().position(|l| l.uuid() == layer_uuid) {
             let layer = self.layers.remove(idx);
             self.mark_dirty();
             self.rebound();
@@ -370,17 +390,17 @@ impl CompNode {
     
     /// Get layer by UUID
     pub fn get_layer(&self, layer_uuid: Uuid) -> Option<&Layer> {
-        self.layers.iter().find(|l| l.uuid == layer_uuid)
+        self.layers.iter().find(|l| l.uuid() == layer_uuid)
     }
     
     /// Get mutable layer by UUID
     pub fn get_layer_mut(&mut self, layer_uuid: Uuid) -> Option<&mut Layer> {
-        self.layers.iter_mut().find(|l| l.uuid == layer_uuid)
+        self.layers.iter_mut().find(|l| l.uuid() == layer_uuid)
     }
     
     /// Find layers by source UUID
     pub fn layers_by_source(&self, source_uuid: Uuid) -> Vec<&Layer> {
-        self.layers.iter().filter(|l| l.source_uuid == source_uuid).collect()
+        self.layers.iter().filter(|l| l.source_uuid() == source_uuid).collect()
     }
 
     // --- Compat methods (for migration from old Comp) ---
@@ -392,12 +412,12 @@ impl CompNode {
 
     /// Get children as (uuid, attrs) pairs - compat with old Comp
     pub fn get_children(&self) -> Vec<(Uuid, &Attrs)> {
-        self.layers.iter().map(|l| (l.uuid, &l.attrs)).collect()
+        self.layers.iter().map(|l| (l.uuid(), &l.attrs)).collect()
     }
 
     /// Get children as (layer_uuid, source_uuid) pairs - for node editor
     pub fn get_children_sources(&self) -> Vec<(Uuid, Uuid)> {
-        self.layers.iter().map(|l| (l.uuid, l.source_uuid)).collect()
+        self.layers.iter().map(|l| (l.uuid(), l.source_uuid())).collect()
     }
 
     /// Set FPS
@@ -407,12 +427,12 @@ impl CompNode {
 
     /// Layer index to UUID
     pub fn idx_to_uuid(&self, idx: usize) -> Option<Uuid> {
-        self.layers.get(idx).map(|l| l.uuid)
+        self.layers.get(idx).map(|l| l.uuid())
     }
 
     /// Layer UUID to index
     pub fn uuid_to_idx(&self, uuid: Uuid) -> Option<usize> {
-        self.layers.iter().position(|l| l.uuid == uuid)
+        self.layers.iter().position(|l| l.uuid() == uuid)
     }
 
     /// Check if multiple layers are selected
@@ -520,7 +540,7 @@ impl CompNode {
         source_dim: (usize, usize),
     ) -> anyhow::Result<Uuid> {
         let layer = Layer::new(source_uuid, name, start_frame, duration, source_dim);
-        let uuid = layer.uuid;
+        let uuid = layer.uuid();
         self.add_layer(layer, insert_idx);
         Ok(uuid)
     }
@@ -544,17 +564,17 @@ impl CompNode {
 
     /// Get layer UUIDs as vector
     pub fn layers_uuids_vec(&self) -> Vec<Uuid> {
-        self.layers.iter().map(|l| l.uuid).collect()
+        self.layers.iter().map(|l| l.uuid()).collect()
     }
 
     /// Get layer attrs by UUID
     pub fn layers_attrs_get(&self, uuid: &Uuid) -> Option<&Attrs> {
-        self.layers.iter().find(|l| l.uuid == *uuid).map(|l| &l.attrs)
+        self.layers.iter().find(|l| l.uuid() == *uuid).map(|l| &l.attrs)
     }
 
     /// Get mutable layer attrs by UUID
     pub fn layers_attrs_get_mut(&mut self, uuid: &Uuid) -> Option<&mut Attrs> {
-        self.layers.iter_mut().find(|l| l.uuid == *uuid).map(|l| &mut l.attrs)
+        self.layers.iter_mut().find(|l| l.uuid() == *uuid).map(|l| &mut l.attrs)
     }
 
     /// Get all layer edges (start, end) sorted by frame.
@@ -685,7 +705,7 @@ impl CompNode {
             return true;
         }
         if !hier {
-            return self.layers.iter().any(|l| l.source_uuid == potential_child);
+            return self.layers.iter().any(|l| l.source_uuid() == potential_child);
         }
         // DFS check for cycles
         let mut stack = vec![potential_child];
@@ -813,7 +833,7 @@ impl CompNode {
             }
             
             // Get source node
-            let source = ctx.media.get(&layer.source_uuid);
+            let source = ctx.media.get(&layer.source_uuid());
             let Some(source_node) = source else {
                 continue;
             };
@@ -878,10 +898,10 @@ impl CompNode {
             stack.borrow_mut().remove(&my_uuid);
         });
         
-        // Mark incomplete if not all loaded
+        // Mark incomplete if not all source frames loaded yet
         result.inspect(|frame| {
             if !all_loaded {
-                let _ = frame.set_status(FrameStatus::Loading);
+                let _ = frame.set_status(FrameStatus::Composing);
             }
         })
     }
@@ -909,7 +929,7 @@ impl Node for CompNode {
     }
     
     fn inputs(&self) -> Vec<Uuid> {
-        self.layers.iter().map(|l| l.source_uuid).collect()
+        self.layers.iter().map(|l| l.source_uuid()).collect()
     }
     
     fn compute(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
@@ -921,7 +941,7 @@ impl Node for CompNode {
         // Check dirty: self, layers, or sources
         let any_layer_dirty = self.layers.iter().any(|l| l.attrs.is_dirty());
         let any_source_dirty = self.layers.iter().any(|l| {
-            ctx.media.get(&l.source_uuid)
+            ctx.media.get(&l.source_uuid())
                 .map(|n| n.is_dirty())
                 .unwrap_or(false)
         });
@@ -1000,7 +1020,7 @@ impl Node for CompNode {
         // Collect source info
         let source_info: Vec<(Uuid, i32)> = self.layers.iter()
             .filter(|l| l.is_visible())
-            .map(|l| (l.source_uuid, l.parent_to_local(center)))
+            .map(|l| (l.source_uuid(), l.parent_to_local(center)))
             .collect();
         
         // Trigger preload for each source
@@ -1173,7 +1193,7 @@ mod tests {
     fn test_layer_creation() {
         let source_uuid = Uuid::new_v4();
         let layer = Layer::new(source_uuid, "Layer 1", 10, 50, (1920, 1080));
-        assert_eq!(layer.source_uuid, source_uuid);
+        assert_eq!(layer.source_uuid(), source_uuid);
         assert_eq!(layer.start(), 10);
         assert_eq!(layer.end(), 59); // 10 + 50 - 1
     }
@@ -1183,7 +1203,7 @@ mod tests {
         let mut node = CompNode::new("Test", 0, 100, 24.0);
         let source_uuid = Uuid::new_v4();
         let layer = Layer::new(source_uuid, "Layer 1", 0, 50, (1920, 1080));
-        let layer_uuid = layer.uuid;
+        let layer_uuid = layer.uuid();
         
         node.add_layer(layer, None);
         assert_eq!(node.layers.len(), 1);

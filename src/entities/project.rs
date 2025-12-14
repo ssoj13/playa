@@ -519,7 +519,7 @@ impl Project {
             let mut media = self.media.write().expect("media lock poisoned");
             for node in media.values_mut() {
                 if let Some(comp) = node.as_comp_mut() {
-                    comp.layers.retain(|layer| layer.source_uuid != uuid);
+                    comp.layers.retain(|layer| layer.source_uuid() != uuid);
                 }
             }
         }
@@ -606,7 +606,7 @@ impl<'a> Iterator for NodeIter<'a> {
             let media = self.project.media.read().expect("media lock poisoned");
             media.get(&uuid)
                 .and_then(|node| node.as_comp())
-                .map(|comp| comp.layers.iter().map(|l| l.source_uuid).collect())
+                .map(|comp| comp.layers.iter().map(|l| l.source_uuid()).collect())
                 .unwrap_or_default()
         };
 

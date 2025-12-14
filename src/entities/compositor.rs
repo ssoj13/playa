@@ -254,7 +254,7 @@ impl CpuCompositor {
                 FrameStatus::Error => 0,
                 FrameStatus::Placeholder => 1,
                 FrameStatus::Header => 2,
-                FrameStatus::Loading => 3,
+                FrameStatus::Loading | FrameStatus::Composing => 3,
                 FrameStatus::Loaded => 4,
             })
             .unwrap_or(FrameStatus::Placeholder);

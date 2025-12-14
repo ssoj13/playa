@@ -199,7 +199,7 @@ pub fn render_outline(
                     |ui, child_idx, handle, _state| {
                         let idx = *child_idx;
                         let layer = &comp.layers[idx];
-                        let child_uuid = layer.uuid;
+                        let child_uuid = layer.uuid();
                         let attrs = &layer.attrs;
 
                         // In Split mode, use full available width (outline is in separate panel)
@@ -356,7 +356,7 @@ pub fn render_outline(
                         // Double-click: dive into source comp
                         if response.double_clicked() {
                             // source_uuid is a field on Layer, not in attrs
-                            dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid)));
+                            dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid())));
                         }
                     },
                 )
@@ -605,7 +605,7 @@ pub fn render_canvas(
                         for &original_idx in child_order_inner.iter() {
                             let idx = original_idx;
                             let layer = &comp.layers[idx];
-                            let child_uuid = layer.uuid;
+                            let child_uuid = layer.uuid();
                             let attrs = &layer.attrs;
 
                             // Get full bar start/end (computed from in + src_len/speed)
@@ -700,7 +700,7 @@ pub fn render_canvas(
                         for &original_idx in child_order_inner.iter() {
                             let idx = original_idx;
                             let layer = &comp.layers[idx];
-                            let child_uuid = layer.uuid;
+                            let child_uuid = layer.uuid();
                             let attrs = &layer.attrs;
 
                             // Use cached geometry from draw pass
@@ -714,7 +714,7 @@ pub fn render_canvas(
                                 if geom.full_bar_rect.contains(local_pos)
                                     && ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
                                         // source_uuid is a field on Layer, not in attrs
-                                        dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid)));
+                                        dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid())));
                                     }
 
                                 // Tool detection with geometry-aware function (supports Slide in trim zones)
@@ -794,7 +794,7 @@ pub fn render_canvas(
                                         let target_child = child_order_inner.get(target_display_idx).copied().unwrap_or(*layer_idx);
 
                                         // Visual feedback: draw ghost bars for all selected (or just dragged) layers
-                                        let dragged_uuid = comp.layers.get(*layer_idx).map(|l| l.uuid).unwrap_or_default();
+                                        let dragged_uuid = comp.layers.get(*layer_idx).map(|l| l.uuid()).unwrap_or_default();
                                         let selection = if comp.layer_selection.contains(&dragged_uuid) {
                                             comp.layer_selection.clone()
                                         } else {
@@ -1134,7 +1134,7 @@ pub fn render_canvas(
                                 let (selection, anchor) = compute_layer_selection(
                                     &comp.layer_selection,
                                     comp.layer_selection_anchor,
-                                    layer.uuid,
+                                    layer.uuid(),
                                     idx,
                                     modifiers,
                                     &children_uuids,

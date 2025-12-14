@@ -84,7 +84,8 @@ pub enum TonemapMode {
 pub enum FrameStatus {
     Placeholder, // No filename, green placeholder
     Header,      // Filename set, header loaded (resolution known), buffer is green placeholder
-    Loading,     // Async loading in progress
+    Loading,     // Async file loading in progress (FileNode)
+    Composing,   // Async composition in progress (CompNode)
     Loaded,      // Cached: File mode = image loaded into buffer, Layer mode = composed result cached
     Error,       // Loading failed
 }
@@ -96,7 +97,8 @@ impl FrameStatus {
         match self {
             FrameStatus::Placeholder => Color32::from_rgba_unmultiplied(40, 40, 45, 128),
             FrameStatus::Header => Color32::from_rgba_unmultiplied(60, 100, 180, 128),
-            FrameStatus::Loading => Color32::from_rgba_unmultiplied(220, 160, 60, 128),
+            FrameStatus::Loading => Color32::from_rgba_unmultiplied(220, 160, 60, 128),   // orange - file loading
+            FrameStatus::Composing => Color32::from_rgba_unmultiplied(180, 100, 220, 128), // purple - compositing
             FrameStatus::Loaded => Color32::from_rgba_unmultiplied(80, 200, 120, 128),
             FrameStatus::Error => Color32::from_rgba_unmultiplied(200, 60, 60, 128),
         }
@@ -363,17 +365,17 @@ impl Frame {
 
     /// Create composing placeholder (for layer mode cache reservation)
     ///
-    /// Creates minimal 1x1 frame with Loading status to prevent
+    /// Creates minimal 1x1 frame with Composing status to prevent
     /// race conditions where multiple workers try to compose same frame.
     pub fn new_composing() -> Self {
-        let buffer_u8 = vec![0, 50, 100, 255]; // 1 pixel blue-ish (composing indicator)
+        let buffer_u8 = vec![100, 50, 150, 255]; // 1 pixel purple-ish (composing indicator)
 
         let data = FrameData {
             buffer: Arc::new(PixelBuffer::U8(buffer_u8)),
             pixel_format: PixelFormat::Rgba8,
             width: 1,
             height: 1,
-            status: FrameStatus::Loading, // Mark as composing in progress
+            status: FrameStatus::Composing, // Mark as composing in progress
             attrs: Attrs::new(),
         };
 

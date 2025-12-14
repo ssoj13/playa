@@ -825,7 +825,7 @@ pub fn handle_app_event(
                     .iter()
                     .filter_map(|uuid| {
                         comp.get_layer(*uuid).map(|layer| {
-                            (*uuid, layer.source_uuid, layer.attrs.clone())
+                            (*uuid, layer.source_uuid(), layer.attrs.clone())
                         })
                     })
                     .collect()
@@ -857,13 +857,9 @@ pub fn handle_app_event(
                     let insert_idx = comp.uuid_to_idx(orig_uuid).unwrap_or(0);
                     // Update attrs with new name
                     attrs.set("name", crate::entities::AttrValue::Str(new_name.clone()));
-                    // Create new Layer
-                    let new_layer = crate::entities::comp_node::Layer {
-                        uuid: Uuid::new_v4(),
-                        source_uuid,
-                        attrs,
-                    };
-                    let new_uuid = new_layer.uuid;
+                    // Create new Layer using from_attrs
+                    let new_layer = crate::entities::comp_node::Layer::from_attrs(source_uuid, attrs);
+                    let new_uuid = new_layer.uuid();
                     comp.layers.insert(insert_idx, new_layer);
                     new_uuids.push(new_uuid);
                     trace!("  Duplicated -> {} at idx {}", new_name, insert_idx);
@@ -887,7 +883,7 @@ pub fn handle_app_event(
             for uuid in &comp.layer_selection {
                 // Use get_layer() to access source_uuid field, not attrs
                 if let Some(layer) = comp.get_layer(*uuid) {
-                    let source_uuid = layer.source_uuid; // Correct: field on Layer struct
+                    let source_uuid = layer.source_uuid();
                     let original_start = layer.attrs.get_i32("in").unwrap_or(0);
                     let name = layer.attrs.get_str("name").unwrap_or("?");
                     trace!("  Copy layer '{}' (source={}) at frame {}", name, source_uuid, original_start);
@@ -946,12 +942,8 @@ pub fn handle_app_event(
                     attrs.set("in", crate::entities::AttrValue::Int(new_in));
                     attrs.set("out", crate::entities::AttrValue::Int(new_out));
                     // Create and insert new Layer at tracked position
-                    let new_layer = crate::entities::comp_node::Layer {
-                        uuid: Uuid::new_v4(),
-                        source_uuid: item.source_uuid,
-                        attrs,
-                    };
-                    let new_uuid = new_layer.uuid;
+                    let new_layer = crate::entities::comp_node::Layer::from_attrs(item.source_uuid, attrs);
+                    let new_uuid = new_layer.uuid();
                     comp.layers.insert(insert_idx, new_layer);
                     insert_idx += 1; // Next layer goes after this one
                     // Select pasted layer
@@ -967,10 +959,10 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SelectAllLayersEvent>(event) {
         trace!("SelectAllLayersEvent: comp={}", e.comp_uuid);
         project.modify_comp(e.comp_uuid, |comp| {
-            let all_uuids: Vec<Uuid> = comp.layers.iter().map(|l| l.uuid).collect();
+            let all_uuids: Vec<Uuid> = comp.layers.iter().map(|l| l.uuid()).collect();
             trace!("Selecting all {} layers", all_uuids.len());
             comp.layer_selection = all_uuids;
-            comp.layer_selection_anchor = comp.layers.first().map(|l| l.uuid);
+            comp.layer_selection_anchor = comp.layers.first().map(|l| l.uuid());
         });
         return Some(result);
     }

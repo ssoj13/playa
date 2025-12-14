@@ -143,11 +143,16 @@ pub fn render(
         match frame_state {
             // Header = file comp created frame but not loaded yet
             // Loading = worker claimed frame, loading in progress
-            FrameStatus::Header | FrameStatus::Loading => {
+            // Composing = composition in progress (waiting for source frames)
+            FrameStatus::Header | FrameStatus::Loading | FrameStatus::Composing => {
+                let msg = match frame_state {
+                    FrameStatus::Composing => format!("Composing frame {}...", player.current_frame(project)),
+                    _ => format!("Loading frame {}...", player.current_frame(project)),
+                };
                 ui.painter().text(
                     panel_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    format!("Loading frame {}...", player.current_frame(project)),
+                    msg,
                     egui::FontId::proportional(24.0),
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200),
                 );
