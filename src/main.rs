@@ -439,29 +439,33 @@ impl PlayaApp {
         //
         // DO NOT REFACTOR THIS INTO THE MAIN LOOP - the main loop has already drained poll().
         // DO NOT USE DIRECT CALLS - we need EventBus for decoupling and traceability.
-        for _ in 0..10 {
+        for iteration in 0..10 {
             let derived = self.event_bus.poll();
             if derived.is_empty() {
                 break;
             }
+            info!("[DERIVED] iteration={}, events={}", iteration, derived.len());
             for event in derived {
                 if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
-                    trace!("(derived) Comp {} attrs changed", e.0);
+                    info!("[DERIVED] AttrsChangedEvent comp={}", e.0);
                     if let Some(manager) = self.project.cache_manager() {
                         manager.increment_epoch();
+                        info!("[DERIVED] epoch incremented to {}", manager.current_epoch());
                     }
                     if let Some(ref cache) = self.project.global_cache {
                         cache.clear_comp(e.0);
+                        info!("[DERIVED] cache cleared for comp {}", e.0);
                     }
                     self.event_bus.emit(ViewportRefreshEvent);
                     continue;
                 }
                 if downcast_event::<ViewportRefreshEvent>(&event).is_some() {
-                    trace!("(derived) ViewportRefreshEvent");
+                    info!("[DERIVED] ViewportRefreshEvent -> request_refresh()");
                     self.viewport_state.request_refresh();
                     continue;
                 }
                 // Other derived events are ignored (processed next frame)
+                info!("[DERIVED] ignored event: {}", event.type_name());
             }
         }
 
@@ -847,9 +851,18 @@ impl PlayaApp {
             .unwrap_or(false);
         let texture_needs_upload = epoch_changed || frame_changed || frame_loading;
 
+        if texture_needs_upload {
+            info!(
+                "[VIEWPORT] needs_upload: epoch_changed={} ({}!={}) frame_changed={} loading={}",
+                epoch_changed, self.viewport_state.last_rendered_epoch, current_epoch,
+                frame_changed, frame_loading
+            );
+        }
+
         // If refresh needed, get frame from cache/compositor
         if texture_needs_upload {
             self.frame = self.player.get_current_frame(&self.project);
+            info!("[VIEWPORT] got frame: {:?}", self.frame.as_ref().map(|f| f.status()));
             // Update tracking only when frame is fully loaded
             if !frame_loading {
                 self.viewport_state.last_rendered_epoch = current_epoch;

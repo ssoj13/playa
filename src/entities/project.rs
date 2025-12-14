@@ -411,10 +411,12 @@ impl Project {
                 // This ensures ALL changes that affect render trigger cache invalidation,
                 // even when multiple modify_comp calls happen before next render.
                 let dirty = comp.is_dirty();
-                log::trace!("modify_comp: uuid={}, is_dirty={}", uuid, dirty);
+                log::info!("[MODIFY_COMP] uuid={}, is_dirty={}", uuid, dirty);
                 if dirty && let Some(ref emitter) = self.event_emitter {
-                    log::trace!("modify_comp: emitting AttrsChangedEvent for {}", uuid);
+                    log::info!("[MODIFY_COMP] emitting AttrsChangedEvent for {}", uuid);
                     emitter.emit(AttrsChangedEvent(uuid));
+                } else if dirty {
+                    log::warn!("[MODIFY_COMP] dirty but NO emitter! uuid={}", uuid);
                 }
                 return true;
             }

@@ -799,11 +799,17 @@ impl CompNode {
         let mut all_loaded = true;
         
         // Collect frames from layers (reverse order: last = bottom, first = top)
-        for layer in self.layers.iter().rev() {
+        for (i, layer) in self.layers.iter().rev().enumerate() {
             let (play_start, play_end) = layer.work_area();
+            let layer_in = layer.attrs.get_i32("in").unwrap_or(0);
+            log::info!(
+                "[COMPOSE] layer[{}] '{}': in={}, work_area={}..{}, frame_idx={}",
+                i, layer.attrs.get_str("name").unwrap_or("?"), layer_in, play_start, play_end, frame_idx
+            );
             
             // Skip if outside work area
             if frame_idx < play_start || frame_idx > play_end {
+                log::info!("[COMPOSE] layer[{}] SKIPPED (outside work area)", i);
                 continue;
             }
             
