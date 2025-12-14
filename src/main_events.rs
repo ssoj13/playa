@@ -885,14 +885,15 @@ pub fn handle_app_event(
             }
             let mut items: Vec<crate::widgets::timeline::ClipboardLayer> = Vec::new();
             for uuid in &comp.layer_selection {
-                if let Some(attrs) = comp.layers_attrs_get(uuid) {
-                    let source_uuid = attrs.get_uuid("uuid").unwrap_or(*uuid);
-                    let original_start = attrs.get_i32("in").unwrap_or(0);
-                    let name = attrs.get_str("name").unwrap_or("?");
-                    trace!("  Copy layer '{}' at frame {}", name, original_start);
+                // Use get_layer() to access source_uuid field, not attrs
+                if let Some(layer) = comp.get_layer(*uuid) {
+                    let source_uuid = layer.source_uuid; // Correct: field on Layer struct
+                    let original_start = layer.attrs.get_i32("in").unwrap_or(0);
+                    let name = layer.attrs.get_str("name").unwrap_or("?");
+                    trace!("  Copy layer '{}' (source={}) at frame {}", name, source_uuid, original_start);
                     items.push(crate::widgets::timeline::ClipboardLayer {
                         source_uuid,
-                        attrs: attrs.clone(),
+                        attrs: layer.attrs.clone(),
                         original_start,
                     });
                 }
