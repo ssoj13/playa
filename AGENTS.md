@@ -148,24 +148,51 @@ pub struct Project {
 
 ```rust
 pub struct CompNode {
-    uuid: Uuid,
-    attrs: Attrs,           // name, fps, in, out, frame, trim_in, trim_out
+    attrs: Attrs,           // uuid, name, fps, in, out, width, height, frame, trim_in, trim_out
     pub layers: Vec<Layer>, // Bottom to top (render order)
     pub layer_selection: Vec<Uuid>,
+    pub layer_selection_anchor: Option<usize>,
 }
 
 pub struct Layer {
-    pub uuid: Uuid,        // Instance UUID (unique per layer)
-    pub source_uuid: Uuid, // References FileNode or CompNode in media pool
-    pub attrs: Attrs,      // in, src_len, trim_in, trim_out, opacity, blend_mode, speed
+    pub attrs: Attrs,  // ALL data in attrs:
+                       // - uuid: instance UUID (unique per layer)
+                       // - source_uuid: references FileNode/CompNode in media pool  
+                       // - in, src_len, trim_in, trim_out, opacity, blend_mode, speed
+                       // - visible, solo, etc.
+}
+
+impl Layer {
+    pub fn uuid(&self) -> Uuid { self.attrs.get_uuid("uuid")... }
+    pub fn source_uuid(&self) -> Uuid { self.attrs.get_uuid("source_uuid")... }
+    pub fn start(&self) -> i32 { self.attrs.get_i32(A_IN)... }  // position on timeline
+    pub fn end(&self) -> i32 { /* computed from start + src_len / speed */ }
+    pub fn work_area(&self) -> (i32, i32) { /* trimmed range */ }
+    pub fn is_visible(&self) -> bool { ... }
+    pub fn is_solo(&self) -> bool { ... }
 }
 ```
 
 **Layer order**: `layers[0]` is background, `layers[N-1]` is foreground.
 
-**Trim values are OFFSETS**, not absolute frames:
+**Trim values are OFFSETS in SOURCE frames**, not absolute:
 - `trim_in = 0` means no trim from start
 - `trim_out = 0` means no trim from end
+- Scaled by `speed` when converting to timeline frames
+
+**Key CompNode methods**:
+```rust
+// Bounds calculation
+fn bounds(&self, use_trim: bool) -> (i32, i32)  // Actual layer extents
+fn rebound(&mut self)                            // Update _in/_out from bounds()
+fn play_range(&self, use_work_area: bool)        // Stored _in/_out or work_area
+
+// Layer modification (all call rebound() automatically)
+fn move_layers(&mut self, uuids: &[Uuid], delta: i32)
+fn trim_layers(&mut self, uuids: &[Uuid], edge: &str, delta: i32)
+fn add_layer(&mut self, layer: Layer, position: Option<usize>)
+fn remove_layer(&mut self, uuid: Uuid) -> Option<Layer>
+```
 
 ### Frame - Single Image
 
@@ -174,8 +201,17 @@ pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub data: PixelBuffer,    // RGB u8 / RGBA u8 / RGBA f16 / RGBA f32
-    pub status: FrameStatus,  // Placeholder | Loading | Loaded | Error
+    pub status: FrameStatus,  // Placeholder | Header | Loading | Composing | Loaded | Error
     pub attrs: Attrs,         // Metadata
+}
+
+pub enum FrameStatus {
+    Placeholder,  // Empty frame, not started
+    Header,       // Metadata loaded, pixels pending
+    Loading,      // Async file loading in progress (FileNode)
+    Composing,    // Async composition in progress (CompNode)
+    Loaded,       // Ready to display
+    Error,        // Failed to load
 }
 ```
 
@@ -400,6 +436,59 @@ result.merge(other_result);
 
 ---
 
+## Node Editor Sync
+
+The node editor (`widgets/node_editor/node_graph.rs`) visualizes comp hierarchy:
+
+```rust
+pub struct NodeEditorState {
+    snarl: Snarl<CompNode>,      // egui-snarl graph
+    comp_uuid: Option<Uuid>,     // Current comp being displayed
+    needs_rebuild: bool,         // Dirty flag for graph rebuild
+    fit_all_requested: bool,
+    // ...
+}
+```
+
+**IMPORTANT**: When layers change (add/remove/reorder), call:
+```rust
+node_editor_state.mark_dirty();
+```
+
+This triggers `rebuild_from_comp()` on next frame which:
+1. Clears snarl graph
+2. Recursively collects all nodes in comp tree (DFS)
+3. Creates visual nodes with proper types
+4. Connects wires between parent-child relationships
+5. Applies tree layout
+
+---
+
+## Preload System
+
+Background frame loading for smooth playback:
+
+```rust
+// FileNode preload strategies:
+// - Video: forward-only (expensive backward seeking)
+// - Images: spiral from center (cheap bidirectional)
+
+comp.signal_preload(&workers, &project, center_frame);  // Triggers preload
+
+// In file_node.rs:
+fn preload(&self, center: i32, ctx: &ComputeContext) {
+    if is_video {
+        // Forward only: center → play_end
+    } else {
+        // Spiral: center ± offset for offset in 0..max
+    }
+}
+```
+
+**Epoch-based cancellation**: When timeline scrubs fast, `cache_manager.increment_epoch()` cancels all pending preload jobs.
+
+---
+
 ## Quick Reference
 
 ### Adding a New Event Type
@@ -452,5 +541,7 @@ let val = comp.attrs.get_float("my_new_attr").unwrap_or(0.0);
 | **Workers** | Crossbeam work-stealing deques | Parallel frame loading |
 | **CacheManager** | Atomic counters | Memory limit, epoch cancellation |
 | **modify_comp()** | Closure with auto-emit | Safe mutations with cache invalidation |
+| **bounds()** | Iterates visible layers | Calculate actual content extents |
+| **rebound()** | Updates _in/_out from bounds() | Keep comp range synced with layers |
 
 **The goal**: Complex features (multi-layer compositing, async loading, cache management) exposed through simple, composable abstractions.
