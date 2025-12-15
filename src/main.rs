@@ -356,7 +356,7 @@ impl PlayaApp {
                 if let Some(ref cache) = self.project.global_cache {
                     match e.affected_range {
                         Some((start, end)) => cache.clear_range(e.comp_uuid, start, end),
-                        None => cache.clear_comp(e.comp_uuid),
+                        None => cache.clear_comp(e.comp_uuid, true),
                     }
                 }
                 continue;
@@ -372,7 +372,7 @@ impl PlayaApp {
                 }
                 // 2. Clear all cached frames - any attribute could affect rendering
                 if let Some(ref cache) = self.project.global_cache {
-                    cache.clear_comp(e.0);
+                    cache.clear_comp(e.0, true);
                 }
                 // 3. Preload 100 frames around playhead after cache clear
                 self.enqueue_frame_loads_around_playhead(100);
@@ -472,7 +472,7 @@ impl PlayaApp {
                         manager.increment_epoch();
                     }
                     if let Some(ref cache) = self.project.global_cache {
-                        cache.clear_comp(e.0);
+                        cache.clear_comp(e.0, true);
                     }
                     // Preload 100 frames around playhead after cache clear
                     self.enqueue_frame_loads_around_playhead(100);
@@ -870,18 +870,22 @@ impl PlayaApp {
         
         let epoch_changed = self.viewport_state.last_rendered_epoch != current_epoch;
         let frame_changed = self.viewport_state.last_rendered_frame != Some(current_frame);
-        let frame_loading = self.frame.as_ref()
-            .map(|f| matches!(f.status(), crate::entities::frame::FrameStatus::Header | crate::entities::frame::FrameStatus::Loading))
-            .unwrap_or(false);
+        // Check if frame is not fully ready (needs refresh when worker finishes)
+        let frame_not_ready = self.frame.as_ref()
+            .map(|f| f.status() != crate::entities::frame::FrameStatus::Loaded)
+            .unwrap_or(true);
         // Also re-fetch if we have no frame yet (workers may have cached it)
         let no_frame = self.frame.is_none();
-        let texture_needs_upload = epoch_changed || frame_changed || frame_loading || no_frame;
+        let texture_needs_upload = epoch_changed || frame_changed || frame_not_ready || no_frame;
 
         // If refresh needed, get frame from cache/compositor
         if texture_needs_upload {
             self.frame = self.player.get_current_frame(&self.project);
-            // Update tracking only when frame is fully loaded
-            if !frame_loading {
+            // Update tracking only when NEW frame is fully loaded
+            let new_frame_loaded = self.frame.as_ref()
+                .map(|f| f.status() == crate::entities::frame::FrameStatus::Loaded)
+                .unwrap_or(false);
+            if new_frame_loaded {
                 self.viewport_state.last_rendered_epoch = current_epoch;
                 self.viewport_state.last_rendered_frame = Some(current_frame);
             }

@@ -522,9 +522,9 @@ impl Project {
             manager.increment_epoch();
         }
 
-        // 2. Clear cached frames
+        // 2. Clear cached frames (full removal, not dehydrate)
         if let Some(ref cache) = self.global_cache {
-            cache.clear_comp(uuid);
+            cache.clear_comp(uuid, false);
             log::trace!("Cleared cache for removed node: {}", uuid);
         }
 

@@ -168,7 +168,7 @@ pub fn render(
                     egui::Color32::from_rgb(255, 100, 100),
                 );
             }
-            FrameStatus::Loaded | FrameStatus::Placeholder => {}
+            FrameStatus::Loaded | FrameStatus::Placeholder | FrameStatus::Expired => {}
         }
 
         // Draw viewport overlays (scrubber, guides, etc.)

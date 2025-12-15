@@ -225,7 +225,7 @@ impl GlobalFrameCache {
 
         // Apply strategy: LastOnly clears previous frames for this comp
         if *self.strategy.lock().unwrap_or_else(|e| e.into_inner()) == CacheStrategy::LastOnly {
-            self.clear_comp(comp_uuid);
+            self.clear_comp(comp_uuid, false); // Full removal for LastOnly strategy
         }
 
         // Eviction: both memory limit and capacity limit
@@ -333,32 +333,44 @@ impl GlobalFrameCache {
         }
     }
 
-    /// Clear all cached frames for a specific comp - O(1)
+    /// Clear/invalidate cached frames for a specific comp.
     ///
-    /// This is the main benefit of nested HashMap structure.
-    pub fn clear_comp(&self, comp_uuid: Uuid) {
+    /// # Parameters
+    /// - `dehydrate`: if true (default), mark frames as Expired but keep pixels.
+    ///   if false, remove frames from cache entirely (e.g., when deleting node).
+    pub fn clear_comp(&self, comp_uuid: Uuid, dehydrate: bool) {
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
-
-        // Remove entire inner HashMap in O(1)
-        if let Some(frames) = cache.remove(&comp_uuid) {
-            // Free memory for all frames
-            let mut total_freed = 0usize;
-            for (_, frame) in frames.iter() {
-                let size = frame.mem();
-                self.cache_manager.free_memory(size);
-                total_freed += size;
+        
+        if dehydrate {
+            // Dehydrate: mark Loaded frames as Expired (pixels stay valid)
+            if let Some(frames) = cache.get_mut(&comp_uuid) {
+                let mut expired_count = 0;
+                for frame in frames.values() {
+                    if frame.status() == crate::entities::frame::FrameStatus::Loaded {
+                        let _ = frame.set_status(crate::entities::frame::FrameStatus::Expired);
+                        expired_count += 1;
+                    }
+                }
+                trace!("Dehydrated comp {}: {} frames marked Expired", comp_uuid, expired_count);
             }
-
-            // Remove from LRU queue
-            lru.retain(|k| k.comp_uuid != comp_uuid);
-
-            trace!(
-                "Cleared comp {}: {} frames, {} MB freed",
-                comp_uuid,
-                frames.len(),
-                total_freed / 1024 / 1024
-            );
+        } else {
+            // Full clear: remove frames and free memory
+            let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
+            
+            if let Some(frames) = cache.remove(&comp_uuid) {
+                let mut total_freed = 0usize;
+                for (_, frame) in frames.iter() {
+                    let size = frame.mem();
+                    self.cache_manager.free_memory(size);
+                    total_freed += size;
+                }
+                lru.retain(|k| k.comp_uuid != comp_uuid);
+                
+                trace!(
+                    "Cleared comp {}: {} frames, {} MB freed",
+                    comp_uuid, frames.len(), total_freed / 1024 / 1024
+                );
+            }
         }
     }
 
@@ -548,8 +560,8 @@ mod tests {
         assert_eq!(cache.comp_frame_count(comp1), 100);
         assert_eq!(cache.comp_frame_count(comp2), 1);
 
-        // Clear comp1 - should be O(1) on HashMap level
-        cache.clear_comp(comp1);
+        // Clear comp1 - full removal (dehydrate=false)
+        cache.clear_comp(comp1, false);
 
         assert_eq!(cache.comp_frame_count(comp1), 0);
         assert!(!cache.contains(comp1, 0));
@@ -603,8 +615,8 @@ mod tests {
         assert_eq!(cache.comp_count(), 5);
         assert_eq!(cache.len(), 50);
 
-        // Clear middle comp
-        cache.clear_comp(comps[2]);
+        // Clear middle comp (full removal, not dehydrate)
+        cache.clear_comp(comps[2], false);
         assert_eq!(cache.comp_count(), 4);
         assert_eq!(cache.len(), 40);
     }

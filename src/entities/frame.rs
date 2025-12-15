@@ -86,6 +86,7 @@ pub enum FrameStatus {
     Header,      // Filename set, header loaded (resolution known), buffer is green placeholder
     Loading,     // Async file loading in progress (FileNode)
     Composing,   // Async composition in progress (CompNode)
+    Expired,     // Was Loaded, now stale - pixels valid but need recompute
     Loaded,      // Cached: File mode = image loaded into buffer, Layer mode = composed result cached
     Error,       // Loading failed
 }
@@ -99,6 +100,7 @@ impl FrameStatus {
             FrameStatus::Header => Color32::from_rgba_unmultiplied(60, 100, 180, 128),
             FrameStatus::Loading => Color32::from_rgba_unmultiplied(220, 160, 60, 128),   // orange - file loading
             FrameStatus::Composing => Color32::from_rgba_unmultiplied(180, 100, 220, 128), // purple - compositing
+            FrameStatus::Expired => Color32::from_rgba_unmultiplied(160, 140, 80, 128),   // tan - stale, needs refresh
             FrameStatus::Loaded => Color32::from_rgba_unmultiplied(80, 200, 120, 128),
             FrameStatus::Error => Color32::from_rgba_unmultiplied(200, 60, 60, 128),
         }
