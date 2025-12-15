@@ -6,6 +6,13 @@
 //!
 //! Each node can compute a frame at given time, has attributes,
 //! and participates in dirty tracking for efficient caching.
+//!
+//! ## Play Range Helpers
+//!
+//! For timeline bounds and work area, see [`NodeKind`](super::node_kind::NodeKind):
+//! - `play_range(use_work_area)` → `(start, end)` frame range
+//! - `bounds(use_trim, selection_only)` → content bounds
+//! - `frame_count()` → total frames
 
 use std::sync::Arc;
 use uuid::Uuid;

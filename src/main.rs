@@ -63,6 +63,9 @@ enum DockTab {
 struct PlayaApp {
     #[serde(skip)]
     frame: Option<Frame>,
+    /// Last fully loaded frame - shown while new frame is loading to prevent flicker
+    #[serde(skip)]
+    last_good_frame: Option<Frame>,
     #[serde(skip)]
     player: Player,
     #[serde(skip)]
@@ -165,6 +168,7 @@ impl Default for PlayaApp {
 
         Self {
             frame: None,
+            last_good_frame: None,
             player,
             error_msg: None,
             status_bar,
@@ -881,11 +885,23 @@ impl PlayaApp {
                 self.viewport_state.last_rendered_epoch = current_epoch;
                 self.viewport_state.last_rendered_frame = Some(current_frame);
             }
+            // Cache good frame to prevent flicker during recomposition
+            if let Some(f) = &self.frame {
+                if f.status() == crate::entities::frame::FrameStatus::Loaded {
+                    self.last_good_frame = Some(f.clone());
+                }
+            }
         }
+        
+        // Use last_good_frame if current frame is not ready (prevents gray flicker)
+        let display_frame = match &self.frame {
+            Some(f) if f.status() == crate::entities::frame::FrameStatus::Loaded => self.frame.as_ref(),
+            _ => self.last_good_frame.as_ref().or(self.frame.as_ref()),
+        };
 
         let (viewport_actions, render_time) = widgets::viewport::render(
             ui,
-            self.frame.as_ref(),
+            display_frame,
             self.error_msg.as_ref(),
             &mut self.player,
             &mut self.project,
