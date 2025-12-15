@@ -63,8 +63,10 @@ pub struct AppSettings {
     pub show_tooltips: bool,      // Show tooltips on toolbar controls (2s delay)
     pub dark_mode: bool,
     pub font_size: f32,
+    pub timeline_layer_height: f32, // Layer row height in timeline (default 32.0)
     pub timeline_snap_enabled: bool,
     pub timeline_lock_work_area: bool,
+    pub preload_radius: u32, // Frames to preload around playhead (default 100)
 
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
@@ -97,8 +99,10 @@ impl Default for AppSettings {
             show_tooltips: true,
             dark_mode: true,
             font_size: 13.0,
+            timeline_layer_height: 32.0,
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
+            preload_radius: 100,
             workers_override: 0,
             cache_memory_percent: 75.0,
             reserve_system_memory_gb: 2.0,
@@ -128,6 +132,14 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
             .suffix(" px")
             .step_by(0.5),
     );
+    ui.add_space(8.0);
+
+    ui.label("Timeline Layer Height:");
+    ui.add(
+        egui::Slider::new(&mut settings.timeline_layer_height, 20.0..=64.0)
+            .suffix(" px")
+            .step_by(2.0),
+    );
     ui.add_space(16.0);
 
     ui.checkbox(&mut settings.dark_mode, "Dark Mode");
@@ -144,6 +156,14 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
             .range(0..=256),
     );
     ui.label("Takes effect on next launch. Defaults to ~75% of CPU cores.");
+
+    ui.add_space(8.0);
+    ui.label("Preload Radius (frames):");
+    ui.add(
+        egui::Slider::new(&mut settings.preload_radius, 10..=500)
+            .step_by(10.0),
+    );
+    ui.label("Frames to preload around playhead.");
 
     ui.add_space(16.0);
     ui.heading("Cache & Memory");

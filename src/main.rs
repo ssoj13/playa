@@ -283,7 +283,7 @@ impl PlayaApp {
                     self.player.set_active_comp(Some(uuid), &mut self.project);
                     self.node_editor_state.set_comp(uuid);
                     self.node_editor_state.mark_dirty();
-                    self.enqueue_frame_loads_around_playhead(100);
+                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
                 }
 
                 self.error_msg = None;
@@ -346,7 +346,7 @@ impl PlayaApp {
             // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
                 trace!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
-                self.enqueue_frame_loads_around_playhead(100);
+                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
                 continue;
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
@@ -379,8 +379,8 @@ impl PlayaApp {
                 if let Some(ref cache) = self.project.global_cache {
                     cache.clear_comp(e.0, true);
                 }
-                // 3. Preload 100 frames around playhead after cache clear
-                self.enqueue_frame_loads_around_playhead(100);
+                // 3. Preload frames around playhead after cache clear
+                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
                 // 4. Request viewport refresh
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
@@ -490,8 +490,8 @@ impl PlayaApp {
                     if let Some(ref cache) = self.project.global_cache {
                         cache.clear_comp(e.0, true);
                     }
-                    // Preload 100 frames around playhead after cache clear
-                    self.enqueue_frame_loads_around_playhead(100);
+                    // Preload frames around playhead after cache clear
+                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
                     self.event_bus.emit(ViewportRefreshEvent);
                     continue;
                 }
@@ -876,6 +876,7 @@ impl PlayaApp {
             &mut self.timeline_state,
             &self.event_bus,
             self.settings.show_tooltips,
+            self.settings.timeline_layer_height,
         );
 
         // Store hover state for input routing
@@ -1403,7 +1404,7 @@ impl eframe::App for PlayaApp {
 
         // Preload frames during playback (player.update doesn't emit events)
         if self.player.is_playing() {
-            self.enqueue_frame_loads_around_playhead(100);
+            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
         }
 
         // Handle composition events (CurrentFrameChanged → triggers frame loading)

@@ -82,6 +82,7 @@ pub fn render_timeline_panel(
     timeline_state: &mut TimelineState,
     event_bus: &EventBus,
     show_tooltips: bool,
+    layer_height: f32,
 ) -> (bool, crate::widgets::timeline::TimelineActions) {
     let old_shader = shader_manager.current_shader.clone();
     let mut timeline_actions = crate::widgets::timeline::TimelineActions::default();
@@ -106,7 +107,7 @@ pub fn render_timeline_panel(
 
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid).and_then(|n| n.as_comp()) {
-                let config = TimelineConfig::default();
+                let config = TimelineConfig::with_layer_height(layer_height);
 
                 // CRITICAL ORDER: Toolbar MUST be rendered BEFORE calculating splitter_height.
                 // If we calculate height first, then render toolbar, the panels will receive

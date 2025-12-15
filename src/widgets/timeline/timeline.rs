@@ -43,6 +43,16 @@ impl Default for TimelineConfig {
     }
 }
 
+impl TimelineConfig {
+    /// Create config with custom layer height from settings
+    pub fn with_layer_height(layer_height: f32) -> Self {
+        Self {
+            layer_height,
+            ..Default::default()
+        }
+    }
+}
+
 /// Timeline state (persistent between frames)
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TimelineState {
