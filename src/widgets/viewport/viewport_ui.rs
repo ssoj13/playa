@@ -97,10 +97,14 @@ pub fn render(
 
         handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
-        // Get play range for scrubbing (trim_in..trim_out)
+        // Get play range for scrubbing: _in()+trim_in .. _out()-trim_out
         let (play_start, play_end) = player.active_comp()
-            .and_then(|uuid| project.with_comp(uuid, |c| (c.trim_in(), c.trim_out())))
-            .unwrap_or((0, 0));
+            .and_then(|uuid| project.with_comp(uuid, |c| {
+                let start = c._in() + c.trim_in();
+                let end = c._out() - c.trim_out();
+                (start, end)
+            }))
+            .unwrap_or((0, 100));
 
         if let Some(frame_idx) =
             viewport_state.handle_scrubbing(&response, double_clicked, play_start, play_end)
