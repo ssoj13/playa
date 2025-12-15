@@ -67,6 +67,18 @@ use super::keys::*;
 use super::node::{ComputeContext, Node};
 
 // Thread-local compositor and cycle detection
+//
+// **Why thread-local CPU compositor?**
+// compose_internal() can be called from worker threads (preload) which don't have
+// access to OpenGL context. GPU compositor requires GL context from main thread.
+//
+// **Current state:**
+// - THREAD_COMPOSITOR is always CpuCompositor
+// - Settings GPU/CPU switch in prefs only affects Project.compositor (unused here)
+// - To enable GPU compositing: pass Project.compositor via ComputeContext,
+//   but only use GPU when called from main thread (has GL context)
+//
+// See compositor.rs module docs for full GPU transform integration plan.
 thread_local! {
     static THREAD_COMPOSITOR: RefCell<CpuCompositor> = const { RefCell::new(CpuCompositor) };
     static COMPOSE_STACK: RefCell<HashSet<Uuid>> = RefCell::new(HashSet::new());
@@ -892,18 +904,29 @@ impl CompNode {
             let source_frame = source_in + local_frame;
             
             // Recursively compute source frame
-            if let Some(frame) = source_node.compute(source_frame, ctx) {
+            if let Some(mut frame) = source_node.compute(source_frame, ctx) {
                 if frame.status() != FrameStatus::Loaded {
                     all_loaded = false;
                 }
                 
-                // Build inverse transform matrix for GPU compositor
+                // Get layer transform attributes
                 let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
                 let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
                 let scl = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
                 let pvt = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
-                
                 let rot_rad = rot[2].to_radians();
+                
+                // Apply CPU transform if non-identity
+                // This is the active code path - GPU compositor not yet connected
+                if !transform::is_identity(pos, rot_rad, scl) {
+                    let canvas = self.dim();
+                    frame = transform::transform_frame(&frame, canvas, pos, rot_rad, scl, pvt);
+                }
+                
+                // Build inverse transform matrix for GPU compositor (WIP - not used yet)
+                // Matrix is passed through API but CPU compositor ignores it.
+                // When GPU compositing is enabled, remove CPU transform above
+                // and let GPU shader handle it via this matrix.
                 let inv_matrix = if transform::is_identity(pos, rot_rad, scl) {
                     identity_matrix
                 } else {

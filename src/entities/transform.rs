@@ -58,7 +58,16 @@ pub fn build_inverse_transform(
 ///   col0        col1        col2
 /// ```
 /// 
-/// For identity transform, returns `[1,0,0, 0,1,0, 0,0,1]`.
+/// For identity transform, returns `[1,0,0, 0,1,0, 0,0,1]}.
+/// 
+/// # GPU Compositor Integration (WIP)
+/// 
+/// This function is called from `compose_internal` to build matrices for each layer.
+/// Currently these matrices are passed through the blend API but:
+/// - **CPU compositor** ignores them (uses `transform_frame()` instead)
+/// - **GPU compositor** shader is ready (`u_top_transform` uniform) but not connected
+/// 
+/// See `compositor.rs` module docs for full GPU transform status.
 pub fn build_inverse_matrix_3x3(
     position: [f32; 3],
     rotation_z: f32,

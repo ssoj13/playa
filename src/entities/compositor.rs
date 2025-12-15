@@ -4,6 +4,28 @@
 //! Provides modular compositing backend:
 //! - CPU compositor (default, works everywhere)
 //! - GPU compositor (requires OpenGL context, 10-50x faster)
+//!
+//! # GPU Transform Support (WIP)
+//!
+//! The blend API includes transform matrices `[f32; 9]` for GPU-accelerated
+//! layer transforms. Current state:
+//!
+//! - **API ready**: `blend()` accepts `Vec<(Frame, f32, BlendMode, [f32; 9])>`
+//! - **GPU shader ready**: `gpu_compositor.rs` has `u_top_transform` mat3 uniform
+//! - **Matrix builder ready**: `transform::build_inverse_matrix_3x3()`
+//! - **compose_internal ready**: passes inverse matrices from layer attrs
+//!
+//! **NOT YET WORKING:**
+//! - CPU compositor ignores transform matrix (applies CPU transform beforehand)
+//! - GPU compositor not used for compose (requires GL context, can't run in workers)
+//! - Switching GPU/CPU in prefs only affects Project.compositor, not compose_internal
+//!
+//! **To enable GPU compositing:**
+//! 1. compose_internal runs in main thread (has GL context)
+//! 2. Pass Project.compositor to compose_internal via ComputeContext
+//! 3. Remove CPU transform in compose_internal, let GPU handle it
+//!
+//! For now, CPU compositor + CPU transforms work fine. GPU is viewport-only.
 
 use crate::entities::frame::{Frame, FrameStatus, PixelBuffer};
 
@@ -47,7 +69,11 @@ impl Clone for CompositorType {
     }
 }
 
-/// Identity transform matrix (no transformation)
+/// Identity transform matrix (no transformation).
+/// Column-major 3x3 for OpenGL: `[m00, m10, 0, m01, m11, 0, tx, ty, 1]`
+/// 
+/// Used when layer has no transform (position=0, rotation=0, scale=1).
+/// See `transform::build_inverse_matrix_3x3()` for non-identity transforms.
 pub const IDENTITY_TRANSFORM: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
 
 impl CompositorType {
@@ -221,7 +247,13 @@ impl CpuCompositor {
     }
 
     /// Blend frames bottom-to-top with opacity.
+    /// Blend frames using CPU.
+    /// 
     /// Each frame: (pixels, opacity, blend_mode, inverse_transform_matrix)
+    /// 
+    /// **Note:** Transform matrix is IGNORED by CPU compositor.
+    /// For CPU path, transforms are applied beforehand via `transform::transform_frame()`
+    /// in `compose_internal`. The matrix is passed for API compatibility with GPU compositor.
     pub(crate) fn blend(&self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
         // Default to using first frame size
         if let Some((first, _, _, _)) = frames.first() {
@@ -232,7 +264,14 @@ impl CpuCompositor {
     }
 
     /// Blend frames onto a fixed-size canvas (width, height).
-    /// Transform is applied via CPU transform_frame before blending.
+    /// 
+    /// **CPU path:** Transform matrix `[f32; 9]` is ignored here.
+    /// Transforms are pre-applied in `compose_internal` via `transform::transform_frame()`.
+    /// This is less efficient than GPU (transforms pixels twice) but works in worker threads.
+    /// 
+    /// **TODO for GPU compositing:**
+    /// When GPU compositor is used, transforms should NOT be pre-applied.
+    /// Instead, pass original frames + matrices, let GPU shader handle transforms.
     pub(crate) fn blend_with_dim(
         &self,
         frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
@@ -275,7 +314,9 @@ impl CpuCompositor {
         result.crop(width, height, crate::entities::frame::CropAlign::LeftTop);
 
         // Blend each subsequent layer on top
-        // Note: transform already applied to frames in compose_internal for CPU path
+        // Note: _transform is ignored - CPU path applies transform beforehand
+        // in compose_internal via transform::transform_frame()
+        // GPU path would use this matrix in shader instead
         for (layer_frame, opacity, mode, _transform) in iter {
             let result_buffer = result.buffer();
             let layer_buffer = layer_frame.buffer();
