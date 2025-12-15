@@ -114,6 +114,9 @@ impl Layer {
         attrs.set(A_SCALE, AttrValue::Vec3([1.0, 1.0, 1.0]));
         attrs.set(A_PIVOT, AttrValue::Vec3([0.0, 0.0, 0.0]));
         
+        // Clear dirty after construction - these are initial values, not changes
+        attrs.clear_dirty();
+        
         Self { attrs }
     }
     
@@ -232,6 +235,9 @@ impl CompNode {
         attrs.set(A_WIDTH, AttrValue::UInt(1920));
         attrs.set(A_HEIGHT, AttrValue::UInt(1080));
         
+        // Clear dirty after construction - these are initial values, not changes
+        attrs.clear_dirty();
+        
         Self {
             attrs,
             layers: Vec::new(),
@@ -338,18 +344,25 @@ impl CompNode {
     ///
     /// - `use_trim=true`: uses layer.work_area() (visible/trimmed range)
     /// - `use_trim=false`: uses layer.start()/end() (full bar range)
+    /// - `selection_only=true`: only selected layers (falls back to all if none selected)
     ///
     /// Returns (min_frame, max_frame) or (0, 100) if no visible layers.
-    pub fn bounds(&self, use_trim: bool) -> (i32, i32) {
+    pub fn bounds(&self, use_trim: bool, selection_only: bool) -> (i32, i32) {
         if self.layers.is_empty() {
             return (0, 100);
         }
+        
+        let use_selection = selection_only && !self.layer_selection.is_empty();
         
         let mut min_start = i32::MAX;
         let mut max_end = i32::MIN;
         
         for layer in &self.layers {
             if !layer.is_visible() {
+                continue;
+            }
+            // Skip non-selected if selection_only mode
+            if use_selection && !self.layer_selection.contains(&layer.uuid()) {
                 continue;
             }
             let (start, end) = if use_trim {
@@ -397,7 +410,7 @@ impl CompNode {
         let old_bounds = (self._in(), self._out());
         let old_work = self.work_area();
         
-        let (new_start, new_end) = self.bounds(true);
+        let (new_start, new_end) = self.bounds(true, false);
         
         self.attrs.set(A_IN, AttrValue::Int(new_start));
         self.attrs.set(A_OUT, AttrValue::Int(new_end));

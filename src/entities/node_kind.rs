@@ -40,10 +40,11 @@ impl NodeKind {
     }
     
     /// Actual content bounds (for zoom-to-fit)
-    pub fn bounds(&self, use_trim: bool) -> (i32, i32) {
+    /// If selection_only=true and comp has selection, only selected layers are considered
+    pub fn bounds(&self, use_trim: bool, selection_only: bool) -> (i32, i32) {
         match self {
             NodeKind::File(n) => n.work_area_abs(),
-            NodeKind::Comp(n) => n.bounds(use_trim),
+            NodeKind::Comp(n) => n.bounds(use_trim, selection_only),
         }
     }
     

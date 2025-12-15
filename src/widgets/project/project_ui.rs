@@ -273,7 +273,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     }));
                     actions
                         .events
-                        .push(Box::new(ProjectActiveChangedEvent(*comp_uuid)));
+                        .push(Box::new(ProjectActiveChangedEvent::new(*comp_uuid)));
                 }
 
                 // Drag handling

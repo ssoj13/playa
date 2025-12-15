@@ -423,8 +423,12 @@ impl Project {
                 let dirty = comp.is_dirty();
                 if dirty && let Some(ref emitter) = self.event_emitter {
                     emitter.emit(AttrsChangedEvent(uuid));
+                    // Clear dirty immediately after emit to prevent re-emit on next modify_comp.
+                    // Without this, rapid scrubbing would trigger multiple cache clears.
+                    comp.clear_dirty();
                 } else if dirty {
                     log::warn!("modify_comp: dirty but no emitter! uuid={}", uuid);
+                    comp.clear_dirty(); // Clear anyway to prevent stale dirty state
                 }
                 return true;
             }

@@ -432,9 +432,18 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(event) {
-        player.set_active_comp(Some(e.0), project); // also resets selection
-        project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
-        node_editor_state.set_comp(e.0);
+        player.set_active_comp(Some(e.uuid), project); // also resets selection
+        project.selection_anchor = project.comps_order().iter().position(|u| *u == e.uuid);
+        node_editor_state.set_comp(e.uuid);
+        
+        // If target_frame specified (dive-into-comp), set frame in new comp
+        if let Some(local_frame) = e.target_frame {
+            // Add child comp's "in" offset to get absolute frame
+            project.modify_comp(e.uuid, |comp| {
+                let comp_in = comp.attrs().get_i32("in").unwrap_or(0);
+                comp.set_frame(comp_in + local_frame);
+            });
+        }
         return Some(result);
     }
     if downcast_event::<ProjectPreviousCompEvent>(event).is_some() {
@@ -513,7 +522,7 @@ pub fn handle_app_event(
         if let Some(comp_uuid) = player.active_comp() {
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
-                let (min_frame, max_frame) = comp.bounds(true);
+                let (min_frame, max_frame) = comp.bounds(true, false);
                 let duration = (max_frame - min_frame + 1).max(1);
                 let pixels_per_frame = e.0 / duration as f32;
                 let default_ppf = 2.0;
@@ -524,13 +533,13 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
-    if downcast_event::<TimelineFitEvent>(event).is_some() {
+    if let Some(e) = downcast_event::<TimelineFitEvent>(event) {
         let canvas_width = timeline_state.last_canvas_width;
-        // Uses bounds() to calculate actual layer extents
         if let Some(comp_uuid) = player.active_comp() {
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
-                let (min_frame, max_frame) = comp.bounds(true);
+                // If selected_only, use selection bounds (falls back to all if none selected)
+                let (min_frame, max_frame) = comp.bounds(true, e.selected_only);
                 let duration = (max_frame - min_frame + 1).max(1);
                 let pixels_per_frame = canvas_width / duration as f32;
                 let default_ppf = 2.0;
@@ -539,10 +548,6 @@ pub fn handle_app_event(
                 timeline_state.pan_offset = min_frame as f32;
             }
         }
-        return Some(result);
-    }
-    if downcast_event::<TimelineResetZoomEvent>(event).is_some() {
-        timeline_state.zoom = 1.0;
         return Some(result);
     }
 

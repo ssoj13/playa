@@ -55,9 +55,31 @@ pub struct ProjectSelectionChangedEvent {
     pub anchor: Option<usize>,
 }
 
+/// Event to switch active comp (e.g., double-click on layer to dive into nested comp)
 #[derive(Clone, Debug)]
-pub struct ProjectActiveChangedEvent(pub Uuid);
+pub struct ProjectActiveChangedEvent {
+    pub uuid: Uuid,
+    /// If Some, set this frame after switching comp.
+    /// Used for dive-into-comp to preserve playhead position.
+    pub target_frame: Option<i32>,
+}
+
+impl ProjectActiveChangedEvent {
+    /// Create event to switch comp without changing frame
+    pub fn new(uuid: Uuid) -> Self {
+        Self { uuid, target_frame: None }
+    }
+    
+    /// Create event to switch comp and set specific frame
+    pub fn with_frame(uuid: Uuid, frame: i32) -> Self {
+        Self { uuid, target_frame: Some(frame) }
+    }
+}
 
 /// Navigate back to previous comp (U key)
 #[derive(Clone, Debug)]
 pub struct ProjectPreviousCompEvent;
+
+/// Clear all cached frames (Ctrl+Alt+NumpadSlash)
+#[derive(Clone, Debug)]
+pub struct ClearCacheEvent;

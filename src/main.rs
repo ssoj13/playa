@@ -37,6 +37,7 @@ use playa::widgets::ae::AttributesState;
 use playa::widgets::node_editor::{NodeEditorState, render_node_editor};
 use playa::widgets::status::StatusBar;
 use playa::widgets::viewport::{Shaders, ViewportRefreshEvent, ViewportRenderer, ViewportState};
+use playa::widgets::project::project_events::ClearCacheEvent;
 use playa::core::workers::Workers;
 
 use clap::Parser;
@@ -379,6 +380,18 @@ impl PlayaApp {
             if downcast_event::<ViewportRefreshEvent>(&event).is_some() {
                 trace!("ViewportRefreshEvent - forcing frame refresh");
                 self.viewport_state.request_refresh();
+                continue;
+            }
+            // ClearCacheEvent - clear all cached frames (Ctrl+Alt+Slash)
+            if downcast_event::<ClearCacheEvent>(&event).is_some() {
+                info!("ClearCacheEvent - clearing all cached frames");
+                if let Some(manager) = self.project.cache_manager() {
+                    manager.increment_epoch();
+                }
+                if let Some(ref cache) = self.project.global_cache {
+                    cache.clear_all();
+                }
+                self.event_bus.emit(ViewportRefreshEvent);
                 continue;
             }
 

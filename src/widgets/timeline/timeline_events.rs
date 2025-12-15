@@ -15,8 +15,15 @@ pub struct TimelineLockWorkAreaChangedEvent(pub bool);
 #[derive(Clone, Debug)]
 pub struct TimelineFitAllEvent(pub f32);
 
+/// Fit timeline view to layers.
+/// If `selected_only` is true and layers are selected, fit to selection.
+/// Otherwise fit to all layers.
 #[derive(Clone, Debug)]
-pub struct TimelineFitEvent;
+pub struct TimelineFitEvent {
+    pub selected_only: bool,
+}
 
-#[derive(Clone, Debug)]
-pub struct TimelineResetZoomEvent;
+impl TimelineFitEvent {
+    pub fn all() -> Self { Self { selected_only: false } }
+    pub fn selected() -> Self { Self { selected_only: true } }
+}

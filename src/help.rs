@@ -39,6 +39,7 @@ pub const GLOBAL_HELP: &[HelpEntry] = &[
     HelpEntry::new("Ctrl+O", "Open Project"),
     HelpEntry::new("Z", "Toggle Fullscreen"),
     HelpEntry::new("Ctrl+R", "Reset Settings"),
+    HelpEntry::new("Ctrl+Alt+/", "Clear Frame Cache"),
 ];
 
 /// Viewport-specific help

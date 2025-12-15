@@ -134,14 +134,15 @@ impl HotkeyHandler {
         self.bind(Global, "Ctrl+O", OpenProjectDialogEvent);
         self.bind(Global, "Z", ToggleFullscreenEvent);
         self.bind(Global, "U", ProjectPreviousCompEvent);
+        self.bind(Global, "Ctrl+Alt+Slash", ClearCacheEvent);  // Clear all cached frames
         self.bind(Global, "F", FitViewportEvent);
         self.bind(Global, "A", Viewport100Event);
         self.bind(Global, "H", Viewport100Event);
 
         // Timeline-specific
         self.bind(Timeline, "Delete", RemoveSelectedLayerEvent);
-        self.bind(Timeline, "F", TimelineFitEvent);
-        self.bind(Timeline, "A", TimelineResetZoomEvent);
+        self.bind(Timeline, "F", TimelineFitEvent::selected());  // Fit to selected (or all if none)
+        self.bind(Timeline, "A", TimelineFitEvent::all());         // Fit to all layers
         self.bind(Timeline, "OpenBracket", AlignLayersStartEvent(Uuid::nil()));
         self.bind(Timeline, "CloseBracket", AlignLayersEndEvent(Uuid::nil()));
         self.bind(Timeline, "Alt+OpenBracket", TrimLayersStartEvent(Uuid::nil()));

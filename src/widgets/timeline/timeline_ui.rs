@@ -375,8 +375,14 @@ pub fn render_outline(
 
                         // Double-click: dive into source comp
                         if response.double_clicked() {
-                            // source_uuid is a field on Layer, not in attrs
-                            dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid())));
+                            // Convert parent frame to child comp frame
+                            let parent_frame = comp.frame();
+                            let local_frame = layer.parent_to_local(parent_frame);
+                            // Child comp's "in" will be added in the handler
+                            dispatch(Box::new(ProjectActiveChangedEvent::with_frame(
+                                layer.source_uuid(),
+                                local_frame,
+                            )));
                         }
                     },
                 )
@@ -733,8 +739,13 @@ pub fn render_canvas(
                                 // Double-click: dive into source comp (check on full bar)
                                 if geom.full_bar_rect.contains(local_pos)
                                     && ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
-                                        // source_uuid is a field on Layer, not in attrs
-                                        dispatch(Box::new(ProjectActiveChangedEvent(layer.source_uuid())));
+                                        // Convert parent frame to child comp frame
+                                        let parent_frame = comp.frame();
+                                        let local_frame = layer.parent_to_local(parent_frame);
+                                        dispatch(Box::new(ProjectActiveChangedEvent::with_frame(
+                                            layer.source_uuid(),
+                                            local_frame,
+                                        )));
                                     }
 
                                 // Tool detection with geometry-aware function (supports Slide in trim zones)
