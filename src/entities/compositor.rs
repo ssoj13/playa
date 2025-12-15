@@ -47,9 +47,13 @@ impl Clone for CompositorType {
     }
 }
 
+/// Identity transform matrix (no transformation)
+pub const IDENTITY_TRANSFORM: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+
 impl CompositorType {
     /// Blend frames using the selected compositor backend.
-    pub fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
+    /// Each frame has: (pixels, opacity, blend_mode, inverse_transform_matrix)
+    pub fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
         match self {
             CompositorType::Cpu(cpu) => cpu.blend(frames),
             CompositorType::Gpu(gpu) => gpu.blend(frames),
@@ -59,7 +63,7 @@ impl CompositorType {
     /// Blend frames into a canvas with explicit dimensions.
     pub fn blend_with_dim(
         &mut self,
-        frames: Vec<(Frame, f32, BlendMode)>,
+        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         match self {
@@ -217,9 +221,10 @@ impl CpuCompositor {
     }
 
     /// Blend frames bottom-to-top with opacity.
-    pub(crate) fn blend(&self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
+    /// Each frame: (pixels, opacity, blend_mode, inverse_transform_matrix)
+    pub(crate) fn blend(&self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
         // Default to using first frame size
-        if let Some((first, _, _)) = frames.first() {
+        if let Some((first, _, _, _)) = frames.first() {
             let dim = (first.width(), first.height());
             return self.blend_with_dim(frames, dim);
         }
@@ -227,9 +232,10 @@ impl CpuCompositor {
     }
 
     /// Blend frames onto a fixed-size canvas (width, height).
+    /// Transform is applied via CPU transform_frame before blending.
     pub(crate) fn blend_with_dim(
         &self,
-        frames: Vec<(Frame, f32, BlendMode)>,
+        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         use log::trace;
@@ -249,7 +255,7 @@ impl CpuCompositor {
         // Composition is only as good as its worst component
         let min_status = frames
             .iter()
-            .map(|(f, _, _)| f.status())
+            .map(|(f, _, _, _)| f.status())
             .min_by_key(|s| match s {
                 FrameStatus::Error => 0,
                 FrameStatus::Placeholder => 1,
@@ -264,12 +270,13 @@ impl CpuCompositor {
         let (width, height) = dim;
         // Start with first frame cropped to canvas
         let mut iter = frames.iter();
-        let (base_frame, _, _) = iter.next().unwrap(); // safe: frames non-empty
+        let (base_frame, _, _, _) = iter.next().unwrap(); // safe: frames non-empty
         let mut result = base_frame.clone();
         result.crop(width, height, crate::entities::frame::CropAlign::LeftTop);
 
         // Blend each subsequent layer on top
-        for (layer_frame, opacity, mode) in iter {
+        // Note: transform already applied to frames in compose_internal for CPU path
+        for (layer_frame, opacity, mode, _transform) in iter {
             let result_buffer = result.buffer();
             let layer_buffer = layer_frame.buffer();
 

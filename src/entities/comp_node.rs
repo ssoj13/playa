@@ -852,7 +852,9 @@ impl CompNode {
             return Some(self.placeholder_frame());
         }
         
-        let mut source_frames: Vec<(Frame, f32, BlendMode)> = Vec::new();
+        // New API: (frame, opacity, blend_mode, inverse_transform_matrix)
+        let mut source_frames: Vec<(Frame, f32, BlendMode, [f32; 9])> = Vec::new();
+        let identity_matrix = super::compositor::IDENTITY_TRANSFORM;
         let mut target_format = PixelFormat::Rgba8;
         let mut all_loaded = true;
         
@@ -890,27 +892,29 @@ impl CompNode {
             let source_frame = source_in + local_frame;
             
             // Recursively compute source frame
-            if let Some(mut frame) = source_node.compute(source_frame, ctx) {
+            if let Some(frame) = source_node.compute(source_frame, ctx) {
                 if frame.status() != FrameStatus::Loaded {
                     all_loaded = false;
                 }
                 
-                // Apply layer transform if non-identity
+                // Build inverse transform matrix for GPU compositor
                 let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
                 let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
                 let scl = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
                 let pvt = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
                 
                 let rot_rad = rot[2].to_radians();
-                if !transform::is_identity(pos, rot_rad, scl) {
-                    let canvas = self.dim();
-                    frame = transform::transform_frame(&frame, canvas, pos, rot_rad, scl, pvt);
-                }
+                let inv_matrix = if transform::is_identity(pos, rot_rad, scl) {
+                    identity_matrix
+                } else {
+                    let src_center = (frame.width() as f32 / 2.0, frame.height() as f32 / 2.0);
+                    transform::build_inverse_matrix_3x3(pos, rot_rad, scl, pvt, src_center)
+                };
                 
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
                 
-                source_frames.push((frame, opacity, blend));
+                source_frames.push((frame, opacity, blend, inv_matrix));
                 
                 // Track highest precision
                 target_format = match (target_format, source_frames.last().unwrap().0.pixel_format()) {
@@ -925,13 +929,13 @@ impl CompNode {
         let dim = self.get_first_size().unwrap_or_else(|| self.dim());
         
         // Promote frames to target format
-        for (frame, _, _) in source_frames.iter_mut() {
+        for (frame, _, _, _) in source_frames.iter_mut() {
             *frame = promote_frame(frame, target_format);
         }
         
-        // Add black base
+        // Add black base with identity transform
         let base = create_base_frame(dim, target_format);
-        source_frames.insert(0, (base, 1.0, BlendMode::Normal));
+        source_frames.insert(0, (base, 1.0, BlendMode::Normal, identity_matrix));
         
         trace!(
             "CompNode::compose {} frames, dim={}x{}, all_loaded={}",

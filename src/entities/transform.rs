@@ -27,7 +27,7 @@ pub fn is_identity(position: [f32; 3], rotation_z: f32, scale: [f32; 3]) -> bool
 /// ```
 /// 
 /// Returns inverse matrix for reverse-mapping: dst pixel → src coord.
-fn build_inverse_transform(
+pub fn build_inverse_transform(
     position: [f32; 3],
     rotation_z: f32,
     scale: [f32; 3],
@@ -45,6 +45,48 @@ fn build_inverse_transform(
         * Affine2::from_translation(-pivot_pt);
     
     transform.inverse()
+}
+
+/// Build inverse transform as column-major 3x3 matrix for OpenGL/GPU.
+/// 
+/// Same as `build_inverse_transform` but returns `[f32; 9]` in column-major
+/// order suitable for `glUniformMatrix3fv`.
+/// 
+/// Matrix layout (column-major):
+/// ```text
+/// [m00, m10, 0,  m01, m11, 0,  tx, ty, 1]
+///   col0        col1        col2
+/// ```
+/// 
+/// For identity transform, returns `[1,0,0, 0,1,0, 0,0,1]`.
+pub fn build_inverse_matrix_3x3(
+    position: [f32; 3],
+    rotation_z: f32,
+    scale: [f32; 3],
+    pivot: [f32; 3],
+    src_center: (f32, f32),
+) -> [f32; 9] {
+    let inv = build_inverse_transform(
+        position,
+        rotation_z,
+        scale,
+        pivot,
+        Vec2::new(src_center.0, src_center.1),
+    );
+    
+    // Affine2 stores: matrix2 (2x2 rotation/scale), translation (2D offset)
+    // Convert to 3x3 column-major:
+    // Col 0: [m00, m10, 0]
+    // Col 1: [m01, m11, 0]
+    // Col 2: [tx, ty, 1]
+    let m = inv.matrix2;
+    let t = inv.translation;
+    
+    [
+        m.x_axis.x, m.x_axis.y, 0.0,  // column 0
+        m.y_axis.x, m.y_axis.y, 0.0,  // column 1
+        t.x,        t.y,        1.0,  // column 2
+    ]
 }
 
 /// Sample F32 buffer with bilinear interpolation.

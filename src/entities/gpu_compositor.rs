@@ -346,6 +346,8 @@ uniform sampler2D u_top;
 uniform float u_opacity;
 uniform int u_blend_mode;
 uniform mat3 u_top_transform;  // Inverse transform for sampling top layer
+uniform vec2 u_canvas_size;    // Output canvas size in pixels
+uniform vec2 u_top_size;       // Top layer size in pixels
 
 in vec2 v_texcoord;
 out vec4 frag_color;
@@ -373,9 +375,14 @@ vec3 blend(vec3 bottom, vec3 top, int mode) {
 void main() {
     vec4 bottom_color = texture(u_bottom, v_texcoord);
     
-    // Apply inverse transform to get source texcoord for top layer
-    vec3 tc = u_top_transform * vec3(v_texcoord, 1.0);
-    vec2 top_texcoord = tc.xy;
+    // Convert UV (0-1) to pixel coordinates on canvas
+    vec2 canvas_pixel = v_texcoord * u_canvas_size;
+    
+    // Apply inverse transform (in pixel space)
+    vec3 transformed = u_top_transform * vec3(canvas_pixel, 1.0);
+    
+    // Convert back to UV coordinates for top layer
+    vec2 top_texcoord = transformed.xy / u_top_size;
     
     // Sample top with bounds check (transparent outside 0-1 range)
     vec4 top_color;
@@ -573,6 +580,7 @@ void main() {
 
     /// Blend two textures using shader
     /// transform: inverse 3x3 matrix for top layer (column-major)
+    /// top_size: dimensions of top layer texture (for UV conversion)
     fn blend_textures(
         &mut self,
         bottom: glow::Texture,
@@ -580,6 +588,7 @@ void main() {
         opacity: f32,
         mode: &BlendMode,
         transform: &[f32; 9],
+        top_size: (usize, usize),
         width: usize,
         height: usize,
         format: PixelFormat,
@@ -644,6 +653,12 @@ void main() {
             }
             if let Some(loc) = gl.get_uniform_location(program, "u_top_transform") {
                 gl.uniform_matrix_3_f32_slice(Some(&loc), false, transform);
+            }
+            if let Some(loc) = gl.get_uniform_location(program, "u_canvas_size") {
+                gl.uniform_2_f32(Some(&loc), width as f32, height as f32);
+            }
+            if let Some(loc) = gl.get_uniform_location(program, "u_top_size") {
+                gl.uniform_2_f32(Some(&loc), top_size.0 as f32, top_size.1 as f32);
             }
 
             // Draw fullscreen quad
@@ -725,7 +740,7 @@ void main() {
     }
 
     /// Blend frames using GPU with fallback to CPU on error
-    pub(crate) fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
+    pub(crate) fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
         // Try GPU blend first
         match self.blend_impl(frames.clone()) {
             Ok(result) => Some(result),
@@ -739,7 +754,7 @@ void main() {
     }
 
     /// Internal GPU blend implementation (can fail)
-    fn blend_impl(&mut self, frames: Vec<(Frame, f32, BlendMode)>) -> Result<Frame, String> {
+    fn blend_impl(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Result<Frame, String> {
         use crate::entities::frame::FrameStatus;
 
         if frames.is_empty() {
@@ -750,7 +765,7 @@ void main() {
         // Composition is only as good as its worst component
         let min_status = frames
             .iter()
-            .map(|(f, _, _)| f.status())
+            .map(|(f, _, _, _)| f.status())
             .min_by_key(|s| match s {
                 FrameStatus::Error => 0,
                 FrameStatus::Placeholder => 1,
@@ -764,7 +779,7 @@ void main() {
         self.ensure_initialized()?;
 
         // Use first frame as dimension reference
-        let (first_frame, _, _) = &frames[0];
+        let (first_frame, _, _, _) = &frames[0];
         let width = first_frame.width();
         let height = first_frame.height();
         let format = first_frame.pixel_format();
@@ -780,7 +795,7 @@ void main() {
 
         // Upload all frames to textures with RAII guard for cleanup on error
         let mut guard = TextureGuard::new(Arc::clone(&self.gl));
-        for (frame, _, _) in &frames {
+        for (frame, _, _, _) in &frames {
             let texture = self.upload_frame_to_texture(frame)?;
             guard.push(texture);
         }
@@ -789,11 +804,8 @@ void main() {
         let mut result_texture = guard.textures[0];
         for i in 1..guard.textures.len() {
             let top_texture = guard.textures[i];
-            let (_, opacity, mode) = &frames[i];
-
-            // Identity transform (no transformation)
-            // Column-major: [m00, m10, m20, m01, m11, m21, m02, m12, m22]
-            let identity: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+            let (top_frame, opacity, mode, transform) = &frames[i];
+            let top_size = (top_frame.width(), top_frame.height());
             
             // blend_textures creates new texture, add to guard
             let new_result = self.blend_textures(
@@ -801,7 +813,8 @@ void main() {
                 top_texture,
                 *opacity,
                 mode,
-                &identity,
+                transform,
+                top_size,
                 width,
                 height,
                 format,
@@ -829,7 +842,7 @@ void main() {
     /// Blend frames with explicit canvas dimensions
     pub(crate) fn blend_with_dim(
         &mut self,
-        frames: Vec<(Frame, f32, BlendMode)>,
+        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         // For now, just use regular blend and crop result
