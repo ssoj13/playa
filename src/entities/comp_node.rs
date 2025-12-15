@@ -901,9 +901,10 @@ impl CompNode {
                 let scl = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
                 let pvt = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
                 
-                if !transform::is_identity(pos, rot[2], scl) {
+                let rot_rad = rot[2].to_radians();
+                if !transform::is_identity(pos, rot_rad, scl) {
                     let canvas = self.dim();
-                    frame = transform::transform_frame(&frame, canvas, pos, rot[2], scl, pvt);
+                    frame = transform::transform_frame(&frame, canvas, pos, rot_rad, scl, pvt);
                 }
                 
                 let opacity = layer.opacity();
