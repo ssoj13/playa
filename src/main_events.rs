@@ -603,9 +603,12 @@ pub fn handle_app_event(
     // === Layer Operations ===
     if let Some(e) = downcast_event::<AddLayerEvent>(event) {
         // Get source info and generate name BEFORE write lock
+        // Use play_range() to get trimmed duration (respects B/N trim points)
         let source_info = project.with_node(e.source_uuid, |s| {
             let name = project.gen_name(s.name());
-            (s.frame_count(), s.dim(), name)
+            let (start, end) = s.play_range(true);
+            let trimmed_duration = (end - start + 1).max(1);
+            (trimmed_duration, s.dim(), name)
         });
 
         let add_result = {

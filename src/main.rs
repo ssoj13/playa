@@ -141,6 +141,9 @@ struct PlayaApp {
     /// True when NodeEditor tab is the active/visible tab (for hotkey routing)
     #[serde(skip)]
     node_editor_tab_active: bool,
+    /// Current selection focus for AE panel - last clicked entities
+    #[serde(skip)]
+    ae_focus: Vec<Uuid>,
     attributes_state: AttributesState,
     /// Node editor state (snarl graph for composition visualization)
     node_editor_state: NodeEditorState,
@@ -211,6 +214,7 @@ impl Default for PlayaApp {
             project_hovered: false,
             node_editor_hovered: false,
             node_editor_tab_active: false,
+            ae_focus: Vec::new(),
             attributes_state: AttributesState::default(),
             node_editor_state: NodeEditorState::new(),
         }
@@ -394,6 +398,12 @@ impl PlayaApp {
                     cache.clear_all();
                 }
                 self.event_bus.emit(ViewportRefreshEvent);
+                continue;
+            }
+            // SelectionFocusEvent - update AE focus (last clicked selection)
+            if let Some(e) = downcast_event::<playa::widgets::project::project_events::SelectionFocusEvent>(&event) {
+                trace!("SelectionFocusEvent - ae_focus = {:?}", e.0);
+                self.ae_focus = e.0.clone();
                 continue;
             }
 
@@ -1066,20 +1076,146 @@ impl PlayaApp {
 
     fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
         use playa::entities::comp_events::SetLayerAttrsEvent;
+        use playa::entities::node::Node;
 
-        let Some(active) = self.player.active_comp() else { return };
+        let ae_focus = self.ae_focus.clone();
+        let active = self.player.active_comp();
 
-        // Gather data from comp (read-only)
-        let render_data = self.project.with_comp(active, |comp| {
-            let selection: Vec<Uuid> = comp.layer_selection.clone();
+        // If ae_focus is empty, fallback to active comp attrs
+        if ae_focus.is_empty() {
+            if let Some(comp_uuid) = active {
+                self.project.modify_comp(comp_uuid, |comp| {
+                    let comp_name = comp.name().to_string();
+                    if playa::widgets::ae::render(
+                        ui,
+                        &mut comp.attrs,
+                        &mut self.attributes_state,
+                        &comp_name,
+                    ) {
+                        comp.emit_attrs_changed();
+                    }
+                });
+            }
+            return;
+        }
 
-            if selection.len() > 1 {
-                // Multi-select: compute intersection of keys and build merged attrs
+        // Check if ae_focus contains layers in active comp
+        let is_layer_focus = active.map(|comp_uuid| {
+            self.project.with_comp(comp_uuid, |comp| {
+                ae_focus.iter().any(|uuid| comp.layers.iter().any(|l| l.uuid() == *uuid))
+            }).unwrap_or(false)
+        }).unwrap_or(false);
+
+        if is_layer_focus {
+            // === Layer attributes (existing logic) ===
+            let Some(comp_uuid) = active else { return };
+            
+            let render_data = self.project.with_comp(comp_uuid, |comp| {
+                if ae_focus.len() > 1 {
+                    // Multi-select: compute intersection of keys
+                    use std::collections::{BTreeSet, HashSet};
+                    let mut common_keys: BTreeSet<String> = BTreeSet::new();
+                    let mut first = true;
+                    for uuid in &ae_focus {
+                        if let Some(attrs) = comp.layers_attrs_get(uuid) {
+                            let keys: BTreeSet<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
+                            if first {
+                                common_keys = keys;
+                                first = false;
+                            } else {
+                                common_keys = common_keys.intersection(&keys).cloned().collect();
+                            }
+                        }
+                    }
+                    if common_keys.is_empty() { return None; }
+
+                    let mut merged = playa::entities::Attrs::new();
+                    let mut mixed_keys: HashSet<String> = HashSet::new();
+
+                    if let Some(first_uuid) = ae_focus.first() {
+                        if let Some(attrs) = comp.layers_attrs_get(first_uuid) {
+                            for key in &common_keys {
+                                if let Some(v) = attrs.get(key) {
+                                    merged.set(key.clone(), v.clone());
+                                }
+                            }
+                        }
+                    }
+                    for key in &common_keys {
+                        if let Some(base) = merged.get(key) {
+                            for uuid in &ae_focus {
+                                if let Some(attrs) = comp.layers_attrs_get(uuid) {
+                                    if let Some(other) = attrs.get(key) {
+                                        if other != base {
+                                            mixed_keys.insert(key.clone());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Some((merged, mixed_keys, "Multiple layers".to_string()))
+                } else if let Some(layer_uuid) = ae_focus.first() {
+                    let layer_idx = comp.uuid_to_idx(*layer_uuid).unwrap_or(0);
+                    if let Some(attrs) = comp.layers_attrs_get(layer_uuid) {
+                        let name = attrs.get_str("name")
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| format!("Layer {}", layer_idx));
+                        Some((attrs.clone(), std::collections::HashSet::new(), name))
+                    } else { None }
+                } else { None }
+            }).flatten();
+
+            if let Some((mut attrs, mixed_keys, display_name)) = render_data {
+                let mut changed: Vec<(String, playa::entities::AttrValue)> = Vec::new();
+                playa::widgets::ae::render_with_mixed(
+                    ui, &mut attrs, &mut self.attributes_state, &display_name, &mixed_keys, &mut changed,
+                );
+                if !changed.is_empty() {
+                    self.event_bus.emit_boxed(Box::new(SetLayerAttrsEvent {
+                        comp_uuid,
+                        layer_uuids: ae_focus,
+                        attrs: changed,
+                    }));
+                }
+            }
+        } else {
+            // === Node attributes (File, Comp, Camera, Text) ===
+            if ae_focus.len() == 1 {
+                // Single node - edit directly
+                let node_uuid = ae_focus[0];
+                let mut node_changed = false;
+                self.project.modify_node(node_uuid, |node| {
+                    let name = node.name().to_string();
+                    if playa::widgets::ae::render(
+                        ui,
+                        node.attrs_mut(),
+                        &mut self.attributes_state,
+                        &name,
+                    ) {
+                        node_changed = true;
+                    }
+                });
+                // Trigger cache invalidation if node attrs changed
+                if node_changed {
+                    if let Some(manager) = self.project.cache_manager() {
+                        manager.increment_epoch();
+                    }
+                    if let Some(ref cache) = self.project.global_cache {
+                        cache.clear_all();
+                    }
+                    self.event_bus.emit(ViewportRefreshEvent);
+                }
+            } else {
+                // Multi-select nodes: compute intersection of attrs
                 use std::collections::{BTreeSet, HashSet};
                 let mut common_keys: BTreeSet<String> = BTreeSet::new();
                 let mut first = true;
-                for uuid in &selection {
-                    if let Some(attrs) = comp.layers_attrs_get(uuid) {
+                let mut all_attrs: Vec<playa::entities::Attrs> = Vec::new();
+
+                for uuid in &ae_focus {
+                    if let Some(attrs) = self.project.with_node(*uuid, |n| n.attrs().clone()) {
                         let keys: BTreeSet<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
                         if first {
                             common_keys = keys;
@@ -1087,91 +1223,62 @@ impl PlayaApp {
                         } else {
                             common_keys = common_keys.intersection(&keys).cloned().collect();
                         }
+                        all_attrs.push(attrs);
                     }
                 }
 
-                if common_keys.is_empty() {
-                    return None;
+                if common_keys.is_empty() || all_attrs.is_empty() {
+                    ui.label("No common attributes");
+                    return;
                 }
 
                 let mut merged = playa::entities::Attrs::new();
                 let mut mixed_keys: HashSet<String> = HashSet::new();
 
-                if let Some(first_uuid) = selection.first() {
-                    if let Some(attrs) = comp.layers_attrs_get(first_uuid) {
-                        for key in &common_keys {
-                            if let Some(v) = attrs.get(key) {
-                                merged.set(key.clone(), v.clone());
-                            }
-                        }
+                // Copy first node's attrs for common keys
+                for key in &common_keys {
+                    if let Some(v) = all_attrs[0].get(key) {
+                        merged.set(key.clone(), v.clone());
                     }
                 }
-
+                // Find mixed values
                 for key in &common_keys {
                     if let Some(base) = merged.get(key) {
-                        for uuid in &selection {
-                            if let Some(attrs) = comp.layers_attrs_get(uuid) {
-                                if let Some(other) = attrs.get(key) {
-                                    if other != base {
-                                        mixed_keys.insert(key.clone());
-                                        break;
-                                    }
+                        for attrs in &all_attrs[1..] {
+                            if let Some(other) = attrs.get(key) {
+                                if other != base {
+                                    mixed_keys.insert(key.clone());
+                                    break;
                                 }
                             }
                         }
                     }
                 }
 
-                Some((selection, merged, mixed_keys, "Multiple layers".to_string()))
-            } else if let Some(layer_uuid) = selection.first() {
-                // Single layer
-                let layer_idx = comp.uuid_to_idx(*layer_uuid).unwrap_or(0);
-                if let Some(attrs) = comp.layers_attrs_get(layer_uuid) {
-                    let name = attrs.get_str("name")
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| format!("Layer {}", layer_idx));
-                    Some((vec![*layer_uuid], attrs.clone(), std::collections::HashSet::new(), name))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        }).flatten();
+                let mut changed: Vec<(String, playa::entities::AttrValue)> = Vec::new();
+                playa::widgets::ae::render_with_mixed(
+                    ui, &mut merged, &mut self.attributes_state, "Multiple nodes", &mixed_keys, &mut changed,
+                );
 
-        // Render UI and dispatch event if changed
-        if let Some((selection, mut attrs, mixed_keys, display_name)) = render_data {
-            let mut changed: Vec<(String, playa::entities::AttrValue)> = Vec::new();
-            playa::widgets::ae::render_with_mixed(
-                ui,
-                &mut attrs,
-                &mut self.attributes_state,
-                &display_name,
-                &mixed_keys,
-                &mut changed,
-            );
-
-            if !changed.is_empty() {
-                log::trace!("[AE] Emitting SetLayerAttrsEvent: layers={:?}, attrs={:?}", selection, changed);
-                self.event_bus.emit_boxed(Box::new(SetLayerAttrsEvent {
-                    comp_uuid: active,
-                    layer_uuids: selection,
-                    attrs: changed,
-                }));
-            }
-        } else {
-            // No layers selected - show comp attributes
-            self.project.modify_comp(active, |comp| {
-                let comp_name = comp.name().to_string();
-                if playa::widgets::ae::render(
-                    ui,
-                    &mut comp.attrs,
-                    &mut self.attributes_state,
-                    &comp_name,
-                ) {
-                    comp.emit_attrs_changed();
+                // Apply changed attrs to all selected nodes
+                if !changed.is_empty() {
+                    for uuid in &ae_focus {
+                        self.project.modify_node(*uuid, |node| {
+                            for (key, value) in &changed {
+                                node.attrs_mut().set(key.clone(), value.clone());
+                            }
+                        });
+                    }
+                    // Invalidate cache
+                    if let Some(manager) = self.project.cache_manager() {
+                        manager.increment_epoch();
+                    }
+                    if let Some(ref cache) = self.project.global_cache {
+                        cache.clear_all();
+                    }
+                    self.event_bus.emit(ViewportRefreshEvent);
                 }
-            });
+            }
         }
     }
 }

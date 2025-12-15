@@ -264,20 +264,29 @@ impl Attrs {
     }
 
     /// Set attribute value.
-    /// If schema exists: marks dirty only for DAG attributes.
+    /// If schema exists: marks dirty only for DAG attributes AND only if value changed.
     /// If no schema: always marks dirty (legacy behavior).
     pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
         let key = key.into();
-        self.map.insert(key.clone(), value);
         
-        // Check if this attr affects DAG
-        let is_dag = match &self.schema {
-            Some(schema) => schema.is_dag(&key),
-            None => true, // No schema = legacy, always dirty
+        // Check if value actually changed
+        let changed = match self.map.get(&key) {
+            Some(existing) => existing != &value,
+            None => true, // New key = changed
         };
         
-        if is_dag {
-            self.dirty.store(true, Ordering::Relaxed);
+        self.map.insert(key.clone(), value);
+        
+        // Only mark dirty if value changed AND attr is DAG
+        if changed {
+            let is_dag = match &self.schema {
+                Some(schema) => schema.is_dag(&key),
+                None => true, // No schema = legacy, always dirty
+            };
+            
+            if is_dag {
+                self.dirty.store(true, Ordering::Relaxed);
+            }
         }
     }
 

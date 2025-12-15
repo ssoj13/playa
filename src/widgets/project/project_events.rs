@@ -94,3 +94,8 @@ pub struct ProjectPreviousCompEvent;
 /// Clear all cached frames (Ctrl+Alt+NumpadSlash)
 #[derive(Clone, Debug)]
 pub struct ClearCacheEvent;
+
+/// Selection focus event - tells AE which entities to show attributes for.
+/// Emitted when user clicks in Project panel, Timeline, or NodeEditor.
+#[derive(Clone, Debug)]
+pub struct SelectionFocusEvent(pub Vec<Uuid>);

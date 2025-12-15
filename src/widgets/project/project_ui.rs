@@ -267,9 +267,10 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                         modifiers,
                     );
                     actions.events.push(Box::new(ProjectSelectionChangedEvent {
-                        selection: sel,
+                        selection: sel.clone(),
                         anchor,
                     }));
+                    actions.events.push(Box::new(SelectionFocusEvent(sel)));
                 }
                 if response.double_clicked() {
                     let (sel, anchor) = compute_selection(
@@ -280,9 +281,10 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                         modifiers,
                     );
                     actions.events.push(Box::new(ProjectSelectionChangedEvent {
-                        selection: sel,
+                        selection: sel.clone(),
                         anchor,
                     }));
+                    actions.events.push(Box::new(SelectionFocusEvent(sel)));
                     actions
                         .events
                         .push(Box::new(ProjectActiveChangedEvent::new(*comp_uuid)));

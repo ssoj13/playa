@@ -35,7 +35,7 @@ use crate::entities::{Comp, frame::FrameStatus};
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent, SetLoopEvent};
 use super::TimelineViewMode;
-use crate::widgets::project::project_events::ProjectActiveChangedEvent;
+use crate::widgets::project::project_events::{ProjectActiveChangedEvent, SelectionFocusEvent};
 use crate::entities::comp_events::{
     AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
     MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,
@@ -368,9 +368,10 @@ pub fn render_outline(
                             );
                             dispatch(Box::new(CompSelectionChangedEvent {
                                 comp_uuid: comp_id,
-                                selection,
+                                selection: selection.clone(),
                                 anchor,
                             }));
+                            dispatch(Box::new(SelectionFocusEvent(selection)));
                         }
 
                         // Double-click: dive into source comp
@@ -412,6 +413,7 @@ pub fn render_outline(
                 selection: vec![],
                 anchor: None,
             }));
+            dispatch(Box::new(SelectionFocusEvent(vec![])));
         }
         // Visual feedback: subtle highlight on hover
         if empty_response.hovered() {
@@ -774,6 +776,7 @@ pub fn render_canvas(
                                                         selection: vec![child_uuid],
                                                         anchor: Some(child_uuid),
                                                     }));
+                                                    dispatch(Box::new(SelectionFocusEvent(vec![child_uuid])));
                                                 }
                                             }
                                             {
@@ -1173,9 +1176,10 @@ pub fn render_canvas(
                                 );
                                 dispatch(Box::new(CompSelectionChangedEvent {
                                     comp_uuid: comp_id,
-                                    selection,
+                                    selection: selection.clone(),
                                     anchor,
                                 }));
+                                dispatch(Box::new(SelectionFocusEvent(selection)));
                             }
                         } else {
                             // Click on empty space
@@ -1199,6 +1203,7 @@ pub fn render_canvas(
                                     selection: vec![],
                                     anchor: None,
                                 }));
+                                dispatch(Box::new(SelectionFocusEvent(vec![])));
                             }
                         }
                     }
