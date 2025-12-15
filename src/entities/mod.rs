@@ -4,7 +4,6 @@
 
 pub mod attrs;
 pub mod attr_schemas;
-// pub mod comp;  // DEPRECATED: replaced by comp_node
 pub mod comp_events;  // Events for comp/layer manipulation
 pub mod comp_node;
 pub mod compositor;
@@ -17,6 +16,7 @@ pub mod loader_video;
 pub mod node;
 pub mod node_kind;
 pub mod project;
+pub mod transform;
 
 pub use attrs::{AttrValue, Attrs};
 // Type alias for backwards compatibility

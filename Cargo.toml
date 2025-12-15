@@ -36,6 +36,7 @@ egui-snarl = { version = "0.9", features = ["serde"] }
 egui_taffy = "0.10.0"
 egui_ltreeview = { version = "0.6.0", features = ["persistence"] }
 env_logger = "0.11"
+glam = "0.30"
 glob = "0.3"
 half = "1.8"
 image = { version = "0.25", features = ["exr", "png", "jpeg", "tiff", "tga", "hdr"] }

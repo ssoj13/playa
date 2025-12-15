@@ -61,6 +61,7 @@ use uuid::Uuid;
 use super::attr_schemas::{COMP_SCHEMA, LAYER_SCHEMA};
 use super::attrs::{AttrValue, Attrs};
 use super::compositor::{BlendMode, CpuCompositor};
+use super::transform;
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
 use super::keys::*;
 use super::node::{ComputeContext, Node};
@@ -889,9 +890,20 @@ impl CompNode {
             let source_frame = source_in + local_frame;
             
             // Recursively compute source frame
-            if let Some(frame) = source_node.compute(source_frame, ctx) {
+            if let Some(mut frame) = source_node.compute(source_frame, ctx) {
                 if frame.status() != FrameStatus::Loaded {
                     all_loaded = false;
+                }
+                
+                // Apply layer transform if non-identity
+                let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
+                let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
+                let scl = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
+                let pvt = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
+                
+                if !transform::is_identity(pos, rot[2], scl) {
+                    let canvas = self.dim();
+                    frame = transform::transform_frame(&frame, canvas, pos, rot[2], scl, pvt);
                 }
                 
                 let opacity = layer.opacity();

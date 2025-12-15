@@ -202,6 +202,11 @@ impl std::hash::Hash for AttrValue {
 ///
 /// Includes dirty tracking for cache invalidation.
 /// Optional schema for automatic DAG detection.
+///
+/// # Type-Specific Getters/Setters
+///
+/// Available for all `AttrValue` variants: `get_i32`, `get_str`, `get_vec3`, etc.
+/// Key constants are in `keys.rs` with `A_` prefix (e.g., `A_POSITION`).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Attrs {
     #[serde(default)]
@@ -275,13 +280,7 @@ impl Attrs {
             self.dirty.store(true, Ordering::Relaxed);
         }
     }
-    
-    /// Set attribute value WITHOUT marking dirty.
-    /// DEPRECATED: With schema, use set() - it auto-detects DAG attrs.
-    /// Kept for backward compatibility during migration.
-    pub fn set_silent(&mut self, key: impl Into<String>, value: AttrValue) {
-        self.map.insert(key.into(), value);
-    }
+
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
         self.map.get(key)
@@ -363,6 +362,58 @@ impl Attrs {
     pub fn set_list(&mut self, key: impl Into<String>, value: Vec<AttrValue>) {
         self.map.insert(key.into(), AttrValue::List(value));
         self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Get Vec3 attribute `[x, y, z]`.
+    pub fn get_vec3(&self, key: &str) -> Option<[f32; 3]> {
+        match self.map.get(key) {
+            Some(AttrValue::Vec3(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Set Vec3 attribute `[x, y, z]`.
+    pub fn set_vec3(&mut self, key: impl Into<String>, value: [f32; 3]) {
+        self.set(key, AttrValue::Vec3(value));
+    }
+
+    /// Get Vec4 attribute `[x, y, z, w]`.
+    pub fn get_vec4(&self, key: &str) -> Option<[f32; 4]> {
+        match self.map.get(key) {
+            Some(AttrValue::Vec4(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Set Vec4 attribute `[x, y, z, w]`.
+    pub fn set_vec4(&mut self, key: impl Into<String>, value: [f32; 4]) {
+        self.set(key, AttrValue::Vec4(value));
+    }
+
+    /// Get Mat3 attribute (3x3 matrix, column-major).
+    pub fn get_mat3(&self, key: &str) -> Option<[[f32; 3]; 3]> {
+        match self.map.get(key) {
+            Some(AttrValue::Mat3(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Set Mat3 attribute (3x3 matrix, column-major).
+    pub fn set_mat3(&mut self, key: impl Into<String>, value: [[f32; 3]; 3]) {
+        self.set(key, AttrValue::Mat3(value));
+    }
+
+    /// Get Mat4 attribute (4x4 matrix, column-major).
+    pub fn get_mat4(&self, key: &str) -> Option<[[f32; 4]; 4]> {
+        match self.map.get(key) {
+            Some(AttrValue::Mat4(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// Set Mat4 attribute (4x4 matrix, column-major).
+    pub fn set_mat4(&mut self, key: impl Into<String>, value: [[f32; 4]; 4]) {
+        self.set(key, AttrValue::Mat4(value));
     }
 
     // Generic helpers with defaults (to reduce boilerplate)
