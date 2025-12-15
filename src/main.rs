@@ -1211,6 +1211,8 @@ impl PlayaApp {
                     if let Some(ref cache) = self.project.global_cache {
                         cache.clear_all();
                     }
+                    // Must preload after cache clear - viewport only reads from cache
+                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                     self.event_bus.emit(ViewportRefreshEvent);
                 }
             } else {
@@ -1282,6 +1284,8 @@ impl PlayaApp {
                     if let Some(ref cache) = self.project.global_cache {
                         cache.clear_all();
                     }
+                    // Must preload after cache clear - viewport only reads from cache
+                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                     self.event_bus.emit(ViewportRefreshEvent);
                 }
             }

@@ -395,13 +395,25 @@ impl Project {
         self.contains_node(uuid)
     }
 
-    /// Modify node in-place via closure
+    /// Modify node in-place via closure.
+    ///
+    /// Auto-emits `AttrsChangedEvent` if node is dirty after modification,
+    /// triggering cache invalidation and viewport refresh.
     pub fn modify_node<F>(&self, uuid: Uuid, f: F) -> bool
     where
         F: FnOnce(&mut NodeKind),
     {
         if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
             f(node);
+            // Emit event if node is dirty after modification
+            let dirty = node.is_dirty();
+            if dirty && let Some(ref emitter) = self.event_emitter {
+                emitter.emit(AttrsChangedEvent(uuid));
+                node.clear_dirty();
+            } else if dirty {
+                log::warn!("modify_node: dirty but no emitter! uuid={}", uuid);
+                node.clear_dirty();
+            }
             true
         } else {
             false
