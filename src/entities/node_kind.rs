@@ -323,14 +323,7 @@ impl Node for NodeKind {
         }
     }
     
-    fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
-        match self {
-            NodeKind::File(n) => n.preload(center, radius, ctx),
-            NodeKind::Comp(n) => n.preload(center, radius, ctx),
-            NodeKind::Camera(_) => {} // No preload for cameras
-            NodeKind::Text(_) => {}   // No preload for static text
-        }
-    }
+    // preload() uses default no-op - signal_preload() handles everything directly
 }
 
 // Convenience From implementations

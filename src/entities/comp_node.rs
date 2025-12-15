@@ -1102,28 +1102,27 @@ impl Node for CompNode {
         );
 
         // Helper to enqueue compute for a frame
+        // Status check moved to worker to avoid mutex locks on UI thread
+        let Some(media_arc) = &ctx.media_arc else {
+            log::warn!("preload: no media_arc in context");
+            return;
+        };
+        let uuid = self.uuid();
         let enqueue_compute = |frame_idx: i32| {
-            let uuid = self.uuid();
-
-            // Skip if already loaded or loading
-            if let Some(status) = ctx.cache.get_status(uuid, frame_idx) {
-                if matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
-                    return;
-                }
-            }
-
-            // Clone data for worker
-            let Some(media_arc) = &ctx.media_arc else {
-                log::warn!("preload: no media_arc in context");
-                return;
-            };
-            let node = self.clone();
             let cache = std::sync::Arc::clone(ctx.cache);
             let media = std::sync::Arc::clone(media_arc);
             let epoch = ctx.epoch;
 
             workers.execute_with_epoch(epoch, move || {
+                // Check status in worker thread (not UI)
+                if let Some(status) = cache.get_status(uuid, frame_idx) {
+                    if matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
+                        return;
+                    }
+                }
                 let media_guard = media.read().expect("media lock");
+                let Some(node) = media_guard.get(&uuid) else { return; };
+                let Some(comp) = node.as_comp() else { return; };
                 let compute_ctx = ComputeContext {
                     cache: &cache,
                     media: &media_guard,
@@ -1131,8 +1130,7 @@ impl Node for CompNode {
                     workers: None,
                     epoch,
                 };
-                // compute() handles everything: cache check, compose, insert
-                node.compute(frame_idx, &compute_ctx);
+                comp.compute(frame_idx, &compute_ctx);
             });
         };
 

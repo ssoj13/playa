@@ -10,7 +10,7 @@
 //! - Memory tracking via CacheManager
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::hash::{Hash, Hasher};
 use indexmap::IndexSet;
@@ -98,7 +98,8 @@ impl Hash for CacheKey {
 #[derive(Debug)]
 pub struct GlobalFrameCache {
     /// Nested cache: comp_uuid -> (frame_idx -> Frame)
-    cache: Arc<Mutex<HashMap<Uuid, HashMap<i32, Frame>>>>,
+    /// RwLock for concurrent reads, serialized writes
+    cache: Arc<RwLock<HashMap<Uuid, HashMap<i32, Frame>>>>,
     /// LRU eviction queue: IndexSet preserves insertion order, O(1) remove by key
     lru_order: Arc<Mutex<IndexSet<CacheKey>>>,
     /// Cache manager for memory tracking
@@ -127,7 +128,7 @@ impl GlobalFrameCache {
         );
 
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(HashMap::new())),
             lru_order: Arc::new(Mutex::new(IndexSet::with_capacity(capacity))),
             cache_manager: manager,
             strategy: Arc::new(Mutex::new(strategy)),
@@ -143,7 +144,7 @@ impl GlobalFrameCache {
     pub fn get(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
         // Minimize lock hold time - release cache lock before LRU update
         let result = {
-            let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
             cache
                 .get(&comp_uuid)
                 .and_then(|frames| frames.get(&frame_idx))
@@ -168,7 +169,7 @@ impl GlobalFrameCache {
 
     /// Check if frame exists in cache (without updating LRU)
     pub fn contains(&self, comp_uuid: Uuid, frame_idx: i32) -> bool {
-        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         cache
             .get(&comp_uuid)
             .map(|frames| frames.contains_key(&frame_idx))
@@ -177,7 +178,7 @@ impl GlobalFrameCache {
 
     /// Get frame status without cloning the frame (lightweight query for UI)
     pub fn get_status(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<crate::entities::FrameStatus> {
-        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         cache
             .get(&comp_uuid)
             .and_then(|frames| frames.get(&frame_idx))
@@ -188,7 +189,7 @@ impl GlobalFrameCache {
     /// Returns (frame, was_inserted) - true if we inserted, false if already existed.
     /// This prevents race conditions where two threads both check and insert.
     pub fn get_or_insert(&self, comp_uuid: Uuid, frame_idx: i32, make_frame: impl FnOnce() -> Frame) -> (Frame, bool) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
 
         // Check if frame already exists
         if let Some(existing) = cache.get(&comp_uuid).and_then(|f| f.get(&frame_idx)) {
@@ -244,7 +245,7 @@ impl GlobalFrameCache {
 
         // Insert frame
         {
-            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
             let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
             // Remove old frame if exists (prevents memory leak)
@@ -276,7 +277,7 @@ impl GlobalFrameCache {
     ///
     /// Returns true if a frame was evicted, false if cache empty.
     fn evict_oldest(&self) -> bool {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         // Get oldest key from front of queue (first inserted = oldest)
@@ -315,7 +316,7 @@ impl GlobalFrameCache {
     /// Use this for light attribute changes (opacity, blend_mode) that only
     /// require recomposing the current frame, not the entire comp.
     pub fn clear_frame(&self, comp_uuid: Uuid, frame_idx: i32) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(frame) = cache.get_mut(&comp_uuid).and_then(|f| f.remove(&frame_idx)) {
@@ -339,7 +340,7 @@ impl GlobalFrameCache {
     /// - `dehydrate`: if true (default), mark frames as Expired but keep pixels.
     ///   if false, remove frames from cache entirely (e.g., when deleting node).
     pub fn clear_comp(&self, comp_uuid: Uuid, dehydrate: bool) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         
         if dehydrate {
             // Dehydrate: mark Loaded frames as Expired (pixels stay valid)
@@ -379,7 +380,7 @@ impl GlobalFrameCache {
     /// More efficient than clear_comp when only part of timeline changed.
     /// Frames will be recreated as Header on next access.
     pub fn clear_range(&self, comp_uuid: Uuid, start: i32, end: i32) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         let Some(frames) = cache.get_mut(&comp_uuid) else {
@@ -423,7 +424,7 @@ impl GlobalFrameCache {
 
     /// Clear entire cache
     pub fn clear_all(&self) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         // Free all memory
@@ -461,30 +462,30 @@ impl GlobalFrameCache {
 
     /// Get current cache size (total number of frames)
     pub fn len(&self) -> usize {
-        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         cache.values().map(|frames| frames.len()).sum()
     }
 
     /// Get number of cached comps
     pub fn comp_count(&self) -> usize {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.cache.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Check if cache has any frames for a comp
     pub fn has_comp(&self, comp_uuid: Uuid) -> bool {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&comp_uuid)
+        self.cache.read().unwrap_or_else(|e| e.into_inner()).contains_key(&comp_uuid)
     }
 
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+        self.cache.read().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     /// Get frame count for specific comp
     pub fn comp_frame_count(&self, comp_uuid: Uuid) -> usize {
         self.cache
-            .lock()
-            .unwrap()
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&comp_uuid)
             .map(|frames| frames.len())
             .unwrap_or(0)
