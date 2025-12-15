@@ -171,6 +171,8 @@ impl Project {
                 match node {
                     NodeKind::File(f) => f.attach_schema(),
                     NodeKind::Comp(c) => c.attach_schema(),
+                    NodeKind::Camera(c) => c.attach_schema(),
+                    NodeKind::Text(t) => t.attach_schema(),
                 }
             }
         }

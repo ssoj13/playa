@@ -133,3 +133,62 @@ const PLAYER_DEFS: &[AttrDef] = &[
 ];
 
 pub static PLAYER_SCHEMA: AttrSchema = AttrSchema::new("Player", PLAYER_DEFS);
+
+// ============================================================================
+// CameraNode Schema
+// ============================================================================
+
+const CAMERA_DEFS: &[AttrDef] = &[
+    // Identity
+    AttrDef::new("name", AttrType::String, DISP),
+    AttrDef::new("uuid", AttrType::Uuid, INT),
+    
+    // Standard layer transform (like any other layer)
+    AttrDef::new("position", AttrType::Vec3, DAG_DISP_KEY),       // [0, 0, -1000]
+    AttrDef::new("rotation", AttrType::Vec3, DAG_DISP_KEY),       // [0, 0, 0] Euler XYZ
+    AttrDef::new("scale", AttrType::Vec3, DAG_DISP_KEY),          // [1, 1, 1]
+    AttrDef::new("pivot", AttrType::Vec3, DAG_DISP_KEY),          // [0, 0, 0]
+    
+    // Camera-specific: look-at target (alternative to rotation)
+    AttrDef::new("point_of_interest", AttrType::Vec3, DAG_DISP_KEY), // [0, 0, 0]
+    AttrDef::new("use_poi", AttrType::Bool, DAG_DISP),            // true = use POI, false = use rotation
+    
+    // Lens
+    AttrDef::new("fov", AttrType::Float, DAG_DISP_KEY),           // 39.6 (AE default)
+    AttrDef::new("near_clip", AttrType::Float, DAG_DISP),         // 1.0
+    AttrDef::new("far_clip", AttrType::Float, DAG_DISP),          // 10000.0
+    
+    // Depth of field (future)
+    AttrDef::new("dof_enabled", AttrType::Bool, DAG_DISP),        // false
+    AttrDef::new("focus_distance", AttrType::Float, DAG_DISP_KEY), // 1000.0
+    AttrDef::new("aperture", AttrType::Float, DAG_DISP_KEY),      // 2.8
+];
+
+pub static CAMERA_SCHEMA: AttrSchema = AttrSchema::new("CameraNode", CAMERA_DEFS);
+
+// ============================================================================
+// TextNode Schema
+// ============================================================================
+
+const TEXT_DEFS: &[AttrDef] = &[
+    // Identity
+    AttrDef::new("name", AttrType::String, DISP),
+    AttrDef::new("uuid", AttrType::Uuid, INT),
+    
+    // Resolution (affects output frame size)
+    AttrDef::new("width", AttrType::Int, DAG_DISP),               // 1920 (0 = auto-fit to text)
+    AttrDef::new("height", AttrType::Int, DAG_DISP),              // 1080 (0 = auto-fit to text)
+    
+    // Text content
+    AttrDef::new("text", AttrType::String, DAG_DISP),             // "Hello"
+    AttrDef::new("font", AttrType::String, DAG_DISP),             // "Arial" or path
+    AttrDef::new("font_size", AttrType::Float, DAG_DISP_KEY),     // 72.0
+    AttrDef::new("color", AttrType::Vec4, DAG_DISP_KEY),          // [1,1,1,1] white
+    AttrDef::new("alignment", AttrType::String, DAG_DISP),        // "left"|"center"|"right"
+    AttrDef::new("line_height", AttrType::Float, DAG_DISP),       // 1.2
+    
+    // Background
+    AttrDef::new("bg_color", AttrType::Vec4, DAG_DISP),           // [0,0,0,0] transparent
+];
+
+pub static TEXT_SCHEMA: AttrSchema = AttrSchema::new("TextNode", TEXT_DEFS);

@@ -246,6 +246,7 @@ pub enum FrameStatus {
     Loading,      // Async file loading in progress (FileNode)
     Composing,    // Async composition in progress (CompNode)
     Loaded,       // Ready to display
+    Expired,      // Was Loaded, now stale but pixels still valid (dehydrate pattern)
     Error,        // Failed to load
 }
 ```
@@ -417,14 +418,46 @@ pub enum BlendMode {
 }
 ```
 
-### Layer Transforms (TODO)
+### GPU Compositor (WIP)
 
-Layer attributes for 2D transforms (defined but not yet applied in compositor):
+The blend API includes transform matrices for future GPU acceleration:
+
+```rust
+// compositor.rs - blend API
+pub fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame>
+//                                                            ^^^^^^^^
+//                                                            inverse transform matrix
+```
+
+**Current state** (see `compositor.rs` module docs):
+- ✅ API ready: blend accepts `[f32; 9]` transform matrix
+- ✅ GPU shader ready: `u_top_transform` mat3 uniform in `gpu_compositor.rs`
+- ✅ Matrix builder ready: `transform::build_inverse_matrix_3x3()`
+- ✅ compose_internal passes matrices through API
+- ❌ CPU compositor ignores matrix (uses `transform_frame()` instead)
+- ❌ GPU compositor not connected to compose_internal
+
+**Why not GPU yet:**
+- `compose_internal()` runs in worker threads (preload)
+- Worker threads don't have OpenGL context
+- GPU compositor requires main thread GL context
+
+**To enable GPU compositing:**
+1. Detect if running in main thread (has GL context)
+2. Pass `Project.compositor` via `ComputeContext`
+3. Remove CPU `transform_frame()` call when using GPU
+4. Let GPU shader handle transforms via matrix
+
+For now, CPU path works well. GPU is viewport rendering only.
+
+### Layer Transforms (IMPLEMENTED)
+
+Layer attributes for 2D transforms:
 
 ```rust
 // In attr_schemas.rs LAYER_SCHEMA:
 position: Vec3  // [x, y, z] - translation in pixels
-rotation: Vec3  // [rx, ry, rz] - Euler angles (radians), Z = 2D rotation
+rotation: Vec3  // [rx, ry, rz] - Euler angles in DEGREES, Z = 2D rotation
 scale: Vec3     // [sx, sy, sz] - scale factors (1.0 = 100%)
 pivot: Vec3     // [px, py, pz] - anchor point offset from layer center
 ```
@@ -434,11 +467,14 @@ pivot: Vec3     // [px, py, pz] - anchor point offset from layer center
 M = T(position) * T(pivot) * R(rotation.z) * S(scale) * T(-pivot)
 ```
 
-**Implementation plan** (see `todo3.md`):
-1. Add `Layer::transform_matrix()` getter
-2. Create `transform.rs` with affine matrix math
-3. Apply transform in `compose_internal()` before blending
-4. GPU shader variant for performance
+**Implementation** (`transform.rs`):
+- `is_identity(pos, rot, scl)` - check if transform is no-op
+- `build_inverse_transform()` - Affine2 matrix for CPU sampling
+- `build_inverse_matrix_3x3()` - `[f32; 9]` column-major for GPU (WIP)
+- `transform_frame()` - applies transform via CPU (active path)
+
+**Current state**: CPU transforms work. GPU shader ready but not connected.
+See `compositor.rs` module docs for GPU integration plan.
 
 ---
 
@@ -633,12 +669,88 @@ pub fn execute_with_epoch<F>(&self, epoch: u64, f: F) {
 
 **When epoch increments** (cancels ALL pending preload jobs):
 - `LayersChangedEvent` - layer structure changed
-- `AttrsChangedEvent` - layer attributes changed
+- `AttrsChangedEvent` - layer attributes changed (DAG attrs only)
 - `del_node()` - node deleted from media pool
 
 **When epoch does NOT increment**:
 - Frame change (scrubbing, playback) - preload jobs remain valid
 - Pan/zoom timeline - purely visual change
+
+### Cache Dehydrate Pattern (FrameStatus::Expired)
+
+When attributes change, we don't delete cached frames immediately.
+Instead, we "dehydrate" them - mark as stale but keep pixels:
+
+```rust
+// global_cache.rs
+pub fn clear_comp(&self, uuid: Uuid, dehydrate: bool) {
+    if dehydrate {
+        // Mark all frames as Expired (stale but pixels valid)
+        for frame in frames.values() {
+            frame.set_status(FrameStatus::Expired);
+        }
+    } else {
+        // Full removal
+        frames.clear();
+    }
+}
+```
+
+**Benefits:**
+- User sees old frame while new one computes (no flicker)
+- Viewport shows stale content instead of blank
+- When new frame ready, it replaces expired one
+
+**Usage in main_events.rs:**
+```rust
+// On AttrsChangedEvent:
+global_cache.clear_comp(uuid, true);  // dehydrate=true, keep pixels
+
+// On node deletion:
+global_cache.clear_comp(uuid, false); // dehydrate=false, full removal
+```
+
+### Viewport Refresh (Epoch Tracking)
+
+Viewport tracks when to upload new textures via epoch:
+
+```rust
+// viewport_state.rs
+pub struct ViewportState {
+    pub last_rendered_epoch: u64,   // Epoch when frame was rendered
+    pub last_rendered_frame: Option<i32>,
+    // ...
+}
+```
+
+**Refresh logic in main.rs:**
+```rust
+let current_epoch = cache_manager.current_epoch();
+let current_frame = player.current_frame(&project);
+
+// Need texture upload if:
+// 1. Epoch changed (attributes modified) OR
+// 2. Frame changed (scrubbing/playback)
+let texture_needs_upload = 
+    current_epoch != viewport_state.last_rendered_epoch ||
+    viewport_state.last_rendered_frame != Some(current_frame);
+
+// Only update tracking when NEW frame is actually Loaded
+// (prevents marking Expired frame as "rendered")
+if texture_needs_upload {
+    self.frame = player.get_current_frame(&project);
+    let new_frame_loaded = self.frame.as_ref()
+        .map(|f| f.status() == FrameStatus::Loaded)
+        .unwrap_or(false);
+    if new_frame_loaded {
+        viewport_state.last_rendered_epoch = current_epoch;
+        viewport_state.last_rendered_frame = Some(current_frame);
+    }
+}
+```
+
+**Key insight:** Don't update tracking until a Loaded frame arrives.
+This ensures viewport keeps requesting refresh until composition completes.
 
 ### CurrentFrameChangedEvent (DEAD CODE)
 

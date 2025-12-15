@@ -26,7 +26,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
         egui::Sense::click(),
     );
 
-    // Action buttons single row
+    // Action buttons - two rows for better fit
     ui.horizontal(|ui| {
         if ui.button("Save").clicked()
             && let Some(path) = rfd::FileDialog::new()
@@ -44,27 +44,39 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
         {
             actions.send(LoadProjectEvent(path));
         }
-        if ui.button("Add Clip").clicked()
+        ui.separator();
+        if ui.button("+Clip").clicked()
             && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
             && !paths.is_empty()
         {
             actions.send(AddClipsEvent(paths));
         }
-        // Add Folder - pick a directory and scan for media files recursively
-        if ui.button("Add Folder").clicked()
+        if ui.button("+Folder").clicked()
             && let Some(folder) = rfd::FileDialog::new()
                 .set_title("Add Media Folder")
                 .pick_folder()
         {
             actions.send(AddFolderEvent(folder));
         }
-        if ui.button("Add Comp").clicked() {
+        if ui.button("+Comp").clicked() {
             actions.send(AddCompEvent {
                 name: "New Comp".to_string(),
                 fps: 30.0,
             });
         }
-        if ui.button("Clear All").clicked() {
+        if ui.button("+Text").clicked() {
+            actions.send(AddTextEvent {
+                name: "New Text".to_string(),
+                text: "Hello World".to_string(),
+            });
+        }
+        if ui.button("+Cam").clicked() {
+            actions.send(AddCameraEvent {
+                name: "Camera 1".to_string(),
+            });
+        }
+        ui.separator();
+        if ui.button("Clear").clicked() {
             actions.send(ClearAllMediaEvent);
         }
     });

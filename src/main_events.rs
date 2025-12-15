@@ -156,10 +156,11 @@ pub struct EventResult {
     pub save_project: Option<PathBuf>,
     pub load_sequences: Option<Vec<PathBuf>>,
     pub new_comp: Option<(String, f32)>,
+    pub new_camera: Option<String>,
+    pub new_text: Option<(String, String)>,
     pub enqueue_frames: Option<usize>,
     pub quick_save: bool,
     pub show_open_dialog: bool,
-
 }
 
 impl EventResult {
@@ -174,6 +175,12 @@ impl EventResult {
         }
         if other.new_comp.is_some() {
             self.new_comp = other.new_comp;
+        }
+        if other.new_camera.is_some() {
+            self.new_camera = other.new_camera;
+        }
+        if other.new_text.is_some() {
+            self.new_text = other.new_text;
         }
         if other.enqueue_frames.is_some() {
             self.enqueue_frames = other.enqueue_frames;
@@ -359,6 +366,14 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<AddCompEvent>(event) {
         result.new_comp = Some((e.name.clone(), e.fps));
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<AddCameraEvent>(event) {
+        result.new_camera = Some(e.name.clone());
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<AddTextEvent>(event) {
+        result.new_text = Some((e.name.clone(), e.text.clone()));
         return Some(result);
     }
     if let Some(e) = downcast_event::<SaveProjectEvent>(event) {

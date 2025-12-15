@@ -4,6 +4,7 @@
 
 pub mod attrs;
 pub mod attr_schemas;
+pub mod camera_node;
 pub mod comp_events;  // Events for comp/layer manipulation
 pub mod comp_node;
 pub mod compositor;
@@ -16,6 +17,7 @@ pub mod loader_video;
 pub mod node;
 pub mod node_kind;
 pub mod project;
+pub mod text_node;
 pub mod transform;
 
 pub use attrs::{AttrValue, Attrs};
@@ -29,3 +31,5 @@ pub use frame::{Frame, FrameStatus};
 pub use node::Node;
 pub use node_kind::NodeKind;
 pub use project::{Project, NodeIter, NodeIterItem};
+pub use camera_node::CameraNode;
+pub use text_node::TextNode;

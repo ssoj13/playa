@@ -22,6 +22,17 @@ pub struct AddCompEvent {
 }
 
 #[derive(Clone, Debug)]
+pub struct AddCameraEvent {
+    pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AddTextEvent {
+    pub name: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct RemoveMediaEvent(pub Uuid);
 
 #[derive(Clone, Debug)]

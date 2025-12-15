@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::attrs::Attrs;
+use super::camera_node::CameraNode;
 use super::comp_node::CompNode;
 use super::file_node::FileNode;
 use super::frame::Frame;
 use super::node::{ComputeContext, Node};
+use super::text_node::TextNode;
 
 /// Enum containing all possible node types.
 /// Used in Project.media for unified storage.
@@ -18,6 +20,8 @@ use super::node::{ComputeContext, Node};
 pub enum NodeKind {
     File(FileNode),
     Comp(CompNode),
+    Camera(CameraNode),
+    Text(TextNode),
 }
 
 impl NodeKind {
@@ -31,11 +35,23 @@ impl NodeKind {
         matches!(self, NodeKind::Comp(_))
     }
     
+    /// Check if this is a camera node
+    pub fn is_camera(&self) -> bool {
+        matches!(self, NodeKind::Camera(_))
+    }
+    
+    /// Check if this is a text node
+    pub fn is_text(&self) -> bool {
+        matches!(self, NodeKind::Text(_))
+    }
+    
     /// Play range (work area)
     pub fn play_range(&self, use_work_area: bool) -> (i32, i32) {
         match self {
             NodeKind::File(n) => n.work_area_abs(),
             NodeKind::Comp(n) => n.play_range(use_work_area),
+            NodeKind::Camera(_) => (0, 0), // Cameras have no frames
+            NodeKind::Text(_) => (0, 1),   // Text is single frame
         }
     }
     
@@ -45,6 +61,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.work_area_abs(),
             NodeKind::Comp(n) => n.bounds(use_trim, selection_only),
+            NodeKind::Camera(_) => (0, 0),
+            NodeKind::Text(_) => (0, 1),
         }
     }
     
@@ -53,6 +71,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.frame_count(),
             NodeKind::Comp(n) => n.frame_count(),
+            NodeKind::Camera(_) => 0,  // No frames
+            NodeKind::Text(_) => 1,    // Single static frame
         }
     }
     
@@ -61,6 +81,12 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.dim(),
             NodeKind::Comp(n) => n.dim(),
+            NodeKind::Camera(_) => (0, 0), // No dimensions
+            NodeKind::Text(n) => {
+                let w = n.width().max(1) as usize;
+                let h = n.height().max(1) as usize;
+                (w, h)
+            }
         }
     }
     
@@ -76,7 +102,7 @@ impl NodeKind {
     ) -> anyhow::Result<Uuid> {
         match self {
             NodeKind::Comp(comp) => comp.add_child_layer(source_uuid, name, start_frame, duration, insert_idx, source_dim),
-            NodeKind::File(_) => anyhow::bail!("Cannot add child to FileNode"),
+            _ => anyhow::bail!("Cannot add child to non-Comp node"),
         }
     }
     
@@ -112,6 +138,38 @@ impl NodeKind {
         }
     }
     
+    /// Get as CameraNode reference
+    pub fn as_camera(&self) -> Option<&CameraNode> {
+        match self {
+            NodeKind::Camera(n) => Some(n),
+            _ => None,
+        }
+    }
+    
+    /// Get as CameraNode mutable reference
+    pub fn as_camera_mut(&mut self) -> Option<&mut CameraNode> {
+        match self {
+            NodeKind::Camera(n) => Some(n),
+            _ => None,
+        }
+    }
+    
+    /// Get as TextNode reference
+    pub fn as_text(&self) -> Option<&TextNode> {
+        match self {
+            NodeKind::Text(n) => Some(n),
+            _ => None,
+        }
+    }
+    
+    /// Get as TextNode mutable reference
+    pub fn as_text_mut(&mut self) -> Option<&mut TextNode> {
+        match self {
+            NodeKind::Text(n) => Some(n),
+            _ => None,
+        }
+    }
+    
     /// Check if this is a file-mode node (FileNode = true, CompNode = false)
     pub fn is_file_mode(&self) -> bool {
         matches!(self, NodeKind::File(_))
@@ -122,6 +180,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.fps(),
             NodeKind::Comp(n) => n.fps(),
+            NodeKind::Camera(_) => 24.0, // Default
+            NodeKind::Text(_) => 24.0,   // Default
         }
     }
     
@@ -129,7 +189,7 @@ impl NodeKind {
     pub fn file_mask(&self) -> Option<String> {
         match self {
             NodeKind::File(n) => n.file_mask().map(|s| s.to_string()),
-            NodeKind::Comp(_) => None,
+            _ => None,
         }
     }
     
@@ -138,6 +198,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n._in(),
             NodeKind::Comp(n) => n._in(),
+            NodeKind::Camera(_) => 0,
+            NodeKind::Text(_) => 0,
         }
     }
     
@@ -146,6 +208,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n._out(),
             NodeKind::Comp(n) => n._out(),
+            NodeKind::Camera(_) => 0,
+            NodeKind::Text(_) => 1,
         }
     }
     
@@ -154,6 +218,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.frame(),
             NodeKind::Comp(n) => n.frame(),
+            NodeKind::Camera(_) => 0,
+            NodeKind::Text(_) => 0,
         }
     }
     
@@ -171,6 +237,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.uuid(),
             NodeKind::Comp(n) => n.uuid(),
+            NodeKind::Camera(n) => n.uuid(),
+            NodeKind::Text(n) => n.uuid(),
         }
     }
     
@@ -178,6 +246,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.name(),
             NodeKind::Comp(n) => n.name(),
+            NodeKind::Camera(n) => n.name(),
+            NodeKind::Text(n) => n.name(),
         }
     }
     
@@ -185,6 +255,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.node_type(),
             NodeKind::Comp(n) => n.node_type(),
+            NodeKind::Camera(n) => n.node_type(),
+            NodeKind::Text(n) => n.node_type(),
         }
     }
     
@@ -192,6 +264,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.attrs(),
             NodeKind::Comp(n) => n.attrs(),
+            NodeKind::Camera(n) => n.attrs(),
+            NodeKind::Text(n) => n.attrs(),
         }
     }
     
@@ -199,6 +273,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.attrs_mut(),
             NodeKind::Comp(n) => n.attrs_mut(),
+            NodeKind::Camera(n) => n.attrs_mut(),
+            NodeKind::Text(n) => n.attrs_mut(),
         }
     }
     
@@ -206,6 +282,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.inputs(),
             NodeKind::Comp(n) => n.inputs(),
+            NodeKind::Camera(n) => n.inputs(),
+            NodeKind::Text(n) => n.inputs(),
         }
     }
     
@@ -213,6 +291,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.compute(frame, ctx),
             NodeKind::Comp(n) => n.compute(frame, ctx),
+            NodeKind::Camera(n) => n.compute(frame, ctx),
+            NodeKind::Text(n) => n.compute(frame, ctx),
         }
     }
     
@@ -220,6 +300,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.is_dirty(),
             NodeKind::Comp(n) => n.is_dirty(),
+            NodeKind::Camera(n) => n.is_dirty(),
+            NodeKind::Text(n) => n.is_dirty(),
         }
     }
     
@@ -227,6 +309,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.mark_dirty(),
             NodeKind::Comp(n) => n.mark_dirty(),
+            NodeKind::Camera(n) => n.mark_dirty(),
+            NodeKind::Text(n) => n.mark_dirty(),
         }
     }
     
@@ -234,6 +318,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.clear_dirty(),
             NodeKind::Comp(n) => n.clear_dirty(),
+            NodeKind::Camera(n) => n.clear_dirty(),
+            NodeKind::Text(n) => n.clear_dirty(),
         }
     }
     
@@ -241,6 +327,8 @@ impl Node for NodeKind {
         match self {
             NodeKind::File(n) => n.preload(center, radius, ctx),
             NodeKind::Comp(n) => n.preload(center, radius, ctx),
+            NodeKind::Camera(_) => {} // No preload for cameras
+            NodeKind::Text(_) => {}   // No preload for static text
         }
     }
 }
@@ -255,6 +343,18 @@ impl From<FileNode> for NodeKind {
 impl From<CompNode> for NodeKind {
     fn from(node: CompNode) -> Self {
         NodeKind::Comp(node)
+    }
+}
+
+impl From<CameraNode> for NodeKind {
+    fn from(node: CameraNode) -> Self {
+        NodeKind::Camera(node)
+    }
+}
+
+impl From<TextNode> for NodeKind {
+    fn from(node: TextNode) -> Self {
+        NodeKind::Text(node)
     }
 }
 

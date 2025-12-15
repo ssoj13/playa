@@ -26,7 +26,7 @@ use playa::dialogs::encode::EncodeDialog;
 use playa::dialogs::prefs::{AppSettings, HotkeyHandler, render_settings_window};
 use playa::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa::entities;
-use playa::entities::Frame;
+use playa::entities::{Frame, Node};
 use playa::entities::Project;
 use playa::core::event_bus::{CompEventEmitter, EventBus, downcast_event};
 use playa::main_events;
@@ -279,7 +279,7 @@ impl PlayaApp {
                     self.player.set_active_comp(Some(uuid), &mut self.project);
                     self.node_editor_state.set_comp(uuid);
                     self.node_editor_state.mark_dirty();
-                    self.enqueue_frame_loads_around_playhead(50);
+                    self.enqueue_frame_loads_around_playhead(100);
                 }
 
                 self.error_msg = None;
@@ -326,6 +326,8 @@ impl PlayaApp {
         let mut deferred_save_project: Option<std::path::PathBuf> = None;
         let mut deferred_load_sequences: Option<Vec<std::path::PathBuf>> = None;
         let mut deferred_new_comp: Option<(String, f32)> = None;
+        let mut deferred_new_camera: Option<String> = None;
+        let mut deferred_new_text: Option<(String, String)> = None;
         let mut deferred_enqueue_frames: Option<usize> = None;
         let mut deferred_quick_save = false;
         let mut deferred_show_open = false;
@@ -337,7 +339,7 @@ impl PlayaApp {
             // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
                 trace!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
-                self.enqueue_frame_loads_around_playhead(50);
+                self.enqueue_frame_loads_around_playhead(100);
                 continue;
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
@@ -427,6 +429,12 @@ impl PlayaApp {
                 if let Some(comp_data) = result.new_comp {
                     deferred_new_comp = Some(comp_data);
                 }
+                if let Some(camera_name) = result.new_camera {
+                    deferred_new_camera = Some(camera_name);
+                }
+                if let Some(text_data) = result.new_text {
+                    deferred_new_text = Some(text_data);
+                }
                 if let Some(n) = result.enqueue_frames {
                     deferred_enqueue_frames = Some(n);
                 }
@@ -498,6 +506,20 @@ impl PlayaApp {
             self.player.set_active_comp(Some(uuid), &mut self.project);
             self.node_editor_state.set_comp(uuid);
             info!("Created new comp: {}", uuid);
+        }
+        if let Some(name) = deferred_new_camera {
+            use crate::entities::CameraNode;
+            let camera = CameraNode::new(&name);
+            let uuid = camera.uuid();
+            self.project.add_node(camera.into());
+            info!("Created new camera: {}", uuid);
+        }
+        if let Some((name, text)) = deferred_new_text {
+            use crate::entities::TextNode;
+            let text_node = TextNode::new(&name, &text);
+            let uuid = text_node.uuid();
+            self.project.add_node(text_node.into());
+            info!("Created new text: {}", uuid);
         }
         if let Some(n) = deferred_enqueue_frames {
             self.enqueue_frame_loads_around_playhead(n);
@@ -1270,7 +1292,7 @@ impl eframe::App for PlayaApp {
 
         // Preload frames during playback (player.update doesn't emit events)
         if self.player.is_playing() {
-            self.enqueue_frame_loads_around_playhead(50);
+            self.enqueue_frame_loads_around_playhead(100);
         }
 
         // Handle composition events (CurrentFrameChanged → triggers frame loading)
