@@ -128,11 +128,12 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     ui.style().visuals.faint_bg_color
                 };
 
-                let is_file = comp.is_file_mode();
                 let fps = comp.fps() as u32;
                 let frame_count = comp.frame_count();
-                let display_text = if is_file {
-                    if let Some(mask) = comp.file_mask() {
+                
+                // Determine node type for icon and display
+                let (icon, icon_color, display_text) = if comp.is_file() {
+                    let text = if let Some(mask) = comp.file_mask() {
                         let filename = std::path::Path::new(&mask)
                             .file_name()
                             .and_then(|s| s.to_str())
@@ -140,9 +141,15 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                         format!("{} • {}", comp.name(), filename)
                     } else {
                         comp.name().to_string()
-                    }
+                    };
+                    ("[F]", egui::Color32::from_rgb(100, 180, 100), text) // Green for files
+                } else if comp.is_camera() {
+                    ("[K]", egui::Color32::from_rgb(255, 200, 100), comp.name().to_string()) // Orange for camera
+                } else if comp.is_text() {
+                    ("[T]", egui::Color32::from_rgb(200, 150, 255), comp.name().to_string()) // Purple for text
                 } else {
-                    format!("{} (Layer)", comp.name())
+                    // Comp
+                    ("[C]", egui::Color32::from_rgb(100, 150, 255), format!("{} (Layer)", comp.name())) // Blue for comp
                 };
 
                 let available_width = ui.available_width();
@@ -174,11 +181,6 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 let center_y = row_rect.center().y;
 
                 // Icon
-                let (icon, icon_color) = if is_file {
-                    ("[F]", egui::Color32::from_rgb(100, 150, 255))
-                } else {
-                    ("[C]", egui::Color32::from_rgb(255, 150, 100))
-                };
                 let icon_galley = ui.painter().layout_no_wrap(
                     icon.to_string(),
                     egui::FontId::proportional(12.0),
