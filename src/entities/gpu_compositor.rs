@@ -345,6 +345,7 @@ uniform sampler2D u_bottom;
 uniform sampler2D u_top;
 uniform float u_opacity;
 uniform int u_blend_mode;
+uniform mat3 u_top_transform;  // Inverse transform for sampling top layer
 
 in vec2 v_texcoord;
 out vec4 frag_color;
@@ -371,7 +372,19 @@ vec3 blend(vec3 bottom, vec3 top, int mode) {
 
 void main() {
     vec4 bottom_color = texture(u_bottom, v_texcoord);
-    vec4 top_color = texture(u_top, v_texcoord);
+    
+    // Apply inverse transform to get source texcoord for top layer
+    vec3 tc = u_top_transform * vec3(v_texcoord, 1.0);
+    vec2 top_texcoord = tc.xy;
+    
+    // Sample top with bounds check (transparent outside 0-1 range)
+    vec4 top_color;
+    if (top_texcoord.x < 0.0 || top_texcoord.x > 1.0 || 
+        top_texcoord.y < 0.0 || top_texcoord.y > 1.0) {
+        top_color = vec4(0.0);
+    } else {
+        top_color = texture(u_top, top_texcoord);
+    }
 
     float top_alpha = top_color.a * u_opacity;
     vec3 blended = blend(bottom_color.rgb, top_color.rgb, u_blend_mode);
@@ -559,12 +572,14 @@ void main() {
     }
 
     /// Blend two textures using shader
+    /// transform: inverse 3x3 matrix for top layer (column-major)
     fn blend_textures(
         &mut self,
         bottom: glow::Texture,
         top: glow::Texture,
         opacity: f32,
         mode: &BlendMode,
+        transform: &[f32; 9],
         width: usize,
         height: usize,
         format: PixelFormat,
@@ -626,6 +641,9 @@ void main() {
                     BlendMode::Difference => 6,
                 };
                 gl.uniform_1_i32(Some(&loc), mode_id);
+            }
+            if let Some(loc) = gl.get_uniform_location(program, "u_top_transform") {
+                gl.uniform_matrix_3_f32_slice(Some(&loc), false, transform);
             }
 
             // Draw fullscreen quad
@@ -773,12 +791,17 @@ void main() {
             let top_texture = guard.textures[i];
             let (_, opacity, mode) = &frames[i];
 
+            // Identity transform (no transformation)
+            // Column-major: [m00, m10, m20, m01, m11, m21, m02, m12, m22]
+            let identity: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+            
             // blend_textures creates new texture, add to guard
             let new_result = self.blend_textures(
                 result_texture,
                 top_texture,
                 *opacity,
                 mode,
+                &identity,
                 width,
                 height,
                 format,
