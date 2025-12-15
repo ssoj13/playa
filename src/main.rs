@@ -283,7 +283,7 @@ impl PlayaApp {
                     self.player.set_active_comp(Some(uuid), &mut self.project);
                     self.node_editor_state.set_comp(uuid);
                     self.node_editor_state.mark_dirty();
-                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
+                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                 }
 
                 self.error_msg = None;
@@ -306,18 +306,21 @@ impl PlayaApp {
     /// Layer mode: composes frames from children (on-demand for now)
     ///
     /// # Arguments
-    /// * `_radius` - Hint for how many frames around playhead to preload (TODO: implement)
-    fn enqueue_frame_loads_around_playhead(&self, radius: usize) {
+    /// * `radius` - Frames around playhead to preload (-1 = entire comp)
+    fn enqueue_frame_loads_around_playhead(&self, radius: i32) {
         // Get active comp
         let Some(comp_uuid) = self.player.active_comp() else {
             trace!("No active comp for frame loading");
             return;
         };
 
+        // -1 means load entire comp (use i32::MAX, will be capped by work_area)
+        let effective_radius = if radius < 0 { i32::MAX } else { radius };
+
         // Trigger preload (works for both File and Layer modes)
-        log::debug!("[PRELOAD] enqueue_frame_loads: comp={}, radius={}", comp_uuid, radius);
+        log::debug!("[PRELOAD] enqueue_frame_loads: comp={}, radius={}", comp_uuid, effective_radius);
         self.project.with_comp(comp_uuid, |comp| {
-            comp.signal_preload(&self.workers, &self.project, radius as i32);
+            comp.signal_preload(&self.workers, &self.project, effective_radius);
         });
     }
 
@@ -332,7 +335,7 @@ impl PlayaApp {
         let mut deferred_new_comp: Option<(String, f32)> = None;
         let mut deferred_new_camera: Option<String> = None;
         let mut deferred_new_text: Option<(String, String)> = None;
-        let mut deferred_enqueue_frames: Option<usize> = None;
+        let mut deferred_enqueue_frames = false;
         let mut deferred_quick_save = false;
         let mut deferred_show_open = false;
 
@@ -346,7 +349,7 @@ impl PlayaApp {
             // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
                 trace!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
-                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
+                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                 continue;
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
@@ -380,7 +383,7 @@ impl PlayaApp {
                     cache.clear_comp(e.0, true);
                 }
                 // 3. Preload frames around playhead after cache clear
-                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
+                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                 // 4. Request viewport refresh
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
@@ -443,9 +446,7 @@ impl PlayaApp {
                 if let Some(text_data) = result.new_text {
                     deferred_new_text = Some(text_data);
                 }
-                if let Some(n) = result.enqueue_frames {
-                    deferred_enqueue_frames = Some(n);
-                }
+                deferred_enqueue_frames |= result.enqueue_frames;
                 if result.quick_save {
                     deferred_quick_save = true;
                 }
@@ -491,7 +492,7 @@ impl PlayaApp {
                         cache.clear_comp(e.0, true);
                     }
                     // Preload frames around playhead after cache clear
-                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
+                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                     self.event_bus.emit(ViewportRefreshEvent);
                     continue;
                 }
@@ -533,8 +534,8 @@ impl PlayaApp {
             self.project.add_node(text_node.into());
             info!("Created new text: {}", uuid);
         }
-        if let Some(n) = deferred_enqueue_frames {
-            self.enqueue_frame_loads_around_playhead(n);
+        if deferred_enqueue_frames {
+            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
         }
         if deferred_quick_save {
             self.quick_save();
@@ -1404,7 +1405,7 @@ impl eframe::App for PlayaApp {
 
         // Preload frames during playback (player.update doesn't emit events)
         if self.player.is_playing() {
-            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius as usize);
+            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
         }
 
         // Handle composition events (CurrentFrameChanged → triggers frame loading)

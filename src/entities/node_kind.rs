@@ -50,8 +50,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.work_area_abs(),
             NodeKind::Comp(n) => n.play_range(use_work_area),
-            NodeKind::Camera(_) => (0, 0), // Cameras have no frames
-            NodeKind::Text(_) => (0, 1),   // Text is single frame
+            NodeKind::Camera(_) => (0, 99), // 100 frames default duration
+            NodeKind::Text(_) => (0, 99),    // 100 frames default duration
         }
     }
     
@@ -61,8 +61,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.work_area_abs(),
             NodeKind::Comp(n) => n.bounds(use_trim, selection_only),
-            NodeKind::Camera(_) => (0, 0),
-            NodeKind::Text(_) => (0, 1),
+            NodeKind::Camera(_) => (0, 99),
+            NodeKind::Text(_) => (0, 99),
         }
     }
     
@@ -71,8 +71,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.frame_count(),
             NodeKind::Comp(n) => n.frame_count(),
-            NodeKind::Camera(_) => 0,  // No frames
-            NodeKind::Text(_) => 1,    // Single static frame
+            NodeKind::Camera(_) => 100, // 100 frames default
+            NodeKind::Text(_) => 100,   // 100 frames default
         }
     }
     

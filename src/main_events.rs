@@ -158,7 +158,7 @@ pub struct EventResult {
     pub new_comp: Option<(String, f32)>,
     pub new_camera: Option<String>,
     pub new_text: Option<(String, String)>,
-    pub enqueue_frames: Option<usize>,
+    pub enqueue_frames: bool,
     pub quick_save: bool,
     pub show_open_dialog: bool,
     /// Update AE panel focus (SelectionFocusEvent)
@@ -184,9 +184,7 @@ impl EventResult {
         if other.new_text.is_some() {
             self.new_text = other.new_text;
         }
-        if other.enqueue_frames.is_some() {
-            self.enqueue_frames = other.enqueue_frames;
-        }
+        self.enqueue_frames |= other.enqueue_frames;
         // Accumulate paths instead of overwriting
         if let Some(paths) = other.load_sequences {
             self.load_sequences.get_or_insert_with(Vec::new).extend(paths);
@@ -246,7 +244,7 @@ pub fn handle_app_event(
             project.modify_comp(comp_uuid, |comp| {
                 comp.set_frame(e.0);
             });
-            result.enqueue_frames = Some(10);
+            result.enqueue_frames = true;
         }
         return Some(result);
     }
