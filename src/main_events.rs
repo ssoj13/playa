@@ -161,6 +161,8 @@ pub struct EventResult {
     pub enqueue_frames: Option<usize>,
     pub quick_save: bool,
     pub show_open_dialog: bool,
+    /// Update AE panel focus (SelectionFocusEvent)
+    pub ae_focus_update: Option<Vec<Uuid>>,
 }
 
 impl EventResult {
@@ -192,7 +194,10 @@ impl EventResult {
         // Bool flags: set to true if any event sets them
         self.quick_save |= other.quick_save;
         self.show_open_dialog |= other.show_open_dialog;
-
+        // AE focus: last write wins
+        if other.ae_focus_update.is_some() {
+            self.ae_focus_update = other.ae_focus_update;
+        }
     }
 }
 
@@ -444,6 +449,12 @@ pub fn handle_app_event(
             let order = project.comps_order();
             sel.last().and_then(|u| order.iter().position(|x| x == u))
         });
+        return Some(result);
+    }
+    // SelectionFocusEvent: update AE panel focus
+    if let Some(e) = downcast_event::<SelectionFocusEvent>(event) {
+        log::trace!("SelectionFocusEvent -> ae_focus={:?}", e.0);
+        result.ae_focus_update = Some(e.0.clone());
         return Some(result);
     }
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(event) {

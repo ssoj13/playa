@@ -338,6 +338,9 @@ impl PlayaApp {
 
         // Poll all events from the bus
         let events = self.event_bus.poll();
+        // if !events.is_empty() {
+        //     log::trace!("[POLL] {} events polled", events.len());
+        // }
         for event in events {
 
             // === Comp events (high priority, internal) ===
@@ -400,14 +403,8 @@ impl PlayaApp {
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
             }
-            // SelectionFocusEvent - update AE focus (last clicked selection)
-            if let Some(e) = downcast_event::<playa::widgets::project::project_events::SelectionFocusEvent>(&event) {
-                trace!("SelectionFocusEvent - ae_focus = {:?}", e.0);
-                self.ae_focus = e.0.clone();
-                continue;
-            }
-
             // === App events - delegate to main_events module ===
+            // log::trace!("[HANDLE] checking event type_id={:?}", (*event).type_id());
             if let Some(result) = main_events::handle_app_event(
                 &event,
                 &mut self.player,
@@ -426,6 +423,7 @@ impl PlayaApp {
                 &mut self.fullscreen_dirty,
                 &mut self.reset_settings_pending,
             ) {
+                // log::trace!("[HANDLE] got result, ae_focus_update={:?}", result.ae_focus_update);
                 // Process deferred actions from EventResult
                 if let Some(path) = result.load_project {
                     deferred_load_project = Some(path);
@@ -453,6 +451,10 @@ impl PlayaApp {
                 }
                 if result.show_open_dialog {
                     deferred_show_open = true;
+                }
+                // Update AE panel focus (immediate, not deferred)
+                if let Some(focus) = result.ae_focus_update {
+                    self.ae_focus = focus;
                 }
             }
         }
@@ -1080,6 +1082,8 @@ impl PlayaApp {
 
         let ae_focus = self.ae_focus.clone();
         let active = self.player.active_comp();
+        
+        // log::trace!("[AE] ae_focus={:?}, active={:?}", ae_focus, active);
 
         // If ae_focus is empty, fallback to active comp attrs
         if ae_focus.is_empty() {
