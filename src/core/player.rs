@@ -34,6 +34,7 @@
 //! `set_active_comp()` resets project selection to just the activated comp.
 //! This prevents multi-selection accumulation when adding/switching clips.
 
+use crate::entities::attr_schemas::PLAYER_SCHEMA;
 use crate::entities::{Attrs, AttrValue, Project};
 use crate::entities::frame::Frame;
 use log::{info, trace};
@@ -75,7 +76,7 @@ impl Player {
     pub fn new() -> Self {
         info!("Player initialized (project-less architecture)");
 
-        let mut attrs = Attrs::new();
+        let mut attrs = Attrs::with_schema(&PLAYER_SCHEMA);
         // Initialize defaults via attrs
         attrs.set_json("active_comp", &None::<Uuid>);
         attrs.set("is_playing", AttrValue::Bool(false));
@@ -89,6 +90,11 @@ impl Player {
             attrs,
             last_frame_time: None,
         }
+    }
+    
+    /// Attach schema after deserialization
+    pub fn attach_schema(&mut self) {
+        self.attrs.attach_schema(&PLAYER_SCHEMA);
     }
 
     // === Accessor methods for attrs fields ===

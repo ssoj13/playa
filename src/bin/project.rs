@@ -86,6 +86,7 @@ impl ProjectApp {
         if let Some(path) = result.load_project {
             match Project::from_json(&path) {
                 Ok(mut loaded) => {
+                    loaded.attach_schemas();
                     loaded.rebuild_with_manager(Arc::clone(&self.cache_manager), None);
                     self.project = loaded;
                     self.project.set_last_save_path(Some(path));

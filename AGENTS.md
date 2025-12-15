@@ -32,7 +32,8 @@ playa/
 │   │   └── workers.rs       # Thread pool with work-stealing
 │   │
 │   ├── entities/            # Data structures
-│   │   ├── attrs.rs         # Generic key-value storage
+│   │   ├── attrs.rs         # Generic key-value storage + schema
+│   │   ├── attr_schemas.rs  # Static schemas (FILE/COMP/LAYER/PROJECT/PLAYER)
 │   │   ├── project.rs       # Top-level container (media pool)
 │   │   ├── comp_node.rs     # Composition with layers
 │   │   ├── comp_events.rs   # Composition event types
@@ -42,7 +43,8 @@ playa/
 │   │   ├── frame.rs         # Single frame data
 │   │   ├── loader.rs        # Image loading (EXR, PNG, etc)
 │   │   ├── loader_video.rs  # Video frame extraction
-│   │   └── compositor.rs    # Multi-layer blending
+│   │   ├── compositor.rs    # Multi-layer blending (CPU)
+│   │   └── gpu_compositor.rs # GPU-accelerated blending
 │   │
 │   ├── widgets/             # UI components
 │   │   ├── timeline/        # Timeline with layer bars
@@ -97,14 +99,15 @@ The architecture follows a few key principles:
 
 ## Data Structures
 
-### Attrs - Generic Key-Value Storage
+### Attrs - Generic Key-Value Storage with Schema
 
 The simplest yet most powerful abstraction. Used everywhere.
 
 ```rust
 pub struct Attrs {
     map: HashMap<String, AttrValue>,
-    dirty: AtomicBool,  // Thread-safe cache invalidation
+    dirty: AtomicBool,           // Thread-safe cache invalidation
+    schema: Option<&'static AttrSchema>,  // Optional schema for auto DAG detection
 }
 
 pub enum AttrValue {
@@ -121,12 +124,44 @@ pub enum AttrValue {
 ```
 
 **Key methods**:
-- `set(key, value)` - Sets value AND marks dirty (triggers cache invalidation)
-- `set_silent(key, value)` - Sets value WITHOUT marking dirty (playhead, UI state)
+- `set(key, value)` - Sets value, marks dirty ONLY if schema says attr is DAG
 - `is_dirty()` / `clear_dirty()` - Cache invalidation check
 - `get_json<T>()` / `set_json()` - Serialize/deserialize complex types
+- `with_schema(schema)` - Create Attrs with schema
+- `attach_schema(schema)` - Attach schema after deserialization
 
-**Why this design**: Attrs provides a flexible schema-less storage that can evolve without breaking serialization. Every entity (Frame, Layer, Comp, Project) uses Attrs for its properties.
+**Schema system** (`attr_schemas.rs`):
+```rust
+// Attribute flags
+const FLAG_DAG: u8 = 1 << 0;      // Affects render - changes invalidate cache
+const FLAG_DISPLAY: u8 = 1 << 1;  // Show in Attribute Editor
+const FLAG_KEYABLE: u8 = 1 << 2;  // Can be animated (future)
+const FLAG_READONLY: u8 = 1 << 3; // Cannot be modified
+const FLAG_INTERNAL: u8 = 1 << 4; // Internal, not shown to user
+
+pub struct AttrDef {
+    pub name: &'static str,
+    pub attr_type: AttrType,
+    pub flags: AttrFlags,
+}
+
+pub struct AttrSchema {
+    pub name: &'static str,
+    defs: &'static [AttrDef],
+}
+
+// Static schemas for each entity type
+pub static FILE_SCHEMA: AttrSchema = ...;
+pub static COMP_SCHEMA: AttrSchema = ...;  // "frame" is non-DAG!
+pub static LAYER_SCHEMA: AttrSchema = ...;
+pub static PROJECT_SCHEMA: AttrSchema = ...;
+pub static PLAYER_SCHEMA: AttrSchema = ...;
+```
+
+**Why schemas**: Auto-detect which attributes affect rendering (DAG) vs UI-only.
+Changing playhead (`frame`) no longer invalidates cache because schema marks it non-DAG.
+
+**After deserialization**: Call `project.attach_schemas()` to restore schema refs.
 
 ### Project - Top-Level Container
 
@@ -265,13 +300,16 @@ Located in `*_events.rs` files:
 | `viewport_events.rs` | `ZoomViewportEvent`, `FitViewportEvent` |
 | `project_events.rs` | `AddClipEvent`, `SaveProjectEvent`, `SelectMediaEvent` |
 
-### Cache Invalidation Flow
+### Cache Invalidation Flow (Schema-Based)
 
 ```
-User changes opacity
+User changes opacity (DAG attr)
     │
     ▼
-comp.set_child_attrs()  →  attrs.set() marks dirty
+comp.set_child_attrs()  →  attrs.set("opacity", ...)
+    │
+    ▼
+schema.is_dag("opacity") = true  →  dirty = true
     │
     ▼
 modify_comp() detects is_dirty()
@@ -286,6 +324,23 @@ main_events handler:
     │
     ▼
 Next render: compute() regenerates frame
+```
+
+**Non-DAG change (no cache invalidation)**:
+```
+User scrubs timeline (changes frame)
+    │
+    ▼
+comp.set_frame(frame)  →  attrs.set("frame", ...)
+    │
+    ▼
+schema.is_dag("frame") = false  →  dirty unchanged
+    │
+    ▼
+modify_comp() sees !is_dirty()  →  NO event
+    │
+    ▼
+Cache preserved, just display different cached frame
 ```
 
 ---
@@ -362,6 +417,29 @@ pub enum BlendMode {
 }
 ```
 
+### Layer Transforms (TODO)
+
+Layer attributes for 2D transforms (defined but not yet applied in compositor):
+
+```rust
+// In attr_schemas.rs LAYER_SCHEMA:
+position: Vec3  // [x, y, z] - translation in pixels
+rotation: Vec3  // [rx, ry, rz] - Euler angles (radians), Z = 2D rotation
+scale: Vec3     // [sx, sy, sz] - scale factors (1.0 = 100%)
+pivot: Vec3     // [px, py, pz] - anchor point offset from layer center
+```
+
+**Transform order** (AE-style):
+```
+M = T(position) * T(pivot) * R(rotation.z) * S(scale) * T(-pivot)
+```
+
+**Implementation plan** (see `todo3.md`):
+1. Add `Layer::transform_matrix()` getter
+2. Create `transform.rs` with affine matrix math
+3. Apply transform in `compose_internal()` before blending
+4. GPU shader variant for performance
+
 ---
 
 ## Key Patterns
@@ -378,16 +456,28 @@ project.modify_comp(uuid, |comp| {
 });
 ```
 
-### 2. Dirty Flags for Performance
+### 2. Schema-Based Dirty Detection
 
-Instead of computing hashes on every frame:
+Instead of manual `set()` vs `set_silent()` choice:
 ```rust
-// In attrs.rs
+// In attrs.rs - automatic DAG detection
 pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
-    self.map.insert(key.into(), value);
-    self.dirty.store(true, Ordering::Relaxed);  // O(1) flag
+    let key = key.into();
+    self.map.insert(key.clone(), value);
+    
+    // Only mark dirty if schema says this is a DAG attr
+    let is_dag = match &self.schema {
+        Some(schema) => schema.is_dag(&key),
+        None => true, // No schema = legacy, always dirty
+    };
+    if is_dag {
+        self.dirty.store(true, Ordering::Relaxed);
+    }
 }
 ```
+
+**DAG attrs** (invalidate cache): `opacity`, `in`, `out`, `trim_in`, `blend_mode`, `visible`, etc.
+**Non-DAG attrs** (preserve cache): `frame` (playhead), `name`, `selection`, `active`
 
 ### 3. Thread-Safe Read Access
 
@@ -418,8 +508,12 @@ result.merge(other_result);
 ### Serialization
 
 - `Attrs` serializes as `HashMap<String, AttrValue>`
+- Schema is NOT serialized (static code reference)
 - Runtime-only fields use `#[serde(skip)]`
-- After deserialization, call `rebuild_runtime()` to restore caches/emitters
+- After deserialization:
+  1. `project.attach_schemas()` - restore schema refs
+  2. `project.rebuild_with_manager()` - restore cache/emitters
+  3. `project.set_event_emitter()` - enable auto-emit
 
 ### Error Handling
 
@@ -654,10 +748,21 @@ emitter.emit(MyNewEvent { value: 42 });
 
 ### Adding a New Attribute
 
-Just use it - Attrs is schema-less:
+1. **For existing entity** - add to schema in `attr_schemas.rs`:
 ```rust
-comp.attrs.set("my_new_attr", AttrValue::Float(1.0));
-let val = comp.attrs.get_float("my_new_attr").unwrap_or(0.0);
+// In LAYER_DEFS:
+AttrDef::new("my_attr", AttrType::Float, DAG_DISP_KEY),  // DAG = affects render
+```
+
+2. **Initialize** in entity constructor:
+```rust
+attrs.set("my_attr", AttrValue::Float(1.0));
+```
+
+3. **Use** - schema auto-detects dirty:
+```rust
+layer.attrs.set("my_attr", AttrValue::Float(0.5));  // Marks dirty only if DAG
+let val = layer.attrs.get_float("my_attr").unwrap_or(1.0);
 ```
 
 ### Adding a New Node Type
@@ -673,7 +778,8 @@ let val = comp.attrs.get_float("my_new_attr").unwrap_or(0.0);
 
 | Concept | Implementation | Purpose |
 |---------|---------------|---------|
-| **Attrs** | `HashMap<String, AttrValue>` + dirty flag | Flexible properties, cache invalidation |
+| **Attrs** | `HashMap<String, AttrValue>` + schema + dirty | Flexible properties, auto DAG detection |
+| **AttrSchema** | Static `&[AttrDef]` per entity type | Define DAG/DISPLAY/KEYABLE flags |
 | **EventBus** | Pub/sub with immediate + deferred modes | Decoupled component communication |
 | **Project** | `Arc<RwLock<HashMap<Uuid, NodeKind>>>` | Thread-safe media pool |
 | **Workers** | Crossbeam work-stealing deques | Parallel frame loading |

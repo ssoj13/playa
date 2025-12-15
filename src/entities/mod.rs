@@ -3,6 +3,7 @@
 //! and compositor produce `Frame` data that UI/encoding consume.
 
 pub mod attrs;
+pub mod attr_schemas;
 // pub mod comp;  // DEPRECATED: replaced by comp_node
 pub mod comp_events;  // Events for comp/layer manipulation
 pub mod comp_node;

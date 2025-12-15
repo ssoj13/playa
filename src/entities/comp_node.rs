@@ -19,9 +19,9 @@
 //! - **`set_child_attrs()`** - batch attr changes
 //! - **`set_layer_in()`**, **`set_layer_play_start()`**, **`set_layer_play_end()`**
 //!
-//! ## Methods that DO NOT mark_dirty() (silent updates):
+//! ## Methods that DO NOT mark_dirty() (auto via schema):
 //!
-//! - **`set_frame()`** - playhead position (uses `set_silent()`)
+//! - **`set_frame()`** - playhead is non-DAG in schema, auto-skips dirty
 //!
 //! ## Direct field changes REQUIRE explicit mark_dirty():
 //!
@@ -58,6 +58,7 @@ use log::trace;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::attr_schemas::{COMP_SCHEMA, LAYER_SCHEMA};
 use super::attrs::{AttrValue, Attrs};
 use super::compositor::{BlendMode, CpuCompositor};
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
@@ -89,7 +90,7 @@ pub struct Layer {
 impl Layer {
     /// Create new layer instance referencing a source node.
     pub fn new(source_uuid: Uuid, name: &str, start: i32, duration: i32, dim: (usize, usize)) -> Self {
-        let mut attrs = Attrs::new();
+        let mut attrs = Attrs::with_schema(&LAYER_SCHEMA);
         
         // Identity
         attrs.set_uuid(A_UUID, Uuid::new_v4());
@@ -132,6 +133,11 @@ impl Layer {
         attrs.set_uuid(A_UUID, Uuid::new_v4());
         attrs.set_uuid("source_uuid", source_uuid);
         Self { attrs }
+    }
+    
+    /// Attach schema after deserialization
+    pub fn attach_schema(&mut self) {
+        self.attrs.attach_schema(&LAYER_SCHEMA);
     }
     
     /// Layer start frame in parent timeline
@@ -212,7 +218,7 @@ pub struct CompNode {
 impl CompNode {
     /// Create new composition node.
     pub fn new(name: &str, start: i32, end: i32, fps: f32) -> Self {
-        let mut attrs = Attrs::new();
+        let mut attrs = Attrs::with_schema(&COMP_SCHEMA);
         let uuid = Uuid::new_v4();
         
         attrs.set_uuid(A_UUID, uuid);
@@ -238,6 +244,14 @@ impl CompNode {
     pub fn with_uuid(mut self, uuid: Uuid) -> Self {
         self.attrs.set_uuid(A_UUID, uuid);
         self
+    }
+    
+    /// Attach schema after deserialization (comp + all layers)
+    pub fn attach_schema(&mut self) {
+        self.attrs.attach_schema(&COMP_SCHEMA);
+        for layer in &mut self.layers {
+            layer.attach_schema();
+        }
     }
     
     // --- Getters ---
@@ -285,9 +299,9 @@ impl CompNode {
     }
 
     /// Set current playhead frame.
-    /// Uses set_silent() - changing playhead doesn't invalidate cache.
+    /// Changing playhead doesn't invalidate cache (frame is non-DAG in schema).
     pub fn set_frame(&mut self, frame: i32) {
-        self.attrs.set_silent(A_FRAME, super::attrs::AttrValue::Int(frame));
+        self.attrs.set(A_FRAME, super::attrs::AttrValue::Int(frame));
     }
 
     /// Play range (work area) - returns (start, end)
@@ -1015,6 +1029,11 @@ impl Node for CompNode {
     fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
         use super::frame::FrameStatus;
 
+        // Nothing to preload for empty comp
+        if self.layers.is_empty() {
+            return;
+        }
+
         let Some(workers) = ctx.workers else {
             return;
         };
@@ -1109,6 +1128,11 @@ impl CompNode {
         radius: i32,
     ) {
         use super::node::ComputeContext;
+        
+        // Nothing to preload for empty comp
+        if self.layers.is_empty() {
+            return;
+        }
         
         // Get cache and epoch
         let global_cache = match &project.global_cache {

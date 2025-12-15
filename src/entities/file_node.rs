@@ -11,6 +11,7 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::attr_schemas::FILE_SCHEMA;
 use super::attrs::{AttrValue, Attrs};
 use super::frame::{CropAlign, Frame, PixelDepth};
 use super::keys::*;
@@ -33,7 +34,7 @@ impl FileNode {
     /// * `end` - Last frame number in sequence
     /// * `fps` - Frames per second
     pub fn new(file_mask: String, start: i32, end: i32, fps: f32) -> Self {
-        let mut attrs = Attrs::new();
+        let mut attrs = Attrs::with_schema(&FILE_SCHEMA);
         let uuid = Uuid::new_v4();
         
         attrs.set_uuid(A_UUID, uuid);
@@ -57,6 +58,11 @@ impl FileNode {
     pub fn with_uuid(mut self, uuid: Uuid) -> Self {
         self.attrs.set_uuid(A_UUID, uuid);
         self
+    }
+    
+    /// Attach schema after deserialization
+    pub fn attach_schema(&mut self) {
+        self.attrs.attach_schema(&FILE_SCHEMA);
     }
     
     // --- Getters ---

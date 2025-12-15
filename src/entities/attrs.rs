@@ -4,24 +4,22 @@
 //!
 //! # Dirty Flag & Cache Invalidation
 //!
-//! Each `Attrs` instance has an atomic `dirty` flag used for cache invalidation:
+//! Each `Attrs` instance has an atomic `dirty` flag used for cache invalidation.
+//! With schema attached, `set()` auto-detects DAG vs non-DAG attributes:
 //!
-//! - **`set()`** - sets attribute AND marks dirty. Use for attributes that affect
-//!   rendering (opacity, transforms, layer timing, etc.). Triggers cache invalidation.
-//!
-//! - **`set_silent()`** - sets attribute WITHOUT marking dirty. Use for state that
-//!   doesn't affect rendering (playhead position, selection, UI state).
+//! - **DAG attrs** (opacity, transforms, timing): `set()` marks dirty → cache invalidation
+//! - **Non-DAG attrs** (playhead, selection, UI): `set()` skips dirty → cache preserved
 //!
 //! ## Dataflow
 //!
 //! ```text
-//! User changes opacity → attrs.set() → dirty=true
+//! User changes opacity → attrs.set() → schema.is_dag("opacity")=true → dirty=true
 //!   → modify_comp() detects is_dirty()
 //!   → emits AttrsChangedEvent
 //!   → cache.clear_comp() invalidates frames
 //!   → compute() recomposes → clear_dirty()
 //!
-//! Playback advances frame → attrs.set_silent() → dirty unchanged
+//! Playback advances frame → attrs.set() → schema.is_dag("frame")=false → dirty unchanged
 //!   → modify_comp() sees !is_dirty()
 //!   → NO event emitted → cache stays valid
 //! ```
@@ -39,6 +37,123 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
+
+// ============================================================================
+// Attribute Schema System
+// ============================================================================
+
+/// Attribute flags (bitfield)
+/// Controls behavior and visibility of attributes
+pub type AttrFlags = u8;
+
+/// Attribute affects DAG/render - changes invalidate cache
+pub const FLAG_DAG: AttrFlags = 1 << 0;
+/// Attribute shown in Attribute Editor UI
+pub const FLAG_DISPLAY: AttrFlags = 1 << 1;
+/// Attribute can be keyframed for animation
+pub const FLAG_KEYABLE: AttrFlags = 1 << 2;
+/// Attribute is read-only (computed value)
+pub const FLAG_READONLY: AttrFlags = 1 << 3;
+/// Internal attribute, not shown to user
+pub const FLAG_INTERNAL: AttrFlags = 1 << 4;
+
+/// Expected type of attribute value
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttrType {
+    Bool,
+    Int,
+    Float,
+    String,
+    Uuid,
+    Vec3,
+    Vec4,
+    List,
+    Json,
+}
+
+/// Single attribute definition
+#[derive(Debug, Clone)]
+pub struct AttrDef {
+    pub name: &'static str,
+    pub attr_type: AttrType,
+    pub flags: AttrFlags,
+}
+
+impl AttrDef {
+    /// Create new attribute definition
+    pub const fn new(name: &'static str, attr_type: AttrType, flags: AttrFlags) -> Self {
+        Self { name, attr_type, flags }
+    }
+    
+    /// Check if attribute affects DAG (render graph)
+    pub const fn is_dag(&self) -> bool {
+        self.flags & FLAG_DAG != 0
+    }
+    
+    /// Check if attribute is shown in UI
+    pub const fn is_display(&self) -> bool {
+        self.flags & FLAG_DISPLAY != 0
+    }
+    
+    /// Check if attribute can be keyframed
+    pub const fn is_keyable(&self) -> bool {
+        self.flags & FLAG_KEYABLE != 0
+    }
+    
+    /// Check if attribute is read-only
+    pub const fn is_readonly(&self) -> bool {
+        self.flags & FLAG_READONLY != 0
+    }
+    
+    /// Check if attribute is internal
+    pub const fn is_internal(&self) -> bool {
+        self.flags & FLAG_INTERNAL != 0
+    }
+}
+
+/// Schema: collection of attribute definitions for an entity type
+#[derive(Debug, Clone)]
+pub struct AttrSchema {
+    pub name: &'static str,
+    defs: &'static [AttrDef],
+}
+
+impl AttrSchema {
+    /// Create new schema
+    pub const fn new(name: &'static str, defs: &'static [AttrDef]) -> Self {
+        Self { name, defs }
+    }
+    
+    /// Find attribute definition by name
+    pub fn get(&self, name: &str) -> Option<&AttrDef> {
+        self.defs.iter().find(|d| d.name == name)
+    }
+    
+    /// Check if attribute affects DAG
+    pub fn is_dag(&self, name: &str) -> bool {
+        self.get(name).map_or(false, |d| d.is_dag())
+    }
+    
+    /// Check if attribute is display
+    pub fn is_display(&self, name: &str) -> bool {
+        self.get(name).map_or(false, |d| d.is_display())
+    }
+    
+    /// Get all DAG attributes
+    pub fn dag_attrs(&self) -> impl Iterator<Item = &AttrDef> {
+        self.defs.iter().filter(|d| d.is_dag())
+    }
+    
+    /// Get all display attributes
+    pub fn display_attrs(&self) -> impl Iterator<Item = &AttrDef> {
+        self.defs.iter().filter(|d| d.is_display())
+    }
+    
+    /// Iterate all definitions
+    pub fn iter(&self) -> impl Iterator<Item = &AttrDef> {
+        self.defs.iter()
+    }
+}
 
 /// Generic attribute value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,17 +201,23 @@ impl std::hash::Hash for AttrValue {
 /// Attribute container: string key → typed value.
 ///
 /// Includes dirty tracking for cache invalidation.
+/// Optional schema for automatic DAG detection.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Attrs {
     #[serde(default)]
     map: HashMap<String, AttrValue>,
 
-    /// Dirty flag: set when attributes are modified via set()
+    /// Dirty flag: set when DAG attributes are modified
     /// Used for cache invalidation instead of recomputing hashes
     /// Thread-safe AtomicBool for Send+Sync (allows background composition)
     #[serde(skip)]
     #[serde(default = "Attrs::default_dirty")]
     dirty: AtomicBool,
+    
+    /// Optional schema reference for automatic dirty detection
+    /// If set, only DAG attributes mark dirty on change
+    #[serde(skip)]
+    schema: Option<&'static AttrSchema>,
 }
 
 impl Default for Attrs {
@@ -114,20 +235,52 @@ impl Attrs {
         Self {
             map: HashMap::new(),
             dirty: AtomicBool::new(false),
+            schema: None,
         }
     }
+    
+    /// Create Attrs with schema for automatic DAG detection
+    pub fn with_schema(schema: &'static AttrSchema) -> Self {
+        Self {
+            map: HashMap::new(),
+            dirty: AtomicBool::new(false),
+            schema: Some(schema),
+        }
+    }
+    
+    /// Attach schema (for deserialized entities)
+    pub fn attach_schema(&mut self, schema: &'static AttrSchema) {
+        self.schema = Some(schema);
+    }
+    
+    /// Get current schema reference
+    pub fn schema(&self) -> Option<&'static AttrSchema> {
+        self.schema
+    }
 
-    /// Set attribute value and mark as dirty (triggers cache invalidation)
+    /// Set attribute value.
+    /// If schema exists: marks dirty only for DAG attributes.
+    /// If no schema: always marks dirty (legacy behavior).
     pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
-        self.map.insert(key.into(), value);
-        self.dirty.store(true, Ordering::Relaxed);
+        let key = key.into();
+        self.map.insert(key.clone(), value);
+        
+        // Check if this attr affects DAG
+        let is_dag = match &self.schema {
+            Some(schema) => schema.is_dag(&key),
+            None => true, // No schema = legacy, always dirty
+        };
+        
+        if is_dag {
+            self.dirty.store(true, Ordering::Relaxed);
+        }
     }
     
     /// Set attribute value WITHOUT marking dirty.
-    /// Use for playhead position, selection state, etc. that don't affect rendering.
+    /// DEPRECATED: With schema, use set() - it auto-detects DAG attrs.
+    /// Kept for backward compatibility during migration.
     pub fn set_silent(&mut self, key: impl Into<String>, value: AttrValue) {
         self.map.insert(key.into(), value);
-        // Don't mark dirty - this change doesn't require cache invalidation
     }
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
@@ -397,6 +550,7 @@ impl Clone for Attrs {
         Self {
             map: self.map.clone(),
             dirty: AtomicBool::new(self.dirty.load(Ordering::Relaxed)),
+            schema: self.schema,
         }
     }
 }

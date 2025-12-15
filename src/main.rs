@@ -551,6 +551,9 @@ impl PlayaApp {
             Ok(mut project) => {
                 info!("Loaded project from {}", path.display());
 
+                // Attach schemas (not serialized)
+                project.attach_schemas();
+                
                 // Rebuild runtime + set cache manager (unified)
                 project.rebuild_with_manager(
                     Arc::clone(&self.cache_manager),
@@ -853,7 +856,9 @@ impl PlayaApp {
         let frame_loading = self.frame.as_ref()
             .map(|f| matches!(f.status(), crate::entities::frame::FrameStatus::Header | crate::entities::frame::FrameStatus::Loading))
             .unwrap_or(false);
-        let texture_needs_upload = epoch_changed || frame_changed || frame_loading;
+        // Also re-fetch if we have no frame yet (workers may have cached it)
+        let no_frame = self.frame.is_none();
+        let texture_needs_upload = epoch_changed || frame_changed || frame_loading || no_frame;
 
         // If refresh needed, get frame from cache/compositor
         if texture_needs_upload {
@@ -1547,6 +1552,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Recreate Player runtime (no longer owns project)
             let mut player = Player::new();
 
+            // Attach schemas (not serialized, must restore after deserialize)
+            app.project.attach_schemas();
+            
             // Rebuild runtime + set cache manager (unified, lost during clone/deserialization)
             app.project.rebuild_with_manager(
                 Arc::clone(&app.cache_manager),
@@ -1622,6 +1630,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Loading playlist: {}", playlist_path.display());
                     match playa::entities::Project::from_json(playlist_path) {
                         Ok(mut project) => {
+                            // Attach schemas (not serialized)
+                            project.attach_schemas();
+                            
                             // Rebuild runtime + set cache manager (unified)
                             project.rebuild_with_manager(
                                 Arc::clone(&app.cache_manager),

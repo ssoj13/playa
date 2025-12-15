@@ -39,6 +39,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::attr_schemas::PROJECT_SCHEMA;
 use super::{Attrs, CompositorType};
 use super::node::Node;
 use super::node_kind::NodeKind;
@@ -134,8 +135,8 @@ impl Project {
             strategy,
         ));
 
-        // Initialize attrs with default values
-        let mut attrs = Attrs::new();
+        // Initialize attrs with schema
+        let mut attrs = Attrs::with_schema(&PROJECT_SCHEMA);
         attrs.set_json("comps_order", &Vec::<Uuid>::new());
         attrs.set_json("selection", &Vec::<Uuid>::new());
         attrs.set_json("active", &None::<Uuid>);
@@ -156,6 +157,23 @@ impl Project {
     /// Called once during App initialization to enable automatic cache invalidation.
     pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
         self.event_emitter = Some(emitter);
+    }
+    
+    /// Attach schemas to all entities after deserialization.
+    /// Must be called after from_json() since schemas are not serialized.
+    pub fn attach_schemas(&mut self) {
+        // Project schema
+        self.attrs.attach_schema(&PROJECT_SCHEMA);
+        
+        // All nodes in media pool
+        if let Ok(mut media) = self.media.write() {
+            for node in media.values_mut() {
+                match node {
+                    NodeKind::File(f) => f.attach_schema(),
+                    NodeKind::Comp(c) => c.attach_schema(),
+                }
+            }
+        }
     }
 
     // === Accessor methods for attrs fields ===
