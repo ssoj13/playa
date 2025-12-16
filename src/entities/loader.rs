@@ -13,6 +13,7 @@ use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
 use crate::entities::loader_video;
 use crate::entities::{AttrValue, Attrs};
 use crate::utils::media;
+use super::keys::{A_FPS, A_HEIGHT, A_WIDTH};
 
 /// Image loader with metadata support
 pub struct Loader;
@@ -62,15 +63,15 @@ impl Loader {
         let meta = loader_video::VideoMetadata::from_file(&actual_path)?;
 
         let mut meta_attrs = Attrs::new();
-        meta_attrs.set("width", AttrValue::UInt(meta.width));
-        meta_attrs.set("height", AttrValue::UInt(meta.height));
+        meta_attrs.set(A_WIDTH, AttrValue::UInt(meta.width));
+        meta_attrs.set(A_HEIGHT, AttrValue::UInt(meta.height));
         meta_attrs.set(
             "format",
             AttrValue::Str(format!("Video ({})", actual_path.display())),
         );
         meta_attrs.set("channels", AttrValue::UInt(3));
         meta_attrs.set("frames", AttrValue::UInt(meta.frame_count as u32));
-        meta_attrs.set("fps", AttrValue::Float(meta.fps as f32));
+        meta_attrs.set(A_FPS, AttrValue::Float(meta.fps as f32));
 
         Ok(meta_attrs)
     }
@@ -102,8 +103,8 @@ impl Loader {
         let height = (data_window.max.y - data_window.min.y + 1) as usize;
 
         let mut meta = Attrs::new();
-        meta.set("width", AttrValue::UInt(width as u32));
-        meta.set("height", AttrValue::UInt(height as u32));
+        meta.set(A_WIDTH, AttrValue::UInt(width as u32));
+        meta.set(A_HEIGHT, AttrValue::UInt(height as u32));
         meta.set("format", AttrValue::Str("EXR (OpenEXR)".to_string()));
 
         // Extract channel count
@@ -138,8 +139,8 @@ impl Loader {
         })?;
 
         let mut meta = Attrs::new();
-        meta.set("width", AttrValue::UInt(img.width()));
-        meta.set("height", AttrValue::UInt(img.height()));
+        meta.set(A_WIDTH, AttrValue::UInt(img.width()));
+        meta.set(A_HEIGHT, AttrValue::UInt(img.height()));
         meta.set("format", AttrValue::Str(format!("EXR ({:?})", format)));
 
         // Determine channel count from color type
@@ -261,8 +262,8 @@ impl Loader {
             .map_err(|e| FrameError::Image(format!("Image decode error: {}", e)))?;
 
         let mut meta = Attrs::new();
-        meta.set("width", AttrValue::UInt(img.width()));
-        meta.set("height", AttrValue::UInt(img.height()));
+        meta.set(A_WIDTH, AttrValue::UInt(img.width()));
+        meta.set(A_HEIGHT, AttrValue::UInt(img.height()));
         meta.set("format", AttrValue::Str(format!("{:?}", format)));
 
         let channels = match img.color() {

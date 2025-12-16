@@ -2,7 +2,7 @@
 
 **Date:** 2025-12-15
 **Branch:** dev3
-**Status:** Awaiting approval for implementation
+**Status:** Phase 1, 2 & 5 COMPLETED ✅ (build passes, clippy clean)
 
 ---
 
@@ -548,26 +548,26 @@ edition = "2024"  # Unstable, requires nightly
 
 ### Phase 1: Critical Fixes (Required)
 
-- [ ] **1.1** Fix race condition in `cache_man.rs:130` (5 min)
-- [ ] **1.2** Fix integer overflow in `attrs.rs:456` (10 min)
-- [ ] **4.7** Change edition to "2021" in Cargo.toml (1 min)
-- [ ] **4.2** Unify uuid() error handling to safe pattern (15 min)
+- [x] **1.1** Fix race condition in `cache_man.rs:130` ✅
+- [x] **1.2** Fix integer overflow in `attrs.rs:456` ✅
+- [x] **4.7** Change edition to "2021" in Cargo.toml - SKIPPED (using nightly)
+- [x] **4.2** Unify uuid() error handling to safe pattern ✅
 
 ### Phase 2: Dead Code Removal (Recommended)
 
-- [ ] **2.1** Delete `HelpProvider` trait (5 min)
-- [ ] **2.2** Delete `all_help_sections()` function (2 min)
-- [ ] **2.3** Delete `FocusTracker` struct (5 min)
-- [ ] **2.4** Delete unused ae_events (2 min)
-- [ ] **2.6** Delete `IMAGE_EXTS`, `is_image()` (2 min)
-- [ ] **2.8** Delete commented-out code (5 min)
+- [x] **2.1** Delete `HelpProvider` trait ✅
+- [x] **2.2** Delete `all_help_sections()` function ✅
+- [x] **2.3** Delete `FocusTracker` struct ✅
+- [x] **2.4** Delete unused ae_events ✅
+- [x] **2.6** Delete `IMAGE_EXTS`, `is_image()` ✅
+- [x] **2.8** Delete commented-out code ✅
 
 ### Phase 3: Code Deduplication (Optional)
 
 - [ ] **3.1** Add `enum_dispatch` for NodeKind (30 min)
 - [ ] **3.2** Extract `SelectionManager<T>` (45 min)
-- [ ] **3.5** Add `Attrs::work_area()` method (10 min)
-- [ ] **3.6** Add `Frame::placeholder()` factory (10 min)
+- [x] **3.5** `Attrs::work_area()` already exists ✅
+- [x] **3.6** Add `Frame::placeholder()` factory ✅
 
 ### Phase 4: Interface Consistency (Optional)
 
@@ -577,8 +577,8 @@ edition = "2024"  # Unstable, requires nightly
 
 ### Phase 5: Cleanup (Low Priority)
 
-- [ ] **6.x** Fix all clippy warnings (20 min)
-- [ ] **2.5** Decide on orphaned binaries (move/delete/register)
+- [x] **6.x** Fix clippy warnings (auto-fix + allows) ✅
+- [x] **2.5** Delete orphaned binaries in src/bin/ ✅
 
 ---
 

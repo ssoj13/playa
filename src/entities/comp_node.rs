@@ -62,7 +62,7 @@ use super::attr_schemas::{COMP_SCHEMA, LAYER_SCHEMA};
 use super::attrs::{AttrValue, Attrs};
 use super::compositor::{BlendMode, CpuCompositor};
 use super::transform;
-use super::frame::{Frame, FrameStatus, PixelBuffer, PixelDepth, PixelFormat};
+use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
 use super::keys::*;
 use super::node::{ComputeContext, Node};
 
@@ -843,7 +843,7 @@ impl CompNode {
     
     fn placeholder_frame(&self) -> Frame {
         let (w, h) = self.dim();
-        Frame::new(w, h, PixelDepth::U8)
+        Frame::placeholder(w, h)
     }
     
     fn compose_internal(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
@@ -874,7 +874,7 @@ impl CompNode {
         let has_solo = self.layers.iter().any(|l| l.attrs.get_bool(A_SOLO).unwrap_or(false));
         
         // Collect frames from layers (reverse order: last = bottom, first = top)
-        for (_, layer) in self.layers.iter().rev().enumerate() {
+        for layer in self.layers.iter().rev() {
             let (play_start, play_end) = layer.work_area();
             
             // Skip if outside work area
@@ -1115,11 +1115,10 @@ impl Node for CompNode {
 
             workers.execute_with_epoch(epoch, move || {
                 // Check status in worker thread (not UI)
-                if let Some(status) = cache.get_status(uuid, frame_idx) {
-                    if matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
+                if let Some(status) = cache.get_status(uuid, frame_idx)
+                    && matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
                         return;
                     }
-                }
                 let media_guard = media.read().expect("media lock");
                 let Some(node) = media_guard.get(&uuid) else { return; };
                 let Some(comp) = node.as_comp() else { return; };

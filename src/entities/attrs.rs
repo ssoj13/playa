@@ -38,6 +38,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
+use super::keys::{A_IN, A_SPEED, A_SRC_LEN, A_TRIM_IN, A_TRIM_OUT};
+
 // ============================================================================
 // Attribute Schema System
 // ============================================================================
@@ -131,12 +133,12 @@ impl AttrSchema {
     
     /// Check if attribute affects DAG
     pub fn is_dag(&self, name: &str) -> bool {
-        self.get(name).map_or(false, |d| d.is_dag())
+        self.get(name).is_some_and(|d| d.is_dag())
     }
     
     /// Check if attribute is display
     pub fn is_display(&self, name: &str) -> bool {
-        self.get(name).map_or(false, |d| d.is_display())
+        self.get(name).is_some_and(|d| d.is_display())
     }
     
     /// Get all DAG attributes
@@ -450,11 +452,13 @@ impl Attrs {
     /// Layer visible start in parent coords: in + trim_in/speed
     /// trim_in is source frames offset, converted to timeline frames via speed
     pub fn layer_start(&self) -> i32 {
-        let in_val = self.get_i32_or_zero("in");
-        let trim_in = self.get_i32_or_zero("trim_in");
+        let in_val = self.get_i32_or_zero(A_IN);
+        let trim_in = self.get_i32_or_zero(A_TRIM_IN);
         // Clamp speed to safe range (0.1..4.0) to prevent duration explosion
-        let speed = self.get_float_or("speed", 1.0).clamp(0.1, 4.0);
-        in_val + (trim_in as f32 / speed).round() as i32
+        let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
+        // Use f64 for intermediate calc to prevent overflow on large values
+        let offset = (trim_in as f64 / speed as f64).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+        in_val.saturating_add(offset)
     }
 
     /// Layer visible end in parent coords: layer_start + visible_timeline_frames - 1
@@ -462,33 +466,36 @@ impl Attrs {
     /// visible_timeline_frames = visible_src_frames / speed
     pub fn layer_end(&self) -> i32 {
         let layer_start = self.layer_start();
-        let src_len = self.get_i32_or_zero("src_len");
-        let trim_in = self.get_i32_or_zero("trim_in");
-        let trim_out = self.get_i32_or_zero("trim_out");
-        let speed = self.get_float_or("speed", 1.0).clamp(0.1, 4.0);
+        let src_len = self.get_i32_or_zero(A_SRC_LEN);
+        let trim_in = self.get_i32_or_zero(A_TRIM_IN);
+        let trim_out = self.get_i32_or_zero(A_TRIM_OUT);
+        let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
         // Visible source frames (at least 1 to prevent negative duration)
         let visible_src = (src_len - trim_in - trim_out).max(1);
-        let visible_timeline = (visible_src as f32 / speed).round() as i32;
-        layer_start + visible_timeline - 1
+        // Use f64 to prevent overflow on large frame counts
+        let visible_timeline = (visible_src as f64 / speed as f64).round().clamp(1.0, i32::MAX as f64) as i32;
+        layer_start.saturating_add(visible_timeline).saturating_sub(1)
     }
 
     /// Get source length (original duration in source frames)
     pub fn src_len(&self) -> i32 {
-        self.get_i32_or_zero("src_len")
+        self.get_i32_or_zero(A_SRC_LEN)
     }
 
     /// Full bar end (untrimmed): in + src_len/speed - 1
     /// This replaces the "out" attribute - now computed, not stored
     pub fn full_bar_end(&self) -> i32 {
-        let in_val = self.get_i32_or_zero("in");
-        let src_len = self.get_i32_or_zero("src_len");
-        let speed = self.get_float_or("speed", 1.0).clamp(0.1, 4.0);
-        in_val + (src_len as f32 / speed).ceil() as i32 - 1
+        let in_val = self.get_i32_or_zero(A_IN);
+        let src_len = self.get_i32_or_zero(A_SRC_LEN);
+        let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
+        // Use f64 to prevent overflow on large frame counts
+        let duration = (src_len as f64 / speed as f64).ceil().clamp(1.0, i32::MAX as f64) as i32;
+        in_val.saturating_add(duration).saturating_sub(1)
     }
 
     /// Full bar start (same as "in")
     pub fn full_bar_start(&self) -> i32 {
-        self.get_i32_or_zero("in")
+        self.get_i32_or_zero(A_IN)
     }
 
     /// Get mutable reference to attribute value

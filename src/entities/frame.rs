@@ -35,6 +35,7 @@ use half::f16 as F16;
 // Import utilities
 use crate::entities::Attrs;
 use crate::utils::media;
+use super::keys::{A_HEIGHT, A_WIDTH};
 
 /// Pixel buffer format - stores different precision levels
 #[derive(Debug, Clone)]
@@ -225,6 +226,11 @@ impl Frame {
                 }
             }
         }
+    }
+
+    /// Create U8 placeholder frame (convenience alias for Frame::new with U8 depth)
+    pub fn placeholder(width: usize, height: usize) -> Self {
+        Self::new(width, height, PixelDepth::U8)
     }
 
     /// Convenience method: Create 16-bit half-float F16 frame
@@ -453,8 +459,8 @@ impl Frame {
         // For images, use unified Loader
         let attrs = super::loader::Loader::header(&actual_path)?;
 
-        let width = attrs.get_u32("width").unwrap_or(1) as usize;
-        let height = attrs.get_u32("height").unwrap_or(1) as usize;
+        let width = attrs.get_u32(A_WIDTH).unwrap_or(1) as usize;
+        let height = attrs.get_u32(A_HEIGHT).unwrap_or(1) as usize;
 
         let mut data = self.data.lock().unwrap();
         data.width = width;

@@ -179,7 +179,7 @@ impl CameraNode {
 
 impl Node for CameraNode {
     fn uuid(&self) -> Uuid {
-        self.attrs.get_uuid("uuid").expect("Camera must have UUID")
+        self.attrs.get_uuid("uuid").unwrap_or_else(Uuid::nil)
     }
     
     fn name(&self) -> &str {

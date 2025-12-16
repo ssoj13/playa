@@ -17,6 +17,7 @@ use super::attr_schemas::TEXT_SCHEMA;
 use super::attrs::{AttrValue, Attrs};
 use super::frame::Frame;
 use super::node::{ComputeContext, Node};
+use super::keys::{A_HEIGHT, A_WIDTH};
 
 // Global font system (expensive to create, reuse across all TextNodes)
 lazy_static::lazy_static! {
@@ -87,8 +88,8 @@ impl TextNode {
         attrs.set("bg_color", AttrValue::Vec4([0.0, 0.0, 0.0, 0.0]));
         
         // Dimensions (0 = auto)
-        attrs.set("width", AttrValue::Int(0));
-        attrs.set("height", AttrValue::Int(0));
+        attrs.set(A_WIDTH, AttrValue::Int(0));
+        attrs.set(A_HEIGHT, AttrValue::Int(0));
         
         attrs.clear_dirty();
         Self { attrs }
@@ -139,11 +140,11 @@ impl TextNode {
     }
     
     pub fn width(&self) -> i32 {
-        self.attrs.get_i32("width").unwrap_or(0)
+        self.attrs.get_i32(A_WIDTH).unwrap_or(0)
     }
     
     pub fn height(&self) -> i32 {
-        self.attrs.get_i32("height").unwrap_or(0)
+        self.attrs.get_i32(A_HEIGHT).unwrap_or(0)
     }
     
     // === Setters ===
@@ -332,7 +333,7 @@ impl TextNode {
 
 impl Node for TextNode {
     fn uuid(&self) -> Uuid {
-        self.attrs.get_uuid("uuid").expect("TextNode must have UUID")
+        self.attrs.get_uuid("uuid").unwrap_or_else(Uuid::nil)
     }
     
     fn name(&self) -> &str {

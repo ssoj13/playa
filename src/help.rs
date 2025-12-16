@@ -1,6 +1,6 @@
 //! Per-window help system.
 //!
-//! Each widget implements `HelpProvider` trait to provide context-sensitive help.
+//! Provides context-sensitive help for each widget via static const arrays.
 //! Global help (F-keys, Ctrl+S, etc.) is separate and shown in all contexts.
 
 use eframe::egui;
@@ -16,15 +16,6 @@ impl HelpEntry {
     pub const fn new(key: &'static str, desc: &'static str) -> Self {
         Self { key, desc }
     }
-}
-
-/// Trait for widgets that provide context-sensitive help
-pub trait HelpProvider {
-    /// Section title (e.g., "Viewport", "Timeline")
-    fn help_title(&self) -> &'static str;
-
-    /// Help entries for this widget
-    fn help_entries(&self) -> &'static [HelpEntry];
 }
 
 /// Global hotkeys shared across all windows
@@ -155,14 +146,3 @@ pub fn render_help_overlay(ui: &mut egui::Ui, entries: &[HelpEntry], include_glo
         });
 }
 
-/// Combine multiple help sections into one slice (for F11 global view)
-pub fn all_help_sections() -> Vec<(&'static str, &'static [HelpEntry])> {
-    vec![
-        ("Global", GLOBAL_HELP),
-        ("Viewport", VIEWPORT_HELP),
-        ("Playback", PLAYBACK_HELP),
-        ("Timeline", TIMELINE_HELP),
-        ("Project", PROJECT_HELP),
-        ("Attributes", AE_HELP),
-    ]
-}

@@ -341,9 +341,6 @@ impl PlayaApp {
 
         // Poll all events from the bus
         let events = self.event_bus.poll();
-        // if !events.is_empty() {
-        //     log::trace!("[POLL] {} events polled", events.len());
-        // }
         for event in events {
 
             // === Comp events (high priority, internal) ===
@@ -690,9 +687,9 @@ impl PlayaApp {
 
         // Determine focused window and update hotkey handler
         let focused_window = self.determine_focused_window(ctx);
-        self.focused_window = focused_window.clone();
+        self.focused_window = focused_window;
         self.hotkey_handler
-            .set_focused_window(focused_window.clone());
+            .set_focused_window(focused_window);
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
@@ -1138,26 +1135,23 @@ impl PlayaApp {
                     let mut merged = playa::entities::Attrs::new();
                     let mut mixed_keys: HashSet<String> = HashSet::new();
 
-                    if let Some(first_uuid) = ae_focus.first() {
-                        if let Some(attrs) = comp.layers_attrs_get(first_uuid) {
+                    if let Some(first_uuid) = ae_focus.first()
+                        && let Some(attrs) = comp.layers_attrs_get(first_uuid) {
                             for key in &common_keys {
                                 if let Some(v) = attrs.get(key) {
                                     merged.set(key.clone(), v.clone());
                                 }
                             }
                         }
-                    }
                     for key in &common_keys {
                         if let Some(base) = merged.get(key) {
                             for uuid in &ae_focus {
-                                if let Some(attrs) = comp.layers_attrs_get(uuid) {
-                                    if let Some(other) = attrs.get(key) {
-                                        if other != base {
+                                if let Some(attrs) = comp.layers_attrs_get(uuid)
+                                    && let Some(other) = attrs.get(key)
+                                        && other != base {
                                             mixed_keys.insert(key.clone());
                                             break;
                                         }
-                                    }
-                                }
                             }
                         }
                     }
@@ -1253,12 +1247,11 @@ impl PlayaApp {
                 for key in &common_keys {
                     if let Some(base) = merged.get(key) {
                         for attrs in &all_attrs[1..] {
-                            if let Some(other) = attrs.get(key) {
-                                if other != base {
+                            if let Some(other) = attrs.get(key)
+                                && other != base {
                                     mixed_keys.insert(key.clone());
                                     break;
                                 }
-                            }
                         }
                     }
                 }

@@ -225,13 +225,12 @@ fn render_compositing_settings(
         ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Gpu, "GPU");
     });
     // Emit event if changed
-    if settings.compositor_backend != prev_backend {
-        if let Some(bus) = event_bus {
+    if settings.compositor_backend != prev_backend
+        && let Some(bus) = event_bus {
             bus.emit(CompositorBackendChangedEvent {
                 backend: settings.compositor_backend,
             });
         }
-    }
     ui.label("GPU compositor uses OpenGL for 10-50x faster multi-layer blending.");
     ui.label("Requires OpenGL 3.0+. Falls back to CPU on errors.");
 

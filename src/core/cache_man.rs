@@ -129,12 +129,13 @@ impl CacheManager {
     /// Free memory usage (saturating subtraction to prevent underflow)
     pub fn free_memory(&self, bytes: usize) {
         // Use compare-exchange loop for saturating subtraction
+        // AcqRel ensures proper synchronization with add_memory and check_memory_limit
         loop {
-            let current = self.memory_usage.load(Ordering::Relaxed);
+            let current = self.memory_usage.load(Ordering::Acquire);
             let new_val = current.saturating_sub(bytes);
             if self
                 .memory_usage
-                .compare_exchange_weak(current, new_val, Ordering::Relaxed, Ordering::Relaxed)
+                .compare_exchange_weak(current, new_val, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
                 break;

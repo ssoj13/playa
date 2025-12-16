@@ -7,6 +7,8 @@
 //! timeline/project -> `encode_comp` -> frame retrieval (Comp.get_frame) -> pixel
 //! format conversion -> muxed video on disk.
 
+#![allow(clippy::items_after_test_module)] // SwsContext etc. placed after tests for readability
+
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -1362,7 +1364,6 @@ mod tests {
             play_end,
             output_path.display()
         );
-        let settings = settings;
         let mut final_output = output_path.clone();
 
         let result = encode_comp(&comp, &project, &settings, tx.clone(), cancel_flag.clone());
@@ -1478,7 +1479,7 @@ mod tests {
         }
 
         // Cleanup
-        // let _ = std::fs::remove_file(&output_path);
+        let _ = std::fs::remove_file(&output_path);
     }
 }
 

@@ -2,6 +2,10 @@
 //!
 //! Re-exports all modules for use by binary targets.
 
+// Clippy: allow complex signatures in compositor/timeline (refactoring TODO)
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::module_inception)]
+
 // Core engine (cache, events, player, workers)
 pub mod core;
 

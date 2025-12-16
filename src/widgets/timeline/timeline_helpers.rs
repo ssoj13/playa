@@ -3,6 +3,7 @@ use crate::entities::Comp;
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 
 use super::{GlobalDragState, TimelineConfig, TimelineState};
+use crate::entities::keys::{A_IN, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum LayerTool {
@@ -46,7 +47,7 @@ impl LayerTool {
                 }
             }
             LayerTool::Move => {
-                let initial_start = attrs.get_i32_or_zero("in");
+                let initial_start = attrs.get_i32_or_zero(A_IN);
                 GlobalDragState::MovingLayer {
                     layer_idx,
                     initial_start,
@@ -55,10 +56,10 @@ impl LayerTool {
                 }
             }
             LayerTool::Slide => {
-                let initial_in = attrs.get_i32_or_zero("in");
-                let initial_trim_in = attrs.get_i32_or_zero("trim_in");
-                let initial_trim_out = attrs.get_i32_or_zero("trim_out");
-                let speed = attrs.get_float_or("speed", 1.0);
+                let initial_in = attrs.get_i32_or_zero(A_IN);
+                let initial_trim_in = attrs.get_i32_or_zero(A_TRIM_IN);
+                let initial_trim_out = attrs.get_i32_or_zero(A_TRIM_OUT);
+                let speed = attrs.get_float_or(A_SPEED, 1.0);
                 log::trace!(
                     "[SLIDE START] in={}, trim_in={}, trim_out={}, speed={}",
                     initial_in, initial_trim_in, initial_trim_out, speed

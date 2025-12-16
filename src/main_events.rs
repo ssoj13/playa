@@ -71,6 +71,7 @@ use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
 use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
+use crate::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
 /// Jump to next/prev layer edge in composition
 /// direction > 0: next edge, direction < 0: prev edge
@@ -464,7 +465,7 @@ pub fn handle_app_event(
         if let Some(local_frame) = e.target_frame {
             // Add child comp's "in" offset to get absolute frame
             project.modify_comp(e.uuid, |comp| {
-                let comp_in = comp.attrs().get_i32("in").unwrap_or(0);
+                let comp_in = comp.attrs().get_i32(A_IN).unwrap_or(0);
                 comp.set_frame(comp_in + local_frame);
             });
         }
@@ -720,9 +721,9 @@ pub fn handle_app_event(
             let delta = e.new_play_start - dragged_ps;
             if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
                 let selection = comp.layer_selection.clone();
-                comp.trim_layers(&selection, "in", delta);
+                comp.trim_layers(&selection, A_IN, delta);
             } else {
-                comp.trim_layers(&[dragged_uuid], "in", delta);
+                comp.trim_layers(&[dragged_uuid], A_IN, delta);
             }
         });
 
@@ -735,9 +736,9 @@ pub fn handle_app_event(
             let delta = e.new_play_end - dragged_pe;
             if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
                 let selection = comp.layer_selection.clone();
-                comp.trim_layers(&selection, "out", delta);
+                comp.trim_layers(&selection, A_OUT, delta);
             } else {
-                comp.trim_layers(&[dragged_uuid], "out", delta);
+                comp.trim_layers(&[dragged_uuid], A_OUT, delta);
             }
         });
 
@@ -749,9 +750,9 @@ pub fn handle_app_event(
             use crate::entities::AttrValue;
             if let Some(uuid) = comp.idx_to_uuid(e.layer_idx) {
                 comp.set_child_attrs(uuid, vec![
-                    ("in", AttrValue::Int(e.new_in)),
-                    ("trim_in", AttrValue::Int(e.new_trim_in)),
-                    ("trim_out", AttrValue::Int(e.new_trim_out)),
+                    (A_IN, AttrValue::Int(e.new_in)),
+                    (A_TRIM_IN, AttrValue::Int(e.new_trim_in)),
+                    (A_TRIM_OUT, AttrValue::Int(e.new_trim_out)),
                 ]);
                 log::trace!(
                     "[SLIDE] layer {} -> in={}, trim_in={}, trim_out={}",
@@ -768,11 +769,11 @@ pub fn handle_app_event(
             use crate::entities::AttrValue;
             for layer_uuid in comp.layer_selection.clone() {
                 if let Some(layer) = comp.get_layer_mut(layer_uuid) {
-                    let old_trim_in = layer.attrs.get_i32_or_zero("trim_in");
-                    let old_trim_out = layer.attrs.get_i32_or_zero("trim_out");
+                    let old_trim_in = layer.attrs.get_i32_or_zero(A_TRIM_IN);
+                    let old_trim_out = layer.attrs.get_i32_or_zero(A_TRIM_OUT);
                     // Direct layer.attrs.set() doesn't mark comp dirty
-                    layer.attrs.set("trim_in", AttrValue::Int(0));
-                    layer.attrs.set("trim_out", AttrValue::Int(0));
+                    layer.attrs.set(A_TRIM_IN, AttrValue::Int(0));
+                    layer.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
                     log::trace!(
                         "[RESET TRIMS] layer {} -> trim_in: {} -> 0, trim_out: {} -> 0",
                         layer_uuid, old_trim_in, old_trim_out
@@ -799,7 +800,7 @@ pub fn handle_app_event(
                     ("solo", AttrValue::Bool(e.solo)),
                     ("opacity", AttrValue::Float(e.opacity)),
                     ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
-                    ("speed", AttrValue::Float(e.speed)),
+                    (A_SPEED, AttrValue::Float(e.speed)),
                 ]);
             }
         });
@@ -960,7 +961,7 @@ pub fn handle_app_event(
                 // Use get_layer() to access source_uuid field, not attrs
                 if let Some(layer) = comp.get_layer(*uuid) {
                     let source_uuid = layer.source_uuid();
-                    let original_start = layer.attrs.get_i32("in").unwrap_or(0);
+                    let original_start = layer.attrs.get_i32(A_IN).unwrap_or(0);
                     let name = layer.attrs.get_str("name").unwrap_or("?");
                     trace!("  Copy layer '{}' (source={}) at frame {}", name, source_uuid, original_start);
                     items.push(crate::widgets::timeline::ClipboardLayer {
@@ -1011,12 +1012,12 @@ pub fn handle_app_event(
                     // Update name
                     attrs.set("name", crate::entities::AttrValue::Str(new_name.clone()));
                     // Shift both in and out by offset to preserve duration
-                    let old_in = attrs.get_i32("in").unwrap_or(0);
-                    let old_out = attrs.get_i32("out").unwrap_or(old_in + 100);
+                    let old_in = attrs.get_i32(A_IN).unwrap_or(0);
+                    let old_out = attrs.get_i32(A_OUT).unwrap_or(old_in + 100);
                     let new_in = old_in + offset;
                     let new_out = old_out + offset;
-                    attrs.set("in", crate::entities::AttrValue::Int(new_in));
-                    attrs.set("out", crate::entities::AttrValue::Int(new_out));
+                    attrs.set(A_IN, crate::entities::AttrValue::Int(new_in));
+                    attrs.set(A_OUT, crate::entities::AttrValue::Int(new_out));
                     // Create and insert new Layer at tracked position
                     let new_layer = crate::entities::comp_node::Layer::from_attrs(item.source_uuid, attrs);
                     let new_uuid = new_layer.uuid();

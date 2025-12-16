@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use super::attr_schemas::FILE_SCHEMA;
 use super::attrs::{AttrValue, Attrs};
-use super::frame::{CropAlign, Frame, PixelDepth};
+use super::frame::{CropAlign, Frame};
 use super::keys::*;
 use super::node::{ComputeContext, Node};
 use crate::utils::media;
@@ -136,7 +136,7 @@ impl FileNode {
     
     fn placeholder_frame(&self) -> Frame {
         let (w, h) = self.dim();
-        Frame::new(w, h, PixelDepth::U8)
+        Frame::placeholder(w, h)
     }
     
     fn frame_from_path(&self, path: PathBuf) -> Frame {
