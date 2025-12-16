@@ -9,8 +9,97 @@
 //! to ensure consistent alignment between outline and canvas areas.
 //! This removes default panel margins that caused visual offsets.
 //!
+//! # Coordinate Systems
+//!
+//! egui uses absolute screen coordinates for mouse events. When working with
+//! panels (Viewport, Timeline, Project, AE), we need to convert between:
+//! - **Screen coords**: Absolute position on the application window
+//! - **Local coords**: Position relative to a panel's top-left corner
+//!
+//! Use `screen_to_local()` and `local_to_screen()` for conversions.
+//!
 //! Data flow: UI interactions → EventBus → Player/Project/Comps → next UI frame/render.
 use eframe::egui;
+use egui::{Pos2, Rect, Vec2};
+
+// ============================================================================
+// Coordinate Conversion Utilities
+// ============================================================================
+
+/// Convert absolute screen coordinates to local coordinates relative to panel.
+///
+/// Use this when handling mouse events inside a panel - `response.interact_pointer_pos()`
+/// returns screen coords, but panel-internal logic often needs local coords.
+///
+/// # Example
+/// ```ignore
+/// let mouse_screen = response.interact_pointer_pos().unwrap();
+/// let mouse_local = screen_to_local(mouse_screen, panel_rect);
+/// // mouse_local.x is now 0..panel_width, not absolute screen X
+/// ```
+pub fn screen_to_local(screen_pos: Pos2, panel_rect: Rect) -> Vec2 {
+    Vec2::new(
+        screen_pos.x - panel_rect.min.x,
+        screen_pos.y - panel_rect.min.y,
+    )
+}
+
+/// Convert local panel coordinates to absolute screen coordinates.
+///
+/// Use this when you need to draw something at a position calculated in local
+/// coords, or when passing coords to egui drawing functions.
+///
+/// # Example
+/// ```ignore
+/// let local_pos = Vec2::new(100.0, 50.0); // 100px from panel left, 50px from top
+/// let screen_pos = local_to_screen(local_pos, panel_rect);
+/// painter.circle_filled(screen_pos, 5.0, Color32::RED);
+/// ```
+pub fn local_to_screen(local_pos: Vec2, panel_rect: Rect) -> Pos2 {
+    Pos2::new(
+        local_pos.x + panel_rect.min.x,
+        local_pos.y + panel_rect.min.y,
+    )
+}
+
+/// Check if a screen position is inside a panel's bounds.
+///
+/// Useful for determining which panel has focus when handling global keyboard
+/// events, or for hit-testing before processing mouse events.
+///
+/// # Example
+/// ```ignore
+/// if is_in_panel(cursor_pos, viewport_rect) {
+///     // Handle viewport-specific shortcuts
+/// } else if is_in_panel(cursor_pos, timeline_rect) {
+///     // Handle timeline-specific shortcuts  
+/// }
+/// ```
+pub fn is_in_panel(screen_pos: Pos2, panel_rect: Rect) -> bool {
+    panel_rect.contains(screen_pos)
+}
+
+/// Get normalized position within panel (0.0..1.0 for both axes).
+///
+/// Useful for proportional calculations like scrubber position mapping.
+/// Returns None if position is outside panel bounds.
+///
+/// # Example
+/// ```ignore
+/// if let Some(norm) = screen_to_normalized(mouse_pos, panel_rect) {
+///     let frame = lerp(play_start, play_end, norm.x);
+/// }
+/// ```
+pub fn screen_to_normalized(screen_pos: Pos2, panel_rect: Rect) -> Option<Vec2> {
+    if !panel_rect.contains(screen_pos) {
+        return None;
+    }
+    let local = screen_to_local(screen_pos, panel_rect);
+    Some(Vec2::new(
+        local.x / panel_rect.width(),
+        local.y / panel_rect.height(),
+    ))
+}
 
 use crate::entities::Project;
 use crate::core::event_bus::EventBus;

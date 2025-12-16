@@ -104,7 +104,7 @@ pub fn render(
             .unwrap_or((0, 100));
 
         if let Some(frame_idx) =
-            viewport_state.handle_scrubbing(&response, double_clicked, play_start, play_end)
+            viewport_state.handle_scrubbing(&response, panel_rect, double_clicked, play_start, play_end)
         {
             actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
         }
