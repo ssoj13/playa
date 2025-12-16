@@ -1203,7 +1203,18 @@ impl PlayaApp {
                         manager.increment_epoch();
                     }
                     if let Some(ref cache) = self.project.global_cache {
-                        cache.clear_all();
+                        // Dehydrate source node cache (keeps pixels visible)
+                        cache.clear_comp(node_uuid, true);
+                        
+                        // Find and dehydrate all comps that use this source
+                        let media = self.project.media.read().unwrap();
+                        for (comp_uuid, node) in media.iter() {
+                            if let Some(comp) = node.as_comp() {
+                                if comp.layers.iter().any(|l| l.source_uuid() == node_uuid) {
+                                    cache.clear_comp(*comp_uuid, true);
+                                }
+                            }
+                        }
                     }
                     // Must preload after cache clear - viewport only reads from cache
                     self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
@@ -1270,12 +1281,24 @@ impl PlayaApp {
                             }
                         });
                     }
-                    // Invalidate cache
+                    // Invalidate cache with dehydrate (keeps pixels visible)
                     if let Some(manager) = self.project.cache_manager() {
                         manager.increment_epoch();
                     }
                     if let Some(ref cache) = self.project.global_cache {
-                        cache.clear_all();
+                        // Dehydrate all changed source nodes
+                        for uuid in &ae_focus {
+                            cache.clear_comp(*uuid, true);
+                        }
+                        // Find and dehydrate all comps that use these sources
+                        let media = self.project.media.read().unwrap();
+                        for (comp_uuid, node) in media.iter() {
+                            if let Some(comp) = node.as_comp() {
+                                if comp.layers.iter().any(|l| ae_focus.contains(&l.source_uuid())) {
+                                    cache.clear_comp(*comp_uuid, true);
+                                }
+                            }
+                        }
                     }
                     // Must preload after cache clear - viewport only reads from cache
                     self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
