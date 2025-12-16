@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::shaders::Shaders;
 use super::{ViewportRenderer, ViewportState};
+use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
 use crate::core::event_bus::BoxedEvent;

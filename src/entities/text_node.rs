@@ -17,7 +17,7 @@ use super::attr_schemas::TEXT_SCHEMA;
 use super::attrs::{AttrValue, Attrs};
 use super::frame::Frame;
 use super::node::{ComputeContext, Node};
-use super::keys::{A_HEIGHT, A_WIDTH};
+use super::keys::{A_HEIGHT, A_IN, A_SRC_LEN, A_SPEED, A_TRIM_IN, A_TRIM_OUT, A_WIDTH};
 
 // Global font system (expensive to create, reuse across all TextNodes)
 lazy_static::lazy_static! {
@@ -90,6 +90,14 @@ impl TextNode {
         // Dimensions (0 = auto)
         attrs.set(A_WIDTH, AttrValue::Int(0));
         attrs.set(A_HEIGHT, AttrValue::Int(0));
+        
+        // Timing (unified with other nodes)
+        attrs.set(A_IN, AttrValue::Int(0));
+        attrs.set(A_SRC_LEN, AttrValue::Int(100));
+        attrs.set(A_TRIM_IN, AttrValue::Int(0));
+        attrs.set(A_TRIM_OUT, AttrValue::Int(0));
+        attrs.set(A_SPEED, AttrValue::Float(1.0));
+        attrs.set("opacity", AttrValue::Float(1.0));
         
         attrs.clear_dirty();
         Self { attrs }

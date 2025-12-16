@@ -247,6 +247,26 @@ impl Node for FileNode {
     }
     
     // preload() uses default no-op - FileNode frames are loaded lazily during CompNode::compute()
+    
+    // --- Override timeline methods ---
+    
+    fn play_range(&self, _use_work_area: bool) -> (i32, i32) {
+        self.work_area_abs()
+    }
+    
+    fn bounds(&self, _use_trim: bool, _selection_only: bool) -> (i32, i32) {
+        self.work_area_abs()
+    }
+    
+    fn frame_count(&self) -> i32 {
+        (self._out() - self._in() + 1).max(0)
+    }
+    
+    fn dim(&self) -> (usize, usize) {
+        let w = self.attrs.get_u32(A_WIDTH).unwrap_or(64) as usize;
+        let h = self.attrs.get_u32(A_HEIGHT).unwrap_or(64) as usize;
+        (w.max(1), h.max(1))
+    }
 }
 
 // --- Sequence Detection ---

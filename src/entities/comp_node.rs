@@ -1079,6 +1079,22 @@ impl Node for CompNode {
         }
     }
     
+    fn play_range(&self, use_work_area: bool) -> (i32, i32) {
+        CompNode::play_range(self, use_work_area)
+    }
+    
+    fn bounds(&self, use_trim: bool, selection_only: bool) -> (i32, i32) {
+        CompNode::bounds(self, use_trim, selection_only)
+    }
+    
+    fn frame_count(&self) -> i32 {
+        self.play_frame_count()
+    }
+    
+    fn dim(&self) -> (usize, usize) {
+        CompNode::dim(self)
+    }
+    
     fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
         use super::frame::FrameStatus;
 

@@ -28,6 +28,7 @@ clap = { version = "4.5", features = ["derive"] }
 crossbeam = "0.8.4"
 crossbeam-channel = "0.5"
 dirs-next = "2.0"
+enum_dispatch = "0.3"
 eframe = { version = "0.33", features = ["persistence"] }
 egui_dnd = "0.14"
 egui_dock = { version = "0.18", features = ["serde"] }

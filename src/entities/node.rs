@@ -14,11 +14,13 @@
 //! - `bounds(use_trim, selection_only)` → content bounds
 //! - `frame_count()` → total frames
 
+use enum_dispatch::enum_dispatch;
 use std::sync::Arc;
 use uuid::Uuid;
 
 use super::attrs::Attrs;
 use super::frame::Frame;
+use super::keys::{A_HEIGHT, A_SRC_LEN, A_WIDTH};
 use crate::core::global_cache::GlobalFrameCache;
 use crate::core::workers::Workers;
 
@@ -39,6 +41,7 @@ pub struct ComputeContext<'a> {
 
 /// Base trait for all node types.
 /// Provides common interface for identification, attributes, and computation.
+#[enum_dispatch]
 pub trait Node: Send + Sync {
     /// Unique identifier for this node
     fn uuid(&self) -> Uuid;
@@ -111,5 +114,30 @@ pub trait Node: Send + Sync {
     /// Get uuid attribute
     fn get_uuid_attr(&self, key: &str) -> Option<Uuid> {
         self.attrs().get_uuid(key)
+    }
+    
+    // --- Timeline/timing methods (for enum_dispatch unification) ---
+    
+    /// Play range: (start_frame, end_frame) for playback.
+    /// Default uses attrs.layer_start()/layer_end() which respects in/trim/speed.
+    fn play_range(&self, _use_work_area: bool) -> (i32, i32) {
+        (self.attrs().layer_start(), self.attrs().layer_end())
+    }
+    
+    /// Content bounds for zoom-to-fit. Default delegates to play_range.
+    fn bounds(&self, use_trim: bool, _selection_only: bool) -> (i32, i32) {
+        self.play_range(use_trim)
+    }
+    
+    /// Total source frames (before speed/trim).
+    fn frame_count(&self) -> i32 {
+        self.attrs().get_i32(A_SRC_LEN).unwrap_or(100)
+    }
+    
+    /// Dimensions (width, height). Default reads from attrs.
+    fn dim(&self) -> (usize, usize) {
+        let w = self.attrs().get_u32(A_WIDTH).unwrap_or(0) as usize;
+        let h = self.attrs().get_u32(A_HEIGHT).unwrap_or(0) as usize;
+        (w, h)
     }
 }

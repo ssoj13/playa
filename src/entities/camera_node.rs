@@ -11,6 +11,7 @@ use super::attr_schemas::CAMERA_SCHEMA;
 use super::attrs::{AttrValue, Attrs};
 use super::frame::Frame;
 use super::node::{ComputeContext, Node};
+use super::keys::{A_IN, A_SRC_LEN, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
 /// Camera node for 3D compositing.
 /// 
@@ -59,6 +60,14 @@ impl CameraNode {
         attrs.set("dof_enabled", AttrValue::Bool(false));
         attrs.set("focus_distance", AttrValue::Float(1000.0));
         attrs.set("aperture", AttrValue::Float(2.8));
+        
+        // Timing (unified with other nodes)
+        attrs.set(A_IN, AttrValue::Int(0));
+        attrs.set(A_SRC_LEN, AttrValue::Int(100));
+        attrs.set(A_TRIM_IN, AttrValue::Int(0));
+        attrs.set(A_TRIM_OUT, AttrValue::Int(0));
+        attrs.set(A_SPEED, AttrValue::Float(1.0));
+        attrs.set("opacity", AttrValue::Float(1.0));
         
         attrs.clear_dirty();
         Self { attrs }

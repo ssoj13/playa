@@ -162,6 +162,14 @@ const CAMERA_DEFS: &[AttrDef] = &[
     AttrDef::new("dof_enabled", AttrType::Bool, DAG_DISP),        // false
     AttrDef::new("focus_distance", AttrType::Float, DAG_DISP_KEY), // 1000.0
     AttrDef::new("aperture", AttrType::Float, DAG_DISP_KEY),      // 2.8
+    
+    // Timing (unified with other nodes)
+    AttrDef::new("in", AttrType::Int, DAG_DISP),                  // 0
+    AttrDef::new("src_len", AttrType::Int, DAG),                  // 100
+    AttrDef::new("trim_in", AttrType::Int, DAG_DISP),             // 0
+    AttrDef::new("trim_out", AttrType::Int, DAG_DISP),            // 0
+    AttrDef::new("speed", AttrType::Float, DAG_DISP_KEY),         // 1.0
+    AttrDef::new("opacity", AttrType::Float, DAG_DISP_KEY),       // 1.0 (for camera fades)
 ];
 
 pub static CAMERA_SCHEMA: AttrSchema = AttrSchema::new("CameraNode", CAMERA_DEFS);
@@ -189,6 +197,14 @@ const TEXT_DEFS: &[AttrDef] = &[
     
     // Background
     AttrDef::new("bg_color", AttrType::Vec4, DAG_DISP),           // [0,0,0,0] transparent
+    
+    // Timing (unified with other nodes)
+    AttrDef::new("in", AttrType::Int, DAG_DISP),                  // 0
+    AttrDef::new("src_len", AttrType::Int, DAG),                  // 100
+    AttrDef::new("trim_in", AttrType::Int, DAG_DISP),             // 0
+    AttrDef::new("trim_out", AttrType::Int, DAG_DISP),            // 0
+    AttrDef::new("speed", AttrType::Float, DAG_DISP_KEY),         // 1.0
+    AttrDef::new("opacity", AttrType::Float, DAG_DISP_KEY),        // 1.0 (for text fades)
 ];
 
 pub static TEXT_SCHEMA: AttrSchema = AttrSchema::new("TextNode", TEXT_DEFS);
