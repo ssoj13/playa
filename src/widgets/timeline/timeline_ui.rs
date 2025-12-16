@@ -111,7 +111,7 @@ pub fn render_toolbar(
         // Zoom controls
         ui.label("Zoom:");
         let zoom_response = ui.add_sized(
-            egui::Vec2::new(200.0, 20.0),
+            egui::Vec2::new(600.0, 20.0),
             egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2),
         );
         if zoom_response.changed() {

@@ -57,7 +57,7 @@ const COMP_DEFS: &[AttrDef] = &[
     // Resolution
     AttrDef::new("width", AttrType::Int, DISP_RO),
     AttrDef::new("height", AttrType::Int, DISP_RO),
-    AttrDef::new("fps", AttrType::Float, DISP),
+    AttrDef::new("fps", AttrType::Float, DISP),              // Non-DAG: fps is playback rate, not render
     
     // Timing
     AttrDef::new("in", AttrType::Int, DAG_DISP),
@@ -68,6 +68,9 @@ const COMP_DEFS: &[AttrDef] = &[
     
     // Playhead - NON-DAG! This is what we're fixing
     AttrDef::new("frame", AttrType::Int, 0), // No flags = non-DAG
+    
+    // Node editor position (UI only, non-DAG)
+    AttrDef::new("node_pos", AttrType::Vec3, 0),
 ];
 
 pub static COMP_SCHEMA: AttrSchema = AttrSchema::new("CompNode", COMP_DEFS);
@@ -102,6 +105,9 @@ const LAYER_DEFS: &[AttrDef] = &[
     AttrDef::new("rotation", AttrType::Vec3, DAG_DISP_KEY),
     AttrDef::new("scale", AttrType::Vec3, DAG_DISP_KEY),
     AttrDef::new("pivot", AttrType::Vec3, DAG_DISP_KEY),
+    
+    // Node editor position (UI only, non-DAG)
+    AttrDef::new("node_pos", AttrType::Vec3, 0),
 ];
 
 pub static LAYER_SCHEMA: AttrSchema = AttrSchema::new("Layer", LAYER_DEFS);

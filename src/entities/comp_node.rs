@@ -590,7 +590,10 @@ impl CompNode {
             for (key, value) in attrs {
                 layer.attrs.set(key, value);
             }
-            self.mark_dirty();
+            // Only mark comp dirty if layer actually became dirty (DAG attr changed)
+            if layer.attrs.is_dirty() {
+                self.mark_dirty();
+            }
         }
     }
 
