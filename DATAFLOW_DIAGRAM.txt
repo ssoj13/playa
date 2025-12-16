@@ -1,0 +1,753 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                   PLAYA - COMPLETE DATAFLOW DIAGRAM                          ║
+║                      Image Sequence Player (Rust)                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 1. USER INPUT → EVENT BUS                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    ╔════════════════╗
+    ║   USER INPUT   ║
+    ╚═══════╤════════╝
+            │
+            ├─► Keyboard (Space, J/K/L, Arrow keys)
+            ├─► Mouse (Timeline scrub, drag-drop clips)
+            └─► UI Widgets (Sliders, buttons, checkboxes)
+            │
+            ▼
+    ┌───────────────────────┐
+    │  egui Event Handler   │
+    │  ┌─────────────────┐  │
+    │  │ if key_pressed  │  │
+    │  │   emit(Event)   │  │
+    │  └─────────────────┘  │
+    └───────────┬───────────┘
+                │
+                ▼
+    ╔═══════════════════════════════════════════════════════════════╗
+    ║                     EventBus                                  ║
+    ║  ┌────────────────────────────────────────────────────────┐   ║
+    ║  │ emit<E>(event)                                         │   ║
+    ║  │   ├─► IMMEDIATE: Invoke subscribers synchronously     │   ║
+    ║  │   │              (callbacks run in current thread)     │   ║
+    ║  │   │                                                    │   ║
+    ║  │   └─► DEFERRED:  Push to event queue                  │   ║
+    ║  │                  (retrieved via poll() in main loop)   │   ║
+    ║  └────────────────────────────────────────────────────────┘   ║
+    ╚═══════════════════╤═══════════════════════════════════════════╝
+                        │
+          ┌─────────────┴──────────────┐
+          │                            │
+          ▼                            ▼
+    ┌─────────────┐          ┌─────────────────────┐
+    │  Immediate  │          │  Deferred Queue     │
+    │  Callbacks  │          │  poll() → Vec<Ev>   │
+    └─────┬───────┘          └──────┬──────────────┘
+          │                         │
+          │                         ▼
+          │               ┌──────────────────────┐
+          │               │ Main Loop (60Hz)     │
+          │               │  for ev in poll() {  │
+          │               │    handle(ev);       │
+          │               │  }                   │
+          │               └──────┬───────────────┘
+          │                      │
+          └──────────────────────┤
+                                 │
+                                 ▼
+                    ┌────────────────────────┐
+                    │ handle_app_event()     │
+                    │  - Player control      │
+                    │  - Project changes     │
+                    │  - Cache invalidation  │
+                    │  - UI updates          │
+                    └────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 2. EVENT SYSTEM ARCHITECTURE                                                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    Event Hierarchy:
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Player Events (playback control)                            │
+    ├─────────────────────────────────────────────────────────────┤
+    │ • SetFrameEvent(i32)           → Jump to frame             │
+    │ • TogglePlayPauseEvent         → Start/stop playback       │
+    │ • StepForward/BackwardEvent    → Single frame step         │
+    │ • JogForward/BackwardEvent     → J/K/L shuttle             │
+    │ • IncreaseFPS/DecreaseFPSEvent → Change playback speed     │
+    └─────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Comp Events (composition changes)                           │
+    ├─────────────────────────────────────────────────────────────┤
+    │ • AttrsChangedEvent(uuid)      → !!CACHE INVALIDATION!!    │
+    │ • LayersChangedEvent           → Layer structure change    │
+    │ • CurrentFrameChangedEvent     → Playhead moved            │
+    │ • AddLayerEvent                → Add clip to timeline      │
+    │ • SetLayerAttrsEvent           → Change opacity/blend/etc  │
+    └─────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Project Events (media pool)                                 │
+    ├─────────────────────────────────────────────────────────────┤
+    │ • AddClipEvent(PathBuf)        → Add single file           │
+    │ • AddClipsEvent(Vec<PathBuf>)  → Add multiple files        │
+    │ • AddFolderEvent(PathBuf)      → Scan folder recursively   │
+    │ • SelectMediaEvent(uuid)       → Activate composition      │
+    └─────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 3. CACHE SYSTEM DATAFLOW                                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    ╔══════════════════════════════════════════════════════════════╗
+    ║               CacheManager (Global Singleton)                ║
+    ╠══════════════════════════════════════════════════════════════╣
+    ║  memory_usage: AtomicUsize      ← Total bytes allocated     ║
+    ║  max_memory_bytes: AtomicUsize  ← User limit (75% of RAM)   ║
+    ║  current_epoch: Arc<AtomicU64>  ← Cancellation counter      ║
+    ╚═══════════════════╤══════════════════════════════════════════╝
+                        │
+                        ├─► Shared with Workers for epoch checks
+                        │
+                        ▼
+    ╔══════════════════════════════════════════════════════════════╗
+    ║            GlobalFrameCache (Nested HashMap)                 ║
+    ╠══════════════════════════════════════════════════════════════╣
+    ║  cache: Arc<RwLock<HashMap<Uuid, HashMap<i32, Frame>>>>      ║
+    ║                      ▲comp_uuid    ▲frame_idx                ║
+    ║                                                               ║
+    ║  Structure:                                                   ║
+    ║    comp_1 → { 0: Frame, 1: Frame, 2: Frame, ... }           ║
+    ║    comp_2 → { 0: Frame, 1: Frame, 5: Frame, ... }           ║
+    ║    comp_3 → { 10: Frame, 11: Frame, ... }                   ║
+    ║                                                               ║
+    ║  Benefits:                                                    ║
+    ║    • O(1) clear_comp(uuid) - remove entire inner HashMap    ║
+    ║    • O(1) get(comp, frame) - nested hash lookup             ║
+    ║    • Concurrent reads via RwLock                             ║
+    ╠══════════════════════════════════════════════════════════════╣
+    ║  lru_order: Arc<Mutex<IndexSet<CacheKey>>>                   ║
+    ║    Tracks insertion order for LRU eviction                   ║
+    ║    CacheKey { comp_uuid, frame_idx }                         ║
+    ╠══════════════════════════════════════════════════════════════╣
+    ║  strategy: CacheStrategy                                     ║
+    ║    • LastOnly: Keep only most recent frame per comp         ║
+    ║    • All: Cache all frames in work area                     ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    Cache Operations:
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ INSERT: global_cache.insert(comp, frame, data)               │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 1. Apply strategy (clear old if LastOnly)                    │
+    │ 2. Check eviction triggers:                                  │
+    │    - Memory limit: evict while memory_usage > max_memory    │
+    │    - Capacity limit: evict while len() > capacity           │
+    │ 3. Lock cache (write) + lru_order (exclusive)               │
+    │ 4. Remove old frame if exists → free_memory()               │
+    │ 5. Insert new frame → add_memory()                          │
+    │ 6. Update LRU: add to back (most recent)                    │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ GET: global_cache.get(comp, frame)                           │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 1. Lock cache (read) - allows concurrent readers            │
+    │ 2. Lookup: cache[comp][frame] → Option<Frame>               │
+    │ 3. Update stats: record_hit() or record_miss()              │
+    │ 4. Update LRU: shift_remove() → re-insert() (back)          │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ EVICT: evict_oldest()                                        │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 1. Lock cache (write) + lru_order (exclusive)               │
+    │ 2. Remove front of LRU queue (oldest)                       │
+    │ 3. Remove from cache → free_memory()                        │
+    │ 4. Remove empty inner HashMap if needed                     │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ CLEAR_COMP: global_cache.clear_comp(uuid, dehydrate)        │
+    ├──────────────────────────────────────────────────────────────┤
+    │ dehydrate=true:  Mark Loaded → Expired (pixels stay)        │
+    │   • Fast cache invalidation                                  │
+    │   • Pixels still in memory, status says "recompute needed"  │
+    │                                                               │
+    │ dehydrate=false: Remove frames entirely                     │
+    │   • Free memory                                              │
+    │   • Used for deleted nodes or major changes                 │
+    └──────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 4. FRAME LOADING PIPELINE                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    Frame Status State Machine:
+
+    Placeholder ──────────► Header ──────────► Loading ──────────► Loaded
+        │                     │                   │                  │
+        │                     │                   ▼                  │
+        │                     │                 Error                │
+        │                     │                                      │
+        │                     └──────────────────────────────────────┤
+        │                                                            │
+        └────────────────────────────────────────────────────────────┤
+                                                                     │
+                                    ┌────────────────────────────────┘
+                                    │
+                                    ▼
+                                Composing ───────────► Loaded
+                                    │                    │
+                                    ▼                    ▼
+                                  Error              Expired
+
+    Loading Flow (FileNode):
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ 1. User adds clip → FileNode::new(path)                      │
+    │    • Frame::new_unloaded(path)                               │
+    │      status = Header, 1x1 placeholder                        │
+    │                                                               │
+    │ 2. Background: load_header()                                 │
+    │    • Video: FFmpeg metadata (width, height, fps, frames)    │
+    │    • Image: Loader::header() (dimensions, channels)          │
+    │      → Update frame: width, height, status=Header           │
+    │                                                               │
+    │ 3. User sets frame → SetFrameEvent(42)                       │
+    │    • global_cache.get(file_uuid, 42)                         │
+    │      ├─ HIT: return cached                                   │
+    │      └─ MISS: continue to load                               │
+    │                                                               │
+    │ 4. Workers.execute_with_epoch(epoch, || {                    │
+    │      frame.try_claim_for_loading()                           │
+    │        └─ Atomic: Header → Loading (prevents double load)   │
+    │                                                               │
+    │      frame.load()                                            │
+    │        ├─ EXR: openexr-rs OR image crate                     │
+    │        │   → PixelBuffer::F16 or F32 (HDR)                   │
+    │        ├─ PNG/JPG: image crate                               │
+    │        │   → PixelBuffer::U8 (LDR)                           │
+    │        └─ Video: FFmpeg decode                               │
+    │            → PixelBuffer::U8                                 │
+    │                                                               │
+    │      status = Loaded                                         │
+    │      global_cache.insert(file_uuid, 42, frame)               │
+    │    })                                                        │
+    └──────────────────────────────────────────────────────────────┘
+
+    Preload Strategy (Spiral):
+
+        Current Frame: 100
+                │
+                ├─► 100 (priority: highest, current frame)
+                ├─► 101 (+1)
+                ├─► 99  (-1)
+                ├─► 102 (+2)
+                ├─► 98  (-2)
+                ├─► 103 (+3)
+                ├─► 97  (-3)
+                └─► ... (continues until work area boundary)
+
+        Each enqueued with epoch check:
+          workers.execute_with_epoch(epoch, || {
+              if current_epoch() == request_epoch {
+                  load_frame();  // Still valid
+              } else {
+                  skip;  // User moved on, cancel
+              }
+          });
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 5. COMPOSITION PIPELINE                                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    CompNode Structure:
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ CompNode                                                      │
+    ├──────────────────────────────────────────────────────────────┤
+    │ attrs {                                                       │
+    │   uuid, name, in, out, trim_in, trim_out,                   │
+    │   fps, frame, width, height                                  │
+    │ }                                                             │
+    │                                                               │
+    │ layers: Vec<Layer> [BOTTOM → TOP render order]              │
+    │   └─ Layer {                                                 │
+    │        attrs {                                                │
+    │          uuid, source_uuid, name, in, src_len,              │
+    │          trim_in, trim_out, opacity, visible,               │
+    │          blend_mode, speed,                                  │
+    │          position, rotation, scale, pivot                    │
+    │        }                                                      │
+    │      }                                                        │
+    └──────────────────────────────────────────────────────────────┘
+
+    Composition Flow:
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ project.compute_frame(comp_uuid, 100)                        │
+    ├──────────────────────────────────────────────────────────────┤
+    │                                                               │
+    │ 1. Check cache:                                              │
+    │    global_cache.get(comp_uuid, 100)                          │
+    │      ├─ HIT: return cached                                   │
+    │      └─ MISS: continue                                       │
+    │                                                               │
+    │ 2. Reserve slot (prevent race):                              │
+    │    global_cache.insert(comp, 100, Frame::new_composing())    │
+    │      status = Composing                                      │
+    │                                                               │
+    │ 3. Enqueue composition:                                      │
+    │    workers.execute_with_epoch(epoch, || {                    │
+    │      compose_internal(comp, 100, ctx)                        │
+    │    })                                                        │
+    └──────────────────────────────────────────────────────────────┘
+
+    compose_internal(comp, parent_frame, ctx):
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ STEP 1: CYCLE DETECTION                                      │
+    ├──────────────────────────────────────────────────────────────┤
+    │ COMPOSE_STACK.with(|stack| {                                 │
+    │   if stack.contains(&comp.uuid()) {                          │
+    │     return Error("Cyclic dependency detected");             │
+    │   }                                                           │
+    │   stack.insert(comp.uuid());                                 │
+    │ })                                                            │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ STEP 2: COLLECT VISIBLE LAYERS                               │
+    ├──────────────────────────────────────────────────────────────┤
+    │ layers.iter().rev()  ← Reverse: bottom-to-top render order  │
+    │   .filter(|layer| {                                          │
+    │     layer.is_visible() &&                                    │
+    │     layer.work_area().contains(parent_frame)                 │
+    │   })                                                          │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ STEP 3: COMPUTE SOURCE FRAMES (for each layer)               │
+    ├──────────────────────────────────────────────────────────────┤
+    │ Convert parent frame → local source frame:                   │
+    │   local_frame = layer.parent_to_local(parent_frame)          │
+    │                                                               │
+    │   Example:                                                    │
+    │     layer.start = 50                                         │
+    │     layer.speed = 2.0                                        │
+    │     parent_frame = 100                                       │
+    │                                                               │
+    │     offset = 100 - 50 = 50                                   │
+    │     local = 50 * 2.0 = 100                                   │
+    │                                                               │
+    │ Get source node:                                             │
+    │   source = media.get(layer.source_uuid)                      │
+    │                                                               │
+    │ Recursively compute:                                         │
+    │   frame = source.compute_frame(local_frame, ctx)             │
+    │     ├─ FileNode: global_cache.get() or load                 │
+    │     └─ CompNode: Recursive compose_internal()               │
+    │                                                               │
+    │ Apply transform (CPU):                                       │
+    │   matrix = transform::build_inverse_matrix_3x3(              │
+    │       position, rotation, scale, pivot                       │
+    │   )                                                           │
+    │   frame = transform::transform_frame(frame, matrix, dim)     │
+    │                                                               │
+    │ Collect: (frame, opacity, blend_mode, matrix)                │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ STEP 4: BLEND LAYERS (CPU Compositor)                        │
+    ├──────────────────────────────────────────────────────────────┤
+    │ THREAD_COMPOSITOR.with(|comp| {                              │
+    │   comp.blend_with_dim(source_frames, comp.dim())             │
+    │ })                                                            │
+    │                                                               │
+    │ Blending Algorithm:                                          │
+    │   1. Create canvas from first frame (cropped to comp dim)    │
+    │                                                               │
+    │   2. For each subsequent layer:                              │
+    │      - Determine overlap region                              │
+    │      - Match pixel format (U8/F16/F32)                       │
+    │      - Apply blend mode per pixel:                           │
+    │                                                               │
+    │        Blend Modes:                                          │
+    │          Normal:     top_color                               │
+    │          Screen:     1 - (1-bottom)*(1-top)                  │
+    │          Add:        bottom + top                            │
+    │          Subtract:   bottom - top                            │
+    │          Multiply:   bottom * top                            │
+    │          Divide:     bottom / top                            │
+    │          Difference: |bottom - top|                          │
+    │                                                               │
+    │        Alpha Blending:                                       │
+    │          top_alpha = top[i+3] * opacity                      │
+    │          inv_alpha = 1.0 - top_alpha                         │
+    │                                                               │
+    │          result[i] = bottom[i] * inv_alpha +                 │
+    │                      blend(bottom[i], top[i]) * top_alpha    │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ STEP 5: SET COMPOSED STATUS                                  │
+    ├──────────────────────────────────────────────────────────────┤
+    │ Calculate minimum status from all source frames:             │
+    │   Error → Placeholder → Header → Loading/Composing → Loaded │
+    │                                                               │
+    │ composed_frame.status = min_status                           │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ STEP 6: INSERT TO CACHE                                      │
+    ├──────────────────────────────────────────────────────────────┤
+    │ global_cache.insert(comp, 100, composed_frame)               │
+    │   └─ cache_manager.add_memory(frame.mem())                   │
+    └──────────────────────────────────────────────────────────────┘
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ STEP 7: CLEANUP                                              │
+    ├──────────────────────────────────────────────────────────────┤
+    │ COMPOSE_STACK.with(|stack| {                                 │
+    │   stack.remove(&comp.uuid());                                │
+    │ })                                                            │
+    └──────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 6. WORKERS & THREAD POOL                                                     │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    ╔══════════════════════════════════════════════════════════════╗
+    ║              Workers (Work-Stealing Thread Pool)             ║
+    ╠══════════════════════════════════════════════════════════════╣
+    ║  injector: Arc<Injector<Job>>      ← Global task queue      ║
+    ║  handles: Vec<JoinHandle<()>>      ← Thread pool            ║
+    ║  current_epoch: Arc<AtomicU64>     ← Shared with CacheMan   ║
+    ║  shutdown: Arc<AtomicBool>         ← Shutdown signal        ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    Thread Pool (num_cpus * 3/4):
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Worker Thread 1:                                             │
+    │   Loop:                                                      │
+    │     1. Try own queue (LIFO - cache locality)                │
+    │     2. Try global injector                                   │
+    │     3. Try stealing from other workers (FIFO - oldest)      │
+    │     4. Check shutdown signal                                 │
+    │     5. Sleep 1ms if no work                                  │
+    ├─────────────────────────────────────────────────────────────┤
+    │ Worker Thread 2:                                             │
+    │   [Same pattern]                                             │
+    ├─────────────────────────────────────────────────────────────┤
+    │ Worker Thread N:                                             │
+    │   [Same pattern]                                             │
+    └─────────────────────────────────────────────────────────────┘
+
+    Work-Stealing Deques:
+
+      [Injector: Global Queue]
+            │
+            ├─► All workers check injector
+            │   (new tasks get high priority)
+            │
+      ┌─────▼─────────────────┐
+      │ Worker 1 Local Queue  │
+      │  [New] ← push front   │
+      │  [Old] ← steal back   │
+      └───────────────────────┘
+            │
+            └─► Other workers steal from back (oldest tasks)
+
+    Epoch-Based Cancellation:
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ User scrubs timeline rapidly:                                │
+    │   SetFrameEvent(100) → epoch=1                               │
+    │   SetFrameEvent(150) → epoch=2  ← increment_epoch()          │
+    │   SetFrameEvent(200) → epoch=3                               │
+    │                                                               │
+    │ Worker thread:                                               │
+    │   workers.execute_with_epoch(epoch, || {                     │
+    │       if current_epoch() == request_epoch {                  │
+    │           load_frame();  // Still valid                      │
+    │       } else {                                                │
+    │           skip;  // Stale, user moved on                     │
+    │       }                                                       │
+    │   });                                                        │
+    └──────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 7. PROJECT STATE MANAGEMENT                                                  │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    ╔══════════════════════════════════════════════════════════════╗
+    ║                        Project                               ║
+    ╠══════════════════════════════════════════════════════════════╣
+    ║  attrs {                                                     ║
+    ║    comps_order: Vec<Uuid>     ← UI display order            ║
+    ║    selection: Vec<Uuid>        ← Multi-selection            ║
+    ║    active: Option<Uuid>        ← Currently active comp      ║
+    ║  }                                                            ║
+    ║                                                               ║
+    ║  media: Arc<RwLock<HashMap<Uuid, NodeKind>>>                 ║
+    ║    ├─ FileNode: Image sequences, videos                     ║
+    ║    ├─ CompNode: Nested compositions                         ║
+    ║    ├─ CameraNode: Camera transforms                         ║
+    ║    └─ TextNode: Text overlays                               ║
+    ║                                                               ║
+    ║  compositor: Mutex<CompositorType>  ← CPU/GPU blending      ║
+    ║  cache_manager: Arc<CacheManager>   ← Memory tracking       ║
+    ║  global_cache: Arc<GlobalFrameCache> ← Frame cache          ║
+    ║  event_emitter: Option<EventEmitter> ← Auto-emit events     ║
+    ╚══════════════════════════════════════════════════════════════╝
+
+    modify_comp() Auto-Emit Pattern:
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ project.modify_comp(uuid, |comp| {                           │
+    │     // Mutations here may set dirty=true                     │
+    │     comp.add_layer(...);          ← Calls mark_dirty()      │
+    │     comp.set_child_attrs(...);    ← Calls mark_dirty()      │
+    │     comp.layers.push(...);        ← NEEDS manual mark_dirty │
+    │ });                                                          │
+    │                                                               │
+    │ // After closure:                                            │
+    │ if comp.is_dirty() {                                         │
+    │     event_emitter.emit(AttrsChangedEvent(uuid));             │
+    │     comp.clear_dirty();                                      │
+    │ }                                                             │
+    └──────────────────────────────────────────────────────────────┘
+
+    Dirty Tracking (Attrs Schema):
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ Attrs {                                                       │
+    │   schema: Option<AttrSchema>  ← Metadata                     │
+    │   data: HashMap<String, AttrValue>                           │
+    │   dirty_keys: HashSet<String>                                │
+    │ }                                                             │
+    │                                                               │
+    │ Schema defines "dag" vs "non-dag" attributes:                │
+    │                                                               │
+    │   DAG (dirties comp):                                        │
+    │     • in, out, opacity, blend_mode, position, ...           │
+    │     → attrs.set() → dirty_keys.insert()                     │
+    │                                                               │
+    │   NON-DAG (UI-only):                                         │
+    │     • frame (playhead), uuid, name                           │
+    │     → attrs.set() → NO dirty flag                           │
+    └──────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 8. COMPLETE USER INPUT → RENDERING FLOW                                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    Example: User presses Space (Play/Pause)
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ 1. KEYBOARD INPUT                                            │
+    │    egui: if key_pressed(Space) {                             │
+    │      event_bus.emit(TogglePlayPauseEvent);                   │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 2. EVENT BUS                                                 │
+    │    • Immediate callbacks: (none)                             │
+    │    • Deferred queue: push event                              │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 3. MAIN LOOP (60Hz)                                          │
+    │    for event in event_bus.poll() {                           │
+    │      handle_app_event(event, ...);                           │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 4. EVENT HANDLER                                             │
+    │    player.set_is_playing(!player.is_playing());              │
+    │    if playing {                                              │
+    │      player.last_frame_time = Some(Instant::now());          │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 5. PLAYBACK UPDATE (60Hz while playing)                      │
+    │    player.update(project) {                                  │
+    │      if elapsed >= frame_duration {                          │
+    │        advance_frame(project) {                              │
+    │          project.modify_comp(active, |comp| {                │
+    │            comp.set_frame(current + 1);                      │
+    │          });                                                  │
+    │          → Emits CurrentFrameChangedEvent                    │
+    │        }                                                      │
+    │      }                                                        │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 6. FRAME LOADING                                             │
+    │    enqueue_current_frame() {                                 │
+    │      global_cache.get(comp, frame)                           │
+    │        ├─ HIT: return cached                                 │
+    │        └─ MISS:                                              │
+    │            workers.execute_with_epoch(epoch, || {            │
+    │              compose_internal(comp, frame, ctx)              │
+    │            })                                                 │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 7. VIEWPORT RENDERING                                        │
+    │    viewport.ui(ui, player, project, ...) {                   │
+    │      frame = player.get_current_frame(project);              │
+    │      texture = upload_frame(frame);                          │
+    │      shader.draw(texture, transform);                        │
+    │    }                                                          │
+    └──────────────────────────────────────────────────────────────┘
+
+    Example: User changes layer opacity
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ 1. UI WIDGET                                                 │
+    │    Slider::new(&mut opacity, 0.0..=1.0)                      │
+    │    if changed {                                              │
+    │      event_bus.emit(SetLayerAttrsEvent {                     │
+    │        comp_uuid, layer_uuids, attrs: [("opacity", val)]     │
+    │      });                                                      │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 2. EVENT HANDLER                                             │
+    │    project.modify_comp(comp_uuid, |comp| {                   │
+    │      comp.set_child_attrs(layer_uuid, [                      │
+    │        ("opacity", AttrValue::Float(val))                    │
+    │      ]);                                                      │
+    │      → layer.attrs.set() → dirty_keys.insert("opacity")     │
+    │      → comp.attrs.mark_dirty()                               │
+    │    });                                                        │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 3. AUTO-EMIT (in modify_comp)                                │
+    │    if comp.is_dirty() {                                      │
+    │      event_emitter.emit(AttrsChangedEvent(comp_uuid));       │
+    │      comp.clear_dirty();                                     │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 4. CACHE INVALIDATION                                        │
+    │    handle_app_event(AttrsChangedEvent) {                     │
+    │      cache_manager.increment_epoch();                        │
+    │        → Cancels pending worker tasks                        │
+    │                                                               │
+    │      global_cache.clear_comp(uuid, dehydrate=true);          │
+    │        → Marks Loaded → Expired                              │
+    │                                                               │
+    │      invalidate_cascade() {                                  │
+    │        for parent in find_parent_comps(uuid) {               │
+    │          global_cache.clear_comp(parent, true);              │
+    │        }                                                      │
+    │      }                                                        │
+    │    }                                                          │
+    ├──────────────────────────────────────────────────────────────┤
+    │ 5. VIEWPORT REFRESH                                          │
+    │    Next frame:                                               │
+    │      global_cache.get(comp, frame)                           │
+    │        status = Expired → Recompose                          │
+    │          workers.execute_with_epoch(new_epoch, || {          │
+    │            compose_internal(comp, frame, ctx)                │
+    │              → Uses new opacity value                        │
+    │          })                                                   │
+    └──────────────────────────────────────────────────────────────┘
+
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 9. THREAD SAFETY & CONCURRENCY                                               │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+    Lock Hierarchy (prevent deadlock):
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ Arc<RwLock<...>>  ← Multiple concurrent readers              │
+    │   • Project.media (media pool)                               │
+    │   • GlobalFrameCache.cache (frame storage)                   │
+    │                                                               │
+    │ Arc<Mutex<...>>   ← Exclusive access                         │
+    │   • GlobalFrameCache.lru_order (eviction queue)              │
+    │   • Project.compositor (blend operations)                    │
+    │   • Frame.data (atomic state transitions)                    │
+    │                                                               │
+    │ AtomicUsize/U64   ← Lock-free                                │
+    │   • CacheManager.memory_usage                                │
+    │   • CacheManager.current_epoch                               │
+    │   • Workers.shutdown                                         │
+    └──────────────────────────────────────────────────────────────┘
+
+    Atomic State Transitions (prevent race):
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ Problem: Two threads load same frame                         │
+    │   Thread 1: check status == Header → start load              │
+    │   Thread 2: check status == Header → start load              │
+    │   → Wasted work, double memory usage                         │
+    │                                                               │
+    │ Solution: try_claim_for_loading()                            │
+    │   fn try_claim_for_loading(&self) -> bool {                  │
+    │     let mut data = self.data.lock().unwrap();                │
+    │     if data.status == FrameStatus::Header {                  │
+    │       data.status = FrameStatus::Loading;  // Atomic claim  │
+    │       true  // Caller MUST load                              │
+    │     } else {                                                  │
+    │       false  // Already claimed, caller MUST skip            │
+    │     }                                                         │
+    │   }                                                           │
+    │                                                               │
+    │ Usage:                                                        │
+    │   if frame.try_claim_for_loading() {                         │
+    │     // Only ONE thread gets here                             │
+    │     frame.load()?;                                           │
+    │     frame.set_status(Loaded);                                │
+    │   }                                                           │
+    └──────────────────────────────────────────────────────────────┘
+
+    Thread Model:
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │ Main Thread (egui):                                          │
+    │   • UI rendering (60Hz)                                      │
+    │   • Event polling & handling                                 │
+    │   • OpenGL context (viewport, GPU compositor)                │
+    │   • Enqueues tasks to Workers                                │
+    │                                                               │
+    │ Worker Threads (num_cpus * 3/4):                             │
+    │   • Frame loading (Loader::load)                             │
+    │   • Composition (compose_internal + CPU compositor)          │
+    │   • NO OpenGL context (CPU compositor only)                  │
+    │   • Epoch-based cancellation                                 │
+    │                                                               │
+    │ Thread Communication:                                        │
+    │   Main → Workers:                                            │
+    │     workers.execute_with_epoch(epoch, || { ... })            │
+    │       └─ Injector::push(job)                                 │
+    │                                                               │
+    │   Workers → Main:                                            │
+    │     global_cache.insert(comp, frame, result)                 │
+    │       └─ Main thread reads cache on next viewport.ui()      │
+    └──────────────────────────────────────────────────────────────┘
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                            KEY TAKEAWAYS                                     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║ 1. EVENT-DRIVEN: UI never computes directly, all work via EventBus          ║
+║                                                                              ║
+║ 2. CACHE-CENTRIC: GlobalFrameCache with LRU eviction & epoch cancellation   ║
+║                                                                              ║
+║ 3. THREAD-SAFE: Arc/RwLock/Mutex for safe concurrent access                 ║
+║                                                                              ║
+║ 4. MODULAR: Clean separation (Player, Project, Workers, Cache)              ║
+║                                                                              ║
+║ 5. EXTENSIBLE: Plugin architecture (FileNode/CompNode/Camera/Text)          ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
