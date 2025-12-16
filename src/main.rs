@@ -1197,26 +1197,47 @@ impl PlayaApp {
                         node_changed = true;
                     }
                 });
-                // Trigger cache invalidation if node attrs changed
+                // === Cache invalidation for source node attribute changes ===
+                // 
+                // When a source node (FileNode, TextNode, CameraNode) changes:
+                // 1. The source's own cached frames are stale
+                // 2. Any CompNode using this source via layers is also stale
+                //
+                // We use "dehydrate" (clear_comp with true) instead of full clear:
+                // - Dehydrate marks frames as Expired but KEEPS pixel data
+                // - Viewport continues showing old pixels while new ones compute
+                // - This prevents black flash during re-render
+                //
+                // Without dehydrate: clear_all() → cache empty → viewport shows black
+                // With dehydrate: Expired status → old pixels shown → smooth transition
+                //
                 if node_changed {
+                    // Cancel all pending preload jobs (they'd load stale data)
                     if let Some(manager) = self.project.cache_manager() {
                         manager.increment_epoch();
                     }
+                    
                     if let Some(ref cache) = self.project.global_cache {
-                        // Dehydrate source node cache (keeps pixels visible)
+                        // 1. Dehydrate source node's own cache
+                        //    TextNode caches under its UUID, not comp UUID
                         cache.clear_comp(node_uuid, true);
                         
-                        // Find and dehydrate all comps that use this source
+                        // 2. Find all comps that reference this source via layers
+                        //    and dehydrate them too (their composed frames are stale)
                         let media = self.project.media.read().unwrap();
                         for (comp_uuid, node) in media.iter() {
                             if let Some(comp) = node.as_comp() {
-                                if comp.layers.iter().any(|l| l.source_uuid() == node_uuid) {
+                                let uses_source = comp.layers.iter()
+                                    .any(|l| l.source_uuid() == node_uuid);
+                                if uses_source {
                                     cache.clear_comp(*comp_uuid, true);
                                 }
                             }
                         }
                     }
-                    // Must preload after cache clear - viewport only reads from cache
+                    
+                    // Trigger recompute - viewport only reads from cache, so we must
+                    // enqueue new frame loads to replace the Expired ones
                     self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                     self.event_bus.emit(ViewportRefreshEvent);
                 }
@@ -1281,26 +1302,36 @@ impl PlayaApp {
                             }
                         });
                     }
-                    // Invalidate cache with dehydrate (keeps pixels visible)
+                    
+                    // === Multi-node cache invalidation (same logic as single node) ===
+                    // See single-node case above for detailed explanation.
+                    // Key points:
+                    // - Dehydrate keeps old pixels visible during recompute
+                    // - Must invalidate both source nodes AND comps using them
+                    
                     if let Some(manager) = self.project.cache_manager() {
                         manager.increment_epoch();
                     }
+                    
                     if let Some(ref cache) = self.project.global_cache {
-                        // Dehydrate all changed source nodes
+                        // 1. Dehydrate all modified source nodes
                         for uuid in &ae_focus {
                             cache.clear_comp(*uuid, true);
                         }
-                        // Find and dehydrate all comps that use these sources
+                        
+                        // 2. Dehydrate comps that use ANY of the modified sources
                         let media = self.project.media.read().unwrap();
                         for (comp_uuid, node) in media.iter() {
                             if let Some(comp) = node.as_comp() {
-                                if comp.layers.iter().any(|l| ae_focus.contains(&l.source_uuid())) {
+                                let uses_any_source = comp.layers.iter()
+                                    .any(|l| ae_focus.contains(&l.source_uuid()));
+                                if uses_any_source {
                                     cache.clear_comp(*comp_uuid, true);
                                 }
                             }
                         }
                     }
-                    // Must preload after cache clear - viewport only reads from cache
+                    
                     self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                     self.event_bus.emit(ViewportRefreshEvent);
                 }

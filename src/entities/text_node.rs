@@ -366,9 +366,14 @@ impl Node for TextNode {
     
     /// Render text to Frame.
     fn compute(&self, _frame: i32, ctx: &ComputeContext) -> Option<Frame> {
-        // Check cache first (text is always frame 0 since static)
+        use super::frame::FrameStatus;
+        
+        // Check cache - but must re-render if Expired (stale after attr change)
         if let Some(cached) = ctx.cache.get(self.uuid(), 0) {
-            return Some(cached);
+            if cached.status() == FrameStatus::Loaded {
+                return Some(cached);
+            }
+            // Expired or other status - need to re-render
         }
         
         // Render text

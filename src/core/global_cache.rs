@@ -334,16 +334,41 @@ impl GlobalFrameCache {
         }
     }
 
-    /// Clear/invalidate cached frames for a specific comp.
+    /// Clear/invalidate cached frames for a specific comp or source node.
     ///
-    /// # Parameters
-    /// - `dehydrate`: if true (default), mark frames as Expired but keep pixels.
-    ///   if false, remove frames from cache entirely (e.g., when deleting node).
+    /// # Dehydrate vs Full Clear
+    /// 
+    /// **Dehydrate (dehydrate=true)**:
+    /// - Marks frames as `Expired` but KEEPS pixel data in memory
+    /// - Viewport continues displaying old pixels while new ones compute
+    /// - Prevents black flash during attribute changes
+    /// - Use when: user edits attributes, comp structure changes
+    /// 
+    /// **Full Clear (dehydrate=false)**:
+    /// - Removes frames entirely, frees memory
+    /// - Next access returns None until recomputed  
+    /// - Use when: node deleted, explicit cache clear request
+    ///
+    /// # Why This Matters
+    /// 
+    /// Without dehydrate, changing a TextNode's text would:
+    /// 1. Clear cache completely
+    /// 2. Viewport finds no frame → shows black
+    /// 3. User sees black flash until recompute finishes
+    ///
+    /// With dehydrate:
+    /// 1. Mark frames Expired (pixels still valid)
+    /// 2. Viewport shows old frame (Expired status)
+    /// 3. Recompute runs in background
+    /// 4. New frame replaces Expired one smoothly
+    ///
     pub fn clear_comp(&self, comp_uuid: Uuid, dehydrate: bool) {
         let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         
         if dehydrate {
-            // Dehydrate: mark Loaded frames as Expired (pixels stay valid)
+            // Dehydrate mode: keep pixels, just mark stale
+            // Frames with Expired status are still returned by get()
+            // but signal that recompute is needed
             if let Some(frames) = cache.get_mut(&comp_uuid) {
                 let mut expired_count = 0;
                 for frame in frames.values() {
@@ -356,6 +381,7 @@ impl GlobalFrameCache {
             }
         } else {
             // Full clear: remove frames and free memory
+            // Used when node is deleted or user explicitly clears cache
             let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
             
             if let Some(frames) = cache.remove(&comp_uuid) {
