@@ -43,14 +43,20 @@ Core data structures representing the compositing model.
 | File | Description |
 |------|-------------|
 | `attrs.rs` | Generic attribute container (key-value with types) |
+| `attr_schemas.rs` | Attribute schema definitions (DAG/display/keyframable flags) |
 | `comp.rs` | Composition - timeline with children, work area, caching |
+| `comp_node.rs` | CompNode - composition as a node with layers |
 | `comp_events.rs` | Comp-related events (dirty flag, child updates) |
 | `compositor.rs` | CPU frame blending (blend modes, alpha compositing) |
+| `file_node.rs` | FileNode - image/video file source |
 | `frame.rs` | Frame buffer (U8/F16/F32), loading, crop, tonemap |
 | `gpu_compositor.rs` | GPU-accelerated compositing via wgpu |
-| `keys.rs` | Keyframe interpolation |
+| `keys.rs` | Attribute key constants (A_IN, A_SPEED, etc.) |
 | `loader.rs` | Image format loaders (PNG, EXR, JPEG, etc.) |
 | `loader_video.rs` | Video frame extraction via FFmpeg |
+| `node.rs` | Node trait + NodeKind enum (enum_dispatch) |
+| `camera_node.rs` | CameraNode - pan/zoom/rotate transform |
+| `text_node.rs` | TextNode - rasterized text via cosmic-text |
 | `project.rs` | Project container (media library, active comp, settings) |
 
 ### `widgets/` - UI Components
@@ -88,6 +94,34 @@ Development/debug binaries for testing individual components.
 | `attributes.rs` | Standalone attributes editor |
 
 ## Architecture Notes
+
+### Node System (enum_dispatch)
+
+All compositing elements implement the `Node` trait via `enum_dispatch` for zero-cost polymorphism:
+
+```rust
+#[enum_dispatch(Node)]
+pub enum NodeKind {
+    FileNode,    // Image/video source
+    CompNode,    // Composition with layers
+    CameraNode,  // Pan/zoom/rotate transform
+    TextNode,    // Rasterized text
+}
+```
+
+**Node trait provides:**
+- `compute(frame, ctx)` - render frame at given time
+- `attrs()` / `attrs_mut()` - attribute access
+- `play_range()` - visible frame range after trims
+- `bounds()` - spatial bounding box
+- `is_dirty()` / `mark_dirty()` - cache invalidation
+
+**Attribute schemas** (`attr_schemas.rs`) define per-attribute flags:
+- `DAG` - changes invalidate render cache
+- `DISP` - show in Attribute Editor
+- `KEY` - keyframable
+
+Non-DAG attributes (e.g. `node_pos` for Node Editor positions) don't trigger recompute.
 
 ### Event-Driven Communication
 

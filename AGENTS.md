@@ -38,8 +38,9 @@ playa/
 │   │   ├── comp_node.rs     # Composition with layers
 │   │   ├── comp_events.rs   # Composition event types
 │   │   ├── file_node.rs     # Image sequence / video reference
-│   │   ├── node.rs          # Node trait (compute interface)
-│   │   ├── node_kind.rs     # Enum: FileNode | CompNode
+│   │   ├── node.rs          # Node trait + NodeKind enum (enum_dispatch)
+│   │   ├── camera_node.rs   # Pan/zoom/rotate transform node
+│   │   ├── text_node.rs     # Rasterized text via cosmic-text
 │   │   ├── frame.rs         # Single frame data
 │   │   ├── loader.rs        # Image loading (EXR, PNG, etc)
 │   │   ├── loader_video.rs  # Video frame extraction
@@ -513,7 +514,7 @@ pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
 ```
 
 **DAG attrs** (invalidate cache): `opacity`, `in`, `out`, `trim_in`, `blend_mode`, `visible`, etc.
-**Non-DAG attrs** (preserve cache): `frame` (playhead), `name`, `selection`, `active`
+**Non-DAG attrs** (preserve cache): `frame` (playhead), `name`, `selection`, `active`, `node_pos` (Node Editor positions)
 
 ### 3. Thread-Safe Read Access
 
@@ -880,9 +881,21 @@ let val = layer.attrs.get_float("my_attr").unwrap_or(1.0);
 ### Adding a New Node Type
 
 1. Create `my_node.rs` in `entities/`
-2. Implement `Node` trait with `compute()` method
-3. Add variant to `NodeKind` enum
-4. Register in project media pool
+2. Define schema in `attr_schemas.rs` (e.g. `MY_NODE_DEFS`)
+3. Implement `Node` trait with `compute()` method
+4. Add variant to `NodeKind` enum in `node.rs` (uses `enum_dispatch`)
+5. Register in project media pool
+
+**NodeKind uses enum_dispatch** for zero-cost static dispatch:
+```rust
+#[enum_dispatch(Node)]
+pub enum NodeKind {
+    FileNode,    // Image/video source
+    CompNode,    // Composition with layers  
+    CameraNode,  // Pan/zoom/rotate transform
+    TextNode,    // Rasterized text
+}
+```
 
 ---
 
