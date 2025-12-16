@@ -19,6 +19,7 @@
 //! ```
 
 use playa::core::cache_man::CacheManager;
+use playa::core::DebouncedPreloader;
 use playa::cli::Args;
 use playa::config;
 use playa::dialogs;
@@ -112,6 +113,9 @@ struct PlayaApp {
     /// Global cache manager (memory tracking + epoch)
     #[serde(skip)]
     cache_manager: Arc<CacheManager>,
+    /// Debounced preloader - delays full cache preload after attribute changes
+    #[serde(skip)]
+    debounced_preloader: DebouncedPreloader,
     /// Global worker pool for background tasks (frame loading, encoding)
     #[serde(skip)]
     workers: Arc<Workers>,
@@ -199,6 +203,7 @@ impl Default for PlayaApp {
             applied_workers: None,
             path_config: config::PathConfig::from_env_and_cli(None),
             cache_manager,
+            debounced_preloader: DebouncedPreloader::default(),
             workers,
             comp_event_emitter,
             event_bus,
@@ -302,11 +307,18 @@ impl PlayaApp {
     /// Enqueue frame loading around playhead for active comp.
     ///
     /// Unified interface: works for both File mode and Layer mode.
+    /// Enqueue only the current frame for immediate loading.
+    /// Used during attribute changes - shows result immediately while
+    /// debounced preloader schedules full preload after delay.
+    fn enqueue_current_frame_only(&self) {
+        self.enqueue_frame_loads_around_playhead(0);
+    }
+
     /// File mode: loads frames from disk using spiral/forward strategies
     /// Layer mode: composes frames from children (on-demand for now)
     ///
     /// # Arguments
-    /// * `radius` - Frames around playhead to preload (-1 = entire comp)
+    /// * `radius` - Frames around playhead to preload (-1 = entire comp, 0 = current only)
     fn enqueue_frame_loads_around_playhead(&self, radius: i32) {
         // Get active comp
         let Some(comp_uuid) = self.player.active_comp() else {
@@ -379,8 +391,10 @@ impl PlayaApp {
                 if let Some(ref cache) = self.project.global_cache {
                     cache.clear_comp(e.0, true);
                 }
-                // 3. Preload frames around playhead after cache clear
-                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+                // 3. Debounced preload: current frame immediately, full preload after delay
+                //    This prevents flooding cache with requests during rapid slider scrubbing
+                self.enqueue_current_frame_only();
+                self.debounced_preloader.schedule(e.0);
                 // 4. Request viewport refresh
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
@@ -1236,9 +1250,11 @@ impl PlayaApp {
                         }
                     }
                     
-                    // Trigger recompute - viewport only reads from cache, so we must
-                    // enqueue new frame loads to replace the Expired ones
-                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+                    // Trigger recompute: current frame immediately, full preload after delay
+                    self.enqueue_current_frame_only();
+                    if let Some(comp_uuid) = self.player.active_comp() {
+                        self.debounced_preloader.schedule(comp_uuid);
+                    }
                     self.event_bus.emit(ViewportRefreshEvent);
                 }
             } else {
@@ -1332,7 +1348,11 @@ impl PlayaApp {
                         }
                     }
                     
-                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+                    // Trigger recompute: current frame immediately, full preload after delay
+                    self.enqueue_current_frame_only();
+                    if let Some(comp_uuid) = self.player.active_comp() {
+                        self.debounced_preloader.schedule(comp_uuid);
+                    }
                     self.event_bus.emit(ViewportRefreshEvent);
                 }
             }

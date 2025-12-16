@@ -67,6 +67,7 @@ pub struct AppSettings {
     pub timeline_snap_enabled: bool,
     pub timeline_lock_work_area: bool,
     pub preload_radius: i32, // Frames to preload around playhead (-1 = all, default 100)
+    pub preload_delay_ms: u64, // Delay before full preload after attr change (default 500ms)
 
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
@@ -103,6 +104,7 @@ impl Default for AppSettings {
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             preload_radius: -1,
+            preload_delay_ms: 500,
             workers_override: 0,
             cache_memory_percent: 75.0,
             reserve_system_memory_gb: 2.0,
@@ -176,6 +178,15 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
         }
     });
     ui.label("Frames to preload around playhead (-1 = entire comp).");
+
+    ui.add_space(8.0);
+    ui.label("Preload Delay (ms):");
+    ui.add(
+        egui::Slider::new(&mut settings.preload_delay_ms, 0..=2000)
+            .suffix(" ms")
+            .step_by(50.0),
+    );
+    ui.label("Delay before full preload after attribute change. 0 = immediate.");
 
     ui.add_space(16.0);
     ui.heading("Cache & Memory");
