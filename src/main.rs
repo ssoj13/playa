@@ -502,8 +502,9 @@ impl PlayaApp {
                     if let Some(ref cache) = self.project.global_cache {
                         cache.clear_comp(e.0, true);
                     }
-                    // Preload frames around playhead after cache clear
-                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+                    // Debounced preload: current frame immediately, full preload after delay
+                    self.enqueue_current_frame_only();
+                    self.debounced_preloader.schedule(e.0);
                     self.event_bus.emit(ViewportRefreshEvent);
                     continue;
                 }
@@ -1481,6 +1482,13 @@ impl eframe::App for PlayaApp {
 
         // Handle composition events (CurrentFrameChanged → triggers frame loading)
         self.handle_events();
+
+        // Sync preload delay from settings and check debounced preloader
+        self.debounced_preloader.set_delay(self.settings.preload_delay_ms);
+        if let Some(_comp_uuid) = self.debounced_preloader.tick() {
+            // Delayed preload triggered - load full radius around playhead
+            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+        }
 
         // Handle drag-and-drop files/folders - queue for async loading
         ctx.input(|i| {
