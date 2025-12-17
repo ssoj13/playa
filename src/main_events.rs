@@ -848,6 +848,24 @@ pub fn handle_app_event(
 
         return Some(result);
     }
+    // Batch per-layer transform update (from viewport gizmo)
+    if let Some(e) = downcast_event::<crate::entities::comp_events::SetLayerTransformsEvent>(event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            use crate::entities::AttrValue;
+            for (layer_uuid, pos, rot, scale) in &e.updates {
+                comp.set_child_attrs(
+                    *layer_uuid,
+                    vec![
+                        ("position", AttrValue::Vec3(*pos)),
+                        ("rotation", AttrValue::Vec3(*rot)),
+                        ("scale", AttrValue::Vec3(*scale)),
+                    ],
+                );
+            }
+        });
+
+        return Some(result);
+    }
     if let Some(e) = downcast_event::<AlignLayersStartEvent>(event) {
         project.modify_comp(e.0, |comp| {
             let current_frame = comp.frame();

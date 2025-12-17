@@ -70,7 +70,7 @@ impl Default for GizmoPrefs {
     fn default() -> Self {
         Self {
             pref_manip_size: 75.0,
-            pref_manip_stroke_width: 2.0,
+            pref_manip_stroke_width: 1.0,
             pref_manip_inactive_alpha: 0.7,
             pref_manip_highlight_alpha: 1.0,
         }

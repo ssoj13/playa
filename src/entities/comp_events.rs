@@ -150,6 +150,16 @@ pub struct SetLayerAttrsEvent {
     pub attrs: Vec<(String, crate::entities::AttrValue)>,
 }
 
+/// Batch update of per-layer transforms (used by viewport gizmo).
+///
+/// One event updates multiple layers in one `modify_comp()` call to avoid extra locking
+/// and keep transform changes in sync.
+#[derive(Clone, Debug)]
+pub struct SetLayerTransformsEvent {
+    pub comp_uuid: Uuid,
+    pub updates: Vec<(Uuid, [f32; 3], [f32; 3], [f32; 3])>, // (layer_uuid, pos, rot, scale)
+}
+
 // === Comp Selection ===
 
 #[derive(Clone, Debug)]

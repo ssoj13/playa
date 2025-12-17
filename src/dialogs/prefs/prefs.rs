@@ -8,6 +8,7 @@ use super::prefs_events::SetGizmoPrefsEvent;
 enum SettingsCategory {
     General,
     UI,
+    Cache,
     Gizmo,
     Compositing,
 }
@@ -17,6 +18,7 @@ impl SettingsCategory {
         match self {
             SettingsCategory::General => "General",
             SettingsCategory::UI => "UI",
+            SettingsCategory::Cache => "Cache",
             SettingsCategory::Gizmo => "Gizmo",
             SettingsCategory::Compositing => "Compositing",
         }
@@ -26,6 +28,7 @@ impl SettingsCategory {
         match s {
             "General" => Some(SettingsCategory::General),
             "UI" => Some(SettingsCategory::UI),
+            "Cache" => Some(SettingsCategory::Cache),
             "Gizmo" => Some(SettingsCategory::Gizmo),
             "Compositing" => Some(SettingsCategory::Compositing),
             _ => None,
@@ -165,6 +168,14 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.label("Takes effect on next launch. Defaults to ~75% of CPU cores.");
 
     ui.add_space(8.0);
+    ui.label("Preload/cache settings moved to Settings → Cache.");
+}
+
+/// Render Cache settings category
+fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.heading("Preload");
+    ui.add_space(8.0);
+
     ui.label("Preload Radius (frames):");
     ui.horizontal(|ui| {
         if settings.preload_radius < 0 {
@@ -353,8 +364,9 @@ pub fn render_settings_window(
                             let (_response, actions) = TreeView::new(tree_id).show(ui, |builder| {
                                 builder.leaf(0, SettingsCategory::General.as_str());
                                 builder.leaf(1, SettingsCategory::UI.as_str());
-                                builder.leaf(2, SettingsCategory::Gizmo.as_str());
-                                builder.leaf(3, SettingsCategory::Compositing.as_str());
+                                builder.leaf(2, SettingsCategory::Cache.as_str());
+                                builder.leaf(3, SettingsCategory::Gizmo.as_str());
+                                builder.leaf(4, SettingsCategory::Compositing.as_str());
                             });
 
                             // Handle selection from actions
@@ -365,8 +377,9 @@ pub fn render_settings_window(
                                     selected = match node_id {
                                         0 => SettingsCategory::General,
                                         1 => SettingsCategory::UI,
-                                        2 => SettingsCategory::Gizmo,
-                                        3 => SettingsCategory::Compositing,
+                                        2 => SettingsCategory::Cache,
+                                        3 => SettingsCategory::Gizmo,
+                                        4 => SettingsCategory::Compositing,
                                         _ => selected,
                                     };
                                 }
@@ -382,6 +395,7 @@ pub fn render_settings_window(
                             match selected {
                                 SettingsCategory::General => render_general_settings(ui, settings),
                                 SettingsCategory::UI => render_ui_settings(ui, settings),
+                                SettingsCategory::Cache => render_cache_settings(ui, settings),
                                 SettingsCategory::Gizmo => render_gizmo_settings(ui, project, event_bus),
                                 SettingsCategory::Compositing => render_compositing_settings(ui, settings, event_bus),
                             }

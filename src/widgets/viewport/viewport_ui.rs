@@ -136,7 +136,9 @@ pub fn render(
 
         // Render gizmo for transform manipulation (Move/Rotate/Scale tools)
         // (must be after GL callback so it stays visible).
-        let gizmo_consumed = gizmo_state.render(ui, viewport_state, project, player);
+        let (gizmo_consumed, gizmo_events) =
+            gizmo_state.render(ui, viewport_state, project, player);
+        actions.events.extend(gizmo_events);
 
         // Get play range for scrubbing (with work_area limits)
         let (play_start, play_end) = player.active_comp()

@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use super::tool::ToolMode;
 use super::ViewportState;
+use crate::core::event_bus::BoxedEvent;
 use crate::core::player::Player;
-use crate::entities::attrs::AttrValue;
+use crate::entities::comp_events::SetLayerTransformsEvent;
 use crate::entities::Project;
 
 /// Gizmo state - lives in PlayaApp, not saved.
@@ -36,21 +37,21 @@ impl GizmoState {
         &mut self,
         ui: &egui::Ui,
         viewport_state: &ViewportState,
-        project: &mut Project,
+        project: &Project,
         player: &Player,
-    ) -> bool {
+    ) -> (bool, Vec<BoxedEvent>) {
         let tool = ToolMode::from_str(&project.tool());
 
         // No gizmo in Select mode
         let gizmo_modes = match tool.to_gizmo_modes() {
             Some(modes) => modes,
-            None => return false,
+            None => return (false, Vec::new()),
         };
 
         // Get active comp
         let comp_uuid = match player.active_comp() {
             Some(uuid) => uuid,
-            None => return false,
+            None => return (false, Vec::new()),
         };
 
         // Get selected layers from active comp.
@@ -60,13 +61,13 @@ impl GizmoState {
             .with_comp(comp_uuid, |comp| comp.layer_selection.clone())
             .unwrap_or_default();
         if selected.is_empty() {
-            return false;
+            return (false, Vec::new());
         }
 
         // Collect layer transforms
         let (transforms, layer_data) = self.collect_transforms(project, comp_uuid, &selected);
         if transforms.is_empty() {
-            return false;
+            return (false, Vec::new());
         }
 
         // Build matrices
@@ -92,11 +93,14 @@ impl GizmoState {
 
         // Interact
         if let Some((_result, new_transforms)) = self.gizmo.interact(ui, &transforms) {
-            self.apply_transforms(project, comp_uuid, &layer_data, new_transforms);
-            return true;
+            if let Some(event) = self.build_transform_event(comp_uuid, &layer_data, &new_transforms)
+            {
+                return (true, vec![Box::new(event)]);
+            }
+            return (true, Vec::new());
         }
 
-        false
+        (false, Vec::new())
     }
 
     fn collect_transforms(
@@ -118,29 +122,36 @@ impl GizmoState {
         (transforms, layer_data)
     }
 
-    fn apply_transforms(
+    fn build_transform_event(
         &self,
-        project: &mut Project,
         comp_uuid: Uuid,
         layer_data: &[(Uuid, [f32; 3], [f32; 3], [f32; 3])],
-        new_transforms: Vec<Transform>,
-    ) {
-        for (i, new_t) in new_transforms.iter().enumerate() {
-            if let Some((layer_uuid, _, _, _)) = layer_data.get(i) {
-                let (new_pos, new_rot, new_scale) = gizmo_to_layer_transform(new_t);
+        new_transforms: &[Transform],
+    ) -> Option<SetLayerTransformsEvent> {
+        let mut updates = Vec::new();
 
-                project.modify_comp(comp_uuid, |comp| {
-                    comp.set_child_attrs(
-                        *layer_uuid,
-                        vec![
-                            ("position", AttrValue::Vec3(new_pos)),
-                            ("rotation", AttrValue::Vec3(new_rot)),
-                            ("scale", AttrValue::Vec3(new_scale)),
-                        ],
-                    );
-                });
+        for (i, new_t) in new_transforms.iter().enumerate() {
+            let Some((layer_uuid, old_pos, old_rot, old_scale)) = layer_data.get(i) else {
+                continue;
+            };
+            let (new_pos, new_rot, new_scale) = gizmo_to_layer_transform(new_t);
+
+            // Avoid emitting redundant updates when values haven't changed meaningfully.
+            if approx_vec3_equal(*old_pos, new_pos)
+                && approx_vec3_equal(*old_rot, new_rot)
+                && approx_vec3_equal(*old_scale, new_scale)
+            {
+                continue;
             }
+
+            updates.push((*layer_uuid, new_pos, new_rot, new_scale));
         }
+
+        if updates.is_empty() {
+            return None;
+        }
+
+        Some(SetLayerTransformsEvent { comp_uuid, updates })
     }
 }
 
@@ -157,21 +168,13 @@ impl ToolMode {
             ToolMode::Move => Some(
                 EnumSet::from(GizmoMode::TranslateX)
                     | GizmoMode::TranslateY
-                    | GizmoMode::TranslateZ
                     | GizmoMode::TranslateXY
-                    | GizmoMode::TranslateXZ
-                    | GizmoMode::TranslateYZ
                     | GizmoMode::TranslateView
             ),
-            ToolMode::Rotate => Some(
-                EnumSet::from(GizmoMode::RotateX)
-                    | GizmoMode::RotateY
-                    | GizmoMode::RotateZ
-            ),
+            ToolMode::Rotate => Some(EnumSet::from(GizmoMode::RotateZ)),
             ToolMode::Scale => Some(
                 EnumSet::from(GizmoMode::ScaleX)
                     | GizmoMode::ScaleY
-                    | GizmoMode::ScaleZ
                     | GizmoMode::ScaleUniform
             ),
         }
@@ -195,10 +198,11 @@ fn build_gizmo_matrices(
         DVec3::new(viewport_state.pan.x as f64, viewport_state.pan.y as f64, 0.0),
     );
 
-    // Projection: orthographic, flip Y for screen coords
+    // Projection: orthographic. Do NOT flip Y here: transform-gizmo already flips Y
+    // when converting NDC to screen coordinates (see transform_gizmo::math::world_to_screen).
     let w = clip_rect.width() as f64;
     let h = clip_rect.height() as f64;
-    let proj = DMat4::orthographic_rh(-w / 2.0, w / 2.0, h / 2.0, -h / 2.0, -1000.0, 1000.0);
+    let proj = DMat4::orthographic_rh(-w / 2.0, w / 2.0, -h / 2.0, h / 2.0, -1000.0, 1000.0);
 
     // Convert to row-major for gizmo library
     (to_row_matrix(view), to_row_matrix(proj))
@@ -225,13 +229,19 @@ fn layer_to_gizmo_transform(
 ) -> Transform {
     use glam::{DQuat, DVec3};
 
-    let translation = DVec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
-    // Layer rotation attrs are stored in DEGREES (AE-style). Gizmo expects radians.
+    // Layer transform attributes follow AE-style 2D conventions:
+    // - position.y is "down" in image pixel space
+    // - rotation.z positive rotates clockwise on screen (because image y is down)
+    //
+    // Viewport camera uses a conventional y-up space, and transform-gizmo expects
+    // a y-up view/projection. Convert here.
+    let translation = DVec3::new(position[0] as f64, -(position[1] as f64), position[2] as f64);
+    // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
     let rotation_quat = DQuat::from_euler(
         glam::EulerRot::XYZ,
         (rotation[0] as f64).to_radians(),
         (rotation[1] as f64).to_radians(),
-        (rotation[2] as f64).to_radians(),
+        -((rotation[2] as f64).to_radians()),
     );
     let scale_vec = DVec3::new(scale[0] as f64, scale[1] as f64, scale[2] as f64);
 
@@ -256,11 +266,11 @@ fn gizmo_to_layer_transform(t: &Transform) -> ([f32; 3], [f32; 3], [f32; 3]) {
 
     // Layer rotation attrs are stored in DEGREES.
     (
-        [translation.x as f32, translation.y as f32, translation.z as f32],
+        [translation.x as f32, -(translation.y as f32), translation.z as f32],
         [
             (euler.0 as f32).to_degrees(),
             (euler.1 as f32).to_degrees(),
-            (euler.2 as f32).to_degrees(),
+            (-(euler.2 as f32)).to_degrees(),
         ],
         [scale.x as f32, scale.y as f32, scale.z as f32],
     )
@@ -279,4 +289,12 @@ fn get_layer_transform(
             (pos, rot, scale)
         })
     }).flatten()
+}
+
+#[inline]
+fn approx_vec3_equal(a: [f32; 3], b: [f32; 3]) -> bool {
+    // Keep epsilon conservative: gizmo drags are continuous; this just avoids
+    // emitting identical values due to float roundtrips.
+    const EPS: f32 = 1.0e-6;
+    (a[0] - b[0]).abs() <= EPS && (a[1] - b[1]).abs() <= EPS && (a[2] - b[2]).abs() <= EPS
 }
