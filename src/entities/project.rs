@@ -562,6 +562,51 @@ impl Project {
         self.cache_manager.as_ref()
     }
 
+    /// Invalidate cache for source node and all comps that depend on it.
+    /// 
+    /// With `recursive=true`, traverses full dependency graph:
+    /// TextNode → compA (direct) → compB (uses compA) → ...
+    /// 
+    /// Uses dehydrate mode (keeps old pixels visible during recompute).
+    pub fn invalidate_with_dependents(&self, source_uuid: Uuid, recursive: bool) {
+        // 1. Collect all dependent comp UUIDs (media lock held only here)
+        let dependents: Vec<Uuid> = {
+            let media = self.media.read().expect("media lock");
+            let mut result = Vec::new();
+            let mut to_check = vec![source_uuid];
+            let mut checked = std::collections::HashSet::new();
+            
+            while let Some(check_uuid) = to_check.pop() {
+                if !checked.insert(check_uuid) {
+                    continue; // Already processed (cycle protection)
+                }
+                for (comp_uuid, node) in media.iter() {
+                    if let Some(comp) = node.as_comp() {
+                        let uses_source = comp.layers.iter()
+                            .any(|l| l.source_uuid() == check_uuid);
+                        if uses_source && !result.contains(comp_uuid) {
+                            result.push(*comp_uuid);
+                            if recursive {
+                                to_check.push(*comp_uuid);
+                            }
+                        }
+                    }
+                }
+            }
+            result
+        }; // media lock released
+        
+        // 2. Invalidate caches (no media lock held)
+        if let Some(ref cache) = self.global_cache {
+            // Source node's own cache
+            cache.clear_comp(source_uuid, true);
+            // All dependent comps
+            for comp_uuid in dependents {
+                cache.clear_comp(comp_uuid, true);
+            }
+        }
+    }
+
     /// Remove node by UUID. Clears cache, removes layer references.
     pub fn del_node(&mut self, uuid: Uuid) {
         // 1. Cancel pending workers

@@ -1234,24 +1234,8 @@ impl PlayaApp {
                         manager.increment_epoch();
                     }
                     
-                    if let Some(ref cache) = self.project.global_cache {
-                        // 1. Dehydrate source node's own cache
-                        //    TextNode caches under its UUID, not comp UUID
-                        cache.clear_comp(node_uuid, true);
-                        
-                        // 2. Find all comps that reference this source via layers
-                        //    and dehydrate them too (their composed frames are stale)
-                        let media = self.project.media.read().unwrap();
-                        for (comp_uuid, node) in media.iter() {
-                            if let Some(comp) = node.as_comp() {
-                                let uses_source = comp.layers.iter()
-                                    .any(|l| l.source_uuid() == node_uuid);
-                                if uses_source {
-                                    cache.clear_comp(*comp_uuid, true);
-                                }
-                            }
-                        }
-                    }
+                    // Invalidate source + all dependent comps recursively
+                    self.project.invalidate_with_dependents(node_uuid, true);
                     
                     // Trigger recompute: current frame immediately, full preload after delay
                     self.enqueue_current_frame_only();
@@ -1332,23 +1316,9 @@ impl PlayaApp {
                         manager.increment_epoch();
                     }
                     
-                    if let Some(ref cache) = self.project.global_cache {
-                        // 1. Dehydrate all modified source nodes
-                        for uuid in &ae_focus {
-                            cache.clear_comp(*uuid, true);
-                        }
-                        
-                        // 2. Dehydrate comps that use ANY of the modified sources
-                        let media = self.project.media.read().unwrap();
-                        for (comp_uuid, node) in media.iter() {
-                            if let Some(comp) = node.as_comp() {
-                                let uses_any_source = comp.layers.iter()
-                                    .any(|l| ae_focus.contains(&l.source_uuid()));
-                                if uses_any_source {
-                                    cache.clear_comp(*comp_uuid, true);
-                                }
-                            }
-                        }
+                    // Invalidate all modified sources + their dependents recursively
+                    for uuid in &ae_focus {
+                        self.project.invalidate_with_dependents(*uuid, true);
                     }
                     
                     // Trigger recompute: current frame immediately, full preload after delay
