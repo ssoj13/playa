@@ -65,7 +65,7 @@ impl GizmoState {
         }
 
         // Collect layer transforms
-        let (transforms, layer_data) = self.collect_transforms(project, comp_uuid, &selected);
+        let (transforms, layer_data) = self.collect_transforms(tool, project, comp_uuid, &selected);
         if transforms.is_empty() {
             return (false, Vec::new());
         }
@@ -93,7 +93,8 @@ impl GizmoState {
 
         // Interact
         if let Some((_result, new_transforms)) = self.gizmo.interact(ui, &transforms) {
-            if let Some(event) = self.build_transform_event(comp_uuid, &layer_data, &new_transforms)
+            if let Some(event) =
+                self.build_transform_event(tool, comp_uuid, &layer_data, &new_transforms)
             {
                 return (true, vec![Box::new(event)]);
             }
@@ -105,6 +106,7 @@ impl GizmoState {
 
     fn collect_transforms(
         &self,
+        tool: ToolMode,
         project: &Project,
         comp_uuid: Uuid,
         selected: &[Uuid],
@@ -114,7 +116,7 @@ impl GizmoState {
 
         for &layer_uuid in selected {
             if let Some((pos, rot, scale)) = get_layer_transform(project, comp_uuid, layer_uuid) {
-                transforms.push(layer_to_gizmo_transform(pos, rot, scale));
+                transforms.push(layer_to_gizmo_transform(tool, pos, rot, scale));
                 layer_data.push((layer_uuid, pos, rot, scale));
             }
         }
@@ -124,6 +126,7 @@ impl GizmoState {
 
     fn build_transform_event(
         &self,
+        tool: ToolMode,
         comp_uuid: Uuid,
         layer_data: &[(Uuid, [f32; 3], [f32; 3], [f32; 3])],
         new_transforms: &[Transform],
@@ -134,7 +137,26 @@ impl GizmoState {
             let Some((layer_uuid, old_pos, old_rot, old_scale)) = layer_data.get(i) else {
                 continue;
             };
-            let (new_pos, new_rot, new_scale) = gizmo_to_layer_transform(new_t);
+            let (gizmo_pos, gizmo_rot, gizmo_scale) = gizmo_to_layer_transform(new_t);
+
+            // We normalize the input transform we pass into transform-gizmo (see
+            // `layer_to_gizmo_transform`) so gizmo rings/handles render correctly in 2D.
+            // Because of that, we must merge the output back into the original layer
+            // attrs, updating only the channel that the current tool edits.
+            let (new_pos, new_rot, new_scale) = match tool {
+                ToolMode::Move => (gizmo_pos, *old_rot, *old_scale),
+                ToolMode::Rotate => (
+                    *old_pos,
+                    [old_rot[0], old_rot[1], gizmo_rot[2]],
+                    *old_scale,
+                ),
+                ToolMode::Scale => (
+                    *old_pos,
+                    *old_rot,
+                    [gizmo_scale[0], gizmo_scale[1], old_scale[2]],
+                ),
+                ToolMode::Select => (*old_pos, *old_rot, *old_scale),
+            };
 
             // Avoid emitting redundant updates when values haven't changed meaningfully.
             if approx_vec3_equal(*old_pos, new_pos)
@@ -223,6 +245,7 @@ fn to_row_matrix(m: glam::DMat4) -> mint::RowMatrix4<f64> {
 // ============================================================================
 
 fn layer_to_gizmo_transform(
+    tool: ToolMode,
     position: [f32; 3],
     rotation: [f32; 3],
     scale: [f32; 3],
@@ -235,15 +258,27 @@ fn layer_to_gizmo_transform(
     //
     // Viewport camera uses a conventional y-up space, and transform-gizmo expects
     // a y-up view/projection. Convert here.
-    let translation = DVec3::new(position[0] as f64, -(position[1] as f64), position[2] as f64);
+    //
+    // NOTE: We intentionally normalize the transform we pass into transform-gizmo:
+    // - ignore rotation.x/y (we're currently a 2D tool; compositor only uses rot.z)
+    // - for Move/Rotate, force uniform scale=1 to prevent rings/handles becoming oval
+    //   when the layer has non-uniform scale (scale.x != scale.y).
+    //
+    // This is purely a *visual/input normalization* for gizmo interaction; we merge the
+    // output back into the original layer attrs and only write the edited channel.
+    let translation = DVec3::new(position[0] as f64, -(position[1] as f64), 0.0);
     // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
+    // In 2D we only care about Z.
     let rotation_quat = DQuat::from_euler(
         glam::EulerRot::XYZ,
-        (rotation[0] as f64).to_radians(),
-        (rotation[1] as f64).to_radians(),
+        0.0,
+        0.0,
         -((rotation[2] as f64).to_radians()),
     );
-    let scale_vec = DVec3::new(scale[0] as f64, scale[1] as f64, scale[2] as f64);
+    let scale_vec = match tool {
+        ToolMode::Scale => DVec3::new(scale[0] as f64, scale[1] as f64, 1.0),
+        ToolMode::Move | ToolMode::Rotate | ToolMode::Select => DVec3::splat(1.0),
+    };
 
     Transform::from_scale_rotation_translation(
         mint::Vector3::from(scale_vec.to_array()),
