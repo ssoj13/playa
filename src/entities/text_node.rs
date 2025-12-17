@@ -218,7 +218,7 @@ impl TextNode {
         };
         
         let text_attrs = TextAttrs::new().family(family);
-        buffer.set_text(&mut font_system, &text, text_attrs, Shaping::Advanced);
+        buffer.set_text(&mut font_system, &text, &text_attrs, Shaping::Advanced, None);
         
         // Shape and layout
         buffer.shape_until_scroll(&mut font_system, false);

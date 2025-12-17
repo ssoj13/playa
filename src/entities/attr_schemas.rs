@@ -119,9 +119,10 @@ pub static LAYER_SCHEMA: AttrSchema = AttrSchema::new("Layer", LAYER_DEFS);
 const PROJECT_DEFS: &[AttrDef] = &[
     AttrDef::new("name", AttrType::String, DISP),
     AttrDef::new("uuid", AttrType::Uuid, INT),
-    AttrDef::new("comps_order", AttrType::Json, INT), // UI state
-    AttrDef::new("selection", AttrType::Json, INT),   // UI state
-    AttrDef::new("active", AttrType::Json, INT),      // UI state
+    AttrDef::new("order", AttrType::Json, INT),      // UI: media pool order
+    AttrDef::new("selection", AttrType::Json, INT),  // UI: selected items
+    AttrDef::new("active", AttrType::Json, INT),     // UI: active comp
+    AttrDef::new("tool", AttrType::String, 0),       // Viewport tool: select/move/rotate/scale
 ];
 
 pub static PROJECT_SCHEMA: AttrSchema = AttrSchema::new("Project", PROJECT_DEFS);

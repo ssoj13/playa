@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::shaders::Shaders;
 use super::{ViewportRenderer, ViewportState};
+use super::gizmo::GizmoState;
 use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
@@ -42,6 +43,7 @@ pub fn render(
     viewport_state: &mut ViewportState,
     viewport_renderer: &Arc<Mutex<ViewportRenderer>>,
     shader_manager: &mut Shaders,
+    gizmo_state: &mut GizmoState,
     show_help: bool,
     is_fullscreen: bool,
     texture_needs_upload: bool,
@@ -98,15 +100,21 @@ pub fn render(
 
         handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
+        // Render gizmo for transform manipulation (Move/Rotate/Scale tools)
+        let gizmo_consumed = gizmo_state.render(ui, viewport_state, project, player);
+
         // Get play range for scrubbing (with work_area limits)
         let (play_start, play_end) = player.active_comp()
             .and_then(|uuid| project.with_node(uuid, |n| n.play_range(true)))
             .unwrap_or((0, 100));
 
-        if let Some(frame_idx) =
-            viewport_state.handle_scrubbing(&response, panel_rect, double_clicked, play_start, play_end)
-        {
-            actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
+        // Only handle scrubbing if gizmo didn't consume input
+        if !gizmo_consumed {
+            if let Some(frame_idx) =
+                viewport_state.handle_scrubbing(&response, panel_rect, double_clicked, play_start, play_end)
+            {
+                actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
+            }
         }
 
         let render_start = std::time::Instant::now();

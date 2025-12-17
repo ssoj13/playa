@@ -218,7 +218,7 @@ impl Shell {
                     loaded.rebuild_with_manager(Arc::clone(&self.cache_manager), Some(self.comp_emitter.clone()));
                     self.project = loaded;
                     self.project.set_last_save_path(Some(path));
-                    let first = self.project.comps_order().first().cloned();
+                    let first = self.project.order().first().cloned();
                     self.player.set_active_comp(first, &mut self.project);
                     log::info!("Project loaded");
                 }

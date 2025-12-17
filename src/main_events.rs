@@ -69,6 +69,7 @@ use crate::widgets::project::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
+use crate::widgets::viewport::tool::SetToolEvent;
 use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 use crate::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
@@ -415,7 +416,7 @@ pub fn handle_app_event(
         let was_active = player.active_comp() == Some(uuid);
         project.del_comp(uuid);
         if was_active {
-            let first = project.comps_order().first().cloned();
+            let first = project.order().first().cloned();
             player.set_active_comp(first, project);
             if let Some(f) = first {
                 node_editor_state.set_comp(f);
@@ -432,7 +433,7 @@ pub fn handle_app_event(
         // Fix active if deleted
         if let Some(a) = active
             && !project.media.read().expect("media lock poisoned").contains_key(&a) {
-                let first = project.comps_order().first().cloned();
+                let first = project.order().first().cloned();
                 player.set_active_comp(first, project);
                 if let Some(f) = first {
                     node_editor_state.set_comp(f);
@@ -442,14 +443,14 @@ pub fn handle_app_event(
     }
     if downcast_event::<ClearAllMediaEvent>(event).is_some() {
         project.media.write().expect("media lock poisoned").clear();
-        project.set_comps_order(Vec::new());
+        project.set_order(Vec::new());
         project.set_selection(Vec::new());
         player.set_active_comp(None, project);
         return Some(result);
     }
     if let Some(e) = downcast_event::<SelectMediaEvent>(event) {
         player.set_active_comp(Some(e.0), project); // also resets selection
-        project.selection_anchor = project.comps_order().iter().position(|u| *u == e.0);
+        project.selection_anchor = project.order().iter().position(|u| *u == e.0);
         node_editor_state.set_comp(e.0);
         return Some(result);
     }
@@ -459,7 +460,7 @@ pub fn handle_app_event(
         project.set_selection(e.selection.clone());
         project.selection_anchor = e.anchor.or_else(|| {
             let sel = project.selection();
-            let order = project.comps_order();
+            let order = project.order();
             sel.last().and_then(|u| order.iter().position(|x| x == u))
         });
         return Some(result);
@@ -472,7 +473,7 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(event) {
         player.set_active_comp(Some(e.uuid), project); // also resets selection
-        project.selection_anchor = project.comps_order().iter().position(|u| *u == e.uuid);
+        project.selection_anchor = project.order().iter().position(|u| *u == e.uuid);
         node_editor_state.set_comp(e.uuid);
         
         // If target_frame specified (dive-into-comp), set frame in new comp
@@ -488,7 +489,7 @@ pub fn handle_app_event(
     if downcast_event::<ProjectPreviousCompEvent>(event).is_some() {
         if let Some(prev) = player.previous_comp() {
             player.set_active_comp(Some(prev), project);
-            project.selection_anchor = project.comps_order().iter().position(|u| *u == prev);
+            project.selection_anchor = project.order().iter().position(|u| *u == prev);
             node_editor_state.set_comp(prev);
         }
         return Some(result);
@@ -621,6 +622,11 @@ pub fn handle_app_event(
     }
     if downcast_event::<Viewport100Event>(event).is_some() {
         viewport_state.set_mode_100();
+        return Some(result);
+    }
+    // Tool change (Q/W/E/R)
+    if let Some(e) = downcast_event::<SetToolEvent>(event) {
+        project.set_tool(e.0.as_str());
         return Some(result);
     }
 

@@ -151,6 +151,9 @@ struct PlayaApp {
     attributes_state: AttributesState,
     /// Node editor state (snarl graph for composition visualization)
     node_editor_state: NodeEditorState,
+    /// Gizmo state for viewport transform manipulation
+    #[serde(skip)]
+    gizmo_state: playa::widgets::viewport::gizmo::GizmoState,
 }
 
 impl Default for PlayaApp {
@@ -222,6 +225,7 @@ impl Default for PlayaApp {
             ae_focus: Vec::new(),
             attributes_state: AttributesState::default(),
             node_editor_state: NodeEditorState::new(),
+            gizmo_state: playa::widgets::viewport::gizmo::GizmoState::default(),
         }
     }
 }
@@ -274,7 +278,7 @@ impl PlayaApp {
                     let name = node.name().to_string();
                     info!("Adding FileNode: {} ({})", name, uuid);
 
-                    // add_node() adds to media pool and comps_order
+                    // add_node() adds to media pool and order
                     self.project.add_node(node.into());
 
                     // Remember first sequence for activation
@@ -786,8 +790,8 @@ impl PlayaApp {
             );
         }
 
-        // ESC/Q: Priority-based handler. ESC: fullscreen -> encode dialog -> settings -> quit. Q: always quit.
-        if input.key_pressed(egui::Key::Escape) || input.key_pressed(egui::Key::Q) {
+        // ESC: Priority-based handler. ESC: fullscreen -> encode dialog -> settings -> quit.
+        if input.key_pressed(egui::Key::Escape) {
             // Priority 1: Fullscreen/Cinema mode (highest priority - most immersive state)
             if input.key_pressed(egui::Key::Escape) && self.is_fullscreen {
                 self.set_cinema_mode(ctx, false);
@@ -949,6 +953,7 @@ impl PlayaApp {
             &mut self.viewport_state,
             &self.viewport_renderer,
             &mut self.shader_manager,
+            &mut self.gizmo_state,
             self.show_help,
             self.is_fullscreen,
             texture_needs_upload,

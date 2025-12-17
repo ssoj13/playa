@@ -7,6 +7,7 @@ use crate::widgets::project::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
+use crate::widgets::viewport::tool::{ToolMode, SetToolEvent};
 use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 use eframe::egui;
@@ -138,6 +139,11 @@ impl HotkeyHandler {
         self.bind(Global, "F", FitViewportEvent);
         self.bind(Global, "A", Viewport100Event);
         self.bind(Global, "H", Viewport100Event);
+        // Tool hotkeys (Q/W/E/R like Maya)
+        self.bind(Global, "Q", SetToolEvent(ToolMode::Select));
+        self.bind(Global, "W", SetToolEvent(ToolMode::Move));
+        self.bind(Global, "E", SetToolEvent(ToolMode::Rotate));
+        self.bind(Global, "R", SetToolEvent(ToolMode::Scale));
 
         // Timeline-specific
         self.bind(Timeline, "Delete", RemoveSelectedLayerEvent);

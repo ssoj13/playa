@@ -55,12 +55,12 @@ use super::comp_events::AttrsChangedEvent;
 /// Top-level project / scene.
 ///
 /// **Attrs keys** (stored in `attrs`):
-/// - `comps_order`: Vec<Uuid> as JSON - UI order of media items
+/// - `order`: Vec<Uuid> as JSON - UI order of media items
 /// - `selection`: Vec<Uuid> as JSON - current selection (ordered)
 /// - `active`: Option<Uuid> as JSON - currently active item
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Project {
-    /// All serializable project state (includes comps_order, selection, active)
+    /// All serializable project state (includes order, selection, active)
     pub attrs: Attrs,
 
     /// Unified media pool: all nodes (FileNode, CompNode) keyed by UUID.
@@ -147,7 +147,7 @@ impl Project {
 
         // Initialize attrs with schema
         let mut attrs = Attrs::with_schema(&PROJECT_SCHEMA);
-        attrs.set_json("comps_order", &Vec::<Uuid>::new());
+        attrs.set_json("order", &Vec::<Uuid>::new());
         attrs.set_json("selection", &Vec::<Uuid>::new());
         attrs.set_json("active", &None::<Uuid>);
 
@@ -194,27 +194,27 @@ impl Project {
     // === Accessor methods for attrs fields ===
 
     /// Get comps order (Vec<Uuid>)
-    pub fn comps_order(&self) -> Vec<Uuid> {
-        self.attrs.get_json("comps_order").unwrap_or_default()
+    pub fn order(&self) -> Vec<Uuid> {
+        self.attrs.get_json("order").unwrap_or_default()
     }
 
     /// Set comps order
-    pub fn set_comps_order(&mut self, order: Vec<Uuid>) {
-        self.attrs.set_json("comps_order", &order);
+    pub fn set_order(&mut self, order: Vec<Uuid>) {
+        self.attrs.set_json("order", &order);
     }
 
-    /// Push UUID to comps_order
-    pub fn push_comps_order(&mut self, uuid: Uuid) {
-        let mut order = self.comps_order();
+    /// Push UUID to order
+    pub fn push_order(&mut self, uuid: Uuid) {
+        let mut order = self.order();
         order.push(uuid);
-        self.set_comps_order(order);
+        self.set_order(order);
     }
 
-    /// Retain comps_order by predicate
-    pub fn retain_comps_order<F>(&mut self, f: F) where F: FnMut(&Uuid) -> bool {
-        let mut order = self.comps_order();
+    /// Retain order by predicate
+    pub fn retain_order<F>(&mut self, f: F) where F: FnMut(&Uuid) -> bool {
+        let mut order = self.order();
         order.retain(f);
-        self.set_comps_order(order);
+        self.set_order(order);
     }
 
     /// Get selection (Vec<Uuid>)
@@ -249,6 +249,18 @@ impl Project {
     /// Set active comp UUID
     pub fn set_active(&mut self, uuid: Option<Uuid>) {
         self.attrs.set_json("active", &uuid);
+    }
+
+    /// Get viewport tool mode (select/move/rotate/scale).
+    pub fn tool(&self) -> String {
+        self.attrs.get_str("tool")
+            .unwrap_or("select")
+            .to_string()
+    }
+
+    /// Set viewport tool mode.
+    pub fn set_tool(&mut self, tool: &str) {
+        self.attrs.set("tool", super::attrs::AttrValue::Str(tool.to_string()));
     }
 
     /// Get last save path for quick save
@@ -295,14 +307,14 @@ impl Project {
     ///
     /// Returns UUID of the default/first comp.
     pub fn ensure_default_comp(&mut self) -> Uuid {
-        let order = self.comps_order();
+        let order = self.order();
         let has_comps = !order.is_empty();
 
         if !has_comps {
             let comp = CompNode::new("Main", 0, 0, 24.0);
             let uuid = comp.uuid();
             self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(NodeKind::Comp(comp)));
-            self.push_comps_order(uuid);
+            self.push_order(uuid);
             log::info!("Created default comp: {}", uuid);
             uuid
         } else {
@@ -310,7 +322,7 @@ impl Project {
                 let comp = CompNode::new("Main", 0, 0, 24.0);
                 let uuid = comp.uuid();
                 self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(NodeKind::Comp(comp)));
-                self.push_comps_order(uuid);
+                self.push_order(uuid);
                 uuid
             })
         }
@@ -486,7 +498,7 @@ impl Project {
     pub fn add_node(&mut self, node: NodeKind) {
         let uuid = node.uuid();
         self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(node));
-        self.push_comps_order(uuid);
+        self.push_order(uuid);
     }
 
     /// Create and add new CompNode, returns its UUID
@@ -649,7 +661,7 @@ impl Project {
 
         // 4. Remove from media pool and order
         self.media.write().expect("media lock poisoned").remove(&uuid);
-        self.retain_comps_order(|u| *u != uuid);
+        self.retain_order(|u| *u != uuid);
 
         // 5. Fix selection
         self.retain_selection(|u| *u != uuid);

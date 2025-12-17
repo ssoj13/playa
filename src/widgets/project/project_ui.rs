@@ -91,7 +91,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
             ui.set_min_height(scroll_height);
 
             // Collect all comps to render (unified order)
-            let all_comps: Vec<Uuid> = project.comps_order();
+            let all_comps: Vec<Uuid> = project.order();
 
             if all_comps.is_empty() {
                 ui.add_space(20.0);
@@ -111,8 +111,8 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     Some(c) => c,
                     None => continue,
                 };
-                let comps_order = project.comps_order();
-                let clicked_idx = match comps_order
+                let order = project.order();
+                let clicked_idx = match order
                     .iter()
                     .position(|u| u == comp_uuid)
                 {
@@ -262,7 +262,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 let current_selection = project.selection();
                 if response.clicked() {
                     let (sel, anchor) = compute_selection(
-                        &comps_order,
+                        &order,
                         &current_selection,
                         project.selection_anchor,
                         clicked_idx,
@@ -276,7 +276,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 }
                 if response.double_clicked() {
                     let (sel, anchor) = compute_selection(
-                        &comps_order,
+                        &order,
                         &current_selection,
                         project.selection_anchor,
                         clicked_idx,
