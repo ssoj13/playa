@@ -291,10 +291,12 @@ impl Player {
 
 
 
-    /// Update playback state
-    pub fn update(&mut self, project: &mut Project) {
+    /// Update playback state.
+    /// Returns Some(new_frame) if frame changed, None otherwise.
+    /// Caller should emit SetFrameEvent for unified frame change handling.
+    pub fn update(&mut self, project: &mut Project) -> Option<i32> {
         if !self.is_playing() || self.total_frames(project) == 0 {
-            return;
+            return None;
         }
 
         // Ensure play_fps is not lower than base_fps
@@ -312,32 +314,36 @@ impl Player {
             let frame_duration = 1.0 / self.fps_play();
 
             if elapsed >= frame_duration {
-                self.advance_frame(project);
+                let new_frame = self.advance_frame(project);
                 self.last_frame_time = Some(now);
+                return new_frame;
             }
         } else {
             self.last_frame_time = Some(now);
         }
+        None
     }
 
-    /// Advance to next frame
-    fn advance_frame(&mut self, project: &mut Project) {
+    /// Advance to next frame. Returns new frame if changed.
+    fn advance_frame(&mut self, project: &mut Project) -> Option<i32> {
         let total_frames = self.total_frames(project);
         if total_frames == 0 {
-            return;
+            return None;
         }
 
         let (play_start, play_end) = self.play_range(project);
         if play_end < play_start {
-            return;
+            return None;
         }
 
         // Copy values before closure
         let play_direction = self.play_direction();
         let loop_enabled = self.loop_enabled();
 
-        // Closure returns whether playback should stop
+        // Track new frame and stop flag
         let mut should_stop = false;
+        let mut new_frame: Option<i32> = None;
+        
         if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 let mut current = comp.frame();
@@ -357,13 +363,16 @@ impl Player {
                         if loop_enabled {
                             trace!("Frame loop: {} -> {}", current, play_start);
                             comp.set_frame(play_start);
+                            new_frame = Some(play_start);
                         } else {
                             trace!("Reached play range end, stopping");
                             comp.set_frame(play_end);
+                            new_frame = Some(play_end);
                             should_stop = true;
                         }
                     } else {
                         comp.set_frame(next);
+                        new_frame = Some(next);
                     }
                 } else {
                     // Backward
@@ -371,12 +380,14 @@ impl Player {
                         if loop_enabled {
                             trace!("Frame loop: {} -> {}", current, play_end);
                             comp.set_frame(play_end);
+                            new_frame = Some(play_end);
                         } else {
                             trace!("Reached play range start, stopping");
                             should_stop = true;
                         }
                     } else {
                         comp.set_frame(current - 1);
+                        new_frame = Some(current - 1);
                     }
                 }
             });
@@ -385,6 +396,7 @@ impl Player {
         if should_stop {
             self.set_is_playing(false);
         }
+        new_frame
     }
 
     /// Stop playback (always stops, doesn't toggle)

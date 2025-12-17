@@ -242,6 +242,20 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SetFrameEvent>(event) {
         trace!("SetFrame: moving to frame {}", e.0);
         if let Some(comp_uuid) = player.active_comp() {
+            // Get old frame before setting new one (for distance calculation)
+            let old_frame = project.with_comp(comp_uuid, |comp| comp.frame()).unwrap_or(e.0);
+            let distance = (e.0 - old_frame).abs();
+            
+            // Big jump (scrub/seek) vs sequential (playback):
+            // - distance > 1: user jumped to new position, cancel old preload tasks
+            // - distance <= 1: sequential playback, keep loading frames ahead
+            if distance > 1 {
+                if let Some(manager) = project.cache_manager() {
+                    manager.increment_epoch();
+                    trace!("SetFrame: jump detected (distance={}), epoch incremented", distance);
+                }
+            }
+            
             project.modify_comp(comp_uuid, |comp| {
                 comp.set_frame(e.0);
             });

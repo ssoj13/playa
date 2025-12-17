@@ -1445,14 +1445,15 @@ impl eframe::App for PlayaApp {
             self.applied_mem_fraction = mem_fraction;
         }
 
-        self.player.update(&mut self.project);
-
-        // Preload frames during playback (player.update doesn't emit events)
-        if self.player.is_playing() {
-            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+        // Unified frame change path: both playback and scrubbing go through SetFrameEvent.
+        // Why: single codepath for preload logic, distance-based epoch increment, etc.
+        // player.update() returns Some(frame) if frame changed during playback.
+        if let Some(new_frame) = self.player.update(&mut self.project) {
+            // Emit same event as scrubbing - unified handling in handle_events()
+            self.event_bus.emit(playa::core::player_events::SetFrameEvent(new_frame));
         }
 
-        // Handle composition events (CurrentFrameChanged → triggers frame loading)
+        // Handle composition events (SetFrameEvent → triggers frame loading)
         self.handle_events();
 
         // Sync preload delay from settings and check debounced preloader
