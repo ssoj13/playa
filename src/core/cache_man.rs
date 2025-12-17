@@ -6,7 +6,7 @@
 //! **Used by**: App (global singleton), Comp (per-comp cache tracking)
 
 use log::{info, trace};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use sysinfo::System;
 
@@ -31,6 +31,9 @@ pub struct CacheManager {
     max_memory_bytes: AtomicUsize,
     /// Epoch counter for cancelling stale requests
     current_epoch: Arc<AtomicU64>,
+    /// Dirty flag for UI repaint: set when cache changes, cleared by main loop
+    /// Workers set this when frames load; main loop checks and triggers repaint
+    dirty_repaint: Arc<AtomicBool>,
 }
 
 impl CacheManager {
@@ -68,6 +71,7 @@ impl CacheManager {
             memory_usage: Arc::new(AtomicUsize::new(0)),
             max_memory_bytes: AtomicUsize::new(max_memory_bytes),
             current_epoch: Arc::new(AtomicU64::new(0)),
+            dirty_repaint: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -88,6 +92,20 @@ impl CacheManager {
     /// Get shared epoch counter (for Workers)
     pub fn epoch_ref(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.current_epoch)
+    }
+
+    /// Mark cache as dirty (frame loaded/changed)
+    /// Called by GlobalFrameCache when frames are inserted.
+    /// Main loop checks this to trigger UI repaint.
+    pub fn mark_dirty(&self) {
+        self.dirty_repaint.store(true, Ordering::Relaxed);
+    }
+
+    /// Check and clear dirty flag (atomic swap)
+    /// Returns true if cache changed since last check.
+    /// Main loop calls this to decide if repaint needed.
+    pub fn take_dirty(&self) -> bool {
+        self.dirty_repaint.swap(false, Ordering::Relaxed)
     }
 
     /// Check if memory limit exceeded

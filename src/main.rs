@@ -1477,7 +1477,11 @@ impl eframe::App for PlayaApp {
             }
         });
 
-        if self.player.is_playing() {
+        // Request repaint if:
+        // 1. Playing (continuous animation)
+        // 2. Cache changed (workers loaded frames, need to update indicators)
+        let cache_dirty = self.cache_manager.take_dirty();
+        if self.player.is_playing() || cache_dirty {
             ctx.request_repaint();
         }
 

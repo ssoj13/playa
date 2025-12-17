@@ -210,6 +210,9 @@ impl GlobalFrameCache {
             self.cache_manager.add_memory(frame_size);
         }
 
+        // Signal UI that cache changed
+        self.cache_manager.mark_dirty();
+
         (frame_clone, true)
     }
 
@@ -271,6 +274,9 @@ impl GlobalFrameCache {
 
         // Spammy per-frame log
         trace!("Cached frame: {}:{} ({} bytes)", comp_uuid, frame_idx, frame_size);
+
+        // Signal UI that cache changed - triggers repaint to update indicators
+        self.cache_manager.mark_dirty();
     }
 
     /// Evict oldest frame from cache
