@@ -2,17 +2,6 @@
   - Дай опции и план тестирования.
 Вот информация к размышлению:
 
-# Investigation: Timeline Scrubbing UI Jank
-- Symptom: UI stutters when scrubbing the playhead on the timeline; EventBus decoupling is in place, but frame jumps feel blocked.
-  Findings
-  - `SetFrameEvent` handling writes playhead via `project.modify_comp` (`src/main_events.rs:242-249`). This takes a write lock on `project.media`.
-  - `modify_comp` grabs the global `media` write lock before invoking the closure (`src/entities/project.rs:427-449`). Any playhead change blocks on this lock.
-  - Preload/compute jobs hold a read lock on the same `media` for the entire compute:
-    - In worker enqueued closures, they read-lock `media` and run `comp.compute` under that guard (`src/entities/comp_node.rs:1135-1152`).
-    - `signal_preload` also read-locks `media` to build `ComputeContext` (`src/entities/comp_node.rs:1228-1238`).
-  - With workers holding long-lived read locks while composing frames, the UI thread cannot acquire the write lock to update the playhead, causing jank during scrubbing. EventBus isn’t the bottleneck; the shared `RwLock` on the media pool is.
-  - Recommendations?
-
 2. изучить вопрос добавления tools - move, rotate, scale, комбинированного манипулятора как в Maya.
   - Его надо рисовать поверх картинки оверлеем.
   - Как это делать быстро?
@@ -31,6 +20,8 @@
   - p.add_comp(...)
   - playa.player.timeline.go(0)
   - playa.player.timeline.play()
+
+4. изучить возможность добавления web server в плеер и REST api endpoint / endpoints чтобы можно было управлять по вебу.
 
 4. Дай отчёт, запиши в report.md
 
