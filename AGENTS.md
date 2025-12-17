@@ -345,6 +345,35 @@ modify_comp() sees !is_dirty()  →  NO event
 Cache preserved, just display different cached frame
 ```
 
+### Recursive Cache Invalidation (Nested Comps)
+
+When editing a node inside nested comp (e.g., TextNode in compA used by compB),
+all parent comps must also invalidate their caches:
+
+```rust
+// project.rs
+pub fn invalidate_with_dependents(&self, source_uuid: Uuid, recursive: bool) {
+    // 1. Collect dependent UUIDs (comps that reference source_uuid in layers)
+    // 2. Release media lock before cache operations (avoid deadlock)
+    // 3. Clear cache for source and all dependents
+    // 4. If recursive=true, traverse dependency graph transitively
+}
+```
+
+**Dependency detection**: Scans all CompNodes for layers referencing `source_uuid`.
+
+**Usage in main_events.rs**:
+```rust
+// On AttrsChangedEvent - invalidate source and all parents recursively
+project.invalidate_with_dependents(comp_uuid, true);
+```
+
+**Example**: compB contains layer referencing compA. Edit TextNode in compA:
+1. TextNode marks compA dirty
+2. `invalidate_with_dependents(compA, true)` finds compB references compA
+3. Both compA and compB caches cleared
+4. Next render regenerates both
+
 ---
 
 ## Threading Model
@@ -382,10 +411,16 @@ pub struct CacheManager {
     memory_usage: Arc<AtomicUsize>,     // Current bytes used
     max_memory_bytes: AtomicUsize,      // Limit
     current_epoch: Arc<AtomicU64>,      // For cancellation
+    dirty_repaint: Arc<AtomicBool>,     // UI refresh trigger
 }
 ```
 
 All atomic operations = lock-free = fast.
+
+**dirty_repaint pattern**:
+- Workers call `mark_dirty()` when frames are inserted into cache
+- Main loop calls `take_dirty()` (atomic swap) and triggers `ctx.request_repaint()`
+- Ensures UI updates when background loading completes (indicators refresh)
 
 ---
 
@@ -599,24 +634,56 @@ This triggers `rebuild_from_comp()` on next frame which:
 
 Background frame loading for smooth playback.
 
+### Unified Frame Change Codepath
+
+**Both playback and scrubbing use SetFrameEvent** for clean architecture:
+
+```rust
+// main.rs - playback path
+if let Some(new_frame) = self.player.update(&mut self.project) {
+    // player.update() returns Some(frame) if frame changed
+    self.event_bus.emit(SetFrameEvent(new_frame));
+}
+
+// timeline_ui.rs - scrub path  
+event_bus.emit(SetFrameEvent(new_frame));
+```
+
+**Distance-based epoch increment** (main_events.rs):
+```rust
+let distance = (new_frame - old_frame).abs();
+if distance > 1 {
+    // Big jump (scrub/seek) - cancel old preload tasks
+    cache_manager.increment_epoch();
+}
+// distance <= 1: sequential playback - keep loading ahead
+```
+
+**Why unified path:**
+- Single codepath for preload logic
+- Distance-based decision: scrub cancels stale tasks, playback doesn't
+- Clean architecture - all frame changes flow through same handler
+
 ### Data Flow (SetFrameEvent)
 
 ```
-User scrubs timeline / presses arrow keys
+User scrubs timeline / presses arrow / playback advances
     │
     ▼
-Widget emits SetFrameEvent(frame)
+SetFrameEvent(frame) emitted
     │
     ▼
-main_events.rs handler (line ~206):
+main_events.rs handler:
+  - Get old_frame, calculate distance
+  - if distance > 1: increment_epoch() (cancel stale preload)
   - comp.set_frame(frame)              // Updates playhead position
-  - result.enqueue_frames = Some(10)   // Request preload
+  - result.enqueue_frames = true       // Request preload
     │
     ▼
 main.rs handle_events() collects deferred_enqueue_frames
     │
     ▼
-enqueue_frame_loads_around_playhead(radius)  // line ~305
+enqueue_frame_loads_around_playhead(radius)
     │
     ▼
 project.with_comp(uuid, |comp| {
@@ -752,29 +819,6 @@ if texture_needs_upload {
 
 **Key insight:** Don't update tracking until a Loaded frame arrives.
 This ensures viewport keeps requesting refresh until composition completes.
-
-### CurrentFrameChangedEvent (DEAD CODE)
-
-**WARNING**: `CurrentFrameChangedEvent` is defined in `comp_events.rs` but **never emitted anywhere**!
-
-```rust
-// comp_events.rs:34 - DEFINED
-pub struct CurrentFrameChangedEvent {
-    pub comp_uuid: Uuid,
-    pub old_frame: i32,
-    pub new_frame: i32,
-}
-
-// main.rs:337 - HANDLER EXISTS
-if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
-    self.enqueue_frame_loads_around_playhead(10);  // Never called!
-    continue;
-}
-
-// player.rs docstring LIES - says "emits CurrentFrameChanged" but code doesn't
-```
-
-This is dead code - preload is triggered via `SetFrameEvent.enqueue_frames` instead.
 
 ### Frame Status Colors (Timeline Status Strip)
 
