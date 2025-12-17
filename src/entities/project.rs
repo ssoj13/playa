@@ -63,10 +63,20 @@ pub struct Project {
     /// All serializable project state (includes comps_order, selection, active)
     pub attrs: Attrs,
 
-    /// Unified media pool: all nodes (FileNode, CompNode) keyed by UUID
-    /// Thread-safe for concurrent reads from background composition workers
+    /// Unified media pool: all nodes (FileNode, CompNode) keyed by UUID.
+    /// 
+    /// ## Why Arc<NodeKind>?
+    /// 
+    /// Worker threads need to read nodes during frame computation, but UI thread
+    /// needs write access for playhead updates. Without Arc, workers hold read lock
+    /// during long compute operations (50-500ms), blocking UI writes → jank.
+    /// 
+    /// With Arc<NodeKind>:
+    /// - Workers clone Arc (nanoseconds), release lock immediately
+    /// - UI can acquire write lock without waiting for compute
+    /// - Arc::make_mut provides copy-on-write for mutations
     #[serde(with = "arc_rwlock_hashmap")]
-    pub media: Arc<RwLock<HashMap<Uuid, NodeKind>>>,
+    pub media: Arc<RwLock<HashMap<Uuid, Arc<NodeKind>>>>,
 
     /// Runtime-only selection anchor for shift-click range
     #[serde(skip)]
@@ -166,8 +176,11 @@ impl Project {
         self.attrs.attach_schema(&PROJECT_SCHEMA);
         
         // All nodes in media pool
+        // Arc::make_mut: if refcount == 1, mutates in place; otherwise clones.
+        // Safe here because attach_schemas runs at startup before workers start.
         if let Ok(mut media) = self.media.write() {
-            for node in media.values_mut() {
+            for arc_node in media.values_mut() {
+                let node = Arc::make_mut(arc_node);
                 match node {
                     NodeKind::File(f) => f.attach_schema(),
                     NodeKind::Comp(c) => c.attach_schema(),
@@ -288,7 +301,7 @@ impl Project {
         if !has_comps {
             let comp = CompNode::new("Main", 0, 0, 24.0);
             let uuid = comp.uuid();
-            self.media.write().expect("media lock poisoned").insert(uuid, NodeKind::Comp(comp));
+            self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(NodeKind::Comp(comp)));
             self.push_comps_order(uuid);
             log::info!("Created default comp: {}", uuid);
             uuid
@@ -296,7 +309,7 @@ impl Project {
             order.first().copied().unwrap_or_else(|| {
                 let comp = CompNode::new("Main", 0, 0, 24.0);
                 let uuid = comp.uuid();
-                self.media.write().expect("media lock poisoned").insert(uuid, NodeKind::Comp(comp));
+                self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(NodeKind::Comp(comp)));
                 self.push_comps_order(uuid);
                 uuid
             })
@@ -345,13 +358,15 @@ impl Project {
 
     // === Node access methods ===
 
-    /// Access node by reference via closure (no clone)
+    /// Access node by reference via closure (no clone).
+    /// Closure runs under read lock - keep it short to avoid blocking writes.
     pub fn with_node<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
     where
         F: FnOnce(&NodeKind) -> R,
     {
         let media = self.media.read().expect("media lock poisoned");
-        media.get(&uuid).map(f)
+        // arc.as_ref() dereferences Arc to get &NodeKind
+        media.get(&uuid).map(|arc| f(arc.as_ref()))
     }
 
     /// Access CompNode by reference via closure (no clone)
@@ -360,7 +375,7 @@ impl Project {
         F: FnOnce(&CompNode) -> R,
     {
         let media = self.media.read().expect("media lock poisoned");
-        media.get(&uuid).and_then(|n| n.as_comp()).map(f)
+        media.get(&uuid).and_then(|arc| arc.as_comp()).map(f)
     }
 
     /// Access FileNode by reference via closure (no clone)
@@ -369,7 +384,7 @@ impl Project {
         F: FnOnce(&FileNode) -> R,
     {
         let media = self.media.read().expect("media lock poisoned");
-        media.get(&uuid).and_then(|n| n.as_file()).map(f)
+        media.get(&uuid).and_then(|arc| arc.as_file()).map(f)
     }
 
     /// Get cached frame for comp (non-blocking, returns None if not in cache)
@@ -382,7 +397,7 @@ impl Project {
     /// Update node in media pool
     pub fn update_node(&self, node: NodeKind) {
         let uuid = node.uuid();
-        self.media.write().expect("media lock poisoned").insert(uuid, node);
+        self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(node));
     }
 
     /// Check if node exists in media pool
@@ -399,11 +414,20 @@ impl Project {
     ///
     /// Auto-emits `AttrsChangedEvent` if node is dirty after modification,
     /// triggering cache invalidation and viewport refresh.
+    ///
+    /// ## Arc::make_mut semantics
+    /// - If refcount == 1: mutates in place (no allocation)
+    /// - If refcount > 1: clones node, replaces Arc, mutates clone
+    /// 
+    /// This is safe because workers only hold Arc clones for reading.
+    /// They get a snapshot; UI mutations create a new version.
     pub fn modify_node<F>(&self, uuid: Uuid, f: F) -> bool
     where
         F: FnOnce(&mut NodeKind),
     {
-        if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
+        if let Some(arc_node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
+            // Arc::make_mut: copy-on-write if workers hold references
+            let node = Arc::make_mut(arc_node);
             f(node);
             // Emit event if node is dirty after modification
             let dirty = node.is_dirty();
@@ -424,12 +448,17 @@ impl Project {
     ///
     /// Auto-emits `AttrsChangedEvent` if comp or any layer is dirty after modification,
     /// triggering cache invalidation and viewport refresh.
+    ///
+    /// ## Why Arc::make_mut here?
+    /// Workers may hold Arc clones while computing frames. make_mut ensures:
+    /// - Workers keep their snapshot (old Arc) for consistent reads
+    /// - UI gets a fresh copy to mutate without affecting in-flight computes
     pub fn modify_comp<F>(&self, uuid: Uuid, f: F) -> bool
     where
         F: FnOnce(&mut CompNode),
     {
-        if let Some(node) = self.media.write().expect("media lock poisoned").get_mut(&uuid)
-            && let Some(comp) = node.as_comp_mut() {
+        if let Some(arc_node) = self.media.write().expect("media lock poisoned").get_mut(&uuid)
+            && let Some(comp) = Arc::make_mut(arc_node).as_comp_mut() {
                 f(comp);
                 // Emit event if comp or any layer is dirty after modification.
                 // This ensures ALL changes that affect render trigger cache invalidation,
@@ -449,10 +478,14 @@ impl Project {
         false
     }
 
-    /// Add node to project
+    /// Add node to project.
+    /// 
+    /// Wraps in Arc for cheap cloning by worker threads.
+    /// Workers can Arc::clone() and release lock immediately,
+    /// avoiding lock contention during long compute operations.
     pub fn add_node(&mut self, node: NodeKind) {
         let uuid = node.uuid();
-        self.media.write().expect("media lock poisoned").insert(uuid, node);
+        self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(node));
         self.push_comps_order(uuid);
     }
 
@@ -548,7 +581,9 @@ impl Project {
         let mut affected_comps = Vec::new();
         {
             let mut media = self.media.write().expect("media lock poisoned");
-            for (comp_uuid, node) in media.iter_mut() {
+            for (comp_uuid, arc_node) in media.iter_mut() {
+                // Arc::make_mut: copy-on-write if workers hold refs
+                let node = Arc::make_mut(arc_node);
                 if let Some(comp) = node.as_comp_mut() {
                     let before = comp.layers.len();
                     comp.layers.retain(|layer| layer.source_uuid() != uuid);
@@ -676,23 +711,32 @@ impl<'a> Iterator for NodeIter<'a> {
 mod arc_rwlock_hashmap {
     use super::*;
     use serde::{Deserializer, Serializer};
+    use serde::ser::SerializeMap;
 
     pub fn serialize<S>(
-        map: &Arc<RwLock<HashMap<Uuid, NodeKind>>>,
+        map: &Arc<RwLock<HashMap<Uuid, Arc<NodeKind>>>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        map.read().expect("media lock poisoned").serialize(serializer)
+        let guard = map.read().expect("media lock poisoned");
+        let mut map_ser = serializer.serialize_map(Some(guard.len()))?;
+        for (k, v) in guard.iter() {
+            map_ser.serialize_entry(k, v.as_ref())?;
+        }
+        map_ser.end()
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<RwLock<HashMap<Uuid, NodeKind>>>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<RwLock<HashMap<Uuid, Arc<NodeKind>>>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let map = HashMap::<Uuid, NodeKind>::deserialize(deserializer)?;
-        Ok(Arc::new(RwLock::new(map)))
+        let arc_map: HashMap<Uuid, Arc<NodeKind>> = map.into_iter()
+            .map(|(k, v)| (k, Arc::new(v)))
+            .collect();
+        Ok(Arc::new(RwLock::new(arc_map)))
     }
 }
 

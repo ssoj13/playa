@@ -235,8 +235,10 @@ impl PlayaApp {
     /// Attach composition event emitter to all comps in the current project.
     fn attach_comp_event_emitter(&mut self) {
         let emitter = self.comp_event_emitter.clone();
-        for comp in self.project.media.write().expect("media lock poisoned").values_mut() {
-            comp.set_event_emitter(emitter.clone());
+        for arc_node in self.project.media.write().expect("media lock poisoned").values_mut() {
+            // Arc::make_mut: copy-on-write if other refs exist (rare at startup)
+            let node = std::sync::Arc::make_mut(arc_node);
+            node.set_event_emitter(emitter.clone());
         }
     }
 

@@ -84,10 +84,12 @@ struct CompNodeViewer<'a> {
 }
 
 impl<'a> CompNodeViewer<'a> {
-    fn get_node(&self, source_uuid: Uuid) -> Option<crate::entities::NodeKind> {
+    /// Get node by UUID. Returns Arc for cheap cloning.
+    fn get_node(&self, source_uuid: Uuid) -> Option<std::sync::Arc<crate::entities::NodeKind>> {
         self.project.media.read().ok()?.get(&source_uuid).cloned()
     }
     
+    /// Get comp by UUID. Clones CompNode (metadata only, frames stay in cache).
     fn get_comp(&self, source_uuid: Uuid) -> Option<Comp> {
         self.project.media.read().ok()?.get(&source_uuid).and_then(|n| n.as_comp()).cloned()
     }
@@ -517,7 +519,7 @@ fn collect_tree_recursive(
     instance_uuid: Uuid,
     source_uuid: Uuid,
     depth: usize,
-    media: &RwLockReadGuard<'_, HashMap<Uuid, crate::entities::NodeKind>>,
+    media: &RwLockReadGuard<'_, HashMap<Uuid, std::sync::Arc<crate::entities::NodeKind>>>,
     node_info: &mut HashMap<Uuid, NodeInfo>,
     ancestors: &mut Vec<Uuid>,
     max_depth: &mut usize,

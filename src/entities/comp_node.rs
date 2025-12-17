@@ -748,7 +748,7 @@ impl CompNode {
     pub fn check_collisions(
         &self,
         potential_child: Uuid,
-        media: &std::collections::HashMap<Uuid, super::node_kind::NodeKind>,
+        media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
         hier: bool,
     ) -> bool {
         let my_uuid = self.uuid();
@@ -1138,12 +1138,24 @@ impl Node for CompNode {
                     && matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
                         return;
                     }
-                let media_guard = media.read().expect("media lock");
-                let Some(node) = media_guard.get(&uuid) else { return; };
-                let Some(comp) = node.as_comp() else { return; };
+                
+                // CRITICAL: Take snapshot and release lock immediately!
+                // Without this, workers hold read lock during compute (50-500ms),
+                // blocking UI thread from acquiring write lock → jank.
+                //
+                // Snapshot clones HashMap structure + Arc refcounts (microseconds).
+                // Actual NodeKind data is NOT copied - Arc provides shared ownership.
+                let media_snapshot: std::collections::HashMap<uuid::Uuid, std::sync::Arc<super::node_kind::NodeKind>> = {
+                    let guard = media.read().expect("media lock");
+                    guard.clone() // Clone HashMap of Arcs, not the nodes themselves
+                }; // Lock released here - UI can proceed!
+                
+                let Some(node_arc) = media_snapshot.get(&uuid) else { return; };
+                let Some(comp) = node_arc.as_comp() else { return; };
+                
                 let compute_ctx = ComputeContext {
                     cache: &cache,
-                    media: &media_guard,
+                    media: &media_snapshot,
                     media_arc: None,
                     workers: None,
                     epoch,
