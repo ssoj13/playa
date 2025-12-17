@@ -100,23 +100,8 @@ pub fn render(
 
         handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
-        // Render gizmo for transform manipulation (Move/Rotate/Scale tools)
-        let gizmo_consumed = gizmo_state.render(ui, viewport_state, project, player);
-
-        // Get play range for scrubbing (with work_area limits)
-        let (play_start, play_end) = player.active_comp()
-            .and_then(|uuid| project.with_node(uuid, |n| n.play_range(true)))
-            .unwrap_or((0, 100));
-
-        // Only handle scrubbing if gizmo didn't consume input
-        if !gizmo_consumed {
-            if let Some(frame_idx) =
-                viewport_state.handle_scrubbing(&response, panel_rect, double_clicked, play_start, play_end)
-            {
-                actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
-            }
-        }
-
+        // Render the frame first (OpenGL callback). Any egui overlays drawn before this
+        // would be overdrawn by the callback, so keep overlays after it.
         let render_start = std::time::Instant::now();
 
         let renderer = viewport_renderer.clone();
@@ -148,6 +133,24 @@ pub fn render(
         });
 
         render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
+
+        // Render gizmo for transform manipulation (Move/Rotate/Scale tools)
+        // (must be after GL callback so it stays visible).
+        let gizmo_consumed = gizmo_state.render(ui, viewport_state, project, player);
+
+        // Get play range for scrubbing (with work_area limits)
+        let (play_start, play_end) = player.active_comp()
+            .and_then(|uuid| project.with_node(uuid, |n| n.play_range(true)))
+            .unwrap_or((0, 100));
+
+        // Only handle scrubbing if gizmo didn't consume input
+        if !gizmo_consumed {
+            if let Some(frame_idx) =
+                viewport_state.handle_scrubbing(&response, panel_rect, double_clicked, play_start, play_end)
+            {
+                actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
+            }
+        }
 
         match frame_state {
             // Header = file comp created frame but not loaded yet
