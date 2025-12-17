@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use super::shaders::Shaders;
 use super::{ViewportRenderer, ViewportState};
 use super::gizmo::GizmoState;
+use super::tool::ToolMode;
 use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
@@ -140,6 +141,17 @@ pub fn render(
             gizmo_state.render(ui, viewport_state, project, player);
         actions.events.extend(gizmo_events);
 
+        // Right mouse drag: always translate selected layers in screen plane when a tool is active.
+        //
+        // This is a "no-aim" shortcut for moving the gizmo/selection without having to click
+        // the center handle. It emits the same kind of project mutation events as the gizmo.
+        if let Some(evt) =
+            right_drag_translate_event(&ctx, panel_rect, viewport_state, player, project)
+        {
+            actions.events.push(evt);
+            ctx.request_repaint();
+        }
+
         // Get play range for scrubbing (with work_area limits)
         let (play_start, play_end) = player.active_comp()
             .and_then(|uuid| project.with_node(uuid, |n| n.play_range(true)))
@@ -260,6 +272,79 @@ fn handle_viewport_input(
             ctx.request_repaint();
         }
     }
+}
+
+fn right_drag_translate_event(
+    ctx: &egui::Context,
+    panel_rect: egui::Rect,
+    viewport_state: &ViewportState,
+    player: &Player,
+    project: &Project,
+) -> Option<BoxedEvent> {
+    // Only when cursor is over viewport (avoid stealing drags from other panels).
+    let hovered = ctx
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| panel_rect.contains(p));
+    if !hovered {
+        return None;
+    }
+
+    // Only in gizmo tools (Q = Select keeps viewport interaction semantics).
+    let tool = ToolMode::from_str(&project.tool());
+    if matches!(tool, ToolMode::Select) {
+        return None;
+    }
+
+    let pointer = ctx.input(|i| i.pointer.clone());
+    if !pointer.button_down(egui::PointerButton::Secondary) {
+        return None;
+    }
+
+    let delta = pointer.delta();
+    if delta.length() <= 0.1 {
+        return None;
+    }
+
+    let comp_uuid = player.active_comp()?;
+    let selected = project
+        .with_comp(comp_uuid, |comp| comp.layer_selection.clone())
+        .unwrap_or_default();
+    if selected.is_empty() {
+        return None;
+    }
+
+    // Convert screen-space drag to comp-space pixels.
+    //
+    // - delta is in logical points (same space as viewport sizes/pan).
+    // - layer `position` is in comp pixels; the viewport zoom scales pixels → points.
+    // - Divide by zoom so drag distance on screen matches movement in comp pixels.
+    let zoom = viewport_state.zoom.max(0.0001);
+    let dx = delta.x / zoom;
+    let dy = delta.y / zoom;
+
+    let mut updates = Vec::new();
+    project.with_comp(comp_uuid, |comp| {
+        for layer_uuid in &selected {
+            let Some(layer) = comp.get_layer(*layer_uuid) else { continue };
+            let mut pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
+            let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
+            let scale = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
+
+            pos[0] += dx;
+            pos[1] += dy;
+
+            updates.push((*layer_uuid, pos, rot, scale));
+        }
+    });
+
+    if updates.is_empty() {
+        return None;
+    }
+
+    Some(Box::new(crate::entities::comp_events::SetLayerTransformsEvent {
+        comp_uuid,
+        updates,
+    }))
 }
 
 fn render_help_overlay(ui: &egui::Ui, panel_rect: egui::Rect) {
