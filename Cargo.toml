@@ -19,6 +19,7 @@ exclude = [".github/*", "todo/*", "bootstrap.cmd", "bootstrap.sh", "build.rs", "
 [features]
 default = []
 openexr = ["dep:openexr"]
+profiler = ["dep:puffin", "dep:puffin_egui"]
 
 [dependencies]
 anyhow = "1.0"
