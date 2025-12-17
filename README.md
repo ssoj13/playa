@@ -990,3 +990,4 @@ Here's the [Contributing Guide](CONTRIBUTING.md) for details on:
 Cool Halloween Cat app icon is taken from this cute [Flaticon icon pack by Yasashii std](http://flaticon.com/packs/halloween-18020037)  
 
 See [CHANGELOG.md](CHANGELOG.md) for project history.
+
