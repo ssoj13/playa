@@ -53,8 +53,12 @@ impl GizmoState {
             None => return false,
         };
 
-        // Get selected layers
-        let selected = project.selection();
+        // Get selected layers from active comp.
+        // NOTE: Project.selection() refers to selected media nodes in the Project panel,
+        // not layer instances on the timeline.
+        let selected = project
+            .with_comp(comp_uuid, |comp| comp.layer_selection.clone())
+            .unwrap_or_default();
         if selected.is_empty() {
             return false;
         }

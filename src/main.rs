@@ -336,7 +336,7 @@ impl PlayaApp {
         let effective_radius = if radius < 0 { i32::MAX } else { radius };
 
         // Trigger preload (works for both File and Layer modes)
-        log::debug!("[PRELOAD] enqueue_frame_loads: comp={}, radius={}", comp_uuid, effective_radius);
+        trace!("[PRELOAD] enqueue_frame_loads: comp={}, radius={}", comp_uuid, effective_radius);
         self.project.with_comp(comp_uuid, |comp| {
             comp.signal_preload(&self.workers, &self.project, effective_radius);
         });
