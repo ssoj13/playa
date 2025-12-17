@@ -63,6 +63,11 @@ pub struct ViewportState {
     pub viewport_size: egui::Vec2,
     #[serde(skip)]
     pub scrubber: ViewportScrubber,
+    /// True while RMB tool drag is active (latched on press inside viewport).
+    /// Used by viewport UI to implement "no-aim" transform drags without relying on hover_pos,
+    /// which may be None during drags depending on platform/backend.
+    #[serde(skip)]
+    pub rmb_tool_drag_active: bool,
     /// Last rendered cache epoch (0 = needs refresh)
     #[serde(skip)]
     pub last_rendered_epoch: u64,
@@ -80,6 +85,7 @@ impl Default for ViewportState {
             image_size: egui::Vec2::new(1920.0, 1080.0),
             viewport_size: egui::Vec2::new(1920.0, 1080.0),
             scrubber: ViewportScrubber::new(),
+            rmb_tool_drag_active: false,
             last_rendered_epoch: 0,
             last_rendered_frame: None,
         }

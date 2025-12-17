@@ -141,12 +141,14 @@ pub fn render(
             gizmo_state.render(ui, viewport_state, project, player);
         actions.events.extend(gizmo_events);
 
-        // Right mouse drag: always translate selected layers in screen plane when a tool is active.
+        // Right mouse drag: "no-aim" shortcut for the active tool, without having to
+        // aim at gizmo handles. This moves the gizmo center implicitly by updating
+        // layer attrs via the same event bus pipeline.
         //
-        // This is a "no-aim" shortcut for moving the gizmo/selection without having to click
-        // the center handle. It emits the same kind of project mutation events as the gizmo.
-        if let Some(evt) =
-            right_drag_translate_event(&ctx, panel_rect, viewport_state, player, project)
+        // - Move: translate in screen plane (like dragging TranslateView)
+        // - Rotate: rotate Z (like dragging RotateZ)
+        // - Scale: uniform scale (like dragging ScaleUniform)
+        if let Some(evt) = right_drag_tool_event(&ctx, panel_rect, viewport_state, player, project)
         {
             actions.events.push(evt);
             ctx.request_repaint();
@@ -274,33 +276,44 @@ fn handle_viewport_input(
     }
 }
 
-fn right_drag_translate_event(
+fn right_drag_tool_event(
     ctx: &egui::Context,
     panel_rect: egui::Rect,
-    viewport_state: &ViewportState,
+    viewport_state: &mut ViewportState,
     player: &Player,
     project: &Project,
 ) -> Option<BoxedEvent> {
-    // Only when cursor is over viewport (avoid stealing drags from other panels).
-    let hovered = ctx
-        .input(|i| i.pointer.hover_pos())
-        .is_some_and(|p| panel_rect.contains(p));
-    if !hovered {
-        return None;
-    }
-
     // Only in gizmo tools (Q = Select keeps viewport interaction semantics).
     let tool = ToolMode::from_str(&project.tool());
     if matches!(tool, ToolMode::Select) {
+        viewport_state.rmb_tool_drag_active = false;
         return None;
     }
 
-    let pointer = ctx.input(|i| i.pointer.clone());
-    if !pointer.button_down(egui::PointerButton::Secondary) {
+    // Latch RMB drag only when press starts inside the viewport rect.
+    // We intentionally do not rely on response.hovered()/hover_pos during drags,
+    // since hover_pos may be None depending on platform/backend.
+    let (pressed, released, down, delta, latest_pos) = ctx.input(|i| {
+        (
+            i.pointer.button_pressed(egui::PointerButton::Secondary),
+            i.pointer.button_released(egui::PointerButton::Secondary),
+            i.pointer.button_down(egui::PointerButton::Secondary),
+            i.pointer.delta(),
+            i.pointer.latest_pos(),
+        )
+    });
+
+    if pressed {
+        viewport_state.rmb_tool_drag_active =
+            latest_pos.is_some_and(|p| panel_rect.contains(p));
+    }
+    if released || !down {
+        viewport_state.rmb_tool_drag_active = false;
+    }
+    if !viewport_state.rmb_tool_drag_active {
         return None;
     }
 
-    let delta = pointer.delta();
     if delta.length() <= 0.1 {
         return None;
     }
@@ -313,25 +326,44 @@ fn right_drag_translate_event(
         return None;
     }
 
-    // Convert screen-space drag to comp-space pixels.
-    //
-    // - delta is in logical points (same space as viewport sizes/pan).
-    // - layer `position` is in comp pixels; the viewport zoom scales pixels → points.
-    // - Divide by zoom so drag distance on screen matches movement in comp pixels.
+    // Convert screen-space delta to comp-space pixels (for translate).
     let zoom = viewport_state.zoom.max(0.0001);
-    let dx = delta.x / zoom;
-    let dy = delta.y / zoom;
+    let dx_px = delta.x / zoom;
+    let dy_px = delta.y / zoom;
+
+    // Rotate/scale sensitivity: normalized by viewport size so it feels stable across resolutions.
+    let min_dim = panel_rect.width().min(panel_rect.height()).max(1.0);
 
     let mut updates = Vec::new();
     project.with_comp(comp_uuid, |comp| {
         for layer_uuid in &selected {
             let Some(layer) = comp.get_layer(*layer_uuid) else { continue };
             let mut pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
-            let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
-            let scale = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
+            let mut rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
+            let mut scale = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
 
-            pos[0] += dx;
-            pos[1] += dy;
+            match tool {
+                ToolMode::Move => {
+                    // Translate in view plane.
+                    pos[0] += dx_px;
+                    pos[1] += dy_px;
+                }
+                ToolMode::Rotate => {
+                    // RotateZ: horizontal drag. Positive delta.x rotates clockwise in AE-style
+                    // (positive degrees = clockwise because y is down).
+                    let deg_delta = (delta.x / min_dim) * 180.0;
+                    rot[2] += deg_delta;
+                }
+                ToolMode::Scale => {
+                    // Uniform scale: right/up increases, left/down decreases.
+                    // Exponential mapping avoids negative scales and feels natural.
+                    let norm = (delta.x - delta.y) / min_dim;
+                    let factor = 2.0_f32.powf(norm);
+                    scale[0] = (scale[0] * factor).clamp(0.001, 1000.0);
+                    scale[1] = (scale[1] * factor).clamp(0.001, 1000.0);
+                }
+                ToolMode::Select => {}
+            }
 
             updates.push((*layer_uuid, pos, rot, scale));
         }
