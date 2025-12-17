@@ -986,14 +986,13 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<PasteLayersEvent>(event) {
         trace!("PasteLayersEvent: comp={}, frame={}", e.comp_uuid, e.target_frame);
-        // Paste layers from clipboard at target frame
+        // Paste layers from clipboard at original frame positions (no offset)
         if timeline_state.clipboard.is_empty() {
             trace!("Paste: clipboard is empty");
         } else {
-            // Calculate offset from first layer's original position
-            let first_start = timeline_state.clipboard.first().map(|l| l.original_start).unwrap_or(0);
-            let offset = e.target_frame - first_start;
-            trace!("Pasting {} layers with offset {}", timeline_state.clipboard.len(), offset);
+            // No offset - paste at original positions
+            let offset = 0;
+            trace!("Pasting {} layers at original positions", timeline_state.clipboard.len());
 
             // Generate names before taking write lock
             let names: Vec<String> = timeline_state
