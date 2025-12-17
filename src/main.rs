@@ -1798,6 +1798,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             player.set_active_comp(active_uuid, &mut app.project);
 
+            // Kick initial cache/preload after restore.
+            //
+            // On startup, `global_cache` is runtime-only and empty after deserialization.
+            // `set_active_comp()` sets the playhead (`frame`) which is non-DAG, so it does
+            // not emit `AttrsChangedEvent` and therefore doesn't trigger preload.
+            //
+            // Mark the active comp dirty once so the normal AttrsChangedEvent pipeline
+            // runs on first update (epoch bump, cache clear, enqueue current frame + preload).
+            if let Some(active) = active_uuid {
+                app.project.modify_comp(active, |comp| {
+                    comp.attrs.mark_dirty();
+                });
+            }
+
             app.player = player;
             app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;
@@ -1870,6 +1884,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             app.project = project;
                             info!("Playlist loaded via Project");
+
+                            // Sync player + panels to playlist's active comp.
+                            let active_uuid = app.project.active().or_else(|| {
+                                let uuid = app.project.ensure_default_comp();
+                                Some(uuid)
+                            });
+                            app.player.set_active_comp(active_uuid, &mut app.project);
+                            if let Some(active) = active_uuid {
+                                app.node_editor_state.set_comp(active);
+                                app.node_editor_state.mark_dirty();
+
+                                // Kick initial cache/preload after loading playlist.
+                                // Same rationale as the persisted-state restore above: cache is
+                                // runtime-only, and playhead changes are non-DAG.
+                                app.project.modify_comp(active, |comp| {
+                                    comp.attrs.mark_dirty();
+                                });
+                            }
+                            app.selected_media_uuid = app.project.selection().last().cloned();
                         }
                         Err(e) => {
                             warn!("Failed to load playlist {}: {}", playlist_path.display(), e);
@@ -1880,6 +1913,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Apply CLI options
                 if let Some(frame) = args.start_frame {
                     app.player.set_frame(frame, &mut app.project);
+                    // Ensure current frame is enqueued for loading (frame/playhead is non-DAG).
+                    app.enqueue_current_frame_only();
                 }
 
                 if args.autoplay {
