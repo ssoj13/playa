@@ -123,6 +123,7 @@ const PROJECT_DEFS: &[AttrDef] = &[
     AttrDef::new("selection", AttrType::Json, INT),  // UI: selected items
     AttrDef::new("active", AttrType::Json, INT),     // UI: active comp
     AttrDef::new("tool", AttrType::String, 0),       // Viewport tool: select/move/rotate/scale
+    AttrDef::new("prefs", AttrType::Json, INT),      // UI: project preferences (gizmo, etc)
 ];
 
 pub static PROJECT_SCHEMA: AttrSchema = AttrSchema::new("Project", PROJECT_DEFS);

@@ -39,6 +39,44 @@ use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectPrefs {
+    pub gizmo: GizmoPrefs,
+}
+
+impl Default for ProjectPrefs {
+    fn default() -> Self {
+        Self {
+            gizmo: GizmoPrefs::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GizmoPrefs {
+    /// Gizmo size in pixels (logical points). Default matches upstream crate.
+    pub pref_manip_size: f32,
+    /// Stroke width (thickness) in pixels (logical points).
+    pub pref_manip_stroke_width: f32,
+    /// Inactive alpha multiplier.
+    pub pref_manip_inactive_alpha: f32,
+    /// Highlight/active alpha multiplier.
+    pub pref_manip_highlight_alpha: f32,
+}
+
+impl Default for GizmoPrefs {
+    fn default() -> Self {
+        Self {
+            pref_manip_size: 75.0,
+            pref_manip_stroke_width: 2.0,
+            pref_manip_inactive_alpha: 0.7,
+            pref_manip_highlight_alpha: 1.0,
+        }
+    }
+}
+
 use super::attr_schemas::PROJECT_SCHEMA;
 use super::{Attrs, CompositorType};
 use super::node::Node;
@@ -150,6 +188,7 @@ impl Project {
         attrs.set_json("order", &Vec::<Uuid>::new());
         attrs.set_json("selection", &Vec::<Uuid>::new());
         attrs.set_json("active", &None::<Uuid>);
+        attrs.set_json("prefs", &ProjectPrefs::default());
 
         Self {
             attrs,
@@ -261,6 +300,28 @@ impl Project {
     /// Set viewport tool mode.
     pub fn set_tool(&mut self, tool: &str) {
         self.attrs.set("tool", super::attrs::AttrValue::Str(tool.to_string()));
+    }
+
+    /// Read project preferences (stored as JSON under `attrs["prefs"]`).
+    pub fn prefs(&self) -> ProjectPrefs {
+        self.attrs.get_json("prefs").unwrap_or_default()
+    }
+
+    /// Overwrite project preferences.
+    pub fn set_prefs(&mut self, prefs: &ProjectPrefs) {
+        self.attrs.set_json("prefs", prefs);
+    }
+
+    /// Convenience: get gizmo prefs.
+    pub fn gizmo_prefs(&self) -> GizmoPrefs {
+        self.prefs().gizmo
+    }
+
+    /// Convenience: set gizmo prefs (preserves other preference sections).
+    pub fn set_gizmo_prefs(&mut self, gizmo: &GizmoPrefs) {
+        let mut prefs = self.prefs();
+        prefs.gizmo = gizmo.clone();
+        self.set_prefs(&prefs);
     }
 
     /// Get last save path for quick save

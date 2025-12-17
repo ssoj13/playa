@@ -1537,7 +1537,13 @@ impl eframe::App for PlayaApp {
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
             let old_strategy = self.settings.cache_strategy;
-            render_settings_window(ctx, &mut self.show_settings, &mut self.settings, Some(&self.event_bus));
+            render_settings_window(
+                ctx,
+                &mut self.show_settings,
+                &mut self.settings,
+                Some(&self.project),
+                Some(&self.event_bus),
+            );
 
             // Apply cache strategy changes immediately
             if self.settings.cache_strategy != old_strategy {

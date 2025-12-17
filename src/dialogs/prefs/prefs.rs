@@ -1,11 +1,14 @@
 use eframe::egui;
 use egui_ltreeview::TreeView;
 
+use super::prefs_events::SetGizmoPrefsEvent;
+
 /// Settings categories
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SettingsCategory {
     General,
     UI,
+    Gizmo,
     Compositing,
 }
 
@@ -14,6 +17,7 @@ impl SettingsCategory {
         match self {
             SettingsCategory::General => "General",
             SettingsCategory::UI => "UI",
+            SettingsCategory::Gizmo => "Gizmo",
             SettingsCategory::Compositing => "Compositing",
         }
     }
@@ -22,6 +26,7 @@ impl SettingsCategory {
         match s {
             "General" => Some(SettingsCategory::General),
             "UI" => Some(SettingsCategory::UI),
+            "Gizmo" => Some(SettingsCategory::Gizmo),
             "Compositing" => Some(SettingsCategory::Compositing),
             _ => None,
         }
@@ -220,6 +225,66 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.label("Last Only: Minimal memory, only last accessed frame per comp.");
 }
 
+/// Render Gizmo settings category (stored in the current Project)
+fn render_gizmo_settings(
+    ui: &mut egui::Ui,
+    project: Option<&crate::entities::Project>,
+    event_bus: Option<&crate::core::event_bus::EventBus>,
+) {
+    ui.heading("Gizmo");
+    ui.add_space(8.0);
+
+    let Some(project) = project else {
+        ui.label("No active project - gizmo settings are stored per project.");
+        return;
+    };
+
+    let Some(bus) = event_bus else {
+        ui.label("Event bus unavailable - cannot apply changes.");
+        return;
+    };
+
+    let current = project.gizmo_prefs();
+    let mut next = current.clone();
+    let mut changed = false;
+
+    ui.label("These settings are saved inside the Project (attrs.prefs). ");
+    ui.add_space(8.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Size");
+        changed |= ui
+            .add(egui::Slider::new(&mut next.pref_manip_size, 20.0..=250.0).suffix(" px"))
+            .changed();
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Stroke width");
+        changed |= ui
+            .add(egui::Slider::new(&mut next.pref_manip_stroke_width, 0.5..=8.0).suffix(" px"))
+            .changed();
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Inactive alpha");
+        changed |= ui
+            .add(egui::Slider::new(&mut next.pref_manip_inactive_alpha, 0.0..=1.0))
+            .changed();
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Highlight alpha");
+        changed |= ui
+            .add(egui::Slider::new(&mut next.pref_manip_highlight_alpha, 0.0..=1.0))
+            .changed();
+    });
+
+    if changed {
+        bus.emit(SetGizmoPrefsEvent(next));
+        ui.ctx().request_repaint();
+    }
+}
+
 /// Render Compositing settings category
 fn render_compositing_settings(
     ui: &mut egui::Ui,
@@ -257,6 +322,7 @@ pub fn render_settings_window(
     ctx: &egui::Context,
     show_settings: &mut bool,
     settings: &mut AppSettings,
+    project: Option<&crate::entities::Project>,
     event_bus: Option<&crate::core::event_bus::EventBus>,
 ) {
     // Get selected category from settings or use default
@@ -287,7 +353,8 @@ pub fn render_settings_window(
                             let (_response, actions) = TreeView::new(tree_id).show(ui, |builder| {
                                 builder.leaf(0, SettingsCategory::General.as_str());
                                 builder.leaf(1, SettingsCategory::UI.as_str());
-                                builder.leaf(2, SettingsCategory::Compositing.as_str());
+                                builder.leaf(2, SettingsCategory::Gizmo.as_str());
+                                builder.leaf(3, SettingsCategory::Compositing.as_str());
                             });
 
                             // Handle selection from actions
@@ -298,7 +365,8 @@ pub fn render_settings_window(
                                     selected = match node_id {
                                         0 => SettingsCategory::General,
                                         1 => SettingsCategory::UI,
-                                        2 => SettingsCategory::Compositing,
+                                        2 => SettingsCategory::Gizmo,
+                                        3 => SettingsCategory::Compositing,
                                         _ => selected,
                                     };
                                 }
@@ -314,6 +382,7 @@ pub fn render_settings_window(
                             match selected {
                                 SettingsCategory::General => render_general_settings(ui, settings),
                                 SettingsCategory::UI => render_ui_settings(ui, settings),
+                                SettingsCategory::Gizmo => render_gizmo_settings(ui, project, event_bus),
                                 SettingsCategory::Compositing => render_compositing_settings(ui, settings, event_bus),
                             }
                         });

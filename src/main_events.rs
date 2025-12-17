@@ -519,6 +519,10 @@ pub fn handle_app_event(
         *show_attributes_editor = !*show_attributes_editor;
         return Some(result);
     }
+    if let Some(e) = downcast_event::<SetGizmoPrefsEvent>(event) {
+        project.set_gizmo_prefs(&e.0);
+        return Some(result);
+    }
     if downcast_event::<ToggleEncodeDialogEvent>(event).is_some() {
         *show_encode_dialog = !*show_encode_dialog;
         if *show_encode_dialog && encode_dialog.is_none() {

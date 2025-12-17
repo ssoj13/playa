@@ -4,7 +4,7 @@
 
 use eframe::egui;
 use transform_gizmo_egui::{
-    Gizmo, GizmoConfig, GizmoMode, GizmoOrientation, GizmoExt,
+    Gizmo, GizmoConfig, GizmoMode, GizmoOrientation, GizmoVisuals, GizmoExt,
     math::Transform,
     mint, EnumSet,
 };
@@ -73,12 +73,20 @@ impl GizmoState {
         let (view, proj) = build_gizmo_matrices(viewport_state, ui.clip_rect());
 
         // Configure gizmo
+        let gizmo_prefs = project.gizmo_prefs();
         self.gizmo.update_config(GizmoConfig {
             view_matrix: view,
             projection_matrix: proj,
             viewport: ui.clip_rect(),
             modes: gizmo_modes,
             orientation: GizmoOrientation::Local,
+            visuals: GizmoVisuals {
+                gizmo_size: gizmo_prefs.pref_manip_size,
+                stroke_width: gizmo_prefs.pref_manip_stroke_width,
+                inactive_alpha: gizmo_prefs.pref_manip_inactive_alpha,
+                highlight_alpha: gizmo_prefs.pref_manip_highlight_alpha,
+                ..Default::default()
+            },
             ..Default::default()
         });
 
@@ -153,6 +161,7 @@ impl ToolMode {
                     | GizmoMode::TranslateXY
                     | GizmoMode::TranslateXZ
                     | GizmoMode::TranslateYZ
+                    | GizmoMode::TranslateView
             ),
             ToolMode::Rotate => Some(
                 EnumSet::from(GizmoMode::RotateX)
@@ -217,11 +226,12 @@ fn layer_to_gizmo_transform(
     use glam::{DQuat, DVec3};
 
     let translation = DVec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
+    // Layer rotation attrs are stored in DEGREES (AE-style). Gizmo expects radians.
     let rotation_quat = DQuat::from_euler(
         glam::EulerRot::XYZ,
-        rotation[0] as f64,
-        rotation[1] as f64,
-        rotation[2] as f64,
+        (rotation[0] as f64).to_radians(),
+        (rotation[1] as f64).to_radians(),
+        (rotation[2] as f64).to_radians(),
     );
     let scale_vec = DVec3::new(scale[0] as f64, scale[1] as f64, scale[2] as f64);
 
@@ -244,9 +254,14 @@ fn gizmo_to_layer_transform(t: &Transform) -> ([f32; 3], [f32; 3], [f32; 3]) {
 
     let euler = rotation.to_euler(glam::EulerRot::XYZ);
 
+    // Layer rotation attrs are stored in DEGREES.
     (
         [translation.x as f32, translation.y as f32, translation.z as f32],
-        [euler.0 as f32, euler.1 as f32, euler.2 as f32],
+        [
+            (euler.0 as f32).to_degrees(),
+            (euler.1 as f32).to_degrees(),
+            (euler.2 as f32).to_degrees(),
+        ],
         [scale.x as f32, scale.y as f32, scale.z as f32],
     )
 }
