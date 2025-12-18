@@ -107,6 +107,8 @@ struct PlayaApp {
     #[serde(skip)]
     applied_mem_fraction: f64,
     #[serde(skip)]
+    applied_cache_strategy: entities::CacheStrategy,
+    #[serde(skip)]
     applied_workers: Option<usize>,
     #[serde(skip)]
     path_config: config::PathConfig,
@@ -203,6 +205,7 @@ impl Default for PlayaApp {
             fullscreen_dirty: false,
             reset_settings_pending: false,
             applied_mem_fraction: 0.75,
+            applied_cache_strategy: entities::CacheStrategy::All,
             applied_workers: None,
             path_config: config::PathConfig::from_env_and_cli(None),
             cache_manager,
@@ -623,6 +626,7 @@ impl PlayaApp {
                 // Rebuild runtime + set cache manager (unified)
                 project.rebuild_with_manager(
                     Arc::clone(&self.cache_manager),
+                    self.settings.cache_strategy,
                     Some(self.comp_event_emitter.clone()),
                 );
                 // Set event emitter for auto-emit of AttrsChangedEvent
@@ -867,6 +871,19 @@ impl PlayaApp {
             };
             self.project.set_compositor(new_backend);
         }
+    }
+
+    fn apply_cache_strategy_if_changed(&mut self) {
+        let desired = self.settings.cache_strategy;
+        if desired == self.applied_cache_strategy {
+            return;
+        }
+
+        log::info!("Cache strategy changed to: {:?}", desired);
+        if let Some(ref global_cache) = self.project.global_cache {
+            global_cache.set_strategy(desired);
+        }
+        self.applied_cache_strategy = desired;
     }
 
     fn render_project_tab(&mut self, ui: &mut egui::Ui) {
@@ -1536,7 +1553,6 @@ impl eframe::App for PlayaApp {
 
         // Settings window (can be shown even in cinema mode)
         if self.show_settings {
-            let old_strategy = self.settings.cache_strategy;
             render_settings_window(
                 ctx,
                 &mut self.show_settings,
@@ -1544,14 +1560,6 @@ impl eframe::App for PlayaApp {
                 Some(&self.project),
                 Some(&self.event_bus),
             );
-
-            // Apply cache strategy changes immediately
-            if self.settings.cache_strategy != old_strategy {
-                log::info!("Cache strategy changed to: {:?}", self.settings.cache_strategy);
-                if let Some(ref global_cache) = self.project.global_cache {
-                    global_cache.set_strategy(self.settings.cache_strategy);
-                }
-            }
         }
 
         // Encode dialog (can be shown even in cinema mode)
@@ -1574,6 +1582,10 @@ impl eframe::App for PlayaApp {
                 self.show_encode_dialog = false;
             }
         }
+
+        // Apply settings that affect runtime infrastructure/state.
+        // This must not depend on "Settings window opened".
+        self.apply_cache_strategy_if_changed();
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1785,6 +1797,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Rebuild runtime + set cache manager (unified, lost during clone/deserialization)
             app.project.rebuild_with_manager(
                 Arc::clone(&app.cache_manager),
+                app.settings.cache_strategy,
                 Some(app.comp_event_emitter.clone()),
             );
             // Restore event emitter (lost during serde deserialization - #[serde(skip)])
@@ -1815,6 +1828,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             app.player = player;
             app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;
+            app.applied_cache_strategy = app.settings.cache_strategy;
             app.applied_workers = desired_workers;
             app.path_config = path_config_for_app;
 
@@ -1877,6 +1891,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             // Rebuild runtime + set cache manager (unified)
                             project.rebuild_with_manager(
                                 Arc::clone(&app.cache_manager),
+                                app.settings.cache_strategy,
                                 Some(app.comp_event_emitter.clone()),
                             );
                             // Set event emitter for auto-emit of AttrsChangedEvent

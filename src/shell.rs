@@ -215,7 +215,11 @@ impl Shell {
             match Project::from_json(&path) {
                 Ok(mut loaded) => {
                     loaded.attach_schemas();
-                    loaded.rebuild_with_manager(Arc::clone(&self.cache_manager), Some(self.comp_emitter.clone()));
+                    loaded.rebuild_with_manager(
+                        Arc::clone(&self.cache_manager),
+                        CacheStrategy::All,
+                        Some(self.comp_emitter.clone()),
+                    );
                     self.project = loaded;
                     self.project.set_last_save_path(Some(path));
                     let first = self.project.order().first().cloned();

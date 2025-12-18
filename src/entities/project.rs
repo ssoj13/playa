@@ -405,6 +405,7 @@ impl Project {
     pub fn rebuild_with_manager(
         &mut self,
         manager: Arc<CacheManager>,
+        cache_strategy: CacheStrategy,
         event_emitter: Option<crate::core::event_bus::CompEventEmitter>,
     ) {
         log::info!("Project::rebuild_with_manager() - unified rebuild");
@@ -414,7 +415,7 @@ impl Project {
         let global_cache = Arc::new(GlobalFrameCache::new(
             10000,
             manager,
-            CacheStrategy::All,
+            cache_strategy,
         ));
         self.global_cache = Some(global_cache);
 
