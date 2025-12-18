@@ -35,6 +35,10 @@ pub const GLOBAL_HELP: &[HelpEntry] = &[
 
 /// Viewport-specific help
 pub const VIEWPORT_HELP: &[HelpEntry] = &[
+    HelpEntry::new("Q", "Select Tool (scrub)"),
+    HelpEntry::new("W", "Move Tool"),
+    HelpEntry::new("E", "Rotate Tool"),
+    HelpEntry::new("R", "Scale Tool"),
     HelpEntry::new("A / H", "100% Zoom"),
     HelpEntry::new("F", "Fit to View"),
     HelpEntry::new("Mouse Wheel", "Zoom"),
@@ -68,8 +72,8 @@ pub const TIMELINE_HELP: &[HelpEntry] = &[
     HelpEntry::new("Alt+[", "Trim Layer Start to Cursor"),
     HelpEntry::new("Alt+]", "Trim Layer End to Cursor"),
     HelpEntry::new("Delete", "Remove Selected Layer"),
-    HelpEntry::new("F", "Fit Timeline"),
-    HelpEntry::new("A", "Reset Timeline Zoom"),
+    HelpEntry::new("F", "Fit to Selection"),
+    HelpEntry::new("A", "Fit to Work Area (B/N)"),
     HelpEntry::new("Mouse Wheel", "Zoom Timeline"),
     HelpEntry::new("Middle Drag", "Pan Timeline"),
 ];

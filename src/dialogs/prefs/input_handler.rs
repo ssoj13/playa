@@ -148,7 +148,7 @@ impl HotkeyHandler {
         // Timeline-specific
         self.bind(Timeline, "Delete", RemoveSelectedLayerEvent);
         self.bind(Timeline, "F", TimelineFitEvent::selected());  // Fit to selected (or all if none)
-        self.bind(Timeline, "A", TimelineFitEvent::all());         // Fit to all layers
+        self.bind(Timeline, "A", TimelineFitWorkAreaEvent);        // Fit to work area (B/N range)
         self.bind(Timeline, "OpenBracket", AlignLayersStartEvent(Uuid::nil()));
         self.bind(Timeline, "CloseBracket", AlignLayersEndEvent(Uuid::nil()));
         self.bind(Timeline, "Alt+OpenBracket", TrimLayersStartEvent(Uuid::nil()));

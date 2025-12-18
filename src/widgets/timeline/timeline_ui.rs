@@ -108,11 +108,12 @@ pub fn render_toolbar(
 
         ui.separator();
 
-        // Zoom controls
+        // Zoom controls - fixed max width to leave room for buttons/checkboxes
         ui.label("Zoom:");
-        let zoom_response = ui.add_sized(
-            egui::Vec2::new(600.0, 20.0),
-            egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2),
+        ui.spacing_mut().slider_width = 500.0;
+        let zoom_response = ui.add(
+            egui::Slider::new(&mut state.zoom, 0.1..=20.0)
+                .fixed_decimals(2),
         );
         if zoom_response.changed() {
             dispatch(Box::new(TimelineZoomChangedEvent(state.zoom)));

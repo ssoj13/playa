@@ -594,6 +594,32 @@ pub fn handle_app_event(
         }
         return Some(result);
     }
+    // Fit to work area (play range set by B/N). Defaults to full comp if not trimmed.
+    if downcast_event::<TimelineFitWorkAreaEvent>(event).is_some() {
+        let canvas_width = timeline_state.last_canvas_width;
+        if let Some(comp_uuid) = player.active_comp() {
+            let media = project.media.read().expect("media lock poisoned");
+            if let Some(comp) = media.get(&comp_uuid) {
+                let (min_frame, max_frame) = comp.play_range(true); // use_work_area=true
+                let duration = (max_frame - min_frame + 1).max(1);
+                let pixels_per_frame = canvas_width / duration as f32;
+                let default_ppf = 2.0;
+                let zoom = (pixels_per_frame / default_ppf).clamp(0.1, 20.0);
+                timeline_state.zoom = zoom;
+                timeline_state.pan_offset = min_frame as f32;
+            }
+        }
+        return Some(result);
+    }
+    // Timeline zoom in/out via keyboard
+    if downcast_event::<TimelineZoomInEvent>(event).is_some() {
+        timeline_state.zoom = (timeline_state.zoom * 1.2).clamp(0.1, 20.0);
+        return Some(result);
+    }
+    if downcast_event::<TimelineZoomOutEvent>(event).is_some() {
+        timeline_state.zoom = (timeline_state.zoom / 1.2).clamp(0.1, 20.0);
+        return Some(result);
+    }
 
     // === Node Editor State ===
     if downcast_event::<NodeEditorFitAllEvent>(event).is_some() {

@@ -27,3 +27,16 @@ impl TimelineFitEvent {
     pub fn all() -> Self { Self { selected_only: false } }
     pub fn selected() -> Self { Self { selected_only: true } }
 }
+
+/// Fit timeline view to work area (play range set by B/N keys).
+/// Since work area defaults to full comp length, this works as "fit to comp" by default.
+#[derive(Clone, Debug)]
+pub struct TimelineFitWorkAreaEvent;
+
+/// Zoom timeline in (increase zoom level)
+#[derive(Clone, Debug)]
+pub struct TimelineZoomInEvent;
+
+/// Zoom timeline out (decrease zoom level)
+#[derive(Clone, Debug)]
+pub struct TimelineZoomOutEvent;
