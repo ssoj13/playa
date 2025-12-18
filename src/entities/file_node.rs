@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use glob::glob;
+
 use log::info;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -417,8 +417,18 @@ fn create_video_node(path: &Path) -> Result<FileNode, FrameError> {
 
 /// Expand a glob pattern into a list of paths.
 fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
+    // Normalize path separators for cross-platform glob compatibility
+    let pattern = pattern.replace('\\', "/");
+    info!("glob_paths: pattern = {}", pattern);
+    
+    // Use case-insensitive matching for Windows compatibility (TGA vs tga)
+    let options = glob::MatchOptions {
+        case_sensitive: false,
+        ..Default::default()
+    };
+    
     let mut paths = Vec::new();
-    for entry in glob(pattern)
+    for entry in glob::glob_with(&pattern, options)
         .map_err(|e| FrameError::Image(format!("Glob error for pattern {}: {}", pattern, e)))?
     {
         match entry {
@@ -426,6 +436,7 @@ fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
             Err(e) => return Err(FrameError::Image(format!("Glob entry error: {}", e))),
         }
     }
+    info!("glob_paths: found {} files", paths.len());
     Ok(paths)
 }
 
@@ -495,5 +506,53 @@ mod tests {
         let node = FileNode::new("test.*.exr".to_string(), 1, 100, 24.0);
         assert_eq!(node.node_type(), "File");
         assert!(node.inputs().is_empty());
+    }
+    
+    #[test]
+    fn test_cliven_sequence() {
+        let test_path = std::path::Path::new(r"D:\_demo\Srcs\Cliven\cliven.0001.TGA");
+        if !test_path.exists() {
+            println!("Skipping test - path not found");
+            return;
+        }
+        
+        // Test split_sequence_path
+        let result = split_sequence_path(test_path).unwrap();
+        println!("split_sequence_path result: {:?}", result);
+        assert!(result.is_some(), "Should detect as sequence");
+        
+        let (prefix, number, ext, padding) = result.unwrap();
+        println!("prefix: {}", prefix);
+        println!("number: {}", number);
+        println!("ext: {}", ext);
+        println!("padding: {}", padding);
+        
+        // Test glob pattern
+        let pattern = format!("{}*.{}", prefix, ext);
+        println!("glob pattern: {}", pattern);
+        
+        let paths = glob_paths(&pattern).unwrap();
+        println!("glob found {} files", paths.len());
+        assert!(paths.len() > 1, "Should find multiple files, got {}", paths.len());
+    }
+    
+    #[test]
+    fn test_cliven_detect_from_paths() {
+        let test_path = std::path::PathBuf::from(r"D:\_demo\Srcs\Cliven\cliven.0001.TGA");
+        if !test_path.exists() {
+            println!("Skipping test - path not found");
+            return;
+        }
+        
+        let nodes = FileNode::detect_from_paths(vec![test_path]).unwrap();
+        println!("detect_from_paths returned {} nodes", nodes.len());
+        
+        for node in &nodes {
+            println!("Node: mask={:?} start={:?} end={:?} frames={}", 
+                node.file_mask(), node.file_start(), node.file_end(), node.frame_count());
+        }
+        
+        assert_eq!(nodes.len(), 1, "Should have exactly 1 sequence node");
+        assert!(nodes[0].frame_count() > 1, "Sequence should have more than 1 frame, got {}", nodes[0].frame_count());
     }
 }

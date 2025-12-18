@@ -279,7 +279,9 @@ impl PlayaApp {
                 for node in nodes {
                     let uuid = node.uuid();
                     let name = node.name().to_string();
-                    info!("Adding FileNode: {} ({})", name, uuid);
+                    let frames = node.frame_count();
+                    let (start, end) = node.play_range(true);
+                    info!("Adding FileNode: {} ({}) frames={} range={}..{}", name, uuid, frames, start, end);
 
                     // add_node() adds to media pool and order
                     self.project.add_node(node.into());
@@ -295,6 +297,9 @@ impl PlayaApp {
                 // Activate first sequence and trigger frame loading
                 if let Some(uuid) = first_uuid {
                     self.player.set_active_comp(Some(uuid), &mut self.project);
+                    let total = self.player.total_frames(&self.project);
+                    let range = self.player.play_range(&self.project);
+                    info!("After activation: total_frames={} play_range={:?}", total, range);
                     self.node_editor_state.set_comp(uuid);
                     self.node_editor_state.mark_dirty();
                     self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);

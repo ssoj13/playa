@@ -180,17 +180,20 @@ impl Player {
         self.attrs.set_json("selected_seq_idx", &idx);
     }
 
-    /// Get total frames of active comp (play_frame_count - work area)
+    /// Get total frames of active node (work area frame count)
     pub fn total_frames(&self, project: &Project) -> i32 {
         self.active_comp()
-            .and_then(|uuid| project.with_comp(uuid, |c| c.play_frame_count()))
+            .and_then(|uuid| project.with_node(uuid, |n| {
+                let (start, end) = n.play_range(true);
+                (end - start + 1).max(0)
+            }))
             .unwrap_or(0)
     }
 
-    /// Get current play range of active comp (start, end), or (0, 0) if none.
+    /// Get current play range of active node (start, end), or (0, 0) if none.
     pub fn play_range(&self, project: &Project) -> (i32, i32) {
         self.active_comp()
-            .and_then(|uuid| project.with_comp(uuid, |c| c.play_range(true)))
+            .and_then(|uuid| project.with_node(uuid, |n| n.play_range(true)))
             .unwrap_or((0, 0))
     }
 
