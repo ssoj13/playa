@@ -68,19 +68,33 @@ use super::node::{ComputeContext, Node};
 
 // Thread-local compositor and cycle detection
 //
-// **Why thread-local CPU compositor?**
-// compose_internal() can be called from worker threads (preload) which don't have
-// access to OpenGL context. GPU compositor requires GL context from main thread.
+// ## Why thread_local is CORRECT here (not an architecture smell)
 //
-// **Current state:**
-// - THREAD_COMPOSITOR is always CpuCompositor
-// - Settings GPU/CPU switch in prefs only affects Project.compositor (unused here)
-// - To enable GPU compositing: pass Project.compositor via ComputeContext,
-//   but only use GPU when called from main thread (has GL context)
+// **THREAD_COMPOSITOR** - per-thread CPU compositor:
+// - Worker threads don't have OpenGL context (GPU requires main thread)
+// - Each thread needs its own mutable compositor instance
+// - Can't share RefCell<Compositor> across threads (not Send)
+// - thread_local = per-thread singleton, exactly what we need
 //
-// See compositor.rs module docs for full GPU transform integration plan.
+// **COMPOSE_STACK** - per-thread cycle detection:
+// - Tracks call path during recursive composition
+// - Each thread has independent call stack
+// - Parallel workers composing different comps must not interfere
+// - thread_local guarantees isolation between threads
+//
+// Moving these to ComputeContext would require:
+// - Creating stack at every compose call site (boilerplate)
+// - Sharing compositor via Rc<RefCell<>> (awkward, same semantics)
+// - No actual benefit, just complexity
+//
+// See compositor.rs module docs for GPU transform integration plan.
 thread_local! {
+    /// Per-thread CPU compositor for blending layers.
+    /// Workers use this; main thread could use GPU via Project.compositor.
     static THREAD_COMPOSITOR: RefCell<CpuCompositor> = const { RefCell::new(CpuCompositor) };
+    
+    /// Per-thread cycle detection stack.
+    /// Prevents infinite recursion when comp A contains comp B contains comp A.
     static COMPOSE_STACK: RefCell<HashSet<Uuid>> = RefCell::new(HashSet::new());
 }
 

@@ -349,8 +349,7 @@ impl Attrs {
     }
 
     pub fn set_i8(&mut self, key: impl Into<String>, value: i8) {
-        self.map.insert(key.into(), AttrValue::Int8(value));
-        self.dirty.store(true, Ordering::Relaxed);
+        self.set(key, AttrValue::Int8(value));
     }
 
     pub fn get_uuid(&self, key: &str) -> Option<Uuid> {
@@ -361,8 +360,7 @@ impl Attrs {
     }
 
     pub fn set_uuid(&mut self, key: impl Into<String>, value: Uuid) {
-        self.map.insert(key.into(), AttrValue::Uuid(value));
-        self.dirty.store(true, Ordering::Relaxed);
+        self.set(key, AttrValue::Uuid(value));
     }
 
     pub fn get_list(&self, key: &str) -> Option<&Vec<AttrValue>> {
@@ -380,8 +378,7 @@ impl Attrs {
     }
 
     pub fn set_list(&mut self, key: impl Into<String>, value: Vec<AttrValue>) {
-        self.map.insert(key.into(), AttrValue::List(value));
-        self.dirty.store(true, Ordering::Relaxed);
+        self.set(key, AttrValue::List(value));
     }
 
     /// Get Vec3 attribute `[x, y, z]`.
@@ -606,8 +603,7 @@ impl Attrs {
     /// Serialize value to JSON and store
     pub fn set_json<T: serde::Serialize>(&mut self, key: impl Into<String>, value: &T) {
         if let Ok(json) = serde_json::to_string(value) {
-            self.map.insert(key.into(), AttrValue::Json(json));
-            self.dirty.store(true, Ordering::Relaxed);
+            self.set(key, AttrValue::Json(json));
         }
     }
 
