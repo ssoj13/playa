@@ -35,7 +35,7 @@
 //! This prevents multi-selection accumulation when adding/switching clips.
 
 use crate::entities::attr_schemas::PLAYER_SCHEMA;
-use crate::entities::{Attrs, AttrValue, Project};
+use crate::entities::{Attrs, AttrValue, Node, Project};
 use crate::entities::frame::Frame;
 use log::{info, trace};
 use serde::{Deserialize, Serialize};

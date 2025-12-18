@@ -31,7 +31,7 @@ use super::timeline_helpers::{
     frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
-use crate::entities::{Comp, frame::FrameStatus};
+use crate::entities::{Comp, Node, frame::FrameStatus};
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent, SetLoopEvent};
 use super::TimelineViewMode;

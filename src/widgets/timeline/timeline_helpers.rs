@@ -1,5 +1,5 @@
 //! Timeline UI helpers: tools, math and drawing utilities.
-use crate::entities::Comp;
+use crate::entities::{Comp, Node};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 
 use super::{GlobalDragState, TimelineConfig, TimelineState};

@@ -277,47 +277,12 @@ impl CompNode {
     }
     
     // --- Getters ---
-    
-    pub fn _in(&self) -> i32 {
-        self.attrs.get_i32(A_IN).unwrap_or(0)
-    }
-    
-    pub fn _out(&self) -> i32 {
-        self.attrs.get_i32(A_OUT).unwrap_or(100)
-    }
-    
-    pub fn fps(&self) -> f32 {
-        self.attrs.get_float(A_FPS).unwrap_or(24.0)
-    }
-    
-    pub fn dim(&self) -> (usize, usize) {
-        let w = self.attrs.get_u32(A_WIDTH).unwrap_or(1920) as usize;
-        let h = self.attrs.get_u32(A_HEIGHT).unwrap_or(1080) as usize;
-        (w.max(1), h.max(1))
-    }
+    // Timing methods (_in, _out, fps, dim, frame_count, frame, work_area)
+    // are provided by Node trait with defaults from config.rs
     
     /// Get comp name
     pub fn name(&self) -> &str {
         self.attrs.get_str(A_NAME).unwrap_or("Untitled")
-    }
-    
-    pub fn frame_count(&self) -> i32 {
-        (self._out() - self._in() + 1).max(0)
-    }
-    
-    /// Work area (trimmed range) in absolute frames.
-    /// trim_in/trim_out are OFFSETS: work_start = _in + trim_in, work_end = _out - trim_out
-    pub fn work_area(&self) -> (i32, i32) {
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);  // offset from _in
-        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0); // offset from _out
-        (self._in() + trim_in, self._out() - trim_out)
-    }
-
-    // --- Playback ---
-
-    /// Current playhead frame
-    pub fn frame(&self) -> i32 {
-        self.attrs.get_i32(A_FRAME).unwrap_or(self._in())
     }
 
     /// Set current playhead frame.
@@ -847,11 +812,7 @@ impl CompNode {
     }
 
     // --- Internal compose ---
-    
-    fn placeholder_frame(&self) -> Frame {
-        let (w, h) = self.dim();
-        Frame::placeholder(w, h)
-    }
+    // placeholder_frame() provided by Node trait
     
     fn compose_internal(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
         let my_uuid = self.uuid();
@@ -1094,13 +1055,7 @@ impl Node for CompNode {
         CompNode::bounds(self, use_trim, selection_only)
     }
     
-    fn frame_count(&self) -> i32 {
-        self.play_frame_count()
-    }
-    
-    fn dim(&self) -> (usize, usize) {
-        CompNode::dim(self)
-    }
+    // frame_count() and dim() use trait defaults from Node
     
     fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
         use super::frame::FrameStatus;

@@ -18,9 +18,13 @@ use enum_dispatch::enum_dispatch;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::config::{DEFAULT_DIM, DEFAULT_FPS, DEFAULT_SRC_LEN};
+
 use super::attrs::Attrs;
 use super::frame::Frame;
-use super::keys::{A_HEIGHT, A_SRC_LEN, A_WIDTH};
+use super::keys::{
+    A_FPS, A_FRAME, A_HEIGHT, A_IN, A_OUT, A_SRC_LEN, A_TRIM_IN, A_TRIM_OUT, A_WIDTH,
+};
 use super::traits::{FrameCache, WorkerPool};
 
 /// Context passed to node compute and preload functions.
@@ -143,15 +147,53 @@ pub trait Node: Send + Sync {
         self.play_range(use_trim)
     }
     
-    /// Total source frames (before speed/trim).
-    fn frame_count(&self) -> i32 {
-        self.attrs().get_i32(A_SRC_LEN).unwrap_or(100)
+    // --- Timing methods with defaults ---
+    
+    /// Start frame (in point). Default: 0
+    fn _in(&self) -> i32 {
+        self.attrs().get_i32(A_IN).unwrap_or(0)
     }
     
-    /// Dimensions (width, height). Default reads from attrs.
+    /// End frame (out point). Default: src_len or DEFAULT_SRC_LEN
+    fn _out(&self) -> i32 {
+        self.attrs().get_i32(A_OUT).unwrap_or_else(|| {
+            self.attrs().get_i32(A_SRC_LEN).unwrap_or(DEFAULT_SRC_LEN)
+        })
+    }
+    
+    /// Frames per second. Default: DEFAULT_FPS (24.0)
+    fn fps(&self) -> f32 {
+        self.attrs().get_float(A_FPS).unwrap_or(DEFAULT_FPS)
+    }
+    
+    /// Current playhead frame. Default: _in()
+    fn frame(&self) -> i32 {
+        self.attrs().get_i32(A_FRAME).unwrap_or_else(|| self._in())
+    }
+    
+    /// Work area (trimmed range) in absolute frames.
+    /// Returns (in + trim_in, out - trim_out)
+    fn work_area(&self) -> (i32, i32) {
+        let trim_in = self.attrs().get_i32(A_TRIM_IN).unwrap_or(0);
+        let trim_out = self.attrs().get_i32(A_TRIM_OUT).unwrap_or(0);
+        (self._in() + trim_in, self._out() - trim_out)
+    }
+    
+    /// Total source frames: out - in + 1 (inclusive range)
+    fn frame_count(&self) -> i32 {
+        (self._out() - self._in() + 1).max(0)
+    }
+    
+    /// Dimensions (width, height). Default: DEFAULT_DIM (1920x1080)
     fn dim(&self) -> (usize, usize) {
-        let w = self.attrs().get_u32(A_WIDTH).unwrap_or(0) as usize;
-        let h = self.attrs().get_u32(A_HEIGHT).unwrap_or(0) as usize;
-        (w, h)
+        let w = self.attrs().get_u32(A_WIDTH).unwrap_or(DEFAULT_DIM.0 as u32) as usize;
+        let h = self.attrs().get_u32(A_HEIGHT).unwrap_or(DEFAULT_DIM.1 as u32) as usize;
+        (w.max(1), h.max(1))
+    }
+    
+    /// Placeholder frame with node dimensions
+    fn placeholder_frame(&self) -> Frame {
+        let (w, h) = self.dim();
+        Frame::placeholder(w, h)
     }
 }

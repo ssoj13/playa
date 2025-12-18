@@ -80,39 +80,8 @@ impl FileNode {
         self.attrs.get_i32(A_FILE_END)
     }
     
-    pub fn _in(&self) -> i32 {
-        self.attrs.get_i32(A_IN).unwrap_or(0)
-    }
-    
-    pub fn _out(&self) -> i32 {
-        self.attrs.get_i32(A_OUT).unwrap_or(0)
-    }
-    
-    pub fn fps(&self) -> f32 {
-        self.attrs.get_float(A_FPS).unwrap_or(24.0)
-    }
-    
-    pub fn dim(&self) -> (usize, usize) {
-        let w = self.attrs.get_u32(A_WIDTH).unwrap_or(64) as usize;
-        let h = self.attrs.get_u32(A_HEIGHT).unwrap_or(64) as usize;
-        (w.max(1), h.max(1))
-    }
-    
-    pub fn frame_count(&self) -> i32 {
-        (self._out() - self._in() + 1).max(0)
-    }
-    
-    /// Current playhead frame (for FileNode, just returns start)
-    pub fn frame(&self) -> i32 {
-        self.attrs.get_i32(A_FRAME).unwrap_or(self._in())
-    }
-    
-    /// Work area (trimmed range) in absolute frames
-    pub fn work_area_abs(&self) -> (i32, i32) {
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
-        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
-        (self._in() + trim_in, self._out() - trim_out)
-    }
+    // Timing methods (_in, _out, fps, dim, frame_count, frame, work_area)
+    // are provided by Node trait with defaults from config.rs
     
     // --- Internal ---
     
@@ -135,10 +104,7 @@ impl FileNode {
         }
     }
     
-    fn placeholder_frame(&self) -> Frame {
-        let (w, h) = self.dim();
-        Frame::placeholder(w, h)
-    }
+    // placeholder_frame() provided by Node trait
     
     fn frame_from_path(&self, path: PathBuf) -> Frame {
         let (w, h) = self.dim();
@@ -179,7 +145,7 @@ impl Node for FileNode {
             return None;
         }
 
-        let (work_start, work_end) = self.work_area_abs();
+        let (work_start, work_end) = self.work_area();
         if work_end < work_start {
             return Some(self.placeholder_frame());
         }
@@ -252,11 +218,11 @@ impl Node for FileNode {
     // --- Override timeline methods ---
     
     fn play_range(&self, _use_work_area: bool) -> (i32, i32) {
-        self.work_area_abs()
+        self.work_area()
     }
     
     fn bounds(&self, _use_trim: bool, _selection_only: bool) -> (i32, i32) {
-        self.work_area_abs()
+        self.work_area()
     }
     
     fn frame_count(&self) -> i32 {
