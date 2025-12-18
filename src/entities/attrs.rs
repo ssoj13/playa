@@ -117,13 +117,22 @@ impl AttrDef {
 #[derive(Debug, Clone)]
 pub struct AttrSchema {
     pub name: &'static str,
-    defs: &'static [AttrDef],
+    defs: Box<[AttrDef]>,
 }
 
 impl AttrSchema {
-    /// Create new schema
-    pub const fn new(name: &'static str, defs: &'static [AttrDef]) -> Self {
-        Self { name, defs }
+    /// Create schema from static slice (clones into Box)
+    pub fn new(name: &'static str, defs: &[AttrDef]) -> Self {
+        Self { name, defs: defs.to_vec().into_boxed_slice() }
+    }
+    
+    /// Create schema by composing multiple slices (for DRY schemas)
+    /// Example: `AttrSchema::from_slices("Layer", &[IDENTITY, TIMING, TRANSFORM])`
+    pub fn from_slices(name: &'static str, slices: &[&[AttrDef]]) -> Self {
+        let defs: Vec<AttrDef> = slices.iter()
+            .flat_map(|s| s.iter().cloned())
+            .collect();
+        Self { name, defs: defs.into_boxed_slice() }
     }
     
     /// Find attribute definition by name

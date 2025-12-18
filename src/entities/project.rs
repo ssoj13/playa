@@ -87,7 +87,8 @@ use super::frame::Frame;
 use super::keys::*;
 use crate::core::cache_man::CacheManager;
 use crate::core::event_bus::EventEmitter;
-use crate::core::global_cache::{CacheStrategy, GlobalFrameCache};
+use crate::core::global_cache::GlobalFrameCache;
+use super::CacheStrategy;
 use super::comp_events::AttrsChangedEvent;
 
 /// Top-level project / scene.
@@ -184,7 +185,7 @@ impl Project {
         ));
 
         // Initialize attrs with schema
-        let mut attrs = Attrs::with_schema(&PROJECT_SCHEMA);
+        let mut attrs = Attrs::with_schema(&*PROJECT_SCHEMA);
         attrs.set_json("order", &Vec::<Uuid>::new());
         attrs.set_json("selection", &Vec::<Uuid>::new());
         attrs.set_json("active", &None::<Uuid>);
@@ -212,7 +213,7 @@ impl Project {
     /// Must be called after from_json() since schemas are not serialized.
     pub fn attach_schemas(&mut self) {
         // Project schema
-        self.attrs.attach_schema(&PROJECT_SCHEMA);
+        self.attrs.attach_schema(&*PROJECT_SCHEMA);
         
         // All nodes in media pool
         // Arc::make_mut: if refcount == 1, mutates in place; otherwise clones.

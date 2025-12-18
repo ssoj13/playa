@@ -18,16 +18,7 @@ use log::trace;
 use uuid::Uuid;
 
 use crate::core::cache_man::CacheManager;
-use crate::entities::Frame;
-
-/// Cache strategy for frame retention
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CacheStrategy {
-    /// Cache only the last accessed frame per comp (minimal memory)
-    LastOnly,
-    /// Cache all frames within work area (maximum performance)
-    All,
-}
+use crate::entities::{Frame, CacheStrategy, CacheStatsSnapshot, FrameCache};
 
 /// Cache statistics for monitoring performance
 #[derive(Debug, Default)]
@@ -521,6 +512,45 @@ impl GlobalFrameCache {
             .get(&comp_uuid)
             .map(|frames| frames.len())
             .unwrap_or(0)
+    }
+    
+    /// Get cache statistics snapshot (for trait impl)
+    pub fn stats_snapshot(&self) -> CacheStatsSnapshot {
+        CacheStatsSnapshot {
+            hits: self.stats.hits(),
+            misses: self.stats.misses(),
+            size: self.len(),
+        }
+    }
+}
+
+// ============================================================================
+// FrameCache Trait Implementation
+// ============================================================================
+
+impl FrameCache for GlobalFrameCache {
+    fn get(&self, node_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
+        GlobalFrameCache::get(self, node_uuid, frame_idx)
+    }
+
+    fn insert(&self, node_uuid: Uuid, frame_idx: i32, frame: Frame) {
+        GlobalFrameCache::insert(self, node_uuid, frame_idx, frame)
+    }
+
+    fn get_status(&self, node_uuid: Uuid, frame_idx: i32) -> Option<crate::entities::FrameStatus> {
+        GlobalFrameCache::get_status(self, node_uuid, frame_idx)
+    }
+
+    fn len(&self) -> usize {
+        GlobalFrameCache::len(self)
+    }
+
+    fn set_strategy(&self, strategy: CacheStrategy) {
+        GlobalFrameCache::set_strategy(self, strategy)
+    }
+
+    fn stats_snapshot(&self) -> CacheStatsSnapshot {
+        GlobalFrameCache::stats_snapshot(self)
     }
 }
 

@@ -23,7 +23,8 @@ pub mod widgets;
 // Re-export commonly used types from core
 pub use core::cache_man::CacheManager;
 pub use core::event_bus::{downcast_event, BoxedEvent, CompEventEmitter, EventBus, EventEmitter};
-pub use core::global_cache::{CacheStrategy, GlobalFrameCache};
+pub use core::global_cache::GlobalFrameCache;
+pub use entities::CacheStrategy;
 pub use core::player::Player;
 
 // Re-export entities

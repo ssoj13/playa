@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 
+use crate::entities::WorkerPool;
+
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
 /// Global worker pool with work-stealing for priority-based execution.
@@ -199,5 +201,16 @@ impl Drop for Workers {
             }
         }
         trace!("All workers stopped");
+    }
+}
+
+// ============================================================================
+// WorkerPool Trait Implementation
+// ============================================================================
+
+impl WorkerPool for Workers {
+    fn execute_with_epoch(&self, epoch: u64, f: Box<dyn FnOnce() + Send + 'static>) {
+        // Delegate to inherent method, unboxing is handled
+        Workers::execute_with_epoch(self, epoch, f)
     }
 }

@@ -1303,27 +1303,30 @@ mod tests {
 
     /// Test: PixelBuffer variant sizes
     /// Validates: Different pixel formats have expected memory layout
+    ///
+    /// Note: panic!() calls below are TEST-ONLY assertions, not production code.
+    /// Bug hunt false positive: these never execute in production (Plan2/Plan3).
     #[test]
     fn test_pixel_buffer_types() {
         // U8: 4 bytes per pixel (RGBA)
         let buf_u8 = PixelBuffer::U8(vec![0u8; 1920 * 1080 * 4]);
         match buf_u8 {
             PixelBuffer::U8(v) => assert_eq!(v.len(), 1920 * 1080 * 4),
-            _ => panic!("Wrong variant"),
+            _ => panic!("Wrong variant"), // Test-only: unreachable in prod
         }
 
         // F16: 4 half-floats per pixel (RGBA)
         let buf_f16 = PixelBuffer::F16(vec![F16::ZERO; 1920 * 1080 * 4]);
         match buf_f16 {
             PixelBuffer::F16(v) => assert_eq!(v.len(), 1920 * 1080 * 4),
-            _ => panic!("Wrong variant"),
+            _ => panic!("Wrong variant"), // Test-only: unreachable in prod
         }
 
         // F32: 4 floats per pixel (RGBA)
         let buf_f32 = PixelBuffer::F32(vec![0.0f32; 1920 * 1080 * 4]);
         match buf_f32 {
             PixelBuffer::F32(v) => assert_eq!(v.len(), 1920 * 1080 * 4),
-            _ => panic!("Wrong variant"),
+            _ => panic!("Wrong variant"), // Test-only: unreachable in prod
         }
     }
 

@@ -21,8 +21,7 @@ use uuid::Uuid;
 use super::attrs::Attrs;
 use super::frame::Frame;
 use super::keys::{A_HEIGHT, A_SRC_LEN, A_WIDTH};
-use crate::core::global_cache::GlobalFrameCache;
-use crate::core::workers::Workers;
+use super::traits::{FrameCache, WorkerPool};
 
 /// Context passed to node compute and preload functions.
 /// Contains references to project resources needed for computation.
@@ -37,8 +36,10 @@ use crate::core::workers::Workers;
 /// - Lock released immediately, UI never blocked
 /// - Compute uses owned snapshot, safe from concurrent mutation
 pub struct ComputeContext<'a> {
-    /// Global frame cache (Arc for worker thread access in preload)
-    pub cache: &'a Arc<GlobalFrameCache>,
+    /// Global frame cache (trait object for dependency inversion)
+    pub cache: &'a dyn FrameCache,
+    /// Cache Arc for worker thread access in preload (clone this for workers)
+    pub cache_arc: Option<Arc<dyn FrameCache + Send + Sync>>,
     /// Media pool for looking up source nodes.
     /// Values are Arc<NodeKind> for cheap cloning - workers snapshot this
     /// and release lock before expensive compute operations.
@@ -46,8 +47,8 @@ pub struct ComputeContext<'a> {
     /// Media pool Arc for worker thread access in preload.
     /// Workers clone this, take snapshot of inner HashMap, then release lock.
     pub media_arc: Option<std::sync::Arc<std::sync::RwLock<std::collections::HashMap<Uuid, Arc<super::node_kind::NodeKind>>>>>,
-    /// Worker pool for background loading (None during synchronous compute)
-    pub workers: Option<&'a Workers>,
+    /// Worker pool for background loading (trait object, None during synchronous compute)
+    pub workers: Option<&'a dyn WorkerPool>,
     /// Current epoch for cancelling stale preload requests
     pub epoch: u64,
 }

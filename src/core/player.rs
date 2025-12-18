@@ -76,7 +76,7 @@ impl Player {
     pub fn new() -> Self {
         info!("Player initialized (project-less architecture)");
 
-        let mut attrs = Attrs::with_schema(&PLAYER_SCHEMA);
+        let mut attrs = Attrs::with_schema(&*PLAYER_SCHEMA);
         // Initialize defaults via attrs
         attrs.set_json("active_comp", &None::<Uuid>);
         attrs.set("is_playing", AttrValue::Bool(false));
@@ -94,7 +94,7 @@ impl Player {
     
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
-        self.attrs.attach_schema(&PLAYER_SCHEMA);
+        self.attrs.attach_schema(&*PLAYER_SCHEMA);
     }
 
     // === Accessor methods for attrs fields ===

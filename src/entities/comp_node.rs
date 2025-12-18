@@ -103,15 +103,17 @@ pub struct Layer {
 impl Layer {
     /// Create new layer instance referencing a source node.
     pub fn new(source_uuid: Uuid, name: &str, start: i32, duration: i32, dim: (usize, usize)) -> Self {
-        let mut attrs = Attrs::with_schema(&LAYER_SCHEMA);
+        let mut attrs = Attrs::with_schema(&*LAYER_SCHEMA);
         
         // Identity
         attrs.set_uuid(A_UUID, Uuid::new_v4());
         attrs.set_uuid("source_uuid", source_uuid);
         
         attrs.set(A_NAME, AttrValue::Str(name.to_string()));
+        // Timing (unified: in, out, trim_in, trim_out, src_len, speed)
         attrs.set(A_IN, AttrValue::Int(start));
-        attrs.set("src_len", AttrValue::Int(duration));
+        attrs.set(A_OUT, AttrValue::Int(start + duration));
+        attrs.set(A_SRC_LEN, AttrValue::Int(duration));
         attrs.set(A_TRIM_IN, AttrValue::Int(0));
         attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         attrs.set(A_OPACITY, AttrValue::Float(1.0));
@@ -153,7 +155,7 @@ impl Layer {
     
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
-        self.attrs.attach_schema(&LAYER_SCHEMA);
+        self.attrs.attach_schema(&*LAYER_SCHEMA);
     }
     
     /// Layer start frame in parent timeline
@@ -234,7 +236,7 @@ pub struct CompNode {
 impl CompNode {
     /// Create new composition node.
     pub fn new(name: &str, start: i32, end: i32, fps: f32) -> Self {
-        let mut attrs = Attrs::with_schema(&COMP_SCHEMA);
+        let mut attrs = Attrs::with_schema(&*COMP_SCHEMA);
         let uuid = Uuid::new_v4();
         
         attrs.set_uuid(A_UUID, uuid);
@@ -244,6 +246,7 @@ impl CompNode {
         attrs.set(A_TRIM_IN, AttrValue::Int(0));
         attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         attrs.set(A_FPS, AttrValue::Float(fps));
+        attrs.set(A_SPEED, AttrValue::Float(1.0));
         attrs.set(A_FRAME, AttrValue::Int(start));
         attrs.set(A_WIDTH, AttrValue::UInt(1920));
         attrs.set(A_HEIGHT, AttrValue::UInt(1080));
@@ -267,7 +270,7 @@ impl CompNode {
     
     /// Attach schema after deserialization (comp + all layers)
     pub fn attach_schema(&mut self) {
-        self.attrs.attach_schema(&COMP_SCHEMA);
+        self.attrs.attach_schema(&*COMP_SCHEMA);
         for layer in &mut self.layers {
             layer.attach_schema();
         }
@@ -466,7 +469,8 @@ impl CompNode {
         // Blocking mode: compute now
         let media = project.media.read().expect("media lock");
         let ctx = super::node::ComputeContext {
-            cache,
+            cache: cache.as_ref(),
+            cache_arc: None, // Not needed for blocking compute
             media: &media,
             media_arc: None,
             workers: None,
@@ -1126,13 +1130,17 @@ impl Node for CompNode {
             log::warn!("preload: no media_arc in context");
             return;
         };
+        let Some(cache_arc) = &ctx.cache_arc else {
+            log::warn!("preload: no cache_arc in context");
+            return;
+        };
         let uuid = self.uuid();
         let enqueue_compute = |frame_idx: i32| {
-            let cache = std::sync::Arc::clone(ctx.cache);
+            let cache = std::sync::Arc::clone(cache_arc);
             let media = std::sync::Arc::clone(media_arc);
             let epoch = ctx.epoch;
 
-            workers.execute_with_epoch(epoch, move || {
+            workers.execute_with_epoch(epoch, Box::new(move || {
                 // Check status in worker thread (not UI)
                 if let Some(status) = cache.get_status(uuid, frame_idx)
                     && matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
@@ -1154,14 +1162,15 @@ impl Node for CompNode {
                 let Some(comp) = node_arc.as_comp() else { return; };
                 
                 let compute_ctx = ComputeContext {
-                    cache: &cache,
+                    cache: cache.as_ref(),
+                    cache_arc: None, // Not needed for nested compute
                     media: &media_snapshot,
                     media_arc: None,
                     workers: None,
                     epoch,
                 };
                 comp.compute(frame_idx, &compute_ctx);
-            });
+            }));
         };
 
         // Spiral from center up to radius
@@ -1240,7 +1249,8 @@ impl CompNode {
         // Build ComputeContext and delegate to preload()
         let media = project.media.read().expect("media lock");
         let ctx = ComputeContext {
-            cache: global_cache,
+            cache: global_cache.as_ref(),
+            cache_arc: Some(std::sync::Arc::clone(global_cache) as std::sync::Arc<dyn super::traits::FrameCache + Send + Sync>),
             media: &media,
             media_arc: Some(std::sync::Arc::clone(&project.media)),
             workers: Some(workers),

@@ -14,6 +14,7 @@ pub mod workers;
 pub use cache_man::{CacheManager, PreloadStrategy};
 pub use debounced_preloader::DebouncedPreloader;
 pub use event_bus::EventBus;
-pub use global_cache::{CacheStats, CacheStrategy, GlobalFrameCache};
+pub use global_cache::{CacheStats, GlobalFrameCache};
+// CacheStrategy moved to entities::traits for dependency inversion
 pub use player::Player;
 pub use workers::Workers;

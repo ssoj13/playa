@@ -18,6 +18,7 @@ pub mod node;
 pub mod node_kind;
 pub mod project;
 pub mod text_node;
+pub mod traits;
 pub mod transform;
 
 pub use attrs::{AttrValue, Attrs};
@@ -33,3 +34,4 @@ pub use node_kind::NodeKind;
 pub use project::{Project, NodeIter, NodeIterItem};
 pub use camera_node::CameraNode;
 pub use text_node::TextNode;
+pub use traits::{CacheStrategy, CacheStatsSnapshot, FrameCache, WorkerPool};

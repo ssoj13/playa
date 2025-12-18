@@ -17,7 +17,7 @@ use super::attr_schemas::TEXT_SCHEMA;
 use super::attrs::{AttrValue, Attrs};
 use super::frame::Frame;
 use super::node::{ComputeContext, Node};
-use super::keys::{A_HEIGHT, A_IN, A_SRC_LEN, A_SPEED, A_TRIM_IN, A_TRIM_OUT, A_WIDTH};
+use super::keys::{A_HEIGHT, A_IN, A_OUT, A_SRC_LEN, A_SPEED, A_TRIM_IN, A_TRIM_OUT, A_WIDTH};
 
 // Global font system (expensive to create, reuse across all TextNodes)
 lazy_static::lazy_static! {
@@ -70,7 +70,7 @@ pub struct TextNode {
 impl TextNode {
     /// Create new text node with default settings.
     pub fn new(name: &str, text: &str) -> Self {
-        let mut attrs = Attrs::with_schema(&TEXT_SCHEMA);
+        let mut attrs = Attrs::with_schema(&*TEXT_SCHEMA);
         
         // Identity
         attrs.set("uuid", AttrValue::Uuid(Uuid::new_v4()));
@@ -91,8 +91,9 @@ impl TextNode {
         attrs.set(A_WIDTH, AttrValue::Int(0));
         attrs.set(A_HEIGHT, AttrValue::Int(0));
         
-        // Timing (unified with other nodes)
+        // Timing (unified: in, out, trim_in, trim_out, src_len, speed)
         attrs.set(A_IN, AttrValue::Int(0));
+        attrs.set(A_OUT, AttrValue::Int(100));
         attrs.set(A_SRC_LEN, AttrValue::Int(100));
         attrs.set(A_TRIM_IN, AttrValue::Int(0));
         attrs.set(A_TRIM_OUT, AttrValue::Int(0));
@@ -113,7 +114,7 @@ impl TextNode {
     
     /// Attach schema after deserialization.
     pub fn attach_schema(&mut self) {
-        self.attrs.attach_schema(&TEXT_SCHEMA);
+        self.attrs.attach_schema(&*TEXT_SCHEMA);
     }
     
     // === Getters ===

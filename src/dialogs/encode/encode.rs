@@ -1279,6 +1279,8 @@ mod tests {
             }
         }
 
+        // Note: This panic!() is TEST-ONLY - skips test if FFmpeg lacks encoders.
+        // Bug hunt false positive: not production code (Plan2/Plan3).
         if found_encoder.is_none() {
             panic!(
                 "NO VIDEO ENCODERS FOUND - FFmpeg build has no encoding support! Skipping test."

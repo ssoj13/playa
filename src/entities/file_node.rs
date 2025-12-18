@@ -34,7 +34,7 @@ impl FileNode {
     /// * `end` - Last frame number in sequence
     /// * `fps` - Frames per second
     pub fn new(file_mask: String, start: i32, end: i32, fps: f32) -> Self {
-        let mut attrs = Attrs::with_schema(&FILE_SCHEMA);
+        let mut attrs = Attrs::with_schema(&*FILE_SCHEMA);
         let uuid = Uuid::new_v4();
         
         attrs.set_uuid(A_UUID, uuid);
@@ -47,6 +47,7 @@ impl FileNode {
         attrs.set(A_TRIM_IN, AttrValue::Int(0));
         attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         attrs.set(A_FPS, AttrValue::Float(fps));
+        attrs.set(A_SPEED, AttrValue::Float(1.0));
         attrs.set(A_FRAME, AttrValue::Int(start));
         attrs.set(A_WIDTH, AttrValue::UInt(64));
         attrs.set(A_HEIGHT, AttrValue::UInt(64));
@@ -62,7 +63,7 @@ impl FileNode {
     
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
-        self.attrs.attach_schema(&FILE_SCHEMA);
+        self.attrs.attach_schema(&*FILE_SCHEMA);
     }
     
     // --- Getters ---
