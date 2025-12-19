@@ -1,6 +1,19 @@
 //! Viewport gizmo for layer transforms.
 //!
 //! Provides Move/Rotate/Scale manipulation gizmos using transform-gizmo-egui.
+//!
+//! ## Coordinate System
+//!
+//! Layer `position` attribute is **absolute** in comp space:
+//! - Origin at left-bottom corner of comp, +Y up
+//! - `position = (comp_w/2, comp_h/2)` = layer centered in comp
+//! - `position = (0, 0)` = layer center at left-bottom corner
+//!
+//! Viewport space has origin at center, +Y up. We use `comp_to_viewport()` to convert:
+//! - `comp_to_viewport(pos, comp_size)` = `pos - comp_size/2`
+//! - So centered layer `(comp_w/2, comp_h/2)` -> viewport `(0, 0)` = center
+//!
+//! This matches how OpenGL renderer centers the image (quad at 0,0 in viewport space).
 
 use eframe::egui;
 use transform_gizmo_egui::{
@@ -71,8 +84,6 @@ impl GizmoState {
         let comp_size = project
             .with_comp(comp_uuid, |comp| comp.dim())
             .unwrap_or((1, 1));
-        log::debug!("Gizmo: comp_size={:?}, viewport_size={:?}, image_size={:?}",
-            comp_size, viewport_state.viewport_size, viewport_state.image_size);
         let (transforms, layer_data) =
             self.collect_transforms(tool, project, comp_uuid, &selected, comp_size);
         if transforms.is_empty() {
@@ -285,7 +296,6 @@ fn layer_to_gizmo_transform(
         comp_size,
     );
     let translation = DVec3::new(vp.x as f64, vp.y as f64, 0.0);
-    log::debug!("Gizmo: layer pos={:?}, comp_size={:?} -> translation={:?}", position, comp_size, translation);
     // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
     // In 2D we only care about Z.
     let rotation_quat = DQuat::from_euler(

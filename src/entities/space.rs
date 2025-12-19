@@ -1,10 +1,20 @@
 //! Coordinate space conversions (Y-up) for comp/layer sampling.
 //!
-//! Conventions:
-//! - Comp space: origin at left-bottom, +Y up (pixels).
-//! - Viewport space: origin at viewport center, +Y up (pixels).
-//! - Object space: origin at layer center, +Y up (pixels).
-//! - Image space: origin at top-left, +Y down (pixels).
+//! ## Coordinate Spaces
+//!
+//! - **Comp space**: origin at left-bottom, +Y up (pixels).
+//!   Layer `position` attribute is absolute in this space.
+//!   `position = (comp_w/2, comp_h/2)` = layer centered.
+//!
+//! - **Viewport space**: origin at viewport center, +Y up (pixels).
+//!   Used by gizmo and OpenGL renderer. Image quad centered at (0,0).
+//!   `comp_to_viewport()` converts: `pos - comp_size/2`
+//!
+//! - **Object space**: origin at layer center, +Y up (pixels).
+//!   Used for transform math (rotation/scale around pivot).
+//!
+//! - **Image space**: origin at top-left, +Y down (pixels).
+//!   Standard image/texture coordinates.
 
 use glam::Vec2;
 

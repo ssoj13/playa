@@ -630,6 +630,10 @@ impl CompNode {
     }
 
     /// Add child layer (compat with old Comp.add_child_layer)
+    ///
+    /// Layer position is set to center of comp `(comp_w/2, comp_h/2)` so the layer
+    /// appears centered in viewport. Position is absolute in comp space (Y-up,
+    /// origin at left-bottom). See `gizmo.rs` module docs for coordinate system details.
     pub fn add_child_layer(
         &mut self,
         source_uuid: Uuid,
