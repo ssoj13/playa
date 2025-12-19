@@ -34,7 +34,7 @@ const ZOOM_IN_FACTOR: f32 = 1.0 + ZOOM_STEP;
 const ZOOM_OUT_FACTOR: f32 = 1.0 / ZOOM_IN_FACTOR;
 
 /// Linear interpolation: maps value from [old_min, old_max] to [new_min, new_max]
-fn fit(value: f32, old_min: f32, old_max: f32, new_min: f32, new_max: f32) -> f32 {
+pub fn fit(value: f32, old_min: f32, old_max: f32, new_min: f32, new_max: f32) -> f32 {
     if (old_max - old_min).abs() < f32::EPSILON {
         return new_min;
     }

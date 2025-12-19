@@ -121,7 +121,7 @@ pub fn render(
 
         // Render gizmo for transform manipulation (Move/Rotate/Scale tools)
         // (must be after GL callback so it stays visible).
-        let (gizmo_consumed, gizmo_events) =
+        let (_gizmo_consumed, gizmo_events) =
             gizmo_state.render(ui, viewport_state, project, player);
         actions.events.extend(gizmo_events);
 
@@ -138,19 +138,7 @@ pub fn render(
             ctx.request_repaint();
         }
 
-        // Get play range for scrubbing (with work_area limits)
-        let (play_start, play_end) = player.active_comp()
-            .and_then(|uuid| project.with_node(uuid, |n| n.play_range(true)))
-            .unwrap_or((0, 100));
-
-        // Only handle scrubbing if gizmo didn't consume input
-        if !gizmo_consumed {
-            if let Some(frame_idx) =
-                viewport_state.handle_scrubbing(&response, panel_rect, double_clicked, play_start, play_end)
-            {
-                actions.send(crate::core::player_events::SetFrameEvent(frame_idx));
-            }
-        }
+        // Note: Scrubbing moved to RMB in Select tool (see right_drag_tool_event)
 
         match frame_state {
             // Header = file comp created frame but not loaded yet
@@ -260,6 +248,11 @@ fn handle_viewport_input(
     }
 }
 
+/// RMB drag handler for all tools:
+/// - Select (Q): timeline scrubbing
+/// - Move (W): translate layer
+/// - Rotate (E): rotate layer Z
+/// - Scale (R): uniform scale layer
 fn right_drag_tool_event(
     ctx: &egui::Context,
     panel_rect: egui::Rect,
@@ -267,16 +260,9 @@ fn right_drag_tool_event(
     player: &Player,
     project: &Project,
 ) -> Option<BoxedEvent> {
-    // Only in gizmo tools (Q = Select keeps viewport interaction semantics).
     let tool = ToolMode::from_str(&project.tool());
-    if matches!(tool, ToolMode::Select) {
-        viewport_state.rmb_tool_drag_active = false;
-        return None;
-    }
 
     // Latch RMB drag only when press starts inside the viewport rect.
-    // We intentionally do not rely on response.hovered()/hover_pos during drags,
-    // since hover_pos may be None depending on platform/backend.
     let (pressed, released, down, delta, latest_pos) = ctx.input(|i| {
         (
             i.pointer.button_pressed(egui::PointerButton::Secondary),
@@ -290,14 +276,49 @@ fn right_drag_tool_event(
     if pressed {
         viewport_state.rmb_tool_drag_active =
             latest_pos.is_some_and(|p| panel_rect.contains(p));
+        // Initialize scrubber on press for Select tool
+        if matches!(tool, ToolMode::Select) && viewport_state.rmb_tool_drag_active {
+            let bounds = viewport_state.get_image_screen_bounds();
+            viewport_state.scrubber.start_scrubbing(bounds, viewport_state.image_size, 0.5);
+        }
     }
     if released || !down {
         viewport_state.rmb_tool_drag_active = false;
+        if matches!(tool, ToolMode::Select) {
+            viewport_state.scrubber.stop_scrubbing();
+        }
     }
     if !viewport_state.rmb_tool_drag_active {
         return None;
     }
 
+    // Select tool: timeline scrubbing
+    if matches!(tool, ToolMode::Select) {
+        let local_x = latest_pos.map(|p| p.x - panel_rect.min.x)?;
+        let comp_uuid = player.active_comp()?;
+        let (play_start, play_end) = project
+            .with_node(comp_uuid, |n| n.play_range(true))
+            .unwrap_or((0, 100));
+        
+        let image_bounds = viewport_state.scrubber.frozen_bounds()
+            .unwrap_or_else(|| viewport_state.get_image_screen_bounds());
+        
+        // Map mouse X to frame
+        let frame = crate::widgets::viewport::viewport::fit(
+            local_x,
+            image_bounds.min.x, image_bounds.max.x,
+            play_start as f32, play_end as f32,
+        ).round() as i32;
+        let frame_clamped = frame.clamp(play_start, play_end);
+        
+        viewport_state.scrubber.set_clamped(frame != frame_clamped);
+        viewport_state.scrubber.set_current_frame(frame_clamped);
+        viewport_state.scrubber.set_visual_x(local_x);
+        
+        return Some(Box::new(crate::core::player_events::SetFrameEvent(frame_clamped)));
+    }
+
+    // Transform tools: need delta movement
     if delta.length() <= 0.1 {
         return None;
     }
@@ -346,7 +367,7 @@ fn right_drag_tool_event(
                     scale[0] = (scale[0] * factor).clamp(0.001, 1000.0);
                     scale[1] = (scale[1] * factor).clamp(0.001, 1000.0);
                 }
-                ToolMode::Select => {}
+                ToolMode::Select => {} // handled above
             }
 
             updates.push((*layer_uuid, pos, rot, scale));
