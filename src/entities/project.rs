@@ -79,6 +79,7 @@ impl Default for GizmoPrefs {
 
 use super::attr_schemas::PROJECT_SCHEMA;
 use super::{Attrs, CompositorType};
+use super::attrs::AttrValue;
 use super::node::Node;
 use super::node_kind::NodeKind;
 use super::comp_node::CompNode;
@@ -94,9 +95,10 @@ use super::comp_events::AttrsChangedEvent;
 /// Top-level project / scene.
 ///
 /// **Attrs keys** (stored in `attrs`):
-/// - `order`: Vec<Uuid> as JSON - UI order of media items
-/// - `selection`: Vec<Uuid> as JSON - current selection (ordered)
-/// - `active`: Option<Uuid> as JSON - currently active item
+/// - `order`: List<Uuid> - UI order of media items
+/// - `selection`: List<Uuid> - current selection (ordered)
+/// - `active`: Uuid (optional, missing key = None) - currently active item
+/// - `prefs`: Map - project preferences
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Project {
     /// All serializable project state (includes order, selection, active)
@@ -186,10 +188,9 @@ impl Project {
 
         // Initialize attrs with schema
         let mut attrs = Attrs::with_schema(&*PROJECT_SCHEMA);
-        attrs.set_json("order", &Vec::<Uuid>::new());
-        attrs.set_json("selection", &Vec::<Uuid>::new());
-        attrs.set_json("active", &None::<Uuid>);
-        attrs.set_json("prefs", &ProjectPrefs::default());
+        attrs.set_uuid_list("order", &[]);
+        attrs.set_uuid_list("selection", &[]);
+        attrs.set_map("prefs", Self::prefs_to_map(&ProjectPrefs::default()));
 
         Self {
             attrs,
@@ -214,6 +215,7 @@ impl Project {
     pub fn attach_schemas(&mut self) {
         // Project schema
         self.attrs.attach_schema(&*PROJECT_SCHEMA);
+        self.migrate_attrs();
         
         // All nodes in media pool
         // Arc::make_mut: if refcount == 1, mutates in place; otherwise clones.
@@ -231,16 +233,123 @@ impl Project {
         }
     }
 
+    /// Migrate legacy JSON attrs to typed values.
+    fn migrate_attrs(&mut self) {
+        self.migrate_uuid_list_attr("order");
+        self.migrate_uuid_list_attr("selection");
+        self.migrate_uuid_opt_attr("active");
+        self.migrate_prefs_attr();
+    }
+
+    fn migrate_uuid_list_attr(&mut self, key: &str) {
+        let Some(value) = self.attrs.get(key).cloned() else {
+            return;
+        };
+        match value {
+            AttrValue::Json(raw) => {
+                if let Ok(list) = serde_json::from_str::<Vec<Uuid>>(&raw) {
+                    self.attrs.set_uuid_list(key, &list);
+                }
+            }
+            AttrValue::List(_) => {}
+            _ => {}
+        }
+    }
+
+    fn migrate_uuid_opt_attr(&mut self, key: &str) {
+        let Some(value) = self.attrs.get(key).cloned() else {
+            return;
+        };
+        match value {
+            AttrValue::Json(raw) => {
+                if let Ok(opt) = serde_json::from_str::<Option<Uuid>>(&raw) {
+                    match opt {
+                        Some(id) => self.attrs.set_uuid(key, id),
+                        None => {
+                            let _ = self.attrs.remove(key);
+                        }
+                    }
+                }
+            }
+            AttrValue::Uuid(_) => {}
+            _ => {}
+        }
+    }
+
+    fn migrate_prefs_attr(&mut self) {
+        let Some(value) = self.attrs.get("prefs").cloned() else {
+            return;
+        };
+        match value {
+            AttrValue::Json(raw) => {
+                if let Ok(prefs) = serde_json::from_str::<ProjectPrefs>(&raw) {
+                    self.attrs.set_map("prefs", Self::prefs_to_map(&prefs));
+                }
+            }
+            AttrValue::Map(_) => {}
+            _ => {}
+        }
+    }
+
+    fn prefs_to_map(prefs: &ProjectPrefs) -> std::collections::HashMap<String, AttrValue> {
+        use std::collections::HashMap;
+        let mut gizmo = HashMap::new();
+        gizmo.insert("pref_manip_size".to_string(), AttrValue::Float(prefs.gizmo.pref_manip_size));
+        gizmo.insert(
+            "pref_manip_stroke_width".to_string(),
+            AttrValue::Float(prefs.gizmo.pref_manip_stroke_width),
+        );
+        gizmo.insert(
+            "pref_manip_inactive_alpha".to_string(),
+            AttrValue::Float(prefs.gizmo.pref_manip_inactive_alpha),
+        );
+        gizmo.insert(
+            "pref_manip_highlight_alpha".to_string(),
+            AttrValue::Float(prefs.gizmo.pref_manip_highlight_alpha),
+        );
+
+        let mut map = HashMap::new();
+        map.insert("gizmo".to_string(), AttrValue::Map(gizmo));
+        map
+    }
+
+    fn prefs_from_map(map: &std::collections::HashMap<String, AttrValue>) -> ProjectPrefs {
+        let mut prefs = ProjectPrefs::default();
+        let Some(AttrValue::Map(gizmo)) = map.get("gizmo") else {
+            return prefs;
+        };
+
+        let read_f32 = |m: &std::collections::HashMap<String, AttrValue>, key: &str, default: f32| -> f32 {
+            match m.get(key) {
+                Some(AttrValue::Float(v)) => *v,
+                Some(AttrValue::Int(v)) => *v as f32,
+                Some(AttrValue::UInt(v)) => *v as f32,
+                _ => default,
+            }
+        };
+
+        prefs.gizmo.pref_manip_size =
+            read_f32(gizmo, "pref_manip_size", prefs.gizmo.pref_manip_size);
+        prefs.gizmo.pref_manip_stroke_width =
+            read_f32(gizmo, "pref_manip_stroke_width", prefs.gizmo.pref_manip_stroke_width);
+        prefs.gizmo.pref_manip_inactive_alpha =
+            read_f32(gizmo, "pref_manip_inactive_alpha", prefs.gizmo.pref_manip_inactive_alpha);
+        prefs.gizmo.pref_manip_highlight_alpha =
+            read_f32(gizmo, "pref_manip_highlight_alpha", prefs.gizmo.pref_manip_highlight_alpha);
+
+        prefs
+    }
+
     // === Accessor methods for attrs fields ===
 
     /// Get comps order (Vec<Uuid>)
     pub fn order(&self) -> Vec<Uuid> {
-        self.attrs.get_json("order").unwrap_or_default()
+        self.attrs.get_uuid_list("order").unwrap_or_default()
     }
 
     /// Set comps order
     pub fn set_order(&mut self, order: Vec<Uuid>) {
-        self.attrs.set_json("order", &order);
+        self.attrs.set_uuid_list("order", &order);
     }
 
     /// Push UUID to order
@@ -259,12 +368,12 @@ impl Project {
 
     /// Get selection (Vec<Uuid>)
     pub fn selection(&self) -> Vec<Uuid> {
-        self.attrs.get_json("selection").unwrap_or_default()
+        self.attrs.get_uuid_list("selection").unwrap_or_default()
     }
 
     /// Set selection
     pub fn set_selection(&mut self, sel: Vec<Uuid>) {
-        self.attrs.set_json("selection", &sel);
+        self.attrs.set_uuid_list("selection", &sel);
     }
 
     /// Push UUID to selection
@@ -283,12 +392,17 @@ impl Project {
 
     /// Get active comp UUID
     pub fn active(&self) -> Option<Uuid> {
-        self.attrs.get_json("active").unwrap_or(None)
+        self.attrs.get_uuid("active")
     }
 
     /// Set active comp UUID
     pub fn set_active(&mut self, uuid: Option<Uuid>) {
-        self.attrs.set_json("active", &uuid);
+        match uuid {
+            Some(id) => self.attrs.set_uuid("active", id),
+            None => {
+                let _ = self.attrs.remove("active");
+            }
+        }
     }
 
     /// Get viewport tool mode (select/move/rotate/scale).
@@ -303,14 +417,17 @@ impl Project {
         self.attrs.set("tool", super::attrs::AttrValue::Str(tool.to_string()));
     }
 
-    /// Read project preferences (stored as JSON under `attrs["prefs"]`).
+    /// Read project preferences (stored as Map under `attrs["prefs"]`).
     pub fn prefs(&self) -> ProjectPrefs {
-        self.attrs.get_json("prefs").unwrap_or_default()
+        self.attrs
+            .get_map("prefs")
+            .map(Self::prefs_from_map)
+            .unwrap_or_default()
     }
 
     /// Overwrite project preferences.
     pub fn set_prefs(&mut self, prefs: &ProjectPrefs) {
-        self.attrs.set_json("prefs", prefs);
+        self.attrs.set_map("prefs", Self::prefs_to_map(prefs));
     }
 
     /// Convenience: get gizmo prefs.

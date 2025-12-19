@@ -54,13 +54,14 @@ pub const FRAME_JUMP_STEP: i32 = 25;
 /// to methods that need it. PlayaApp owns the single Project instance.
 ///
 /// **Attrs keys**:
-/// - `active_comp`: Option<Uuid> as JSON
+/// - `active_comp`: Uuid (optional, missing key = None)
+/// - `previous_comp_history`: List<Uuid> (most recent last)
 /// - `is_playing`: Bool
 /// - `fps_base`: Float (persistent base FPS)
 /// - `fps_play`: Float (temporary playback FPS)
 /// - `loop_enabled`: Bool
 /// - `play_direction`: Float (1.0 forward, -1.0 backward)
-/// - `selected_seq_idx`: Option<usize> as JSON
+/// - `selected_seq_idx`: Option<usize> stored as Int (missing key = None)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Player {
     /// All serializable player state
@@ -78,13 +79,12 @@ impl Player {
 
         let mut attrs = Attrs::with_schema(&*PLAYER_SCHEMA);
         // Initialize defaults via attrs
-        attrs.set_json("active_comp", &None::<Uuid>);
         attrs.set("is_playing", AttrValue::Bool(false));
         attrs.set("fps_base", AttrValue::Float(24.0));
         attrs.set("fps_play", AttrValue::Float(24.0));
         attrs.set("loop_enabled", AttrValue::Bool(true));
         attrs.set("play_direction", AttrValue::Float(1.0));
-        attrs.set_json("selected_seq_idx", &None::<usize>);
+        attrs.set_uuid_list("previous_comp_history", &[]);
 
         Self {
             attrs,
@@ -95,29 +95,120 @@ impl Player {
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
         self.attrs.attach_schema(&*PLAYER_SCHEMA);
+        self.migrate_attrs();
+    }
+
+    fn migrate_attrs(&mut self) {
+        self.migrate_uuid_opt_attr("active_comp");
+        self.migrate_previous_comp_history();
+        self.migrate_selected_seq_idx();
+    }
+
+    fn migrate_uuid_opt_attr(&mut self, key: &str) {
+        let Some(value) = self.attrs.get(key).cloned() else {
+            return;
+        };
+        match value {
+            AttrValue::Json(raw) => {
+                if let Ok(opt) = serde_json::from_str::<Option<Uuid>>(&raw) {
+                    match opt {
+                        Some(id) => self.attrs.set_uuid(key, id),
+                        None => {
+                            let _ = self.attrs.remove(key);
+                        }
+                    }
+                }
+            }
+            AttrValue::Uuid(_) => {}
+            _ => {}
+        }
+    }
+
+    fn migrate_previous_comp_history(&mut self) {
+        if self.attrs.get("previous_comp_history").is_some() {
+            return;
+        }
+        let Some(value) = self.attrs.get("previous_comp").cloned() else {
+            return;
+        };
+        let prev = match value {
+            AttrValue::Json(raw) => serde_json::from_str::<Option<Uuid>>(&raw).ok().flatten(),
+            AttrValue::Uuid(id) => Some(id),
+            _ => None,
+        };
+        if let Some(id) = prev {
+            self.attrs.set_uuid_list("previous_comp_history", &[id]);
+        } else {
+            self.attrs.set_uuid_list("previous_comp_history", &[]);
+        }
+        let _ = self.attrs.remove("previous_comp");
+    }
+
+    fn migrate_selected_seq_idx(&mut self) {
+        let Some(value) = self.attrs.get("selected_seq_idx").cloned() else {
+            return;
+        };
+        match value {
+            AttrValue::Json(raw) => {
+                if let Ok(opt) = serde_json::from_str::<Option<usize>>(&raw) {
+                    match opt {
+                        Some(v) => self.attrs.set("selected_seq_idx", AttrValue::Int(v as i32)),
+                        None => {
+                            let _ = self.attrs.remove("selected_seq_idx");
+                        }
+                    }
+                }
+            }
+            AttrValue::Int(_) => {}
+            _ => {}
+        }
     }
 
     // === Accessor methods for attrs fields ===
 
     /// Get active comp UUID
     pub fn active_comp(&self) -> Option<Uuid> {
-        self.attrs.get_json("active_comp").unwrap_or(None)
+        self.attrs.get_uuid("active_comp")
     }
 
     /// Set active comp UUID (low-level, does NOT update project state)
     /// Use `set_active_comp()` for full activation with project sync
     fn set_active_comp_uuid(&mut self, uuid: Option<Uuid>) {
-        self.attrs.set_json("active_comp", &uuid);
+        match uuid {
+            Some(id) => self.attrs.set_uuid("active_comp", id),
+            None => {
+                let _ = self.attrs.remove("active_comp");
+            }
+        }
     }
 
-    /// Get previous comp UUID (for U key navigation back)
-    pub fn previous_comp(&self) -> Option<Uuid> {
-        self.attrs.get_json("previous_comp").unwrap_or(None)
+    /// Get previous comp history (most recent last)
+    pub fn previous_comp_history(&self) -> Vec<Uuid> {
+        self.attrs.get_uuid_list("previous_comp_history").unwrap_or_default()
     }
 
-    /// Set previous comp UUID
-    fn set_previous_comp_uuid(&mut self, uuid: Option<Uuid>) {
-        self.attrs.set_json("previous_comp", &uuid);
+    /// Pop the last previous comp (for U key navigation back)
+    pub fn take_previous_comp(&mut self) -> Option<Uuid> {
+        let mut history = self.previous_comp_history();
+        let prev = history.pop();
+        if prev.is_some() {
+            self.attrs.set_uuid_list("previous_comp_history", &history);
+        }
+        prev
+    }
+
+    fn push_previous_comp(&mut self, uuid: Uuid) {
+        const PREV_COMP_HISTORY_MAX: usize = 32;
+        let mut history = self.previous_comp_history();
+        if history.last().copied() == Some(uuid) {
+            return;
+        }
+        history.push(uuid);
+        if history.len() > PREV_COMP_HISTORY_MAX {
+            let overflow = history.len() - PREV_COMP_HISTORY_MAX;
+            history.drain(0..overflow);
+        }
+        self.attrs.set_uuid_list("previous_comp_history", &history);
     }
 
     /// Check if playing
@@ -172,12 +263,17 @@ impl Player {
 
     /// Get selected sequence index
     pub fn selected_seq_idx(&self) -> Option<usize> {
-        self.attrs.get_json("selected_seq_idx").unwrap_or(None)
+        self.attrs.get_i32("selected_seq_idx").map(|v| v.max(0) as usize)
     }
 
     /// Set selected sequence index
     pub fn set_selected_seq_idx(&mut self, idx: Option<usize>) {
-        self.attrs.set_json("selected_seq_idx", &idx);
+        match idx {
+            Some(v) => self.attrs.set("selected_seq_idx", AttrValue::Int(v as i32)),
+            None => {
+                let _ = self.attrs.remove("selected_seq_idx");
+            }
+        }
     }
 
     /// Get total frames of active node (work area frame count)
@@ -270,7 +366,9 @@ impl Player {
         // Save current as previous (for U key navigation back)
         let current = self.active_comp();
         if current != Some(uuid) {
-            self.set_previous_comp_uuid(current);
+            if let Some(current_uuid) = current {
+                self.push_previous_comp(current_uuid);
+            }
         }
 
         // Stop playback during transition

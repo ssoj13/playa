@@ -70,6 +70,8 @@ pub enum AttrType {
     Vec3,
     Vec4,
     List,
+    Map,
+    Set,
     Json,
 }
 
@@ -167,7 +169,7 @@ impl AttrSchema {
 }
 
 /// Generic attribute value.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AttrValue {
     Bool(bool),
     Str(String),
@@ -183,6 +185,10 @@ pub enum AttrValue {
     Uuid(Uuid),
     /// Nested list of values (for children, etc.)
     List(Vec<AttrValue>),
+    /// Nested map of values (string key -> value)
+    Map(HashMap<String, AttrValue>),
+    /// Unordered set of values
+    Set(HashSet<AttrValue>),
     /// JSON-encoded nested data (HashMap, Vec, etc.)
     Json(String),
 }
@@ -190,6 +196,7 @@ pub enum AttrValue {
 impl std::hash::Hash for AttrValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         use AttrValue::*;
+        use std::collections::hash_map::DefaultHasher;
         std::mem::discriminant(self).hash(state);
         match self {
             Bool(v) => v.hash(state),
@@ -204,10 +211,71 @@ impl std::hash::Hash for AttrValue {
             Mat4(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
             Uuid(v) => v.hash(state),
             List(v) => v.hash(state),
+            Map(v) => {
+                let mut acc: u64 = 0;
+                for (k, val) in v {
+                    let mut h = DefaultHasher::new();
+                    k.hash(&mut h);
+                    val.hash(&mut h);
+                    acc ^= h.finish();
+                }
+                acc.hash(state);
+            }
+            Set(v) => {
+                let mut acc: u64 = 0;
+                for val in v {
+                    let mut h = DefaultHasher::new();
+                    val.hash(&mut h);
+                    acc ^= h.finish();
+                }
+                acc.hash(state);
+            }
             Json(v) => v.hash(state),
         }
     }
 }
+
+fn f32_bits_eq(a: f32, b: f32) -> bool {
+    a.to_bits() == b.to_bits()
+}
+
+fn f32_slice_bits_eq(a: &[f32], b: &[f32]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).all(|(x, y)| f32_bits_eq(*x, *y))
+}
+
+impl PartialEq for AttrValue {
+    fn eq(&self, other: &Self) -> bool {
+        use AttrValue::*;
+        match (self, other) {
+            (Bool(a), Bool(b)) => a == b,
+            (Str(a), Str(b)) => a == b,
+            (Int8(a), Int8(b)) => a == b,
+            (Int(a), Int(b)) => a == b,
+            (UInt(a), UInt(b)) => a == b,
+            (Float(a), Float(b)) => f32_bits_eq(*a, *b),
+            (Vec3(a), Vec3(b)) => f32_slice_bits_eq(a, b),
+            (Vec4(a), Vec4(b)) => f32_slice_bits_eq(a, b),
+            (Mat3(a), Mat3(b)) => a.iter().zip(b.iter()).all(|(ra, rb)| f32_slice_bits_eq(ra, rb)),
+            (Mat4(a), Mat4(b)) => a.iter().zip(b.iter()).all(|(ra, rb)| f32_slice_bits_eq(ra, rb)),
+            (Uuid(a), Uuid(b)) => a == b,
+            (List(a), List(b)) => a == b,
+            (Map(a), Map(b)) => {
+                if a.len() != b.len() {
+                    return false;
+                }
+                a.iter().all(|(k, v)| b.get(k).is_some_and(|ov| ov == v))
+            }
+            (Set(a), Set(b)) => a == b,
+            (Json(a), Json(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for AttrValue {}
 
 /// Attribute container: string key → typed value.
 ///
@@ -375,6 +443,59 @@ impl Attrs {
             Some(AttrValue::List(v)) => Some(v),
             _ => None,
         }
+    }
+
+    pub fn get_map(&self, key: &str) -> Option<&HashMap<String, AttrValue>> {
+        match self.map.get(key) {
+            Some(AttrValue::Map(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn get_map_mut(&mut self, key: &str) -> Option<&mut HashMap<String, AttrValue>> {
+        match self.map.get_mut(key) {
+            Some(AttrValue::Map(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn set_map(&mut self, key: impl Into<String>, value: HashMap<String, AttrValue>) {
+        self.set(key, AttrValue::Map(value));
+    }
+
+    pub fn get_set(&self, key: &str) -> Option<&HashSet<AttrValue>> {
+        match self.map.get(key) {
+            Some(AttrValue::Set(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn get_set_mut(&mut self, key: &str) -> Option<&mut HashSet<AttrValue>> {
+        match self.map.get_mut(key) {
+            Some(AttrValue::Set(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn set_set(&mut self, key: impl Into<String>, value: HashSet<AttrValue>) {
+        self.set(key, AttrValue::Set(value));
+    }
+
+    pub fn get_uuid_list(&self, key: &str) -> Option<Vec<Uuid>> {
+        let list = self.get_list(key)?;
+        let mut out = Vec::with_capacity(list.len());
+        for v in list {
+            match v {
+                AttrValue::Uuid(id) => out.push(*id),
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    pub fn set_uuid_list(&mut self, key: impl Into<String>, values: &[Uuid]) {
+        let list = values.iter().copied().map(AttrValue::Uuid).collect();
+        self.set(key, AttrValue::List(list));
     }
 
     pub fn set_list(&mut self, key: impl Into<String>, value: Vec<AttrValue>) {

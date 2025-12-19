@@ -487,7 +487,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<ProjectPreviousCompEvent>(event).is_some() {
-        if let Some(prev) = player.previous_comp() {
+        if let Some(prev) = player.take_previous_comp() {
             player.set_active_comp(Some(prev), project);
             project.selection_anchor = project.order().iter().position(|u| *u == prev);
             node_editor_state.set_comp(prev);

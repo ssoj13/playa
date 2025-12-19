@@ -129,11 +129,11 @@ pub static LAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
 
 /// Project-specific attributes (UI state)
 const PROJECT_SPECIFIC: &[AttrDef] = &[
-    AttrDef::new("order", AttrType::Json, INT),      // UI: media pool order
-    AttrDef::new("selection", AttrType::Json, INT),  // UI: selected items
-    AttrDef::new("active", AttrType::Json, INT),     // UI: active comp
+    AttrDef::new("order", AttrType::List, INT),      // UI: media pool order (Uuid list)
+    AttrDef::new("selection", AttrType::List, INT),  // UI: selected items (Uuid list)
+    AttrDef::new("active", AttrType::Uuid, INT),     // UI: active comp (Uuid)
     AttrDef::new("tool", AttrType::String, 0),       // Viewport tool: select/move/rotate/scale
-    AttrDef::new("prefs", AttrType::Json, INT),      // UI: project preferences (gizmo, etc)
+    AttrDef::new("prefs", AttrType::Map, INT),       // UI: project preferences (gizmo, etc)
 ];
 
 pub static PROJECT_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {

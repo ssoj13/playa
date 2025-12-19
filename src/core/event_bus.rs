@@ -110,7 +110,11 @@ impl EventBus {
         let type_id = TypeId::of::<E>();
 
         // Invoke immediate callbacks
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb(&event);
             }
@@ -133,7 +137,11 @@ impl EventBus {
         // Invoke immediate callbacks
         // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable,
         // not Box<dyn Event>'s blanket impl (see downcast_event docs)
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb((*event).as_any());
             }
@@ -224,7 +232,11 @@ impl EventEmitter {
         let type_id = TypeId::of::<E>();
 
         // Invoke immediate callbacks
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb(&event);
             }
@@ -246,7 +258,11 @@ impl EventEmitter {
 
         // Invoke immediate callbacks
         // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb((*event).as_any());
             }

@@ -304,6 +304,12 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
         (_, AttrValue::List(items)) => {
             ui.label(format!("List: {} items", items.len()));
         }
+        (_, AttrValue::Map(entries)) => {
+            ui.label(format!("Map: {} entries", entries.len()));
+        }
+        (_, AttrValue::Set(items)) => {
+            ui.label(format!("Set: {} items", items.len()));
+        }
     }
     });
     changed |= scope_changed;

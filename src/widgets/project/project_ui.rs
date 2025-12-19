@@ -1,4 +1,5 @@
 use eframe::egui;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::entities::Project;
@@ -91,9 +92,15 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
             ui.set_min_height(scroll_height);
 
             // Collect all comps to render (unified order)
-            let all_comps: Vec<Uuid> = project.order();
+            let order = project.order();
+            let mut order_index = HashMap::with_capacity(order.len());
+            for (i, uuid) in order.iter().enumerate() {
+                order_index.insert(*uuid, i);
+            }
+            let selection = project.selection();
+            let selection_set: HashSet<Uuid> = selection.iter().copied().collect();
 
-            if all_comps.is_empty() {
+            if order.is_empty() {
                 ui.add_space(20.0);
                 ui.vertical_centered(|ui| {
                     ui.colored_label(ui.visuals().weak_text_color(), "No media loaded");
@@ -106,22 +113,17 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
             }
 
             let media = project.media.read().unwrap_or_else(|e| e.into_inner());
-            for comp_uuid in &all_comps {
+            for comp_uuid in &order {
                 let comp = match media.get(comp_uuid) {
                     Some(c) => c,
                     None => continue,
                 };
-                let order = project.order();
-                let clicked_idx = match order
-                    .iter()
-                    .position(|u| u == comp_uuid)
-                {
-                    Some(i) => i,
-                    None => continue,
+                let Some(clicked_idx) = order_index.get(comp_uuid).copied() else {
+                    continue;
                 };
 
                 let is_active = project.active().as_ref() == Some(comp_uuid);
-                let is_selected = project.selection().iter().any(|u| u == comp_uuid);
+                let is_selected = selection_set.contains(comp_uuid);
                 let bg_color = if is_selected {
                     ui.style().visuals.selection.bg_fill
                 } else {
@@ -259,7 +261,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
 
                 // Selection logic (click) and activation (double click) via events
                 let modifiers = ui.input(|i| i.modifiers);
-                let current_selection = project.selection();
+                let current_selection = selection.clone();
                 if response.clicked() {
                     let (sel, anchor) = compute_selection(
                         &order,
