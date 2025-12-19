@@ -47,6 +47,32 @@ pub fn build_inverse_transform(
     transform.inverse()
 }
 
+/// Compute pivot position in comp space (Y-down).
+///
+/// `pivot` is an offset from the source center (AE-style anchor point).
+pub fn layer_pivot_in_comp(
+    position: [f32; 3],
+    pivot: [f32; 3],
+    src_size: (usize, usize),
+) -> Vec2 {
+    let src_center = Vec2::new(src_size.0 as f32 / 2.0, src_size.1 as f32 / 2.0);
+    let pivot_pt = src_center + Vec2::new(pivot[0], pivot[1]);
+    Vec2::new(position[0], position[1]) + pivot_pt
+}
+
+/// Convert a pivot position in comp space (Y-down) back into layer position.
+pub fn position_from_pivot(
+    pivot_pos: Vec2,
+    pivot: [f32; 3],
+    src_size: (usize, usize),
+    position_z: f32,
+) -> [f32; 3] {
+    let src_center = Vec2::new(src_size.0 as f32 / 2.0, src_size.1 as f32 / 2.0);
+    let pivot_pt = src_center + Vec2::new(pivot[0], pivot[1]);
+    let pos = pivot_pos - pivot_pt;
+    [pos.x, pos.y, position_z]
+}
+
 /// Build inverse transform as column-major 3x3 matrix for OpenGL/GPU.
 /// 
 /// Same as `build_inverse_transform` but returns `[f32; 9]` in column-major

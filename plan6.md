@@ -5,6 +5,21 @@ Scope: outstanding work only.
 
 ---
 
+## Gizmo / Transform Space Unification (pending)
+1) Define two spaces:
+   - comp: origin left-bottom, Y up.
+   - layer (object): origin center, coordinates in pixels [-w/2..w/2], [-h/2..h/2].
+2) Add conversion helpers (single ground truth):
+   - comp <-> viewport (centered) conversion using comp size.
+   - layer pivot <-> comp conversion using src size + pivot offsets.
+3) Update gizmo:
+   - translate = comp->viewport(layer pivot).
+   - move writes back via viewport->comp->position_from_pivot.
+4) Update RMB drag tool to use same conversions (no divergent codepath).
+5) Decide canonical storage for attrs:
+   - keep existing Y-down storage and only convert for gizmo, or
+   - switch attrs to Y-up comp space and update transform/render math.
+
 ## 3D Perspective Roadmap (still pending)
 
 ### Phase 1: Camera integration

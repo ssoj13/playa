@@ -16,6 +16,8 @@ use crate::core::event_bus::BoxedEvent;
 use crate::core::player::Player;
 use crate::entities::comp_events::SetLayerTransformsEvent;
 use crate::entities::Project;
+use crate::entities::keys::{A_HEIGHT, A_PIVOT, A_POSITION, A_ROTATION, A_SCALE, A_WIDTH};
+use crate::entities::transform;
 use super::coords;
 
 /// Gizmo state - lives in PlayaApp, not saved.
@@ -111,14 +113,16 @@ impl GizmoState {
         project: &Project,
         comp_uuid: Uuid,
         selected: &[Uuid],
-    ) -> (Vec<Transform>, Vec<(Uuid, [f32; 3], [f32; 3], [f32; 3])>) {
+    ) -> (Vec<Transform>, Vec<(Uuid, [f32; 3], [f32; 3], [f32; 3], [f32; 3], (usize, usize))>) {
         let mut transforms = Vec::new();
         let mut layer_data = Vec::new();
 
         for &layer_uuid in selected {
-            if let Some((pos, rot, scale)) = get_layer_transform(project, comp_uuid, layer_uuid) {
-                transforms.push(layer_to_gizmo_transform(tool, pos, rot, scale));
-                layer_data.push((layer_uuid, pos, rot, scale));
+            if let Some((pos, rot, scale, pivot, src_size)) =
+                get_layer_transform(project, comp_uuid, layer_uuid)
+            {
+                transforms.push(layer_to_gizmo_transform(tool, pos, rot, scale, pivot, src_size));
+                layer_data.push((layer_uuid, pos, rot, scale, pivot, src_size));
             }
         }
 
@@ -129,23 +133,29 @@ impl GizmoState {
         &self,
         tool: ToolMode,
         comp_uuid: Uuid,
-        layer_data: &[(Uuid, [f32; 3], [f32; 3], [f32; 3])],
+        layer_data: &[(Uuid, [f32; 3], [f32; 3], [f32; 3], [f32; 3], (usize, usize))],
         new_transforms: &[Transform],
     ) -> Option<SetLayerTransformsEvent> {
         let mut updates = Vec::new();
 
         for (i, new_t) in new_transforms.iter().enumerate() {
-            let Some((layer_uuid, old_pos, old_rot, old_scale)) = layer_data.get(i) else {
+            let Some((layer_uuid, old_pos, old_rot, old_scale, old_pivot, src_size)) =
+                layer_data.get(i)
+            else {
                 continue;
             };
-            let (gizmo_pos, gizmo_rot, gizmo_scale) = gizmo_to_layer_transform(new_t);
+            let (gizmo_pivot, gizmo_rot, gizmo_scale) = gizmo_to_layer_transform(new_t);
 
             // We normalize the input transform we pass into transform-gizmo (see
             // `layer_to_gizmo_transform`) so gizmo rings/handles render correctly in 2D.
             // Because of that, we must merge the output back into the original layer
             // attrs, updating only the channel that the current tool edits.
             let (new_pos, new_rot, new_scale) = match tool {
-                ToolMode::Move => (gizmo_pos, *old_rot, *old_scale),
+                ToolMode::Move => {
+                    let pivot_pos = glam::Vec2::new(gizmo_pivot[0], gizmo_pivot[1]);
+                    let pos = transform::position_from_pivot(pivot_pos, *old_pivot, *src_size, old_pos[2]);
+                    (pos, *old_rot, *old_scale)
+                }
                 ToolMode::Rotate => (
                     *old_pos,
                     [old_rot[0], old_rot[1], gizmo_rot[2]],
@@ -250,6 +260,8 @@ fn layer_to_gizmo_transform(
     position: [f32; 3],
     rotation: [f32; 3],
     scale: [f32; 3],
+    pivot: [f32; 3],
+    src_size: (usize, usize),
 ) -> Transform {
     use glam::{DQuat, DVec3};
 
@@ -264,10 +276,12 @@ fn layer_to_gizmo_transform(
     // - ignore rotation.x/y (we're currently a 2D tool; compositor only uses rot.z)
     // - for Move/Rotate, force uniform scale=1 to prevent rings/handles becoming oval
     //   when the layer has non-uniform scale (scale.x != scale.y).
+    // - translation is the layer pivot position in comp space (position + center + pivot offset).
     //
     // This is purely a *visual/input normalization* for gizmo interaction; we merge the
     // output back into the original layer attrs and only write the edited channel.
-    let translation = DVec3::new(position[0] as f64, -(position[1] as f64), 0.0);
+    let pivot_pos = transform::layer_pivot_in_comp(position, pivot, src_size);
+    let translation = DVec3::new(pivot_pos.x as f64, -(pivot_pos.y as f64), 0.0);
     // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
     // In 2D we only care about Z.
     let rotation_quat = DQuat::from_euler(
@@ -316,13 +330,16 @@ fn get_layer_transform(
     project: &Project,
     comp_uuid: Uuid,
     layer_uuid: Uuid,
-) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
+) -> Option<([f32; 3], [f32; 3], [f32; 3], [f32; 3], (usize, usize))> {
     project.with_comp(comp_uuid, |comp| {
         comp.get_layer(layer_uuid).map(|layer| {
-            let pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
-            let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
-            let scale = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
-            (pos, rot, scale)
+            let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
+            let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
+            let scale = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
+            let pivot = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
+            let width = layer.attrs.get_u32(A_WIDTH).unwrap_or(1).max(1) as usize;
+            let height = layer.attrs.get_u32(A_HEIGHT).unwrap_or(1).max(1) as usize;
+            (pos, rot, scale, pivot, (width, height))
         })
     }).flatten()
 }
