@@ -71,6 +71,8 @@ impl GizmoState {
         let comp_size = project
             .with_comp(comp_uuid, |comp| comp.dim())
             .unwrap_or((1, 1));
+        log::debug!("Gizmo: comp_size={:?}, viewport_size={:?}, image_size={:?}",
+            comp_size, viewport_state.viewport_size, viewport_state.image_size);
         let (transforms, layer_data) =
             self.collect_transforms(tool, project, comp_uuid, &selected, comp_size);
         if transforms.is_empty() {
@@ -274,11 +276,16 @@ fn layer_to_gizmo_transform(
     // - translation is the layer pivot position in comp space (position).
     // This is purely a *visual/input normalization* for gizmo interaction; we merge the
     // output back into the original layer attrs and only write the edited channel.
-    let translation = space::comp_to_viewport(
+    //
+    // Position is absolute in comp space (origin at left-bottom, Y-up).
+    // Default position = (comp_w/2, comp_h/2) = layer centered in comp.
+    // comp_to_viewport converts to viewport space (origin at center).
+    let vp = space::comp_to_viewport(
         glam::Vec2::new(position[0], position[1]),
         comp_size,
     );
-    let translation = DVec3::new(translation.x as f64, translation.y as f64, 0.0);
+    let translation = DVec3::new(vp.x as f64, vp.y as f64, 0.0);
+    log::debug!("Gizmo: layer pos={:?}, comp_size={:?} -> translation={:?}", position, comp_size, translation);
     // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
     // In 2D we only care about Z.
     let rotation_quat = DQuat::from_euler(
@@ -313,6 +320,7 @@ fn gizmo_to_layer_transform(
     let scale = DVec3::new(t.scale.x, t.scale.y, t.scale.z);
 
     let euler = rotation.to_euler(glam::EulerRot::XYZ);
+    // Convert viewport space back to comp space (inverse of comp_to_viewport)
     let comp_pos = space::viewport_to_comp(
         glam::Vec2::new(translation.x as f32, translation.y as f32),
         comp_size,

@@ -137,7 +137,7 @@ impl Layer {
         attrs.set(A_SPEED, AttrValue::Float(1.0));
         attrs.set(A_WIDTH, AttrValue::UInt(dim.0 as u32));
         attrs.set(A_HEIGHT, AttrValue::UInt(dim.1 as u32));
-        // Transform
+        // Transform - position will be set to center of comp in add_child_layer()
         attrs.set(A_POSITION, AttrValue::Vec3([0.0, 0.0, 0.0]));
         attrs.set(A_ROTATION, AttrValue::Vec3([0.0, 0.0, 0.0]));
         attrs.set(A_SCALE, AttrValue::Vec3([1.0, 1.0, 1.0]));
@@ -639,7 +639,14 @@ impl CompNode {
         insert_idx: Option<usize>,
         source_dim: (usize, usize),
     ) -> anyhow::Result<Uuid> {
-        let layer = Layer::new(source_uuid, name, start_frame, duration, source_dim);
+        let mut layer = Layer::new(source_uuid, name, start_frame, duration, source_dim);
+        // Center layer in comp by default
+        let comp_dim = self.dim();
+        layer.attrs.set(A_POSITION, AttrValue::Vec3([
+            comp_dim.0 as f32 / 2.0,
+            comp_dim.1 as f32 / 2.0,
+            0.0,
+        ]));
         let uuid = layer.uuid();
         self.add_layer(layer, insert_idx);
         Ok(uuid)
