@@ -897,10 +897,11 @@ impl CompNode {
                 let scl = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
                 let pvt = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
                 let rot_rad = rot[2].to_radians();
+                let src_size = (frame.width(), frame.height());
                 
                 // Apply CPU transform if non-identity
                 // This is the active code path - GPU compositor not yet connected
-                if !transform::is_identity(pos, rot_rad, scl) {
+                if !transform::is_identity(pos, rot_rad, scl, pvt) {
                     let canvas = self.dim();
                     frame = transform::transform_frame(&frame, canvas, pos, rot_rad, scl, pvt);
                 }
@@ -909,11 +910,10 @@ impl CompNode {
                 // Matrix is passed through API but CPU compositor ignores it.
                 // When GPU compositing is enabled, remove CPU transform above
                 // and let GPU shader handle it via this matrix.
-                let inv_matrix = if transform::is_identity(pos, rot_rad, scl) {
+                let inv_matrix = if transform::is_identity(pos, rot_rad, scl, pvt) {
                     identity_matrix
                 } else {
-                    let src_center = (frame.width() as f32 / 2.0, frame.height() as f32 / 2.0);
-                    transform::build_inverse_matrix_3x3(pos, rot_rad, scl, pvt, src_center)
+                    transform::build_inverse_matrix_3x3(pos, rot_rad, scl, pvt, src_size)
                 };
                 
                 let opacity = layer.opacity();

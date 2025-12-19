@@ -2,21 +2,15 @@
 //!
 //! Conventions:
 //! - egui screen space: +Y is down.
-//! - Viewport/image space: +Y is down.
-//! - Transform gizmo expects +Y up (right-handed).
+//! - Viewport space: +Y is up, origin at viewport center.
 //!
-//! Use these helpers to keep Y inversion consistent across viewport + gizmo.
+//! Use these helpers to keep Y inversion consistent across viewport input.
 
 use eframe::egui;
 
 /// Flip Y for a 2D vector.
 pub fn flip_y_vec2(v: egui::Vec2) -> egui::Vec2 {
     egui::vec2(v.x, -v.y)
-}
-
-/// Flip Y for a f64 value.
-pub fn flip_y_f64(v: f64) -> f64 {
-    -v
 }
 
 /// Convert screen-space pos to centered viewport space (+Y up).

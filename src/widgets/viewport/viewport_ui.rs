@@ -310,10 +310,11 @@ fn right_drag_tool_event(
         return None;
     }
 
-    // Convert screen-space delta to comp-space pixels (for translate).
+    // Convert screen-space delta to comp-space pixels (Y-up).
     let zoom = viewport_state.zoom.max(0.0001);
-    let dx_px = delta.x / zoom;
-    let dy_px = delta.y / zoom;
+    let delta_viewport = super::coords::screen_delta_to_viewport(delta);
+    let dx_px = delta_viewport.x / zoom;
+    let dy_px = delta_viewport.y / zoom;
 
     // Rotate/scale sensitivity: normalized by viewport size so it feels stable across resolutions.
     let min_dim = panel_rect.width().min(panel_rect.height()).max(1.0);
@@ -333,15 +334,14 @@ fn right_drag_tool_event(
                     pos[1] += dy_px;
                 }
                 ToolMode::Rotate => {
-                    // RotateZ: horizontal drag. Positive delta.x rotates clockwise in AE-style
-                    // (positive degrees = clockwise because y is down).
-                    let deg_delta = (delta.x / min_dim) * 180.0;
+                    // RotateZ: horizontal drag. Positive delta.x rotates clockwise (user space).
+                    let deg_delta = (delta_viewport.x / min_dim) * 180.0;
                     rot[2] += deg_delta;
                 }
                 ToolMode::Scale => {
                     // Uniform scale: right/up increases, left/down decreases.
                     // Exponential mapping avoids negative scales and feels natural.
-                    let norm = (delta.x - delta.y) / min_dim;
+                    let norm = (delta_viewport.x + delta_viewport.y) / min_dim;
                     let factor = 2.0_f32.powf(norm);
                     scale[0] = (scale[0] * factor).clamp(0.001, 1000.0);
                     scale[1] = (scale[1] * factor).clamp(0.001, 1000.0);

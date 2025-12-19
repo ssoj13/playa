@@ -16,7 +16,7 @@ Scope: convert all transform logic to a single Y‑up ground truth; fix gizmo/pi
 - **comp space**: origin = left‑bottom, +Y up, units = pixels.
 - **layer/object space**: origin = center of layer, +Y up, units = pixels.
 - **pivot**: offset from layer center in layer space (default 0,0).
-- **position**: pivot position in comp space (so pivot=0 ⇒ position = layer center).
+- **position**: pivot position in comp space (pivot=0 ⇒ position = layer center).
 
 ---
 
@@ -39,15 +39,11 @@ Create a single “ground truth” module, e.g. `src/entities/space.rs` (or exte
 - `comp_to_viewport(p, comp_size)` → `p - (w/2,h/2)`
 - `viewport_to_comp(p, comp_size)` → `p + (w/2,h/2)`
 
-2) **layer pivot helpers**:
-- `layer_pivot_in_comp(position, pivot, src_size)`
-- `position_from_pivot(pivot_pos, pivot, src_size, position_z)`
-
-3) **layer/object <-> source image pixels** (image is top‑left Y‑down):
+2) **layer/object <-> source image pixels** (image is top‑left Y‑down):
 - `object_to_src(p, src_size)` → `p + (w/2,h/2)` with Y flip to image space
 - `src_to_object(p, src_size)` → inverse of above
 
-4) **comp <-> image** (comp Y‑up ↔ image Y‑down):
+3) **comp <-> image** (comp Y‑up ↔ image Y‑down):
 - `comp_to_image(p, comp_size)` and `image_to_comp(p, comp_size)`
 
 All future code must use these helpers — no inline Y‑flips.
@@ -69,8 +65,8 @@ Update `build_inverse_matrix_3x3` to match the new math (GPU path still WIP but 
 
 ## Step 3 — Gizmo (viewport) + RMB drag
 Update `src/widgets/viewport/gizmo.rs` and RMB drag in `src/widgets/viewport/viewport_ui.rs`:
-- Gizmo translation = `comp_to_viewport(layer_pivot_in_comp(position, pivot, src_size), comp_size)`
-- On drag/move: `position = position_from_pivot(viewport_to_comp(gizmo_pos), pivot, src_size)`
+- Gizmo translation = `comp_to_viewport(position, comp_size)`
+- On drag/move: `position = viewport_to_comp(gizmo_pos, comp_size)`
 - All conversions must go through the new helper module (no manual flips).
 
 ---

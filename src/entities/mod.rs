@@ -17,6 +17,7 @@ pub mod loader_video;
 pub mod node;
 pub mod node_kind;
 pub mod project;
+pub mod space;
 pub mod text_node;
 pub mod traits;
 pub mod transform;
