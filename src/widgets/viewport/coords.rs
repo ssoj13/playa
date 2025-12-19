@@ -14,11 +14,6 @@ pub fn flip_y_vec2(v: egui::Vec2) -> egui::Vec2 {
     egui::vec2(v.x, -v.y)
 }
 
-/// Flip Y for a f32 value.
-pub fn flip_y_f32(v: f32) -> f32 {
-    -v
-}
-
 /// Flip Y for a f64 value.
 pub fn flip_y_f64(v: f64) -> f64 {
     -v

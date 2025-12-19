@@ -73,7 +73,7 @@ pub struct TimelineState {
     #[serde(skip)]
     pub clipboard: Vec<ClipboardLayer>, // Copied layers for Ctrl-C/Ctrl-V
     #[serde(skip)]
-    pub geom_cache: HashMap<usize, LayerGeom>, // Cached layer geometry for interactions
+    pub(super) geom_cache: HashMap<usize, LayerGeom>, // Cached layer geometry for interactions
 }
 
 impl std::fmt::Debug for TimelineState {
