@@ -1,4 +1,4 @@
-use super::ViewportState;
+use super::ViewportRenderState;
 use super::shaders::Shaders;
 use crate::entities::frame::{PixelBuffer, PixelFormat};
 use eframe::glow::{self, HasContext};
@@ -462,7 +462,7 @@ impl ViewportRenderer {
     }
 
     /// Render the viewport
-    pub fn render(&mut self, gl: &glow::Context, viewport_state: &ViewportState) {
+    pub fn render(&mut self, gl: &glow::Context, viewport_state: &ViewportRenderState) {
         // Check if we need to (re)compile shaders - store values to avoid borrow checker issues
         let needs_recompile = self.needs_recompile || self.program.is_none();
         if needs_recompile {
@@ -492,8 +492,8 @@ impl ViewportRenderer {
             gl.use_program(Some(program));
 
             // Set uniforms
-            let view_matrix = viewport_state.get_view_matrix();
-            let proj_matrix = viewport_state.get_projection_matrix();
+            let view_matrix = viewport_state.view_matrix;
+            let proj_matrix = viewport_state.projection_matrix;
 
             if let Some(loc) = gl.get_uniform_location(program, "u_view") {
                 gl.uniform_matrix_4_f32_slice(

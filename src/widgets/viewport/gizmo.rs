@@ -16,6 +16,7 @@ use crate::core::event_bus::BoxedEvent;
 use crate::core::player::Player;
 use crate::entities::comp_events::SetLayerTransformsEvent;
 use crate::entities::Project;
+use super::coords;
 
 /// Gizmo state - lives in PlayaApp, not saved.
 pub struct GizmoState {
@@ -301,7 +302,7 @@ fn gizmo_to_layer_transform(t: &Transform) -> ([f32; 3], [f32; 3], [f32; 3]) {
 
     // Layer rotation attrs are stored in DEGREES.
     (
-        [translation.x as f32, -(translation.y as f32), translation.z as f32],
+        [translation.x as f32, coords::flip_y_f64(translation.y) as f32, translation.z as f32],
         [
             (euler.0 as f32).to_degrees(),
             (euler.1 as f32).to_degrees(),

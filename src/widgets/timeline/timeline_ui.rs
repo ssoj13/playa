@@ -612,8 +612,10 @@ pub fn render_canvas(
 
         // Draw layers (egui automatically clips to visible area inside ScrollArea)
                         // Cache LayerGeom results to avoid recalculating in interaction pass
-                        let mut geom_cache: std::collections::HashMap<usize, super::timeline::LayerGeom> =
-                            std::collections::HashMap::with_capacity(child_order_inner.len());
+                        let pan_offset = state.pan_offset;
+                        let zoom = state.zoom;
+                        state.geom_cache.clear();
+                        state.geom_cache.reserve(child_order_inner.len());
 
                         // First pass: draw row backgrounds (alternating colors)
                         for row in 0..num_layers {
@@ -651,9 +653,9 @@ pub fn render_canvas(
                             // Calculate layer geometry and cache for interaction pass
                             let geom = super::timeline::LayerGeom::calc(
                                 child_start, child_end, play_start, play_end,
-                                child_y, timeline_rect, config, state
+                                child_y, timeline_rect, config, pan_offset, zoom
                             );
-                            geom_cache.insert(idx, geom);
+                            state.geom_cache.insert(idx, geom);
 
                             // Child bar color (use hash of name for stable color per clip)
                             let child_name = attrs.get_str("name").unwrap_or("?");
@@ -733,7 +735,7 @@ pub fn render_canvas(
                             let attrs = &layer.attrs;
 
                             // Use cached geometry from draw pass
-                            let Some(&geom) = geom_cache.get(&idx) else { continue };
+                            let Some(&geom) = state.geom_cache.get(&idx) else { continue };
 
                             // Tool detection with full geometry support (including Slide in trim zones)
                             let edge_threshold = 8.0;
@@ -799,9 +801,10 @@ pub fn render_canvas(
 
                         // Process active drag operations
                         // Use latest_pos() instead of hover_pos() to track cursor even outside window
-                        if let Some(drag) = &state.drag_state.clone() {
+                        if let Some(drag) = state.drag_state.take() {
+                            let mut keep_drag = true;
                             if let Some(current_pos) = ui.ctx().input(|i| i.pointer.latest_pos()) {
-                                match drag {
+                                match &drag {
                                     GlobalDragState::TimelinePan { drag_start_pos, initial_pan_offset } => {
                                         let delta_x = current_pos.x - drag_start_pos.x;
                                         let delta_frames = delta_x / (config.pixels_per_frame * state.zoom);
@@ -812,7 +815,7 @@ pub fn render_canvas(
                                         dispatch(Box::new(TimelinePanChangedEvent(new_pan)));
 
                                         if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            state.drag_state = None;
+                                            keep_drag = false;
                                         }
                                     }
                                     GlobalDragState::MovingLayer { layer_idx, initial_start, drag_start_x, drag_start_y, .. } => {
@@ -886,7 +889,7 @@ pub fn render_canvas(
                                                     new_idx: target_child,
                                                 }));
                                             }
-                                            state.drag_state = None;
+                                            keep_drag = false;
                                         }
                                     }
                                     GlobalDragState::AdjustPlayStart { layer_idx, initial_play_start, drag_start_x } => {
@@ -925,7 +928,7 @@ pub fn render_canvas(
                                                 layer_idx: *layer_idx,
                                                 new_play_start,
                                             }));
-                                            state.drag_state = None;
+                                            keep_drag = false;
                                         }
                                     }
                                     GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x } => {
@@ -966,7 +969,7 @@ pub fn render_canvas(
                                                 layer_idx: *layer_idx,
                                                 new_play_end,
                                             }));
-                                            state.drag_state = None;
+                                            keep_drag = false;
                                         }
                                     }
                                     GlobalDragState::SlidingLayer {
@@ -1030,7 +1033,7 @@ pub fn render_canvas(
                                                 new_trim_in,
                                                 new_trim_out,
                                             }));
-                                            state.drag_state = None;
+                                            keep_drag = false;
                                         }
                                     }
                                     // Other drag states are handled elsewhere (ProjectItem, TimelineScrub)
@@ -1040,36 +1043,38 @@ pub fn render_canvas(
 
                             // Cancel drag on escape
                             if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-                                state.drag_state = None;
+                                keep_drag = false;
+                            }
+
+                            if keep_drag {
+                                state.drag_state = Some(drag);
                             }
                         }
 
                         // Draw work area overlay (darken regions outside play_range)
                         let (play_start, play_end) = comp.play_range(true);
-                        let comp_start = comp._in();
-                        let comp_end = comp._out();
 
                         // Spammy per-frame log, use trace level
-                        log::trace!("work_area: play=[{}..{}] comp=[{}..{}]", play_start, play_end, comp_start, comp_end);
+                        log::trace!("work_area: play=[{}..{}]", play_start, play_end);
 
-                        // Darken region before work area start
-                        if play_start > comp_start {
-                            let start_x = frame_to_screen_x(comp_start as f32, timeline_rect.min.x, config, state);
-                            let end_x = frame_to_screen_x(play_start as f32, timeline_rect.min.x, config, state);
+                        // Darken everything outside play_range across the full visible width.
+                        let left_edge = timeline_rect.min.x;
+                        let right_edge = timeline_rect.max.x;
+                        let play_start_x = frame_to_screen_x(play_start as f32, timeline_rect.min.x, config, state);
+                        let play_end_x = frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x, config, state);
+
+                        if play_start_x > left_edge {
                             let overlay_rect = Rect::from_min_max(
-                                Pos2::new(start_x, timeline_rect.min.y),
-                                Pos2::new(end_x, timeline_rect.max.y),
+                                Pos2::new(left_edge, timeline_rect.min.y),
+                                Pos2::new(play_start_x, timeline_rect.max.y),
                             );
                             painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 100));
                         }
 
-                        // Darken region after work area end
-                        if play_end < comp_end {
-                            let start_x = frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x, config, state);
-                            let end_x = frame_to_screen_x((comp_end + 1) as f32, timeline_rect.min.x, config, state);
+                        if play_end_x < right_edge {
                             let overlay_rect = Rect::from_min_max(
-                                Pos2::new(start_x, timeline_rect.min.y),
-                                Pos2::new(end_x, timeline_rect.max.y),
+                                Pos2::new(play_end_x, timeline_rect.min.y),
+                                Pos2::new(right_edge, timeline_rect.max.y),
                             );
                             painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 100));
                         }

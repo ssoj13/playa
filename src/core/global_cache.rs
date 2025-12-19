@@ -203,6 +203,7 @@ impl GlobalFrameCache {
 
         // Signal UI that cache changed
         self.cache_manager.mark_dirty();
+        self.enforce_limits();
 
         (frame_clone, true)
     }
@@ -221,20 +222,6 @@ impl GlobalFrameCache {
         // Apply strategy: LastOnly clears previous frames for this comp
         if *self.strategy.lock().unwrap_or_else(|e| e.into_inner()) == CacheStrategy::LastOnly {
             self.clear_comp(comp_uuid, false); // Full removal for LastOnly strategy
-        }
-
-        // Eviction: both memory limit and capacity limit
-        // First evict if over memory limit
-        while self.cache_manager.check_memory_limit() {
-            if !self.evict_oldest() {
-                break; // Nothing to evict
-            }
-        }
-        // Then evict if over capacity limit (allow up to capacity entries)
-        while self.len() > self.capacity {
-            if !self.evict_oldest() {
-                break;
-            }
         }
 
         // Insert frame
@@ -268,6 +255,21 @@ impl GlobalFrameCache {
 
         // Signal UI that cache changed - triggers repaint to update indicators
         self.cache_manager.mark_dirty();
+        self.enforce_limits();
+    }
+
+    /// Enforce memory and capacity limits after insertions.
+    fn enforce_limits(&self) {
+        while self.cache_manager.check_memory_limit() {
+            if !self.evict_oldest() {
+                break; // Nothing to evict
+            }
+        }
+        while self.len() > self.capacity {
+            if !self.evict_oldest() {
+                break;
+            }
+        }
     }
 
     /// Evict oldest frame from cache
@@ -485,8 +487,7 @@ impl GlobalFrameCache {
 
     /// Get current cache size (total number of frames)
     pub fn len(&self) -> usize {
-        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
-        cache.values().map(|frames| frames.len()).sum()
+        self.lru_order.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Get number of cached comps

@@ -215,7 +215,6 @@ impl Project {
     pub fn attach_schemas(&mut self) {
         // Project schema
         self.attrs.attach_schema(&*PROJECT_SCHEMA);
-        self.migrate_attrs();
         
         // All nodes in media pool
         // Arc::make_mut: if refcount == 1, mutates in place; otherwise clones.
@@ -230,64 +229,6 @@ impl Project {
                     NodeKind::Text(t) => t.attach_schema(),
                 }
             }
-        }
-    }
-
-    /// Migrate legacy JSON attrs to typed values.
-    fn migrate_attrs(&mut self) {
-        self.migrate_uuid_list_attr("order");
-        self.migrate_uuid_list_attr("selection");
-        self.migrate_uuid_opt_attr("active");
-        self.migrate_prefs_attr();
-    }
-
-    fn migrate_uuid_list_attr(&mut self, key: &str) {
-        let Some(value) = self.attrs.get(key).cloned() else {
-            return;
-        };
-        match value {
-            AttrValue::Json(raw) => {
-                if let Ok(list) = serde_json::from_str::<Vec<Uuid>>(&raw) {
-                    self.attrs.set_uuid_list(key, &list);
-                }
-            }
-            AttrValue::List(_) => {}
-            _ => {}
-        }
-    }
-
-    fn migrate_uuid_opt_attr(&mut self, key: &str) {
-        let Some(value) = self.attrs.get(key).cloned() else {
-            return;
-        };
-        match value {
-            AttrValue::Json(raw) => {
-                if let Ok(opt) = serde_json::from_str::<Option<Uuid>>(&raw) {
-                    match opt {
-                        Some(id) => self.attrs.set_uuid(key, id),
-                        None => {
-                            let _ = self.attrs.remove(key);
-                        }
-                    }
-                }
-            }
-            AttrValue::Uuid(_) => {}
-            _ => {}
-        }
-    }
-
-    fn migrate_prefs_attr(&mut self) {
-        let Some(value) = self.attrs.get("prefs").cloned() else {
-            return;
-        };
-        match value {
-            AttrValue::Json(raw) => {
-                if let Ok(prefs) = serde_json::from_str::<ProjectPrefs>(&raw) {
-                    self.attrs.set_map("prefs", Self::prefs_to_map(&prefs));
-                }
-            }
-            AttrValue::Map(_) => {}
-            _ => {}
         }
     }
 

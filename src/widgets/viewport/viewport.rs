@@ -20,6 +20,8 @@
 use eframe::egui;
 use log::{info, trace};
 
+use super::coords;
+
 /// Scrubber line color when inside image bounds (white, 50% transparent)
 const SCRUB_NORMAL: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.5);
 
@@ -74,6 +76,13 @@ pub struct ViewportState {
     /// Last rendered frame number (for detecting frame changes)
     #[serde(skip)]
     pub last_rendered_frame: Option<i32>,
+}
+
+/// Render-only viewport state (cheap to copy into GL callbacks).
+#[derive(Clone, Copy)]
+pub struct ViewportRenderState {
+    pub view_matrix: [[f32; 4]; 4],
+    pub projection_matrix: [[f32; 4]; 4],
 }
 
 impl Default for ViewportState {
@@ -185,8 +194,7 @@ impl ViewportState {
 
         // Adjust pan to keep the point under the cursor stationary
         let zoom_ratio = self.zoom / old_zoom;
-        let mut cursor_to_center = cursor_pos - self.viewport_size * 0.5;
-        cursor_to_center.y = -cursor_to_center.y;
+        let cursor_to_center = coords::screen_to_viewport_centered(cursor_pos, self.viewport_size);
         self.pan = cursor_to_center - (cursor_to_center - self.pan) * zoom_ratio;
 
         trace!(
@@ -198,7 +206,7 @@ impl ViewportState {
     /// Handle pan (switches to Manual mode)
     pub fn handle_pan(&mut self, delta: egui::Vec2) {
         self.mode = ViewportMode::Manual;
-        self.pan += egui::vec2(delta.x, -delta.y);
+        self.pan += coords::screen_delta_to_viewport(delta);
         trace!("Pan: ({:.1}, {:.1})", self.pan.x, self.pan.y);
     }
 
@@ -336,6 +344,14 @@ impl ViewportState {
             None
         } else {
             None
+        }
+    }
+
+    /// Snapshot render-only matrices for GL callbacks.
+    pub fn render_state(&self) -> ViewportRenderState {
+        ViewportRenderState {
+            view_matrix: self.get_view_matrix(),
+            projection_matrix: self.get_projection_matrix(),
         }
     }
 

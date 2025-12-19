@@ -13,26 +13,10 @@ use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player::Player;
+use crate::widgets::actions::ActionQueue;
+use crate::widgets::file_dialogs::create_media_dialog;
 
-/// Viewport actions result - all actions via events
-#[derive(Default)]
-pub struct ViewportActions {
-    pub hovered: bool,
-    pub events: Vec<BoxedEvent>,
-}
-
-impl ViewportActions {
-    pub fn send<E: crate::core::event_bus::Event>(&mut self, event: E) {
-        self.events.push(Box::new(event));
-    }
-}
-
-/// Create configured file dialog for image/video selection
-fn create_image_dialog(title: &str) -> rfd::FileDialog {
-    rfd::FileDialog::new()
-        .add_filter("All Supported Files", crate::utils::media::ALL_EXTS)
-        .set_title(title)
-}
+pub type ViewportActions = ActionQueue;
 
 /// Render viewport inside provided UI (dock tab or fullscreen panel)
 pub fn render(
@@ -74,7 +58,7 @@ pub fn render(
 
     if double_clicked {
         info!("Double-click detected, opening file dialog");
-        if let Some(paths) = create_image_dialog("Select Media Files").pick_files()
+        if let Some(paths) = create_media_dialog("Select Media Files").pick_files()
             && !paths.is_empty() {
                 info!("Files selected: {:?}", paths);
                 actions.send(crate::widgets::project::project_events::AddClipsEvent(paths));
@@ -106,7 +90,7 @@ pub fn render(
         let render_start = std::time::Instant::now();
 
         let renderer = viewport_renderer.clone();
-        let state = viewport_state.clone();
+        let render_state = viewport_state.render_state();
         let mut needs_upload = texture_needs_upload;
         {
             let r = renderer.lock().unwrap();
@@ -129,7 +113,7 @@ pub fn render(
                 if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
                     renderer.upload_texture(gl, w, h, pixels, *pixel_format);
                 }
-                renderer.render(gl, &state);
+                renderer.render(gl, &render_state);
             })),
         });
 

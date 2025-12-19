@@ -95,73 +95,6 @@ impl Player {
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
         self.attrs.attach_schema(&*PLAYER_SCHEMA);
-        self.migrate_attrs();
-    }
-
-    fn migrate_attrs(&mut self) {
-        self.migrate_uuid_opt_attr("active_comp");
-        self.migrate_previous_comp_history();
-        self.migrate_selected_seq_idx();
-    }
-
-    fn migrate_uuid_opt_attr(&mut self, key: &str) {
-        let Some(value) = self.attrs.get(key).cloned() else {
-            return;
-        };
-        match value {
-            AttrValue::Json(raw) => {
-                if let Ok(opt) = serde_json::from_str::<Option<Uuid>>(&raw) {
-                    match opt {
-                        Some(id) => self.attrs.set_uuid(key, id),
-                        None => {
-                            let _ = self.attrs.remove(key);
-                        }
-                    }
-                }
-            }
-            AttrValue::Uuid(_) => {}
-            _ => {}
-        }
-    }
-
-    fn migrate_previous_comp_history(&mut self) {
-        if self.attrs.get("previous_comp_history").is_some() {
-            return;
-        }
-        let Some(value) = self.attrs.get("previous_comp").cloned() else {
-            return;
-        };
-        let prev = match value {
-            AttrValue::Json(raw) => serde_json::from_str::<Option<Uuid>>(&raw).ok().flatten(),
-            AttrValue::Uuid(id) => Some(id),
-            _ => None,
-        };
-        if let Some(id) = prev {
-            self.attrs.set_uuid_list("previous_comp_history", &[id]);
-        } else {
-            self.attrs.set_uuid_list("previous_comp_history", &[]);
-        }
-        let _ = self.attrs.remove("previous_comp");
-    }
-
-    fn migrate_selected_seq_idx(&mut self) {
-        let Some(value) = self.attrs.get("selected_seq_idx").cloned() else {
-            return;
-        };
-        match value {
-            AttrValue::Json(raw) => {
-                if let Ok(opt) = serde_json::from_str::<Option<usize>>(&raw) {
-                    match opt {
-                        Some(v) => self.attrs.set("selected_seq_idx", AttrValue::Int(v as i32)),
-                        None => {
-                            let _ = self.attrs.remove("selected_seq_idx");
-                        }
-                    }
-                }
-            }
-            AttrValue::Int(_) => {}
-            _ => {}
-        }
     }
 
     // === Accessor methods for attrs fields ===
@@ -567,12 +500,9 @@ impl Player {
         let (play_start, play_end) = self.play_range(project);
         let loop_enabled = self.loop_enabled();
 
-        // Calculate target frame with saturating arithmetic
-        let target = if count > 0 {
-            current.saturating_add(count)
-        } else {
-            current.saturating_sub(count.unsigned_abs() as i32)
-        };
+        // Calculate target frame with saturating arithmetic (avoid i32::MIN overflow)
+        let target = (i64::from(current) + i64::from(count))
+            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
 
         // Apply loop/clamp logic based on loop_enabled
         let range_size = play_end - play_start + 1;

@@ -7,13 +7,7 @@ use crate::entities::node::Node;
 use crate::widgets::project::project_events::*;
 use crate::core::player::Player;
 use crate::widgets::project::project::ProjectActions;
-
-/// Create configured file dialog for image/video selection
-fn create_image_dialog(title: &str) -> rfd::FileDialog {
-    rfd::FileDialog::new()
-        .add_filter("All Supported Files", crate::utils::media::ALL_EXTS)
-        .set_title(title)
-}
+use crate::widgets::file_dialogs::create_media_dialog;
 
 /// Render project window (dock tab): Unified list of Clips & Compositions
 pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> ProjectActions {
@@ -47,7 +41,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
         }
         ui.separator();
         if ui.button("+Clip").clicked()
-            && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
+            && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
             && !paths.is_empty()
         {
             actions.send(AddClipsEvent(paths));
@@ -320,7 +314,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
 
     // Double-click on empty area opens file dialog (same as Add Clip button)
     if panel_response.double_clicked()
-        && let Some(paths) = create_image_dialog("Add Media Files").pick_files()
+            && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
             && !paths.is_empty() {
                 actions.send(AddClipsEvent(paths));
             }

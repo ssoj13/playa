@@ -157,8 +157,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n._in(),
             NodeKind::Comp(n) => n._in(),
-            NodeKind::Camera(_) => 0,
-            NodeKind::Text(_) => 0,
+            NodeKind::Camera(n) => n._in(),
+            NodeKind::Text(n) => n._in(),
         }
     }
     
@@ -167,8 +167,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n._out(),
             NodeKind::Comp(n) => n._out(),
-            NodeKind::Camera(_) => 0,
-            NodeKind::Text(_) => 1,
+            NodeKind::Camera(n) => n._out(),
+            NodeKind::Text(n) => n._out(),
         }
     }
     
@@ -177,8 +177,8 @@ impl NodeKind {
         match self {
             NodeKind::File(n) => n.frame(),
             NodeKind::Comp(n) => n.frame(),
-            NodeKind::Camera(_) => 0,
-            NodeKind::Text(_) => 0,
+            NodeKind::Camera(n) => n.frame(),
+            NodeKind::Text(n) => n.frame(),
         }
     }
     

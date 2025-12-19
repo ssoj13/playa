@@ -8,6 +8,7 @@ use crate::entities::Attrs;
 use eframe::egui::{self, Pos2};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use std::collections::HashMap;
 
 /// Clipboard entry for copied layers
 /// Stores source UUID and a clone of the layer attributes
@@ -71,6 +72,8 @@ pub struct TimelineState {
     pub hatch_texture: Option<egui::TextureHandle>, // Diagonal hatch pattern for file comps
     #[serde(skip)]
     pub clipboard: Vec<ClipboardLayer>, // Copied layers for Ctrl-C/Ctrl-V
+    #[serde(skip)]
+    pub geom_cache: HashMap<usize, LayerGeom>, // Cached layer geometry for interactions
 }
 
 impl std::fmt::Debug for TimelineState {
@@ -87,6 +90,7 @@ impl std::fmt::Debug for TimelineState {
             .field("outline_width", &self.outline_width)
             .field("hatch_texture", &self.hatch_texture.as_ref().map(|_| "TextureHandle"))
             .field("clipboard", &format!("{} layers", self.clipboard.len()))
+            .field("geom_cache", &format!("{} entries", self.geom_cache.len()))
             .finish()
     }
 }
@@ -105,6 +109,7 @@ impl Default for TimelineState {
             outline_width: 400.0,     // Default outline panel width
             hatch_texture: None,
             clipboard: Vec::new(),
+            geom_cache: HashMap::new(),
         }
     }
 }
@@ -227,13 +232,14 @@ impl LayerGeom {
         child_y: f32,
         timeline_rect: eframe::egui::Rect,
         config: &TimelineConfig,
-        state: &TimelineState,
+        pan_offset: f32,
+        zoom: f32,
     ) -> Self {
         use eframe::egui::{Pos2, Rect};
 
         let frame_to_screen_x = |frame: f32, timeline_min_x: f32| -> f32 {
-            let frame_offset = frame - state.pan_offset;
-            timeline_min_x + (frame_offset * config.pixels_per_frame * state.zoom)
+            let frame_offset = frame - pan_offset;
+            timeline_min_x + (frame_offset * config.pixels_per_frame * zoom)
         };
 
         let full_bar_x_start = frame_to_screen_x(child_start as f32, timeline_rect.min.x);
