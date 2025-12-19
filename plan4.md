@@ -376,10 +376,10 @@ fn compose_3d(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
 
 ## 6. Open Decisions
 
-1. **Euler order:** ZYX (AE default) or configurable?
-2. **Default camera:** Auto-create when 3D used, or require explicit?
+1. **Euler order:** ZYX (AE default) or configurable? MAke a comparison and ask question
+2. **Default camera:** Lookup for camera when 3D used, fallback to default app camera settings.
 3. **2D/3D toggle:** Per-comp setting, or auto-detect?
-4. **Gizmo:** 3D gizmo in v1, or defer to number inputs?
+4. **Gizmo:** 3D gizmo in v1, we already have one
 
 ---
 
