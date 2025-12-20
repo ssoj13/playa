@@ -4,16 +4,12 @@
 //!
 //! ## Coordinate System
 //!
-//! Layer `position` attribute is **absolute** in comp space:
-//! - Origin at left-bottom corner of comp, +Y up
-//! - `position = (comp_w/2, comp_h/2)` = layer centered in comp
-//! - `position = (0, 0)` = layer center at left-bottom corner
+//! Layer `position` is in **frame space** (same as viewport space):
+//! - Origin at CENTER of comp, +Y up
+//! - `position = (0, 0, 0)` = layer centered
+//! - `position = (100, 50, 0)` = layer 100px right, 50px up from center
 //!
-//! Viewport space has origin at center, +Y up. We use `comp_to_viewport()` to convert:
-//! - `comp_to_viewport(pos, comp_size)` = `pos - comp_size/2`
-//! - So centered layer `(comp_w/2, comp_h/2)` -> viewport `(0, 0)` = center
-//!
-//! This matches how OpenGL renderer centers the image (quad at 0,0 in viewport space).
+//! Frame space == viewport space, so NO conversion needed for gizmo!
 
 use eframe::egui;
 use transform_gizmo_egui::{
@@ -31,7 +27,7 @@ use crate::entities::comp_events::SetLayerTransformsEvent;
 use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::keys::{A_POSITION, A_ROTATION, A_SCALE};
-use crate::entities::space;
+
 
 /// Gizmo state - lives in PlayaApp, not saved.
 pub struct GizmoState {
@@ -273,7 +269,7 @@ fn layer_to_gizmo_transform(
     position: [f32; 3],
     rotation: [f32; 3],
     scale: [f32; 3],
-    comp_size: (usize, usize),
+    _comp_size: (usize, usize),
 ) -> Transform {
     use glam::{DQuat, DVec3};
 
@@ -284,18 +280,13 @@ fn layer_to_gizmo_transform(
     // - ignore rotation.x/y (we're currently a 2D tool; compositor only uses rot.z)
     // - for Move/Rotate, force uniform scale=1 to prevent rings/handles becoming oval
     //   when the layer has non-uniform scale (scale.x != scale.y).
-    // - translation is the layer pivot position in comp space (position).
+    // - translation is the layer position (already in frame/viewport space).
     // This is purely a *visual/input normalization* for gizmo interaction; we merge the
     // output back into the original layer attrs and only write the edited channel.
     //
-    // Position is absolute in comp space (origin at left-bottom, Y-up).
-    // Default position = (comp_w/2, comp_h/2) = layer centered in comp.
-    // comp_to_viewport converts to viewport space (origin at center).
-    let vp = space::comp_to_viewport(
-        glam::Vec2::new(position[0], position[1]),
-        comp_size,
-    );
-    let translation = DVec3::new(vp.x as f64, vp.y as f64, 0.0);
+    // Position is in frame space (origin at center, Y-up).
+    // Frame space == viewport space, so NO conversion needed!
+    let translation = DVec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
     // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
     // In 2D we only care about Z.
     let rotation_quat = DQuat::from_euler(
@@ -321,7 +312,7 @@ fn layer_to_gizmo_transform(
 
 fn gizmo_to_layer_transform(
     t: &Transform,
-    comp_size: (usize, usize),
+    _comp_size: (usize, usize),
 ) -> ([f32; 3], [f32; 3], [f32; 3]) {
     use glam::{DQuat, DVec3};
 
@@ -330,15 +321,11 @@ fn gizmo_to_layer_transform(
     let scale = DVec3::new(t.scale.x, t.scale.y, t.scale.z);
 
     let euler = rotation.to_euler(glam::EulerRot::XYZ);
-    // Convert viewport space back to comp space (inverse of comp_to_viewport)
-    let comp_pos = space::viewport_to_comp(
-        glam::Vec2::new(translation.x as f32, translation.y as f32),
-        comp_size,
-    );
+    // Position is already in frame space (same as viewport) - no conversion needed!
 
     // Layer rotation attrs are stored in DEGREES.
     (
-        [comp_pos.x, comp_pos.y, translation.z as f32],
+        [translation.x as f32, translation.y as f32, translation.z as f32],
         [
             (euler.0 as f32).to_degrees(),
             (euler.1 as f32).to_degrees(),

@@ -377,12 +377,12 @@ pub fn transform_frame_with_camera(
                 .enumerate()
                 .for_each(|(y, row)| {
                     for x in 0..dst_w {
-                        // Transform dst coord to src coord
+                        // Transform dst coord (image space) -> frame space (centered)
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
-                        let comp_pt = space::image_to_comp(dst_pt, comp_size);
-                        // Use Mat4 transform (project to 2D for sampling)
-                        let comp_pt3 = Vec3::new(comp_pt.x, comp_pt.y, 0.0);
-                        let obj_pt3 = inv.transform_point3(comp_pt3);
+                        let frame_pt = space::image_to_frame(dst_pt, comp_size);
+                        // Apply inverse model transform: frame -> object space
+                        let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
+                        let obj_pt3 = inv.transform_point3(frame_pt3);
                         let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
                         let src_pt = space::object_to_src(obj_pt, src_size);
 
@@ -404,9 +404,9 @@ pub fn transform_frame_with_camera(
                 .for_each(|(y, row)| {
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
-                        let comp_pt = space::image_to_comp(dst_pt, comp_size);
-                        let comp_pt3 = Vec3::new(comp_pt.x, comp_pt.y, 0.0);
-                        let obj_pt3 = inv.transform_point3(comp_pt3);
+                        let frame_pt = space::image_to_frame(dst_pt, comp_size);
+                        let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
+                        let obj_pt3 = inv.transform_point3(frame_pt3);
                         let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
                         let src_pt = space::object_to_src(obj_pt, src_size);
 
@@ -431,9 +431,9 @@ pub fn transform_frame_with_camera(
                 .for_each(|(y, row)| {
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
-                        let comp_pt = space::image_to_comp(dst_pt, comp_size);
-                        let comp_pt3 = Vec3::new(comp_pt.x, comp_pt.y, 0.0);
-                        let obj_pt3 = inv.transform_point3(comp_pt3);
+                        let frame_pt = space::image_to_frame(dst_pt, comp_size);
+                        let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
+                        let obj_pt3 = inv.transform_point3(frame_pt3);
                         let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
                         let src_pt = space::object_to_src(obj_pt, src_size);
 

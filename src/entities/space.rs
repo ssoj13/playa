@@ -1,49 +1,65 @@
-//! Coordinate space conversions (Y-up) for comp/layer sampling.
+//! Coordinate space conversions for compositing.
 //!
-//! ## Coordinate Spaces
+//! ## Coordinate Spaces (simplified)
 //!
-//! - **Comp space**: origin at left-bottom, +Y up (pixels).
-//!   Layer `position` attribute is absolute in this space.
-//!   `position = (comp_w/2, comp_h/2)` = layer centered.
+//! - **Image space**: origin top-left, +Y down (pixels).
+//!   Standard image/texture coordinates for sampling.
 //!
-//! - **Viewport space**: origin at viewport center, +Y up (pixels).
-//!   Used by gizmo and OpenGL renderer. Image quad centered at (0,0).
-//!   `comp_to_viewport()` converts: `pos - comp_size/2`
+//! - **Frame space**: origin CENTER, +Y up (pixels).
+//!   Used for layer transforms and viewport/gizmo.
+//!   `position = (0,0,0)` = layer centered in comp.
+//!   Same as viewport space - no conversion needed for gizmo!
 //!
 //! - **Object space**: origin at layer center, +Y up (pixels).
-//!   Used for transform math (rotation/scale around pivot).
+//!   Local space for rotation/scale around pivot.
 //!
-//! - **Image space**: origin at top-left, +Y down (pixels).
-//!   Standard image/texture coordinates.
+//! ## Transform Pipeline
+//!
+//! ```text
+//! Screen pixel (image space)
+//!     |  image_to_frame()
+//!     v
+//! Frame space (centered, Y-up)
+//!     |  inverse model transform
+//!     v
+//! Object space (layer center)
+//!     |  object_to_src()
+//!     v
+//! Source pixel (for texture sampling)
+//! ```
 
 use glam::Vec2;
 
+// =============================================================================
+// Frame Space (centered, Y-up) - PRIMARY coordinate system for transforms
+// =============================================================================
+
+/// Image space -> Frame space (centered, Y-up).
+/// 
+/// Converts screen/image pixel coords to centered frame coords.
+/// - Image (0, 0) = top-left -> Frame (-w/2, h/2)
+/// - Image (w/2, h/2) = center -> Frame (0, 0)
+/// - Image (w, h) = bottom-right -> Frame (w/2, -h/2)
 #[inline]
-pub fn comp_to_viewport(p: Vec2, comp_size: (usize, usize)) -> Vec2 {
-    let w = comp_size.0 as f32;
-    let h = comp_size.1 as f32;
-    p - Vec2::new(w * 0.5, h * 0.5)
+pub fn image_to_frame(p: Vec2, size: (usize, usize)) -> Vec2 {
+    let w = size.0 as f32;
+    let h = size.1 as f32;
+    Vec2::new(p.x - w * 0.5, h * 0.5 - p.y)
 }
 
+/// Frame space -> Image space.
+/// 
+/// Inverse of image_to_frame.
 #[inline]
-pub fn viewport_to_comp(p: Vec2, comp_size: (usize, usize)) -> Vec2 {
-    let w = comp_size.0 as f32;
-    let h = comp_size.1 as f32;
-    p + Vec2::new(w * 0.5, h * 0.5)
+pub fn frame_to_image(p: Vec2, size: (usize, usize)) -> Vec2 {
+    let w = size.0 as f32;
+    let h = size.1 as f32;
+    Vec2::new(p.x + w * 0.5, h * 0.5 - p.y)
 }
 
-#[inline]
-pub fn image_to_comp(p: Vec2, comp_size: (usize, usize)) -> Vec2 {
-    let h = comp_size.1 as f32;
-    Vec2::new(p.x, h - p.y)
-}
-
-#[allow(dead_code)]
-#[inline]
-pub fn comp_to_image(p: Vec2, comp_size: (usize, usize)) -> Vec2 {
-    let h = comp_size.1 as f32;
-    Vec2::new(p.x, h - p.y)
-}
+// =============================================================================
+// Object Space (layer center origin)
+// =============================================================================
 
 #[inline]
 pub fn object_to_src(p: Vec2, src_size: (usize, usize)) -> Vec2 {
