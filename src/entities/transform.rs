@@ -58,12 +58,15 @@ pub fn build_inverse_transform(
         if scale[2].abs() > f32::EPSILON { 1.0 / scale[2] } else { 0.0 },
     );
 
-    // Inverse rotation: negate all angles and reverse order (XYZ is inverse of ZYX)
+    // Inverse rotation: reverse order (XYZ is inverse of ZYX).
+    // Our convention is CW+ (clockwise positive), glam uses CCW+ (math convention).
+    // Forward rotation in our convention = negative in glam.
+    // Inverse of forward = positive in glam = just pass our values as-is!
     let inv_rot = Quat::from_euler(
         EulerRot::XYZ,  // reverse of ZYX
-        -rotation[0],   // NEGATE for inverse
-        -rotation[1],   // NEGATE for inverse
-        -rotation[2],   // NEGATE for inverse
+        rotation[0],    // NOT negated: our CW+ -> glam CCW+ for inverse
+        rotation[1],
+        rotation[2],
     );
 
     // Inverse transform chain (right-to-left application):

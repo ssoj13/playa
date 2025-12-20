@@ -1016,13 +1016,15 @@ impl CompNode {
                 let rot_rad = [rot[0].to_radians(), rot[1].to_radians(), rot[2].to_radians()];
                 let src_size = (frame.width(), frame.height());
                 
-                // Apply CPU transform with optional camera projection
-                // Camera enables perspective/ortho 3D; without camera uses 2D ortho
-                let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt) 
-                    || view_projection.is_some();
-                
+                // Apply CPU transform with optional camera projection.
+                // Camera enables perspective/ortho 3D; without camera uses 2D ortho.
+                // Always transform if source size != comp size (frame space centering).
+                let canvas = self.dim();
+                let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt)
+                    || view_projection.is_some()
+                    || src_size != canvas;  // Source != output = needs centering
+
                 if needs_transform {
-                    let canvas = self.dim();
                     frame = transform::transform_frame_with_camera(
                         &frame, canvas, pos, rot_rad, scl, pvt, view_projection
                     );
