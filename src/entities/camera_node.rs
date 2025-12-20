@@ -47,7 +47,7 @@ impl CameraNode {
         // Camera-specific
         attrs.set("projection_type", AttrValue::Str("perspective".to_string()));
         attrs.set("point_of_interest", AttrValue::Vec3([0.0, 0.0, 0.0]));
-        attrs.set("use_poi", AttrValue::Bool(true)); // default: use POI like AE
+        attrs.set("use_poi", AttrValue::Bool(false)); // default: rotation mode (POI mode available via toggle)
         
         // Lens - perspective mode (AE defaults)
         attrs.set("fov", AttrValue::Float(39.6));
