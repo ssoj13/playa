@@ -88,19 +88,27 @@ impl GizmoState {
 
         // Get camera matrices if 3D camera is active
         let frame_idx = player.current_frame(project);
-        let camera_matrices = get_camera_matrices(project, comp_uuid, frame_idx);
+        let camera_matrices = get_camera_matrices(project, comp_uuid, frame_idx, ui.clip_rect());
 
         // Build matrices (uses camera for 3D, ortho for 2D)
         let (view, proj) = build_gizmo_matrices(viewport_state, ui.clip_rect(), camera_matrices);
 
         // Configure gizmo
         let gizmo_prefs = project.gizmo_prefs();
+        
+        // Shift enables snapping
+        let snapping = ui.input(|i| i.modifiers.shift);
+        
         self.gizmo.update_config(GizmoConfig {
             view_matrix: view,
             projection_matrix: proj,
             viewport: ui.clip_rect(),
             modes: gizmo_modes,
             orientation: GizmoOrientation::Local,
+            snapping,
+            snap_angle: 5.0_f32.to_radians(),    // 5 degrees
+            snap_distance: 10.0,                  // 10 units
+            snap_scale: 0.1,                      // 0.1 step
             visuals: GizmoVisuals {
                 gizmo_size: gizmo_prefs.pref_manip_size,
                 stroke_width: gizmo_prefs.pref_manip_stroke_width,
@@ -238,18 +246,24 @@ impl ToolMode {
 ///
 /// Returns (view, projection) separately for gizmo library.
 /// Returns None if no camera in comp (2D mode).
-fn get_camera_matrices(project: &Project, comp_uuid: Uuid, frame_idx: i32) -> Option<(glam::Mat4, glam::Mat4)> {
+fn get_camera_matrices(
+    project: &Project,
+    comp_uuid: Uuid,
+    frame_idx: i32,
+    viewport_rect: egui::Rect,
+) -> Option<(glam::Mat4, glam::Mat4)> {
     let media = project.media.read().ok()?;
 
     project.with_comp(comp_uuid, |comp| {
         let (camera, pos, rot) = comp.active_camera(frame_idx, &media)?;
 
-        // Calculate aspect ratio and comp height for projection
-        let (w, h) = comp.dim();
-        let aspect = w as f32 / h as f32;
+        // Use VIEWPORT aspect for gizmo projection (not comp aspect).
+        // Gizmo is drawn in viewport space, so projection must match viewport.
+        let (_, comp_h) = comp.dim();
+        let aspect = viewport_rect.width() / viewport_rect.height();
 
         let view = camera.view_matrix(pos, rot);
-        let proj = camera.projection_matrix(aspect, h as f32);
+        let proj = camera.projection_matrix(aspect, comp_h as f32);
 
         Some((view, proj))
     }).flatten()

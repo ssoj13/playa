@@ -684,7 +684,7 @@ pub fn handle_app_event(
                 // Camera uses RH convention: looks in -Z direction.
                 // Camera at Z=+1000 looks toward origin (Z=0) where layers live.
                 // User can adjust via layer.position in inspector.
-                let initial_pos = if is_camera { Some([0.0, 0.0, 1000.0]) } else { None };
+                let initial_pos = if is_camera { Some([0.0, 0.0, 800.0]) } else { None };
                 node.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim, renderable, initial_pos)
             } else {
                 Err(anyhow::anyhow!("Parent comp not found"))
