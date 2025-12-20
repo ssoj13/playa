@@ -71,7 +71,8 @@ pub struct AppSettings {
     pub show_tooltips: bool,      // Show tooltips on toolbar controls (2s delay)
     pub dark_mode: bool,
     pub font_size: f32,
-    pub timeline_layer_height: f32, // Layer row height in timeline (default 32.0)
+    pub timeline_layer_height: f32,       // Layer row height in timeline (default 32.0)
+    pub timeline_name_column_width: f32,  // Name column width in outline (default 150.0)
     pub timeline_snap_enabled: bool,
     pub timeline_lock_work_area: bool,
     pub preload_radius: i32, // Frames to preload around playhead (-1 = all, default 100)
@@ -109,6 +110,7 @@ impl Default for AppSettings {
             dark_mode: true,
             font_size: 11.0,
             timeline_layer_height: 32.0,
+            timeline_name_column_width: 150.0,
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             preload_radius: -1,
@@ -149,6 +151,14 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
         egui::Slider::new(&mut settings.timeline_layer_height, 20.0..=64.0)
             .suffix(" px")
             .step_by(2.0),
+    );
+    ui.add_space(8.0);
+
+    ui.label("Timeline Name Column Width:");
+    ui.add(
+        egui::Slider::new(&mut settings.timeline_name_column_width, 80.0..=300.0)
+            .suffix(" px")
+            .step_by(10.0),
     );
     ui.add_space(16.0);
 

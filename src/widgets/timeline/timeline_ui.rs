@@ -502,6 +502,10 @@ pub fn render_canvas(
     let tab_rect = ui.max_rect(); // Full tab rect for hover detection
 
     // Draw ruler with proper layout sync
+    // Zero item_spacing to match outline panel alignment
+    let saved_spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+
     ui.horizontal(|ui| {
         // Add left spacer only in OutlineOnly mode (to align ruler with outline column)
         // In CanvasOnly mode there's no outline, in Split mode outline is separate panel
@@ -557,6 +561,9 @@ pub fn render_canvas(
         }
 
     ui.add_space(4.0);
+
+    // Restore spacing for layers area
+    ui.spacing_mut().item_spacing.y = saved_spacing;
 
     // Layers area with vertical scroll (but horizontal pan via state.pan_offset)
     // ScrollArea is needed here because layers can extend beyond visible area vertically

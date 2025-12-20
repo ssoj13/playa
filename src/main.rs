@@ -918,6 +918,7 @@ impl PlayaApp {
             &self.event_bus,
             self.settings.show_tooltips,
             self.settings.timeline_layer_height,
+            self.settings.timeline_name_column_width,
         );
 
         // Store hover state for input routing

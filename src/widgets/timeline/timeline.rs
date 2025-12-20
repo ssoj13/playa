@@ -45,10 +45,11 @@ impl Default for TimelineConfig {
 }
 
 impl TimelineConfig {
-    /// Create config with custom layer height from settings
-    pub fn with_layer_height(layer_height: f32) -> Self {
+    /// Create config with custom settings
+    pub fn new(layer_height: f32, name_column_width: f32) -> Self {
         Self {
             layer_height,
+            name_column_width,
             ..Default::default()
         }
     }

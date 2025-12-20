@@ -225,6 +225,15 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
             }
         }
 
+        // Camera projection type: perspective/orthographic toggle
+        ("projection_type", AttrValue::Str(current)) => {
+            let mut is_ortho = current == "orthographic";
+            if ui.checkbox(&mut is_ortho, "Orthographic").changed() {
+                *current = if is_ortho { "orthographic" } else { "perspective" }.to_string();
+                scope_changed = true;
+            }
+        }
+
         // Known slider attributes with specific ranges
         ("speed", AttrValue::Float(v)) => {
             scope_changed |= ui.add(egui::Slider::new(v, 0.1..=4.0).step_by(0.1)).changed();
