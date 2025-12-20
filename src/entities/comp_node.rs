@@ -950,6 +950,24 @@ impl CompNode {
         
         // Collect visible renderable layers with their Z positions for sorting.
         // Each entry: (layer_index, z_position) - index used for stable sort fallback.
+        //
+        // LIMITATION: Layer-level sorting, not per-pixel depth testing.
+        //
+        // Currently we use painter's algorithm with whole-layer Z sorting based on
+        // the layer's center position. This means:
+        //   - Rotated layers that span multiple Z depths sort as a single unit
+        //   - A layer rotated in 3D crossing Z=0 will entirely appear in front of
+        //     or behind other layers, not correctly intersecting per-pixel
+        //   - No proper depth buffer / Z-buffer compositing
+        //
+        // For true per-pixel 3D compositing, we would need:
+        //   1. GPU depth buffer - render to FBO with depth attachment
+        //   2. Per-pixel depth test in fragment shader
+        //   3. Or Order-Independent Transparency (OIT) for alpha blending
+        //
+        // This is a fundamental architectural limitation of the current CPU/hybrid
+        // compositor. GPU compositor with depth buffer would solve this.
+        //
         let mut renderable_layers: Vec<(usize, f32)> = Vec::new();
         
         for (idx, layer) in self.layers.iter().enumerate() {
