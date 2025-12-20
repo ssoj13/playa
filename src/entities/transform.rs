@@ -7,7 +7,7 @@
 //! Rotation order: ZYX (AE-style) - rotate Z first, then Y, then X.
 //! Rotation sign: clockwise-positive when looking down axis (user convention).
 
-use glam::{Mat4, Vec2, Vec3, Quat, EulerRot};
+use glam::{Mat4, Vec2, Vec3, Vec4, Quat, EulerRot};
 use half::f16 as F16;
 use rayon::prelude::*;
 
@@ -15,7 +15,7 @@ use super::frame::{Frame, PixelBuffer, PixelFormat};
 use super::space;
 
 /// Check if transform is identity (no-op).
-/// 
+///
 /// Returns true if position==pivot, rotation=0, scale=1 — no transform needed.
 #[inline]
 pub fn is_identity(position: [f32; 3], rotation: [f32; 3], scale: [f32; 3], pivot: [f32; 3]) -> bool {
@@ -28,6 +28,55 @@ pub fn is_identity(position: [f32; 3], rotation: [f32; 3], scale: [f32; 3], pivo
         && scale[0] == 1.0
         && scale[1] == 1.0
         && scale[2] == 1.0
+}
+
+/// Unproject NDC point to world space plane at given Z.
+///
+/// For perspective projection, we cast a ray from the camera through the NDC point
+/// and intersect it with a horizontal plane at z=plane_z.
+///
+/// # Arguments
+/// - `ndc` - Normalized device coordinates [-1, 1]
+/// - `inv_vp` - Inverse view-projection matrix
+/// - `plane_z` - Z coordinate of the plane to intersect
+///
+/// # Returns
+/// World-space point on the plane, or None if ray is parallel to plane.
+#[inline]
+fn unproject_to_plane(ndc: Vec2, inv_vp: Mat4, plane_z: f32) -> Option<Vec3> {
+    // Unproject two points at near and far planes to get the ray
+    let near_clip = Vec4::new(ndc.x, ndc.y, -1.0, 1.0);
+    let far_clip = Vec4::new(ndc.x, ndc.y, 1.0, 1.0);
+
+    let near_world4 = inv_vp * near_clip;
+    let far_world4 = inv_vp * far_clip;
+
+    // Perspective divide
+    if near_world4.w.abs() < 1e-6 || far_world4.w.abs() < 1e-6 {
+        return None;
+    }
+    let near_world = Vec3::new(
+        near_world4.x / near_world4.w,
+        near_world4.y / near_world4.w,
+        near_world4.z / near_world4.w,
+    );
+    let far_world = Vec3::new(
+        far_world4.x / far_world4.w,
+        far_world4.y / far_world4.w,
+        far_world4.z / far_world4.w,
+    );
+
+    // Ray direction
+    let ray_dir = far_world - near_world;
+
+    // Intersect with z = plane_z
+    // near_world.z + t * ray_dir.z = plane_z
+    if ray_dir.z.abs() < 1e-6 {
+        return None; // Ray parallel to plane
+    }
+    let t = (plane_z - near_world.z) / ray_dir.z;
+
+    Some(near_world + ray_dir * t)
 }
 
 /// Build inverse transform matrix for sampling.
@@ -326,10 +375,10 @@ pub fn transform_frame(
 }
 
 /// Transform frame with optional camera view-projection.
-/// 
+///
 /// When camera is provided, applies full MVP transform for perspective/ortho projection.
-/// Screen pixels are transformed through: screen -> NDC -> world -> object -> texture.
-/// 
+/// For perspective, uses ray-plane intersection to properly handle the nonlinear projection.
+///
 /// # Arguments
 /// - `src` - Source frame (U8/F16/F32)
 /// - `canvas` - Output dimensions (width, height)
@@ -350,43 +399,52 @@ pub fn transform_frame_with_camera(
     let src_w = src.width();
     let src_h = src.height();
     let (dst_w, dst_h) = canvas;
-    
+
     let comp_size = canvas;
     let src_size = (src_w, src_h);
 
     // Build inverse model transform: world/comp -> object space
     let inv_model = build_inverse_transform(position, rotation, scale, pivot);
 
-    // Build full inverse MVP if camera provided
-    // When camera is used, we need to:
-    // 1. Convert frame space (pixels) -> NDC (-1..1)
-    // 2. Apply VP^-1 (NDC -> world)
-    // 3. Apply Model^-1 (world -> object)
-    //
-    // For step 1, we build a matrix that scales pixels to NDC:
-    // NDC_x = frame_x / (width/2), NDC_y = frame_y / (height/2)
-    let (inv, use_camera) = match view_projection {
-        Some(vp) => {
-            // Scale from frame pixels to NDC [-1, 1]
-            let half_w = dst_w as f32 * 0.5;
-            let half_h = dst_h as f32 * 0.5;
-            let frame_to_ndc = Mat4::from_scale(Vec3::new(1.0 / half_w, 1.0 / half_h, 1.0));
-            // Full inverse: frame -> NDC -> world -> object
-            (inv_model * vp.inverse() * frame_to_ndc, true)
-        }
-        None => (inv_model, false),
-    };
-    let _use_camera = use_camera; // silence warning for now
-    
+    // Layer's Z position in world space (for ray-plane intersection)
+    let layer_z = position[2];
+
+    // Precompute NDC scale factors
+    let half_w = dst_w as f32 * 0.5;
+    let half_h = dst_h as f32 * 0.5;
+
+    // For perspective camera, we need inverse VP for ray casting
+    let inv_vp = view_projection.map(|vp| vp.inverse());
+
     // Get source buffer
     let src_buffer = src.buffer();
     let src_format = src.pixel_format();
-    
+
+    // Helper closure to transform screen point to object space
+    // Returns None if point is outside valid range (e.g., ray parallel to plane)
+    let transform_point = |frame_pt: Vec2| -> Option<Vec2> {
+        match inv_vp {
+            Some(inv_vp_mat) => {
+                // Perspective: use ray-plane intersection
+                let ndc = Vec2::new(frame_pt.x / half_w, frame_pt.y / half_h);
+                let world_pt = unproject_to_plane(ndc, inv_vp_mat, layer_z)?;
+                let obj_pt3 = inv_model.transform_point3(world_pt);
+                Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+            }
+            None => {
+                // No camera: direct affine transform
+                let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
+                let obj_pt3 = inv_model.transform_point3(frame_pt3);
+                Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+            }
+        }
+    };
+
     // Transform based on pixel format (output same format as input)
     match (src_buffer.as_ref(), src_format) {
         (PixelBuffer::F32(buf), PixelFormat::RgbaF32) => {
             let mut dst_buf = vec![0.0f32; dst_w * dst_h * 4];
-            
+
             // Parallel row processing with rayon
             dst_buf
                 .par_chunks_mut(dst_w * 4)
@@ -396,24 +454,26 @@ pub fn transform_frame_with_camera(
                         // Transform dst coord (image space) -> frame space (centered)
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let frame_pt = space::image_to_frame(dst_pt, comp_size);
-                        // Apply inverse model transform: frame -> object space
-                        let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
-                        let obj_pt3 = inv.transform_point3(frame_pt3);
-                        let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
-                        let src_pt = space::object_to_src(obj_pt, src_size);
 
-                        let color = sample_f32(buf, src_w, src_h, src_pt.x, src_pt.y);
+                        // Transform to object space
+                        let color = if let Some(obj_pt) = transform_point(frame_pt) {
+                            let src_pt = space::object_to_src(obj_pt, src_size);
+                            sample_f32(buf, src_w, src_h, src_pt.x, src_pt.y)
+                        } else {
+                            [0.0, 0.0, 0.0, 0.0] // Transparent for invalid points
+                        };
+
                         let idx = x * 4;
                         row[idx..idx + 4].copy_from_slice(&color);
                     }
                 });
-            
+
             Frame::from_f32_buffer(dst_buf, dst_w, dst_h)
         }
-        
+
         (PixelBuffer::F16(buf), PixelFormat::RgbaF16) => {
             let mut dst_buf = vec![F16::ZERO; dst_w * dst_h * 4];
-            
+
             dst_buf
                 .par_chunks_mut(dst_w * 4)
                 .enumerate()
@@ -421,12 +481,14 @@ pub fn transform_frame_with_camera(
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let frame_pt = space::image_to_frame(dst_pt, comp_size);
-                        let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
-                        let obj_pt3 = inv.transform_point3(frame_pt3);
-                        let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
-                        let src_pt = space::object_to_src(obj_pt, src_size);
 
-                        let color = sample_f16(buf, src_w, src_h, src_pt.x, src_pt.y);
+                        let color = if let Some(obj_pt) = transform_point(frame_pt) {
+                            let src_pt = space::object_to_src(obj_pt, src_size);
+                            sample_f16(buf, src_w, src_h, src_pt.x, src_pt.y)
+                        } else {
+                            [0.0, 0.0, 0.0, 0.0]
+                        };
+
                         let idx = x * 4;
                         row[idx] = F16::from_f32(color[0]);
                         row[idx + 1] = F16::from_f32(color[1]);
@@ -434,13 +496,13 @@ pub fn transform_frame_with_camera(
                         row[idx + 3] = F16::from_f32(color[3]);
                     }
                 });
-            
+
             Frame::from_f16_buffer(dst_buf, dst_w, dst_h)
         }
-        
+
         (PixelBuffer::U8(buf), PixelFormat::Rgba8) => {
             let mut dst_buf = vec![0u8; dst_w * dst_h * 4];
-            
+
             dst_buf
                 .par_chunks_mut(dst_w * 4)
                 .enumerate()
@@ -448,12 +510,14 @@ pub fn transform_frame_with_camera(
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let frame_pt = space::image_to_frame(dst_pt, comp_size);
-                        let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
-                        let obj_pt3 = inv.transform_point3(frame_pt3);
-                        let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
-                        let src_pt = space::object_to_src(obj_pt, src_size);
 
-                        let color = sample_u8(buf, src_w, src_h, src_pt.x, src_pt.y);
+                        let color = if let Some(obj_pt) = transform_point(frame_pt) {
+                            let src_pt = space::object_to_src(obj_pt, src_size);
+                            sample_u8(buf, src_w, src_h, src_pt.x, src_pt.y)
+                        } else {
+                            [0.0, 0.0, 0.0, 0.0]
+                        };
+
                         let idx = x * 4;
                         row[idx] = (color[0] * 255.0).clamp(0.0, 255.0) as u8;
                         row[idx + 1] = (color[1] * 255.0).clamp(0.0, 255.0) as u8;
@@ -461,7 +525,7 @@ pub fn transform_frame_with_camera(
                         row[idx + 3] = (color[3] * 255.0).clamp(0.0, 255.0) as u8;
                     }
                 });
-            
+
             Frame::from_u8_buffer(dst_buf, dst_w, dst_h)
         }
         
