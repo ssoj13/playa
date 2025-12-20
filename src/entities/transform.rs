@@ -30,20 +30,36 @@ pub fn is_identity(position: [f32; 3], rotation: [f32; 3], scale: [f32; 3], pivo
         && scale[2] == 1.0
 }
 
-/// Unproject NDC point to world space plane at given Z.
+/// Check if a view-projection matrix is orthographic (affine) or perspective (projective).
 ///
-/// For perspective projection, we cast a ray from the camera through the NDC point
-/// and intersect it with a horizontal plane at z=plane_z.
+/// Orthographic VP has bottom row ≈ [0, 0, 0, 1].
+/// Perspective VP has bottom row with significant values in first 3 components.
+#[inline]
+fn is_orthographic_vp(vp: Mat4) -> bool {
+    let row3 = vp.row(3);
+    row3.x.abs() < 1e-6 && row3.y.abs() < 1e-6 && (row3.w - 1.0).abs() < 1e-6
+}
+
+/// Unproject NDC point to world space using ray-plane intersection.
+///
+/// For perspective projection, casts a ray from camera through NDC point
+/// and intersects with the layer plane (defined by position and normal).
 ///
 /// # Arguments
 /// - `ndc` - Normalized device coordinates [-1, 1]
 /// - `inv_vp` - Inverse view-projection matrix
-/// - `plane_z` - Z coordinate of the plane to intersect
+/// - `plane_point` - A point on the layer plane (layer position)
+/// - `plane_normal` - Normal of the layer plane (from rotation)
 ///
 /// # Returns
 /// World-space point on the plane, or None if ray is parallel to plane.
 #[inline]
-fn unproject_to_plane(ndc: Vec2, inv_vp: Mat4, plane_z: f32) -> Option<Vec3> {
+fn unproject_to_plane(
+    ndc: Vec2,
+    inv_vp: Mat4,
+    plane_point: Vec3,
+    plane_normal: Vec3,
+) -> Option<Vec3> {
     // Unproject two points at near and far planes to get the ray
     let near_clip = Vec4::new(ndc.x, ndc.y, -1.0, 1.0);
     let far_clip = Vec4::new(ndc.x, ndc.y, 1.0, 1.0);
@@ -69,14 +85,35 @@ fn unproject_to_plane(ndc: Vec2, inv_vp: Mat4, plane_z: f32) -> Option<Vec3> {
     // Ray direction
     let ray_dir = far_world - near_world;
 
-    // Intersect with z = plane_z
-    // near_world.z + t * ray_dir.z = plane_z
-    if ray_dir.z.abs() < 1e-6 {
+    // Ray-plane intersection: (ray_origin + t * ray_dir - plane_point) · plane_normal = 0
+    // t = ((plane_point - ray_origin) · plane_normal) / (ray_dir · plane_normal)
+    let denom = ray_dir.dot(plane_normal);
+    if denom.abs() < 1e-6 {
         return None; // Ray parallel to plane
     }
-    let t = (plane_z - near_world.z) / ray_dir.z;
+    let t = (plane_point - near_world).dot(plane_normal) / denom;
 
     Some(near_world + ray_dir * t)
+}
+
+/// Compute layer plane normal from rotation.
+///
+/// In object space, the layer plane is z=0 with normal [0, 0, 1].
+/// After rotation, the normal is transformed.
+#[inline]
+fn layer_plane_normal(rotation: [f32; 3]) -> Vec3 {
+    // Build rotation matrix (same as in build_model_matrix)
+    // Our convention: CW+ (clockwise positive)
+    // glam convention: CCW+ (counter-clockwise positive)
+    // Convert: negate angles
+    let quat = Quat::from_euler(
+        EulerRot::ZYX,
+        -rotation[2], // Z first (negated for CW→CCW)
+        -rotation[1], // then Y
+        -rotation[0], // then X
+    );
+    // Transform the local Z axis (normal of z=0 plane)
+    quat * Vec3::Z
 }
 
 /// Build inverse transform matrix for sampling.
@@ -131,12 +168,12 @@ pub fn build_inverse_transform(
 }
 
 /// Build model matrix (object -> world/comp space).
-/// 
+///
 /// Forward transform: comp = position + R * S * (object - pivot)
-/// 
+///
 /// # Arguments
 /// - `position` — layer position in comp space (XYZ)
-/// - `rotation` — rotation in radians [rx, ry, rz]
+/// - `rotation` — rotation in radians [rx, ry, rz], clockwise-positive (user convention)
 /// - `scale` — scale factors [sx, sy, sz]
 /// - `pivot` — pivot offset from layer center [px, py, pz]
 pub fn build_model_matrix(
@@ -148,15 +185,18 @@ pub fn build_model_matrix(
     let pos = Vec3::from(position);
     let pvt = Vec3::from(pivot);
     let scl = Vec3::from(scale);
-    
-    // Rotation: ZYX order (AE-style), clockwise-positive
+
+    // Rotation: ZYX order (AE-style)
+    // Our convention: CW+ (clockwise positive)
+    // glam convention: CCW+ (counter-clockwise positive)
+    // Convert: negate angles
     let rot = Quat::from_euler(
         EulerRot::ZYX,
-        rotation[2],
-        rotation[1],
-        rotation[0],
+        -rotation[2], // negated for CW→CCW
+        -rotation[1],
+        -rotation[0],
     );
-    
+
     // Forward transform: translate(-pivot) -> scale -> rotate -> translate(position)
     Mat4::from_translation(pos)
         * Mat4::from_quat(rot)
@@ -406,15 +446,20 @@ pub fn transform_frame_with_camera(
     // Build inverse model transform: world/comp -> object space
     let inv_model = build_inverse_transform(position, rotation, scale, pivot);
 
-    // Layer's Z position in world space (for ray-plane intersection)
-    let layer_z = position[2];
+    // Layer plane in world space (for ray-plane intersection)
+    let plane_point = Vec3::from(position);
+    let plane_normal = layer_plane_normal(rotation);
 
     // Precompute NDC scale factors
     let half_w = dst_w as f32 * 0.5;
     let half_h = dst_h as f32 * 0.5;
 
-    // For perspective camera, we need inverse VP for ray casting
-    let inv_vp = view_projection.map(|vp| vp.inverse());
+    // Check camera type and prepare transforms
+    let camera_info: Option<(Mat4, Mat4, bool)> = view_projection.map(|vp| {
+        let inv_vp = vp.inverse();
+        let is_ortho = is_orthographic_vp(vp);
+        (vp, inv_vp, is_ortho)
+    });
 
     // Get source buffer
     let src_buffer = src.buffer();
@@ -423,13 +468,22 @@ pub fn transform_frame_with_camera(
     // Helper closure to transform screen point to object space
     // Returns None if point is outside valid range (e.g., ray parallel to plane)
     let transform_point = |frame_pt: Vec2| -> Option<Vec2> {
-        match inv_vp {
-            Some(inv_vp_mat) => {
-                // Perspective: use ray-plane intersection
-                let ndc = Vec2::new(frame_pt.x / half_w, frame_pt.y / half_h);
-                let world_pt = unproject_to_plane(ndc, inv_vp_mat, layer_z)?;
-                let obj_pt3 = inv_model.transform_point3(world_pt);
-                Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+        match camera_info {
+            Some((_vp, inv_vp, is_ortho)) => {
+                if is_ortho {
+                    // Orthographic: use simple affine transform
+                    // inv_vp is affine, so we can just multiply
+                    let ndc = Vec3::new(frame_pt.x / half_w, frame_pt.y / half_h, 0.0);
+                    let world_pt = inv_vp.transform_point3(ndc);
+                    let obj_pt3 = inv_model.transform_point3(world_pt);
+                    Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+                } else {
+                    // Perspective: use ray-plane intersection
+                    let ndc = Vec2::new(frame_pt.x / half_w, frame_pt.y / half_h);
+                    let world_pt = unproject_to_plane(ndc, inv_vp, plane_point, plane_normal)?;
+                    let obj_pt3 = inv_model.transform_point3(world_pt);
+                    Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+                }
             }
             None => {
                 // No camera: direct affine transform
