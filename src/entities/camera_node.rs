@@ -40,13 +40,10 @@ impl CameraNode {
         // Identity
         attrs.set("uuid", AttrValue::Uuid(Uuid::new_v4()));
         attrs.set("name", AttrValue::Str(name.to_string()));
-        
-        // Standard layer transform
-        attrs.set("position", AttrValue::Vec3([0.0, 0.0, -1000.0])); // pulled back
-        attrs.set("rotation", AttrValue::Vec3([0.0, 0.0, 0.0]));
-        attrs.set("scale", AttrValue::Vec3([1.0, 1.0, 1.0]));
-        attrs.set("pivot", AttrValue::Vec3([0.0, 0.0, 0.0]));
-        
+
+        // NOTE: No position/rotation/scale here - those come from Layer attrs
+        // Camera only stores lens/projection settings
+
         // Camera-specific
         attrs.set("projection_type", AttrValue::Str("perspective".to_string()));
         attrs.set("point_of_interest", AttrValue::Vec3([0.0, 0.0, 0.0]));
@@ -91,24 +88,8 @@ impl CameraNode {
         self.attrs.attach_schema(&*CAMERA_SCHEMA);
     }
     
-    // === Standard layer getters ===
-    
-    pub fn position(&self) -> [f32; 3] {
-        self.attrs.get_vec3("position").unwrap_or([0.0, 0.0, -1000.0])
-    }
-    
-    pub fn rotation(&self) -> [f32; 3] {
-        self.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0])
-    }
-    
-    pub fn scale(&self) -> [f32; 3] {
-        self.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0])
-    }
-    
-    pub fn pivot(&self) -> [f32; 3] {
-        self.attrs.get_vec3("pivot").unwrap_or([0.0, 0.0, 0.0])
-    }
-    
+    // NOTE: No position/rotation/scale getters - those come from Layer attrs
+
     // === Camera-specific getters ===
     
     /// "perspective" or "orthographic"
@@ -158,15 +139,19 @@ impl CameraNode {
     }
     
     // === Matrix builders ===
-    
+
     /// Build view matrix (world -> camera space).
-    /// 
+    ///
+    /// Position and rotation come from the Layer attrs (not stored in CameraNode).
     /// Uses either point_of_interest (if use_poi=true) or rotation angles.
-    pub fn view_matrix(&self) -> Mat4 {
-        let pos = self.position();
-        let eye = Vec3::from(pos);
+    ///
+    /// # Arguments
+    /// - `position` - camera position from layer attrs [x, y, z]
+    /// - `rotation` - camera rotation from layer attrs [rx, ry, rz] in degrees
+    pub fn view_matrix(&self, position: [f32; 3], rotation: [f32; 3]) -> Mat4 {
+        let eye = Vec3::from(position);
         let up = Vec3::Y; // Y-up convention
-        
+
         if self.use_poi() {
             // Look-at mode: camera points at POI
             let target = self.point_of_interest();
@@ -174,30 +159,29 @@ impl CameraNode {
             Mat4::look_at_rh(eye, center, up)
         } else {
             // Rotation mode: use Euler angles (degrees)
-            let rot = self.rotation();
-            let rot_x = rot[0].to_radians();
-            let rot_y = rot[1].to_radians();
-            let rot_z = rot[2].to_radians();
-            
+            let rot_x = rotation[0].to_radians();
+            let rot_y = rotation[1].to_radians();
+            let rot_z = rotation[2].to_radians();
+
             // Build rotation matrix (XYZ order)
-            let rotation = Mat4::from_euler(glam::EulerRot::XYZ, rot_x, rot_y, rot_z);
+            let rot_mat = Mat4::from_euler(glam::EulerRot::XYZ, rot_x, rot_y, rot_z);
             let translation = Mat4::from_translation(-eye);
-            
-            rotation * translation
+
+            rot_mat * translation
         }
     }
-    
+
     /// Build projection matrix (camera -> clip space).
-    /// 
+    ///
     /// Supports both perspective and orthographic projection.
-    /// 
+    ///
     /// # Arguments
     /// - `aspect` - viewport width / height
     /// - `comp_height` - composition height in pixels (for ortho scale)
     pub fn projection_matrix(&self, aspect: f32, comp_height: f32) -> Mat4 {
         let near = self.near_clip();
         let far = self.far_clip();
-        
+
         if self.is_orthographic() {
             // Orthographic: ortho_scale=1.0 means comp_height maps to view height
             let scale = self.ortho_scale();
@@ -210,17 +194,24 @@ impl CameraNode {
             Mat4::perspective_rh_gl(fov_rad, aspect, near, far)
         }
     }
-    
+
     /// Build combined view-projection matrix (world -> clip space).
-    /// 
-    /// This is the full camera transform: model coordinates go through
-    /// view (world->camera) then projection (camera->clip).
-    /// 
+    ///
+    /// Position and rotation come from the Layer attrs (not stored in CameraNode).
+    ///
     /// # Arguments
+    /// - `position` - camera position from layer attrs [x, y, z]
+    /// - `rotation` - camera rotation from layer attrs [rx, ry, rz] in degrees
     /// - `aspect` - viewport width / height ratio
     /// - `comp_height` - composition height in pixels (for ortho scale)
-    pub fn view_projection_matrix(&self, aspect: f32, comp_height: f32) -> Mat4 {
-        self.projection_matrix(aspect, comp_height) * self.view_matrix()
+    pub fn view_projection_matrix(
+        &self,
+        position: [f32; 3],
+        rotation: [f32; 3],
+        aspect: f32,
+        comp_height: f32,
+    ) -> Mat4 {
+        self.projection_matrix(aspect, comp_height) * self.view_matrix(position, rotation)
     }
 }
 
@@ -270,44 +261,47 @@ impl Node for CameraNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_camera_defaults() {
         let cam = CameraNode::new("Test Camera");
-        
+
         assert_eq!(cam.name(), "Test Camera");
         assert_eq!(cam.node_type(), "Camera");
-        assert_eq!(cam.position(), [0.0, 0.0, -1000.0]);
+        // position comes from Layer now, not CameraNode
         assert_eq!(cam.point_of_interest(), [0.0, 0.0, 0.0]);
         assert!((cam.fov() - 39.6).abs() < 0.01);
     }
-    
+
     #[test]
     fn test_view_matrix() {
         let cam = CameraNode::new("Test");
-        let view = cam.view_matrix();
-        
+        // Position/rotation now come from layer attrs
+        let pos = [0.0, 0.0, -1000.0];
+        let rot = [0.0, 0.0, 0.0];
+        let view = cam.view_matrix(pos, rot);
+
         // View matrix should be valid (not NaN/Inf)
         assert!(!view.is_nan());
     }
-    
+
     #[test]
     fn test_projection_matrix_perspective() {
         let cam = CameraNode::new("Test");
         // Default is perspective mode
         let proj = cam.projection_matrix(16.0 / 9.0, 1080.0);
-        
+
         assert!(!proj.is_nan());
         assert!(!cam.is_orthographic());
     }
-    
+
     #[test]
     fn test_projection_matrix_orthographic() {
         let mut cam = CameraNode::new("Test");
         cam.attrs.set("projection_type", super::AttrValue::Str("orthographic".to_string()));
-        
+
         let proj = cam.projection_matrix(16.0 / 9.0, 1080.0);
-        
+
         assert!(!proj.is_nan());
         assert!(cam.is_orthographic());
     }

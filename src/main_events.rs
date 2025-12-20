@@ -669,7 +669,8 @@ pub fn handle_app_event(
             let (start, end) = s.play_range(true);
             let trimmed_duration = (end - start + 1).max(1);
             let renderable = s.is_renderable();  // false for camera/light/null/audio
-            (trimmed_duration, s.dim(), name, renderable)
+            let is_camera = s.as_camera().is_some();
+            (trimmed_duration, s.dim(), name, renderable, is_camera)
         });
 
         let add_result = {
@@ -677,8 +678,11 @@ pub fn handle_app_event(
             if let Some(arc_node) = media.get_mut(&e.comp_uuid) {
                 // Arc::make_mut: copy-on-write for mutation
                 let node = std::sync::Arc::make_mut(arc_node);
-                let (duration, source_dim, name, renderable) = source_info.unwrap_or((1, (64, 64), "layer_1".to_string(), true));
-                node.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim, renderable)
+                let (duration, source_dim, name, renderable, is_camera) =
+                    source_info.unwrap_or((1, (64, 64), "layer_1".to_string(), true, false));
+                // Camera layers need position pulled back so they can see the scene
+                let initial_pos = if is_camera { Some([0.0, 0.0, -1000.0]) } else { None };
+                node.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim, renderable, initial_pos)
             } else {
                 Err(anyhow::anyhow!("Parent comp not found"))
             }

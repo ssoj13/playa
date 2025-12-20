@@ -69,9 +69,10 @@ impl NodeKind {
         insert_idx: Option<usize>,
         source_dim: (usize, usize),
         renderable: bool,
+        initial_position: Option<[f32; 3]>,
     ) -> anyhow::Result<Uuid> {
         match self {
-            NodeKind::Comp(comp) => comp.add_child_layer(source_uuid, name, start_frame, duration, insert_idx, source_dim, renderable),
+            NodeKind::Comp(comp) => comp.add_child_layer(source_uuid, name, start_frame, duration, insert_idx, source_dim, renderable, initial_position),
             _ => anyhow::bail!("Cannot add child to non-Comp node"),
         }
     }

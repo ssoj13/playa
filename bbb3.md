@@ -1,79 +1,69 @@
-# What's Left to Fix
-
-After unifying viewport/gizmo coordinate systems, here's what remains from cdx.md audit:
-
----
+# Coordinate System Cleanup — Final Status
 
 ## Completed
 
-| Task | Status |
-|------|--------|
-| #2 Gizmo/renderer world units | FIXED - both use `zoom + pan` view matrix |
-| #7 Stale comments | FIXED - updated in gizmo.rs |
-| #4 Rotation helpers | DONE - added to space.rs, used in gizmo.rs |
-| Cleanup _comp_size params | DONE - removed from gizmo.rs |
+| Task | Status | Notes |
+|------|--------|-------|
+| #2 Gizmo/renderer world units | FIXED | Both use `zoom + pan` view matrix |
+| #7 Stale comments | FIXED | Updated in gizmo.rs |
+| #4 Rotation helpers | DONE | Added to space.rs, used in gizmo.rs |
+| Cleanup _comp_size params | DONE | Removed from gizmo.rs |
+| transform.rs rotation | OK | Already correct — inverse math handles sign |
+| coords.rs consolidation | KEEP | Stays in widgets/ — UI layer, not domain |
 
 ---
 
-## Still To Do
+## Architecture After Cleanup
 
-### 1. Unify coordinate helpers (Issue #1)
+```
+entities/space.rs          — Domain: frame/image/object conversions (glam)
+                           — Rotation helpers: to_math_rot(), from_math_rot()
 
-Three places with overlapping conversions:
-- `space.rs` — `image_to_frame`, `frame_to_image` (glam::Vec2)
-- `coords.rs` — `screen_to_viewport_centered` (egui::Vec2)
-- `viewport.rs` — `image_to_screen`, `screen_to_image` (egui::Vec2)
+widgets/viewport/coords.rs — UI: egui screen <-> viewport conversions
+                           — Stays separate (egui types, widget-specific)
 
-**Options:**
-- A) Move all to `space.rs`, add egui/glam conversion helpers
-- B) Keep `coords.rs` for egui-specific UI helpers, have them call `space.rs` internally
-- C) Delete `coords.rs`, inline into viewport.rs
-
-**Effort:** Medium
+widgets/viewport/viewport.rs — Uses both:
+                           — image_to_screen() uses frame space (like space.rs)
+                           — handle_zoom/pan use coords.rs for egui input
+```
 
 ---
 
-### 2. GPU compositor conventions (Issue #5)
+## Remaining Work
 
-`build_inverse_matrix_3x3()` in transform.rs builds comp->src mapping. Currently unused (GPU path inactive). When enabled, verify it matches CPU path conventions.
+### 1. CameraNode Integration (Feature)
 
-**Effort:** Low (verification when GPU path enabled)
+**Status:** CameraNode is fully implemented, just not wired in.
 
----
-
-### 3. CameraNode integration (Issue #6)
-
-**Status:** CameraNode is FULLY IMPLEMENTED but not wired into compositor.
-
-`camera_node.rs` has:
-- `view_matrix()` — world -> camera (supports POI or rotation)
+`camera_node.rs` provides:
+- `view_matrix()` — world -> camera (POI or rotation mode)
 - `projection_matrix()` — perspective or orthographic
-- `view_projection_matrix()` — combined
-- Full AE-like attributes: fov, near/far clip, DOF params
+- `view_projection_matrix()` — combined MVP
 
-`transform.rs` has `transform_frame_with_camera()` but always receives `None`.
-
-**To integrate:**
-1. Add camera selection to comp (active camera UUID)
-2. In compositor, get camera's view_projection matrix
+**To enable 3D:**
+1. Add active camera selection to comp
+2. Get camera's view_projection matrix in compositor
 3. Pass to `transform_frame_with_camera()` instead of `None`
-4. Update viewport to use camera's projection for preview
+4. Update viewport preview to use camera projection
 
-**Effort:** Medium-High (real 3D compositing)
+**Effort:** Medium-High
 
 ---
 
-### 4. Use rotation helpers in transform.rs
+### 2. GPU Compositor (When Enabled)
 
-`transform.rs` still has manual sign handling. Could use `space::to_math_rot()` for consistency.
+`build_inverse_matrix_3x3()` in transform.rs is ready but GPU path is inactive.
+Verify conventions match CPU path when GPU compositor is enabled.
 
-**Effort:** Low
+**Effort:** Low (verification only)
 
 ---
 
 ## Summary
 
-Quick wins done. Remaining work is either:
-- **Unification** (coords.rs consolidation) — cleanup
-- **Feature work** (CameraNode integration) — new capability
-- **Future-proofing** (GPU compositor) — when needed
+**Core coordinate issues are resolved.** The codebase now has:
+- Unified view matrix between renderer and gizmo
+- Centralized rotation convention helpers
+- Clean separation: domain (space.rs) vs UI (coords.rs)
+
+Remaining work is feature development (3D camera) not bug fixes.

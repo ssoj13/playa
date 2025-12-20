@@ -185,7 +185,8 @@ const CAMERA_SPECIFIC: &[AttrDef] = &[
 ];
 
 pub static CAMERA_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::from_slices("CameraNode", &[IDENTITY, TRANSFORM, CAMERA_SPECIFIC, TIMING, OPACITY])
+    // No TRANSFORM - camera position/rotation comes from Layer, not CameraNode
+    AttrSchema::from_slices("CameraNode", &[IDENTITY, CAMERA_SPECIFIC, TIMING, OPACITY])
 });
 
 // ============================================================================

@@ -505,7 +505,9 @@ impl CompNode {
     /// Returns the topmost visible camera layer that covers the given frame.
     /// Layers are checked from top to bottom (reverse iteration since layers
     /// are stored bottom-to-top). Returns None if no camera is active.
-    /// 
+    ///
+    /// Returns (CameraNode, position, rotation) - position/rotation from Layer attrs.
+    ///
     /// # Arguments
     /// - `frame_idx` - frame to check camera visibility
     /// - `media` - node registry to look up source types
@@ -513,28 +515,31 @@ impl CompNode {
         &self,
         frame_idx: i32,
         media: &'a std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
-    ) -> Option<&'a super::camera_node::CameraNode> {
+    ) -> Option<(&'a super::camera_node::CameraNode, [f32; 3], [f32; 3])> {
         // Iterate from top to bottom (reverse of storage order)
         for layer in self.layers.iter().rev() {
             // Skip invisible layers
             if !layer.is_visible() {
                 continue;
             }
-            
+
             // Check if frame is within layer's work area
             let (play_start, play_end) = layer.work_area();
             if frame_idx < play_start || frame_idx > play_end {
                 continue;
             }
-            
+
             // Check if source is a camera
             if let Some(source) = media.get(&layer.source_uuid()) {
                 if let Some(camera) = source.as_camera() {
-                    return Some(camera);
+                    // Position/rotation come from Layer attrs, not CameraNode
+                    let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, -1000.0]);
+                    let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
+                    return Some((camera, pos, rot));
                 }
             }
         }
-        
+
         None
     }
     
@@ -702,6 +707,7 @@ impl CompNode {
     /// Frame space: origin at center, +X right, +Y up.
     ///
     /// `renderable` - false for control layers (camera, light, null, audio).
+    /// `initial_position` - optional override for layer position (e.g. camera at [0,0,-1000]).
     pub fn add_child_layer(
         &mut self,
         source_uuid: Uuid,
@@ -711,10 +717,13 @@ impl CompNode {
         insert_idx: Option<usize>,
         source_dim: (usize, usize),
         renderable: bool,
+        initial_position: Option<[f32; 3]>,
     ) -> anyhow::Result<Uuid> {
         let mut layer = Layer::new(source_uuid, name, start_frame, duration, source_dim);
         layer.attrs.set("renderable", AttrValue::Bool(renderable));
-        // Position defaults to (0,0,0) = centered in frame space (set in Layer::new)
+        if let Some(pos) = initial_position {
+            layer.attrs.set(A_POSITION, AttrValue::Vec3(pos));
+        }
         let uuid = layer.uuid();
         self.add_layer(layer, insert_idx);
         Ok(uuid)
@@ -980,13 +989,15 @@ impl CompNode {
         
         // Get active camera for this frame (if any)
         // Camera provides view-projection matrix for 3D perspective/ortho rendering
-        let camera = self.active_camera(frame_idx, ctx.media);
-        let view_projection: Option<glam::Mat4> = camera.map(|cam| {
-            let dim = self.dim();
-            let aspect = dim.0 as f32 / dim.1 as f32;
-            let comp_height = dim.1 as f32;
-            cam.view_projection_matrix(aspect, comp_height)
-        });
+        // Position/rotation come from Layer attrs, not CameraNode
+        let view_projection: Option<glam::Mat4> = self
+            .active_camera(frame_idx, ctx.media)
+            .map(|(cam, pos, rot)| {
+                let dim = self.dim();
+                let aspect = dim.0 as f32 / dim.1 as f32;
+                let comp_height = dim.1 as f32;
+                cam.view_projection_matrix(pos, rot, aspect, comp_height)
+            });
         
         // Render layers in sorted order
         for (layer_idx, _z) in renderable_layers {
