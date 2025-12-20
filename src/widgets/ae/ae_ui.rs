@@ -123,6 +123,9 @@ fn render_impl(
     let mut keys: Vec<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
     keys.sort();
 
+    // Get schema for UI hints
+    let schema = attrs.schema();
+
     TableBuilder::new(ui)
         .id_salt("attrs_table")
         .striped(true)
@@ -145,6 +148,12 @@ fn render_impl(
                 let Some(value) = attrs.get_mut(&key) else {
                     continue;
                 };
+                // Get UI options from schema (combobox values or slider range)
+                let ui_options = schema
+                    .and_then(|s| s.get(&key))
+                    .map(|def| def.ui_options)
+                    .unwrap_or(&[]);
+
                 body.row(row_height, |mut row| {
                     row.col(|ui| {
                         ui.label(format!("{}:", key));
@@ -153,12 +162,12 @@ fn render_impl(
                         let is_mixed = mixed_keys.contains(&key);
                         if collect_changes {
                             let before = value.clone();
-                            let changed = render_value_editor(ui, &key, value, is_mixed);
+                            let changed = render_value_editor(ui, &key, value, is_mixed, ui_options);
                             if changed && &before != value {
                                 changed_out.push((key.clone(), value.clone()));
                             }
                         } else {
-                            let _ = render_value_editor(ui, &key, value, is_mixed);
+                            let _ = render_value_editor(ui, &key, value, is_mixed, ui_options);
                         }
                     });
                 });
@@ -189,7 +198,17 @@ fn render_impl(
     );
 }
 
-fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: bool) -> bool {
+/// Render value editor widget based on type and UI options from schema.
+/// - String with ui_options -> combobox
+/// - Float with ui_options ["min", "max", "step"] -> slider
+/// - Otherwise -> default widget for type
+fn render_value_editor(
+    ui: &mut Ui,
+    key: &str,
+    value: &mut AttrValue,
+    mixed: bool,
+    ui_options: &[&str],
+) -> bool {
     let mut changed = false;
     let weak = ui.visuals().weak_text_color();
     let mut scope_changed = false;
@@ -208,118 +227,105 @@ fn render_value_editor(ui: &mut Ui, key: &str, value: &mut AttrValue, mixed: boo
         if mixed {
             ui.visuals_mut().override_text_color = Some(weak);
         }
-    match (key, value) {
-        // Known enum-like string attributes rendered as dropdowns
-        ("blend_mode" | "layer_mode", AttrValue::Str(current)) => {
-            let mut selected = current.clone();
-            ComboBox::from_id_salt(format!("attr_enum_{}", key))
-                .selected_text(&selected)
-                .show_ui(ui, |ui| {
-                    for mode in ["normal", "screen", "add", "subtract", "multiply", "divide", "difference"] {
-                        ui.selectable_value(&mut selected, mode.to_string(), mode);
-                    }
+
+        match value {
+            // String with options -> combobox
+            AttrValue::Str(current) if !ui_options.is_empty() => {
+                let mut selected = current.clone();
+                ComboBox::from_id_salt(format!("attr_{}", key))
+                    .selected_text(&selected)
+                    .show_ui(ui, |ui| {
+                        for opt in ui_options {
+                            ui.selectable_value(&mut selected, opt.to_string(), *opt);
+                        }
+                    });
+                if &selected != current {
+                    *current = selected;
+                    scope_changed = true;
+                }
+            }
+
+            // Float with options -> slider with range [min, max, step]
+            AttrValue::Float(v) if ui_options.len() >= 2 => {
+                let min: f32 = ui_options[0].parse().unwrap_or(0.0);
+                let max: f32 = ui_options[1].parse().unwrap_or(1.0);
+                let step: f64 = ui_options.get(2)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0.01);
+                scope_changed |= ui.add(egui::Slider::new(v, min..=max).step_by(step)).changed();
+            }
+
+            // Default widgets by type
+            AttrValue::Bool(v) => {
+                scope_changed |= ui.checkbox(v, "").changed();
+            }
+            AttrValue::Str(s) => {
+                scope_changed |= ui.text_edit_singleline(s).changed();
+            }
+            AttrValue::Int(v) => {
+                scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0 * speed_mult)).changed();
+            }
+            AttrValue::UInt(v) => {
+                let mut temp = *v as i32;
+                if ui.add(egui::DragValue::new(&mut temp).speed(1.0 * speed_mult).range(0..=i32::MAX)).changed() {
+                    *v = temp.max(0) as u32;
+                    scope_changed = true;
+                }
+            }
+            AttrValue::Float(v) => {
+                scope_changed |= ui.add(egui::DragValue::new(v).speed(0.1 * speed_mult)).changed();
+            }
+            AttrValue::Vec3(arr) => {
+                ui.horizontal(|ui| {
+                    ui.label("X:");
+                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1 * speed_mult)).changed();
+                    ui.label("Y:");
+                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1 * speed_mult)).changed();
+                    ui.label("Z:");
+                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1 * speed_mult)).changed();
                 });
-            if &selected != current {
-                *current = selected;
-                scope_changed = true;
+            }
+            AttrValue::Vec4(arr) => {
+                ui.horizontal(|ui| {
+                    ui.label("X:");
+                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1 * speed_mult)).changed();
+                    ui.label("Y:");
+                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1 * speed_mult)).changed();
+                    ui.label("Z:");
+                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1 * speed_mult)).changed();
+                    ui.label("W:");
+                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1 * speed_mult)).changed();
+                });
+            }
+            AttrValue::Mat3(_) => {
+                ui.label("(3x3 matrix - not editable)");
+            }
+            AttrValue::Mat4(_) => {
+                ui.label("(4x4 matrix - not editable)");
+            }
+            AttrValue::Json(s) => {
+                ui.label(format!("JSON: {} chars", s.len()));
+            }
+            AttrValue::Int8(v) => {
+                let mut temp = *v as i32;
+                if ui.add(egui::DragValue::new(&mut temp).speed(1.0 * speed_mult).range(-128..=127)).changed() {
+                    *v = temp.clamp(-128, 127) as i8;
+                    scope_changed = true;
+                }
+            }
+            AttrValue::Uuid(u) => {
+                ui.label(format!("{}", u));
+            }
+            AttrValue::List(items) => {
+                ui.label(format!("List: {} items", items.len()));
+            }
+            AttrValue::Map(entries) => {
+                ui.label(format!("Map: {} entries", entries.len()));
+            }
+            AttrValue::Set(items) => {
+                ui.label(format!("Set: {} items", items.len()));
             }
         }
-
-        // Camera projection type: perspective/orthographic toggle
-        ("projection_type", AttrValue::Str(current)) => {
-            let mut is_ortho = current == "orthographic";
-            if ui.checkbox(&mut is_ortho, "Orthographic").changed() {
-                *current = if is_ortho { "orthographic" } else { "perspective" }.to_string();
-                scope_changed = true;
-            }
-        }
-
-        // Known slider attributes with specific ranges
-        ("speed", AttrValue::Float(v)) => {
-            scope_changed |= ui.add(egui::Slider::new(v, 0.1..=4.0).step_by(0.1)).changed();
-        }
-        ("opacity", AttrValue::Float(v)) => {
-            scope_changed |= ui.add(egui::Slider::new(v, 0.0..=1.0).step_by(0.01)).changed();
-        }
-
-        // Fallbacks
-        (_, AttrValue::Bool(v)) => {
-            scope_changed |= ui.checkbox(v, "").changed();
-        }
-        (_, AttrValue::Str(s)) => {
-            scope_changed |= ui.text_edit_singleline(s).changed();
-        }
-        (_, AttrValue::Int(v)) => {
-            scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0 * speed_mult)).changed();
-        }
-        (_, AttrValue::UInt(v)) => {
-            let mut temp = *v as i32;
-            if ui
-                .add(
-                    egui::DragValue::new(&mut temp)
-                        .speed(1.0 * speed_mult)
-                        .range(0..=i32::MAX),
-                )
-                .changed()
-            {
-                *v = temp.max(0) as u32;
-                scope_changed = true;
-            }
-        }
-        (_, AttrValue::Float(v)) => {
-            scope_changed |= ui.add(egui::DragValue::new(v).speed(0.1 * speed_mult)).changed();
-        }
-        (_, AttrValue::Vec3(arr)) => {
-            ui.horizontal(|ui| {
-                ui.label("X:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1 * speed_mult)).changed();
-                ui.label("Y:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1 * speed_mult)).changed();
-                ui.label("Z:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1 * speed_mult)).changed();
-            });
-        }
-        (_, AttrValue::Vec4(arr)) => {
-            ui.horizontal(|ui| {
-                ui.label("X:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1 * speed_mult)).changed();
-                ui.label("Y:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1 * speed_mult)).changed();
-                ui.label("Z:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1 * speed_mult)).changed();
-                ui.label("W:");
-                scope_changed |= ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1 * speed_mult)).changed();
-            });
-        }
-        (_, AttrValue::Mat3(_)) => {
-            ui.label("(3x3 matrix - not editable)");
-        }
-        (_, AttrValue::Mat4(_)) => {
-            ui.label("(4x4 matrix - not editable)");
-        }
-        (_, AttrValue::Json(s)) => {
-            ui.label(format!("JSON: {} chars", s.len()));
-        }
-        (_, AttrValue::Int8(v)) => {
-            let mut temp = *v as i32;
-            if ui.add(egui::DragValue::new(&mut temp).speed(1.0 * speed_mult).range(-128..=127)).changed() {
-                *v = temp.clamp(-128, 127) as i8;
-                scope_changed = true;
-            }
-        }
-        (_, AttrValue::Uuid(u)) => {
-            ui.label(format!("{}", u));
-        }
-        (_, AttrValue::List(items)) => {
-            ui.label(format!("List: {} items", items.len()));
-        }
-        (_, AttrValue::Map(entries)) => {
-            ui.label(format!("Map: {} entries", entries.len()));
-        }
-        (_, AttrValue::Set(items)) => {
-            ui.label(format!("Set: {} items", items.len()));
-        }
-    }
     });
     changed |= scope_changed;
     changed

@@ -132,6 +132,7 @@ impl Layer {
         attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         attrs.set(A_OPACITY, AttrValue::Float(1.0));
         attrs.set(A_VISIBLE, AttrValue::Bool(true));
+        attrs.set("renderable", AttrValue::Bool(true));
         attrs.set(A_SOLO, AttrValue::Bool(false));
         attrs.set(A_BLEND_MODE, AttrValue::Str("normal".to_string()));
         attrs.set(A_SPEED, AttrValue::Float(1.0));
@@ -699,6 +700,8 @@ impl CompNode {
     ///
     /// Layer position defaults to (0,0,0) which is CENTER of comp in frame space.
     /// Frame space: origin at center, +X right, +Y up.
+    ///
+    /// `renderable` - false for control layers (camera, light, null, audio).
     pub fn add_child_layer(
         &mut self,
         source_uuid: Uuid,
@@ -707,8 +710,10 @@ impl CompNode {
         duration: i32,
         insert_idx: Option<usize>,
         source_dim: (usize, usize),
+        renderable: bool,
     ) -> anyhow::Result<Uuid> {
-        let layer = Layer::new(source_uuid, name, start_frame, duration, source_dim);
+        let mut layer = Layer::new(source_uuid, name, start_frame, duration, source_dim);
+        layer.attrs.set("renderable", AttrValue::Bool(renderable));
         // Position defaults to (0,0,0) = centered in frame space (set in Layer::new)
         let uuid = layer.uuid();
         self.add_layer(layer, insert_idx);
@@ -946,15 +951,12 @@ impl CompNode {
             if has_solo && !layer.attrs.get_bool(A_SOLO).unwrap_or(false) {
                 continue;
             }
-            
-            // Skip camera layers - they define viewpoint, not content
-            let source = ctx.media.get(&layer.source_uuid());
-            if let Some(source_node) = source {
-                if source_node.as_camera().is_some() {
-                    continue;
-                }
+
+            // Skip non-renderable layers (camera, light, null, audio)
+            if !layer.attrs.get_bool("renderable").unwrap_or(true) {
+                continue;
             }
-            
+
             // Get Z position for depth sorting
             let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
             renderable_layers.push((idx, pos[2]));

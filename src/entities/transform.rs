@@ -356,14 +356,27 @@ pub fn transform_frame_with_camera(
 
     // Build inverse model transform: world/comp -> object space
     let inv_model = build_inverse_transform(position, rotation, scale, pivot);
-    
+
     // Build full inverse MVP if camera provided
-    // MVP = Projection * View * Model
-    // Inverse: Model^-1 * View^-1 * Projection^-1
-    let inv = match view_projection {
-        Some(vp) => inv_model * vp.inverse(),
-        None => inv_model,
+    // When camera is used, we need to:
+    // 1. Convert frame space (pixels) -> NDC (-1..1)
+    // 2. Apply VP^-1 (NDC -> world)
+    // 3. Apply Model^-1 (world -> object)
+    //
+    // For step 1, we build a matrix that scales pixels to NDC:
+    // NDC_x = frame_x / (width/2), NDC_y = frame_y / (height/2)
+    let (inv, use_camera) = match view_projection {
+        Some(vp) => {
+            // Scale from frame pixels to NDC [-1, 1]
+            let half_w = dst_w as f32 * 0.5;
+            let half_h = dst_h as f32 * 0.5;
+            let frame_to_ndc = Mat4::from_scale(Vec3::new(1.0 / half_w, 1.0 / half_h, 1.0));
+            // Full inverse: frame -> NDC -> world -> object
+            (inv_model * vp.inverse() * frame_to_ndc, true)
+        }
+        None => (inv_model, false),
     };
+    let _use_camera = use_camera; // silence warning for now
     
     // Get source buffer
     let src_buffer = src.buffer();

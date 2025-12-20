@@ -46,7 +46,17 @@ impl NodeKind {
     pub fn is_text(&self) -> bool {
         matches!(self, NodeKind::Text(_))
     }
-    
+
+    /// Check if this node type can be rendered as a layer.
+    /// Returns false for control nodes (camera, light, null, audio).
+    pub fn is_renderable(&self) -> bool {
+        match self {
+            NodeKind::Camera(_) => false,
+            // Future: Light, Transform (null), Audio -> false
+            _ => true,
+        }
+    }
+
     // play_range, bounds, frame_count, dim - now via Node trait (enum_dispatch)
     
     /// Add child layer (only works on CompNode)
@@ -58,9 +68,10 @@ impl NodeKind {
         duration: i32,
         insert_idx: Option<usize>,
         source_dim: (usize, usize),
+        renderable: bool,
     ) -> anyhow::Result<Uuid> {
         match self {
-            NodeKind::Comp(comp) => comp.add_child_layer(source_uuid, name, start_frame, duration, insert_idx, source_dim),
+            NodeKind::Comp(comp) => comp.add_child_layer(source_uuid, name, start_frame, duration, insert_idx, source_dim, renderable),
             _ => anyhow::bail!("Cannot add child to non-Comp node"),
         }
     }

@@ -81,12 +81,24 @@ pub struct AttrDef {
     pub name: &'static str,
     pub attr_type: AttrType,
     pub flags: AttrFlags,
+    /// UI hints: combobox options or slider range ["min", "max", "step"]
+    pub ui_options: &'static [&'static str],
 }
 
 impl AttrDef {
-    /// Create new attribute definition
+    /// Create new attribute definition (default: auto UI by type)
     pub const fn new(name: &'static str, attr_type: AttrType, flags: AttrFlags) -> Self {
-        Self { name, attr_type, flags }
+        Self { name, attr_type, flags, ui_options: &[] }
+    }
+
+    /// Create attribute with UI options (combobox values or slider range)
+    pub const fn with_ui(
+        name: &'static str,
+        attr_type: AttrType,
+        flags: AttrFlags,
+        ui_options: &'static [&'static str],
+    ) -> Self {
+        Self { name, attr_type, flags, ui_options }
     }
     
     /// Check if attribute affects DAG (render graph)

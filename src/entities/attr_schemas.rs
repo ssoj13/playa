@@ -42,7 +42,7 @@ const TIMING: &[AttrDef] = &[
     AttrDef::new("trim_in", AttrType::Int, DAG_DISP),
     AttrDef::new("trim_out", AttrType::Int, DAG_DISP),
     AttrDef::new("src_len", AttrType::Int, DAG),
-    AttrDef::new("speed", AttrType::Float, DAG_DISP_KEY),
+    AttrDef::with_ui("speed", AttrType::Float, DAG_DISP_KEY, &["0.1", "4", "0.1"]),
 ];
 
 /// Transform attributes: position/rotation/scale/pivot (used by spatial entities)
@@ -66,7 +66,7 @@ const RESOLUTION_RO: &[AttrDef] = &[
 
 /// Opacity for compositing (keyable)
 const OPACITY: &[AttrDef] = &[
-    AttrDef::new("opacity", AttrType::Float, DAG_DISP_KEY),
+    AttrDef::with_ui("opacity", AttrType::Float, DAG_DISP_KEY, &["0", "1", "0.01"]),
 ];
 
 // ============================================================================
@@ -113,8 +113,10 @@ pub static COMP_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
 const LAYER_SPECIFIC: &[AttrDef] = &[
     AttrDef::new("source_uuid", AttrType::Uuid, INT_DAG), // DAG - affects source lookup
     // Compositing
-    AttrDef::new("blend_mode", AttrType::String, DAG_DISP),
+    AttrDef::with_ui("blend_mode", AttrType::String, DAG_DISP,
+        &["normal", "screen", "add", "subtract", "multiply", "divide", "difference"]),
     AttrDef::new("visible", AttrType::Bool, DAG_DISP),
+    AttrDef::new("renderable", AttrType::Bool, DAG_DISP),  // false for camera/light/null/audio
     AttrDef::new("mute", AttrType::Bool, DAG_DISP),
     AttrDef::new("solo", AttrType::Bool, DAG_DISP),
 ];
@@ -132,7 +134,8 @@ const PROJECT_SPECIFIC: &[AttrDef] = &[
     AttrDef::new("order", AttrType::List, INT),      // UI: media pool order (Uuid list)
     AttrDef::new("selection", AttrType::List, INT),  // UI: selected items (Uuid list)
     AttrDef::new("active", AttrType::Uuid, INT),     // UI: active comp (Uuid)
-    AttrDef::new("tool", AttrType::String, 0),       // Viewport tool: select/move/rotate/scale
+    AttrDef::with_ui("tool", AttrType::String, 0,    // Viewport tool
+        &["select", "move", "rotate", "scale"]),
     AttrDef::new("prefs", AttrType::Map, INT),       // UI: project preferences (gizmo, etc)
 ];
 
@@ -163,21 +166,22 @@ pub static PLAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
 
 /// Camera-specific attributes (lens, DOF)
 const CAMERA_SPECIFIC: &[AttrDef] = &[
-    // Projection type: "perspective" or "orthographic"
-    AttrDef::new("projection_type", AttrType::String, DAG_DISP),
+    // Projection type
+    AttrDef::with_ui("projection_type", AttrType::String, DAG_DISP,
+        &["perspective", "orthographic"]),
     // Look-at target (alternative to rotation)
     AttrDef::new("point_of_interest", AttrType::Vec3, DAG_DISP_KEY),
     AttrDef::new("use_poi", AttrType::Bool, DAG_DISP),
     // Lens (perspective mode)
-    AttrDef::new("fov", AttrType::Float, DAG_DISP_KEY),           // 39.6 (AE default)
+    AttrDef::with_ui("fov", AttrType::Float, DAG_DISP_KEY, &["1", "180", "0.1"]),
     AttrDef::new("near_clip", AttrType::Float, DAG_DISP),
     AttrDef::new("far_clip", AttrType::Float, DAG_DISP),
     // Ortho zoom (orthographic mode)
-    AttrDef::new("ortho_scale", AttrType::Float, DAG_DISP_KEY),   // 1.0 = 1:1 pixel mapping
+    AttrDef::with_ui("ortho_scale", AttrType::Float, DAG_DISP_KEY, &["0.01", "10", "0.01"]),
     // Depth of field (future)
     AttrDef::new("dof_enabled", AttrType::Bool, DAG_DISP),
     AttrDef::new("focus_distance", AttrType::Float, DAG_DISP_KEY),
-    AttrDef::new("aperture", AttrType::Float, DAG_DISP_KEY),
+    AttrDef::with_ui("aperture", AttrType::Float, DAG_DISP_KEY, &["0.5", "32", "0.1"]),
 ];
 
 pub static CAMERA_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
@@ -196,10 +200,10 @@ const TEXT_SPECIFIC: &[AttrDef] = &[
     // Text content
     AttrDef::new("text", AttrType::String, DAG_DISP),
     AttrDef::new("font", AttrType::String, DAG_DISP),
-    AttrDef::new("font_size", AttrType::Float, DAG_DISP_KEY),
+    AttrDef::with_ui("font_size", AttrType::Float, DAG_DISP_KEY, &["1", "500", "1"]),
     AttrDef::new("color", AttrType::Vec4, DAG_DISP_KEY),
-    AttrDef::new("alignment", AttrType::String, DAG_DISP),
-    AttrDef::new("line_height", AttrType::Float, DAG_DISP),
+    AttrDef::with_ui("alignment", AttrType::String, DAG_DISP, &["left", "center", "right"]),
+    AttrDef::with_ui("line_height", AttrType::Float, DAG_DISP, &["0.5", "3", "0.1"]),
     // Background
     AttrDef::new("bg_color", AttrType::Vec4, DAG_DISP),
 ];

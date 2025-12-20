@@ -668,7 +668,8 @@ pub fn handle_app_event(
             let name = project.gen_name(s.name());
             let (start, end) = s.play_range(true);
             let trimmed_duration = (end - start + 1).max(1);
-            (trimmed_duration, s.dim(), name)
+            let renderable = s.is_renderable();  // false for camera/light/null/audio
+            (trimmed_duration, s.dim(), name, renderable)
         });
 
         let add_result = {
@@ -676,8 +677,8 @@ pub fn handle_app_event(
             if let Some(arc_node) = media.get_mut(&e.comp_uuid) {
                 // Arc::make_mut: copy-on-write for mutation
                 let node = std::sync::Arc::make_mut(arc_node);
-                let (duration, source_dim, name) = source_info.unwrap_or((1, (64, 64), "layer_1".to_string()));
-                node.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim)
+                let (duration, source_dim, name, renderable) = source_info.unwrap_or((1, (64, 64), "layer_1".to_string(), true));
+                node.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim, renderable)
             } else {
                 Err(anyhow::anyhow!("Parent comp not found"))
             }
