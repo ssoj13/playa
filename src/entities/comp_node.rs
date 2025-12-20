@@ -497,6 +497,71 @@ impl CompNode {
     pub fn layers_by_source(&self, source_uuid: Uuid) -> Vec<&Layer> {
         self.layers.iter().filter(|l| l.source_uuid() == source_uuid).collect()
     }
+    
+    /// Get the active camera for current frame.
+    /// 
+    /// Returns the topmost visible camera layer that covers the given frame.
+    /// Layers are checked from top to bottom (reverse iteration since layers
+    /// are stored bottom-to-top). Returns None if no camera is active.
+    /// 
+    /// # Arguments
+    /// - `frame_idx` - frame to check camera visibility
+    /// - `media` - node registry to look up source types
+    pub fn active_camera<'a>(
+        &self,
+        frame_idx: i32,
+        media: &'a std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> Option<&'a super::camera_node::CameraNode> {
+        // Iterate from top to bottom (reverse of storage order)
+        for layer in self.layers.iter().rev() {
+            // Skip invisible layers
+            if !layer.is_visible() {
+                continue;
+            }
+            
+            // Check if frame is within layer's work area
+            let (play_start, play_end) = layer.work_area();
+            if frame_idx < play_start || frame_idx > play_end {
+                continue;
+            }
+            
+            // Check if source is a camera
+            if let Some(source) = media.get(&layer.source_uuid()) {
+                if let Some(camera) = source.as_camera() {
+                    return Some(camera);
+                }
+            }
+        }
+        
+        None
+    }
+    
+    /// Check if composition has any 3D content (Z != 0 or XY rotation).
+    /// 
+    /// Used to determine if camera projection should be applied.
+    /// Returns true if any visible layer has non-zero Z position or XY rotation.
+    pub fn has_3d_content(&self, frame_idx: i32) -> bool {
+        for layer in &self.layers {
+            if !layer.is_visible() {
+                continue;
+            }
+            
+            let (play_start, play_end) = layer.work_area();
+            if frame_idx < play_start || frame_idx > play_end {
+                continue;
+            }
+            
+            let pos = layer.attrs.get_vec3(super::keys::A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
+            let rot = layer.attrs.get_vec3(super::keys::A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
+            
+            // Check for 3D: Z position or X/Y rotation
+            if pos[2].abs() > 0.001 || rot[0].abs() > 0.001 || rot[1].abs() > 0.001 {
+                return true;
+            }
+        }
+        
+        false
+    }
 
     // --- Compat methods (for migration from old Comp) ---
 
@@ -866,8 +931,11 @@ impl CompNode {
         // Check if any layer has solo enabled
         let has_solo = self.layers.iter().any(|l| l.attrs.get_bool(A_SOLO).unwrap_or(false));
         
-        // Collect frames from layers (reverse order: last = bottom, first = top)
-        for layer in self.layers.iter().rev() {
+        // Collect visible renderable layers with their Z positions for sorting.
+        // Each entry: (layer_index, z_position) - index used for stable sort fallback.
+        let mut renderable_layers: Vec<(usize, f32)> = Vec::new();
+        
+        for (idx, layer) in self.layers.iter().enumerate() {
             let (play_start, play_end) = layer.work_area();
             
             // Skip if outside work area
@@ -885,7 +953,50 @@ impl CompNode {
                 continue;
             }
             
-            // Get source node
+            // Skip camera layers - they define viewpoint, not content
+            let source = ctx.media.get(&layer.source_uuid());
+            if let Some(source_node) = source {
+                if source_node.as_camera().is_some() {
+                    continue;
+                }
+            }
+            
+            // Get Z position for depth sorting
+            let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
+            renderable_layers.push((idx, pos[2]));
+        }
+        
+        // Sort by Z position (ascending = farther first, closer renders on top).
+        // For same Z, higher layer index = on top (stable sort preserves this).
+        renderable_layers.sort_by(|a, b| {
+            // Primary: Z position (lower = farther = render first)
+            match a.1.partial_cmp(&b.1) {
+                Some(std::cmp::Ordering::Equal) | None => {
+                    // Secondary: layer index (lower = render first = behind)
+                    a.0.cmp(&b.0)
+                }
+                Some(ord) => ord,
+            }
+        });
+        
+        // Reverse so that closer layers (higher Z) are processed last = end up on top
+        renderable_layers.reverse();
+        
+        // Get active camera for this frame (if any)
+        // Camera provides view-projection matrix for 3D perspective/ortho rendering
+        let camera = self.active_camera(frame_idx, ctx.media);
+        let view_projection: Option<glam::Mat4> = camera.map(|cam| {
+            let dim = self.dim();
+            let aspect = dim.0 as f32 / dim.1 as f32;
+            let comp_height = dim.1 as f32;
+            cam.view_projection_matrix(aspect, comp_height)
+        });
+        
+        // Render layers in sorted order
+        for (layer_idx, _z) in renderable_layers {
+            let layer = &self.layers[layer_idx];
+            
+            // Get source node (already validated above)
             let source = ctx.media.get(&layer.source_uuid());
             let Some(source_node) = source else {
                 continue;
@@ -907,24 +1018,29 @@ impl CompNode {
                 let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
                 let scl = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
                 let pvt = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
-                let rot_rad = rot[2].to_radians();
+                // Convert rotation to radians (XYZ Euler angles)
+                let rot_rad = [rot[0].to_radians(), rot[1].to_radians(), rot[2].to_radians()];
                 let src_size = (frame.width(), frame.height());
                 
-                // Apply CPU transform if non-identity
-                // This is the active code path - GPU compositor not yet connected
-                if !transform::is_identity(pos, rot_rad, scl, pvt) {
+                // Apply CPU transform with optional camera projection
+                // Camera enables perspective/ortho 3D; without camera uses 2D ortho
+                let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt) 
+                    || view_projection.is_some();
+                
+                if needs_transform {
                     let canvas = self.dim();
-                    frame = transform::transform_frame(&frame, canvas, pos, rot_rad, scl, pvt);
+                    frame = transform::transform_frame_with_camera(
+                        &frame, canvas, pos, rot_rad, scl, pvt, view_projection
+                    );
                 }
                 
                 // Build inverse transform matrix for GPU compositor (WIP - not used yet)
                 // Matrix is passed through API but CPU compositor ignores it.
-                // When GPU compositing is enabled, remove CPU transform above
-                // and let GPU shader handle it via this matrix.
+                // GPU path still uses Z-only rotation until shader is updated.
                 let inv_matrix = if transform::is_identity(pos, rot_rad, scl, pvt) {
                     identity_matrix
                 } else {
-                    transform::build_inverse_matrix_3x3(pos, rot_rad, scl, pvt, src_size)
+                    transform::build_inverse_matrix_3x3(pos, rot_rad[2], scl, pvt, src_size)
                 };
                 
                 let opacity = layer.opacity();

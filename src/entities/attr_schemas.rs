@@ -163,13 +163,17 @@ pub static PLAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
 
 /// Camera-specific attributes (lens, DOF)
 const CAMERA_SPECIFIC: &[AttrDef] = &[
+    // Projection type: "perspective" or "orthographic"
+    AttrDef::new("projection_type", AttrType::String, DAG_DISP),
     // Look-at target (alternative to rotation)
     AttrDef::new("point_of_interest", AttrType::Vec3, DAG_DISP_KEY),
     AttrDef::new("use_poi", AttrType::Bool, DAG_DISP),
-    // Lens
+    // Lens (perspective mode)
     AttrDef::new("fov", AttrType::Float, DAG_DISP_KEY),           // 39.6 (AE default)
     AttrDef::new("near_clip", AttrType::Float, DAG_DISP),
     AttrDef::new("far_clip", AttrType::Float, DAG_DISP),
+    // Ortho zoom (orthographic mode)
+    AttrDef::new("ortho_scale", AttrType::Float, DAG_DISP_KEY),   // 1.0 = 1:1 pixel mapping
     // Depth of field (future)
     AttrDef::new("dof_enabled", AttrType::Bool, DAG_DISP),
     AttrDef::new("focus_distance", AttrType::Float, DAG_DISP_KEY),

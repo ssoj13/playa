@@ -48,13 +48,17 @@ impl CameraNode {
         attrs.set("pivot", AttrValue::Vec3([0.0, 0.0, 0.0]));
         
         // Camera-specific
+        attrs.set("projection_type", AttrValue::Str("perspective".to_string()));
         attrs.set("point_of_interest", AttrValue::Vec3([0.0, 0.0, 0.0]));
         attrs.set("use_poi", AttrValue::Bool(true)); // default: use POI like AE
         
-        // Lens (AE defaults)
+        // Lens - perspective mode (AE defaults)
         attrs.set("fov", AttrValue::Float(39.6));
         attrs.set("near_clip", AttrValue::Float(1.0));
         attrs.set("far_clip", AttrValue::Float(10000.0));
+        
+        // Lens - orthographic mode
+        attrs.set("ortho_scale", AttrValue::Float(1.0)); // 1.0 = 1:1 pixel mapping
         
         // Depth of field (future)
         attrs.set("dof_enabled", AttrValue::Bool(false));
@@ -107,6 +111,15 @@ impl CameraNode {
     
     // === Camera-specific getters ===
     
+    /// "perspective" or "orthographic"
+    pub fn projection_type(&self) -> &str {
+        self.attrs.get_str("projection_type").unwrap_or("perspective")
+    }
+    
+    pub fn is_orthographic(&self) -> bool {
+        self.projection_type() == "orthographic"
+    }
+    
     pub fn point_of_interest(&self) -> [f32; 3] {
         self.attrs.get_vec3("point_of_interest").unwrap_or([0.0, 0.0, 0.0])
     }
@@ -125,6 +138,11 @@ impl CameraNode {
     
     pub fn far_clip(&self) -> f32 {
         self.attrs.get_float("far_clip").unwrap_or(10000.0)
+    }
+    
+    /// Orthographic scale factor (1.0 = 1:1 pixel mapping)
+    pub fn ortho_scale(&self) -> f32 {
+        self.attrs.get_float("ortho_scale").unwrap_or(1.0)
     }
     
     pub fn dof_enabled(&self) -> bool {
@@ -171,19 +189,38 @@ impl CameraNode {
     
     /// Build projection matrix (camera -> clip space).
     /// 
+    /// Supports both perspective and orthographic projection.
+    /// 
     /// # Arguments
     /// - `aspect` - viewport width / height
-    pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
-        let fov_rad = self.fov().to_radians();
+    /// - `comp_height` - composition height in pixels (for ortho scale)
+    pub fn projection_matrix(&self, aspect: f32, comp_height: f32) -> Mat4 {
         let near = self.near_clip();
         let far = self.far_clip();
         
-        Mat4::perspective_rh_gl(fov_rad, aspect, near, far)
+        if self.is_orthographic() {
+            // Orthographic: ortho_scale=1.0 means comp_height maps to view height
+            let scale = self.ortho_scale();
+            let half_h = (comp_height * 0.5) / scale;
+            let half_w = half_h * aspect;
+            Mat4::orthographic_rh_gl(-half_w, half_w, -half_h, half_h, near, far)
+        } else {
+            // Perspective
+            let fov_rad = self.fov().to_radians();
+            Mat4::perspective_rh_gl(fov_rad, aspect, near, far)
+        }
     }
     
-    /// Build combined view-projection matrix.
-    pub fn view_projection_matrix(&self, aspect: f32) -> Mat4 {
-        self.projection_matrix(aspect) * self.view_matrix()
+    /// Build combined view-projection matrix (world -> clip space).
+    /// 
+    /// This is the full camera transform: model coordinates go through
+    /// view (world->camera) then projection (camera->clip).
+    /// 
+    /// # Arguments
+    /// - `aspect` - viewport width / height ratio
+    /// - `comp_height` - composition height in pixels (for ortho scale)
+    pub fn view_projection_matrix(&self, aspect: f32, comp_height: f32) -> Mat4 {
+        self.projection_matrix(aspect, comp_height) * self.view_matrix()
     }
 }
 
@@ -255,11 +292,23 @@ mod tests {
     }
     
     #[test]
-    fn test_projection_matrix() {
+    fn test_projection_matrix_perspective() {
         let cam = CameraNode::new("Test");
-        let proj = cam.projection_matrix(16.0 / 9.0);
+        // Default is perspective mode
+        let proj = cam.projection_matrix(16.0 / 9.0, 1080.0);
         
-        // Projection matrix should be valid
         assert!(!proj.is_nan());
+        assert!(!cam.is_orthographic());
+    }
+    
+    #[test]
+    fn test_projection_matrix_orthographic() {
+        let mut cam = CameraNode::new("Test");
+        cam.attrs.set("projection_type", super::AttrValue::Str("orthographic".to_string()));
+        
+        let proj = cam.projection_matrix(16.0 / 9.0, 1080.0);
+        
+        assert!(!proj.is_nan());
+        assert!(cam.is_orthographic());
     }
 }

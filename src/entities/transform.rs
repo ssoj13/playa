@@ -1,10 +1,13 @@
-//! 2D affine transforms for layer compositing.
+//! 3D affine transforms for layer compositing.
 //!
-//! Uses glam::Affine2 for matrix math in Y-up space.
+//! Uses glam::Mat4 for matrix math in Y-up space.
 //! Forward transform (layer -> comp):
 //! comp = position + R * S * (object - pivot)
+//!
+//! Rotation order: ZYX (AE-style) - rotate Z first, then Y, then X.
+//! Rotation sign: clockwise-positive when looking down axis (user convention).
 
-use glam::{Affine2, Vec2};
+use glam::{Mat4, Vec2, Vec3, Quat, EulerRot};
 use half::f16 as F16;
 use rayon::prelude::*;
 
@@ -13,14 +16,18 @@ use super::space;
 
 /// Check if transform is identity (no-op).
 /// 
-/// Returns true if position==pivot, rotation_z=0, scale=1 — no transform needed.
+/// Returns true if position==pivot, rotation=0, scale=1 — no transform needed.
 #[inline]
-pub fn is_identity(position: [f32; 3], rotation_z: f32, scale: [f32; 3], pivot: [f32; 3]) -> bool {
+pub fn is_identity(position: [f32; 3], rotation: [f32; 3], scale: [f32; 3], pivot: [f32; 3]) -> bool {
     position[0] == pivot[0]
         && position[1] == pivot[1]
-        && rotation_z == 0.0
+        && position[2] == pivot[2]
+        && rotation[0] == 0.0
+        && rotation[1] == 0.0
+        && rotation[2] == 0.0
         && scale[0] == 1.0
         && scale[1] == 1.0
+        && scale[2] == 1.0
 }
 
 /// Build inverse transform matrix for sampling.
@@ -30,52 +37,100 @@ pub fn is_identity(position: [f32; 3], rotation_z: f32, scale: [f32; 3], pivot: 
 /// comp = position + R * S * (object - pivot)
 /// ```
 /// 
-/// Returns inverse matrix for reverse-mapping: comp → object.
-/// rotation_z is clockwise-positive (user convention).
+/// Returns inverse Mat4 for reverse-mapping: comp → object.
+/// 
+/// # Arguments
+/// - `position` — layer position in comp space (XYZ)
+/// - `rotation` — rotation in radians [rx, ry, rz], clockwise-positive
+/// - `scale` — scale factors [sx, sy, sz]
+/// - `pivot` — pivot offset from layer center [px, py, pz]
 pub fn build_inverse_transform(
     position: [f32; 3],
-    rotation_z: f32,
+    rotation: [f32; 3],
     scale: [f32; 3],
     pivot: [f32; 3],
-) -> Affine2 {
-    let pos = Vec2::new(position[0], position[1]);
-    let pivot = Vec2::new(pivot[0], pivot[1]);
-    let inv_scale = Vec2::new(
+) -> Mat4 {
+    let pos = Vec3::from(position);
+    let pvt = Vec3::from(pivot);
+    let inv_scale = Vec3::new(
         if scale[0].abs() > f32::EPSILON { 1.0 / scale[0] } else { 0.0 },
         if scale[1].abs() > f32::EPSILON { 1.0 / scale[1] } else { 0.0 },
+        if scale[2].abs() > f32::EPSILON { 1.0 / scale[2] } else { 0.0 },
     );
 
-    // rotation_z is clockwise-positive (user space). For the inverse transform we
-    // rotate counter-clockwise by the same magnitude.
-    Affine2::from_translation(pivot)
-        * Affine2::from_angle(rotation_z)
-        * Affine2::from_scale(inv_scale)
-        * Affine2::from_translation(-pos)
+    // Inverse rotation: negate all angles and reverse order (XYZ is inverse of ZYX)
+    let inv_rot = Quat::from_euler(
+        EulerRot::XYZ,  // reverse of ZYX
+        -rotation[0],   // NEGATE for inverse
+        -rotation[1],   // NEGATE for inverse
+        -rotation[2],   // NEGATE for inverse
+    );
+
+    // Inverse transform chain (right-to-left application):
+    // 1. T(-pos): subtract position
+    // 2. R^(-1): inverse rotate
+    // 3. S^(-1): inverse scale
+    // 4. T(pvt): add pivot
+    // Result: object = pivot + S^(-1) * R^(-1) * (comp - position)
+    Mat4::from_translation(pvt)
+        * Mat4::from_scale(inv_scale)
+        * Mat4::from_quat(inv_rot)
+        * Mat4::from_translation(-pos)
 }
 
-/// Build inverse transform as column-major 3x3 matrix for OpenGL/GPU.
+/// Build model matrix (object -> world/comp space).
+/// 
+/// Forward transform: comp = position + R * S * (object - pivot)
+/// 
+/// # Arguments
+/// - `position` — layer position in comp space (XYZ)
+/// - `rotation` — rotation in radians [rx, ry, rz]
+/// - `scale` — scale factors [sx, sy, sz]
+/// - `pivot` — pivot offset from layer center [px, py, pz]
+pub fn build_model_matrix(
+    position: [f32; 3],
+    rotation: [f32; 3],
+    scale: [f32; 3],
+    pivot: [f32; 3],
+) -> Mat4 {
+    let pos = Vec3::from(position);
+    let pvt = Vec3::from(pivot);
+    let scl = Vec3::from(scale);
+    
+    // Rotation: ZYX order (AE-style), clockwise-positive
+    let rot = Quat::from_euler(
+        EulerRot::ZYX,
+        rotation[2],
+        rotation[1],
+        rotation[0],
+    );
+    
+    // Forward transform: translate(-pivot) -> scale -> rotate -> translate(position)
+    Mat4::from_translation(pos)
+        * Mat4::from_quat(rot)
+        * Mat4::from_scale(scl)
+        * Mat4::from_translation(-pvt)
+}
+
+/// Build full inverse MVP matrix for camera-aware transform.
+/// 
+/// Combines model (layer), view (camera), and projection matrices.
+/// Returns inverse for reverse-mapping: screen pixel -> object space.
+/// 
+/// # Arguments
+/// - `model` — layer model matrix from `build_model_matrix()`
+/// - `view_projection` — camera view-projection matrix (or identity for 2D)
+pub fn build_inverse_mvp(model: Mat4, view_projection: Mat4) -> Mat4 {
+    let mvp = view_projection * model;
+    mvp.inverse()
+}
+
+/// Build inverse transform as column-major 3x3 matrix for OpenGL/GPU (2D only).
 /// 
 /// Same as `build_inverse_transform` but returns `[f32; 9]` in column-major
-/// order suitable for `glUniformMatrix3fv`.
+/// order suitable for `glUniformMatrix3fv`. Only uses Z rotation.
 /// 
 /// The matrix maps comp-space pixels (Y-up) to source image pixels (Y-down).
-/// 
-/// Matrix layout (column-major):
-/// ```text
-/// [m00, m10, 0,  m01, m11, 0,  tx, ty, 1]
-///   col0        col1        col2
-/// ```
-/// 
-/// For identity transform, returns `[1,0,0, 0,1,0, 0,0,1]}.
-/// 
-/// # GPU Compositor Integration (WIP)
-/// 
-/// This function is called from `compose_internal` to build matrices for each layer.
-/// Currently these matrices are passed through the blend API but:
-/// - **CPU compositor** ignores them (uses `transform_frame()` instead)
-/// - **GPU compositor** shader is ready (`u_top_transform` uniform) but not connected
-/// 
-/// See `compositor.rs` module docs for full GPU transform status.
 pub fn build_inverse_matrix_3x3(
     position: [f32; 3],
     rotation_z: f32,
@@ -83,7 +138,21 @@ pub fn build_inverse_matrix_3x3(
     pivot: [f32; 3],
     src_size: (usize, usize),
 ) -> [f32; 9] {
-    let inv = build_inverse_transform(position, rotation_z, scale, pivot);
+    // Use 2D path for backwards compatibility
+    use glam::Affine2;
+    
+    let pos = Vec2::new(position[0], position[1]);
+    let pvt = Vec2::new(pivot[0], pivot[1]);
+    let inv_scale = Vec2::new(
+        if scale[0].abs() > f32::EPSILON { 1.0 / scale[0] } else { 0.0 },
+        if scale[1].abs() > f32::EPSILON { 1.0 / scale[1] } else { 0.0 },
+    );
+
+    let inv = Affine2::from_translation(pvt)
+        * Affine2::from_angle(rotation_z)
+        * Affine2::from_scale(inv_scale)
+        * Affine2::from_translation(-pos);
+        
     let src_half = Vec2::new(src_size.0 as f32 * 0.5, src_size.1 as f32 * 0.5);
 
     // object -> src (image space, Y-down): x' = x + w/2, y' = h/2 - y
@@ -92,11 +161,6 @@ pub fn build_inverse_matrix_3x3(
 
     let total = object_to_src * inv;
 
-    // Affine2 stores: matrix2 (2x2 rotation/scale), translation (2D offset)
-    // Convert to 3x3 column-major:
-    // Col 0: [m00, m10, 0]
-    // Col 1: [m01, m11, 0]
-    // Col 2: [tx, ty, 1]
     let m = total.matrix2;
     let t = total.translation;
 
@@ -221,37 +285,64 @@ fn sample_u8(buffer: &[u8], width: usize, height: usize, x: f32, y: f32) -> [f32
     result
 }
 
-/// Transform frame with 2D affine matrix.
+/// Transform frame with 3D affine matrix (no camera).
 /// 
 /// Applies position, rotation, scale around pivot point using parallel
 /// pixel processing (rayon). Output format matches input format.
+/// Uses orthographic projection (no perspective).
 /// 
 /// # Arguments
 /// - `src` — Source frame (U8/F16/F32)
 /// - `canvas` — Output dimensions `(width, height)`
-/// - `position` — `[x, y, z]` pivot position in comp space (z ignored)
-/// - `rotation_z` — Z-axis rotation in radians (clockwise-positive)
-/// - `scale` — `[sx, sy, sz]` scale factors (sz ignored)
-/// - `pivot` — `[px, py, pz]` offset from layer center (pz ignored)
+/// - `position` — `[x, y, z]` pivot position in comp space
+/// - `rotation` — `[rx, ry, rz]` rotation in radians (clockwise-positive)
+/// - `scale` — `[sx, sy, sz]` scale factors
+/// - `pivot` — `[px, py, pz]` offset from layer center
 /// 
 /// # Example
 /// ```ignore
 /// let transformed = transform_frame(
 ///     &frame,
 ///     (1920, 1080),
-///     [100.0, 50.0, 0.0],  // move right 100, up 50
-///     0.785,                // 45° clockwise rotation
-///     [0.5, 0.5, 1.0],      // 50% scale
-///     [0.0, 0.0, 0.0],      // pivot at center
+///     [100.0, 50.0, 0.0],       // move right 100, up 50
+///     [0.0, 0.0, 0.785],        // 45deg Z rotation
+///     [0.5, 0.5, 1.0],          // 50% XY scale
+///     [0.0, 0.0, 0.0],          // pivot at center
 /// );
 /// ```
 pub fn transform_frame(
     src: &Frame,
     canvas: (usize, usize),
     position: [f32; 3],
-    rotation_z: f32,
+    rotation: [f32; 3],
     scale: [f32; 3],
     pivot: [f32; 3],
+) -> Frame {
+    // No camera - use identity view-projection
+    transform_frame_with_camera(src, canvas, position, rotation, scale, pivot, None)
+}
+
+/// Transform frame with optional camera view-projection.
+/// 
+/// When camera is provided, applies full MVP transform for perspective/ortho projection.
+/// Screen pixels are transformed through: screen -> NDC -> world -> object -> texture.
+/// 
+/// # Arguments
+/// - `src` - Source frame (U8/F16/F32)
+/// - `canvas` - Output dimensions (width, height)
+/// - `position` - Layer position [x, y, z] in world/comp space
+/// - `rotation` - Rotation [rx, ry, rz] in radians (ZYX order)
+/// - `scale` - Scale factors [sx, sy, sz]
+/// - `pivot` - Pivot offset from layer center [px, py, pz]
+/// - `view_projection` - Camera view-projection matrix (None = identity/ortho)
+pub fn transform_frame_with_camera(
+    src: &Frame,
+    canvas: (usize, usize),
+    position: [f32; 3],
+    rotation: [f32; 3],
+    scale: [f32; 3],
+    pivot: [f32; 3],
+    view_projection: Option<Mat4>,
 ) -> Frame {
     let src_w = src.width();
     let src_h = src.height();
@@ -260,8 +351,16 @@ pub fn transform_frame(
     let comp_size = canvas;
     let src_size = (src_w, src_h);
 
-    // Inverse transform: comp space -> object space
-    let inv = build_inverse_transform(position, rotation_z, scale, pivot);
+    // Build inverse model transform: world/comp -> object space
+    let inv_model = build_inverse_transform(position, rotation, scale, pivot);
+    
+    // Build full inverse MVP if camera provided
+    // MVP = Projection * View * Model
+    // Inverse: Model^-1 * View^-1 * Projection^-1
+    let inv = match view_projection {
+        Some(vp) => inv_model * vp.inverse(),
+        None => inv_model,
+    };
     
     // Get source buffer
     let src_buffer = src.buffer();
@@ -281,7 +380,10 @@ pub fn transform_frame(
                         // Transform dst coord to src coord
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let comp_pt = space::image_to_comp(dst_pt, comp_size);
-                        let obj_pt = inv.transform_point2(comp_pt);
+                        // Use Mat4 transform (project to 2D for sampling)
+                        let comp_pt3 = Vec3::new(comp_pt.x, comp_pt.y, 0.0);
+                        let obj_pt3 = inv.transform_point3(comp_pt3);
+                        let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
                         let src_pt = space::object_to_src(obj_pt, src_size);
 
                         let color = sample_f32(buf, src_w, src_h, src_pt.x, src_pt.y);
@@ -303,7 +405,9 @@ pub fn transform_frame(
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let comp_pt = space::image_to_comp(dst_pt, comp_size);
-                        let obj_pt = inv.transform_point2(comp_pt);
+                        let comp_pt3 = Vec3::new(comp_pt.x, comp_pt.y, 0.0);
+                        let obj_pt3 = inv.transform_point3(comp_pt3);
+                        let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
                         let src_pt = space::object_to_src(obj_pt, src_size);
 
                         let color = sample_f16(buf, src_w, src_h, src_pt.x, src_pt.y);
@@ -328,7 +432,9 @@ pub fn transform_frame(
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let comp_pt = space::image_to_comp(dst_pt, comp_size);
-                        let obj_pt = inv.transform_point2(comp_pt);
+                        let comp_pt3 = Vec3::new(comp_pt.x, comp_pt.y, 0.0);
+                        let obj_pt3 = inv.transform_point3(comp_pt3);
+                        let obj_pt = Vec2::new(obj_pt3.x, obj_pt3.y);
                         let src_pt = space::object_to_src(obj_pt, src_size);
 
                         let color = sample_u8(buf, src_w, src_h, src_pt.x, src_pt.y);
@@ -357,11 +463,12 @@ mod tests {
     
     #[test]
     fn test_identity_check() {
-        assert!(is_identity([0.0, 0.0, 0.0], 0.0, [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([10.0, 0.0, 0.0], 0.0, [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([0.0, 0.0, 0.0], 0.1, [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([0.0, 0.0, 0.0], 0.0, [2.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([0.0, 0.0, 0.0], 0.0, [1.0, 1.0, 1.0], [5.0, 0.0, 0.0]));
+        assert!(is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
+        assert!(!is_identity([10.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
+        assert!(!is_identity([0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
+        assert!(!is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.1], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
+        assert!(!is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
+        assert!(!is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [5.0, 0.0, 0.0]));
     }
     
     #[test]
@@ -375,7 +482,7 @@ mod tests {
             &frame,
             (4, 4),
             [0.0, 0.0, 0.0],
-            0.0,
+            [0.0, 0.0, 0.0],
             [1.0, 1.0, 1.0],
             [0.0, 0.0, 0.0],
         );
