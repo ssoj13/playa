@@ -501,12 +501,21 @@ impl CompNode {
     }
     
     /// Get the active camera for current frame.
-    /// 
+    ///
     /// Returns the topmost visible camera layer that covers the given frame.
     /// Layers are checked from top to bottom (reverse iteration since layers
     /// are stored bottom-to-top). Returns None if no camera is active.
     ///
-    /// Returns (CameraNode, position, rotation) - position/rotation from Layer attrs.
+    /// # Return value: (CameraNode, position, rotation)
+    ///
+    /// Position/rotation come from the LAYER, not CameraNode. This is intentional:
+    /// - CameraNode stores lens params only (fov, near/far, projection type)
+    /// - Transform lives on Layer like any spatial object
+    /// - Avoids duplicate position attrs and confusion
+    /// - Matches After Effects architecture
+    ///
+    /// Default position [0,0,-1000] puts camera 1000 units back on Z axis,
+    /// looking at origin (standard setup).
     ///
     /// # Arguments
     /// - `frame_idx` - frame to check camera visibility

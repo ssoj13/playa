@@ -680,7 +680,11 @@ pub fn handle_app_event(
                 let node = std::sync::Arc::make_mut(arc_node);
                 let (duration, source_dim, name, renderable, is_camera) =
                     source_info.unwrap_or((1, (64, 64), "layer_1".to_string(), true, false));
-                // Camera layers need position pulled back so they can see the scene
+                // WHY CAMERA GETS Z=-1000:
+                // Camera at Z=0 would be AT the layer plane, seeing nothing.
+                // Pull back to Z=-1000 so it looks at origin where layers live.
+                // This matches typical 3D app default (camera behind scene).
+                // User can adjust via layer.position in inspector.
                 let initial_pos = if is_camera { Some([0.0, 0.0, -1000.0]) } else { None };
                 node.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim, renderable, initial_pos)
             } else {

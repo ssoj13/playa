@@ -142,8 +142,17 @@ impl CameraNode {
 
     /// Build view matrix (world -> camera space).
     ///
-    /// Position and rotation come from the Layer attrs (not stored in CameraNode).
-    /// Uses either point_of_interest (if use_poi=true) or rotation angles.
+    /// # Architecture: Why pos/rot are arguments, not stored in CameraNode
+    ///
+    /// Camera is a spatial object like any layer. Its transform (position, rotation,
+    /// scale) lives on the Layer that references this CameraNode. This follows AE
+    /// model and avoids duplicate attrs. CameraNode only stores lens parameters.
+    ///
+    /// Call site (comp_node.rs) reads layer.position/rotation and passes here.
+    ///
+    /// # Modes
+    /// - `use_poi=true`: look_at mode, camera points at point_of_interest
+    /// - `use_poi=false`: rotation mode, use Euler angles from layer
     ///
     /// # Arguments
     /// - `position` - camera position from layer attrs [x, y, z]

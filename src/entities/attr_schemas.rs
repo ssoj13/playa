@@ -185,7 +185,17 @@ const CAMERA_SPECIFIC: &[AttrDef] = &[
 ];
 
 pub static CAMERA_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    // No TRANSFORM - camera position/rotation comes from Layer, not CameraNode
+    // WHY NO TRANSFORM:
+    // Camera is a spatial object in the composition, like any other layer.
+    // Position/rotation/scale come from the LAYER that references this camera,
+    // not from CameraNode itself. This follows After Effects model where
+    // camera transform is on the layer, and CameraNode only stores lens params
+    // (fov, near/far, projection type, DOF settings).
+    //
+    // Benefits:
+    // - No duplicate position attrs (layer.position vs camera.position)
+    // - Animation works naturally on layer transform
+    // - Consistent with how all spatial objects (lights, nulls) will work
     AttrSchema::from_slices("CameraNode", &[IDENTITY, CAMERA_SPECIFIC, TIMING, OPACITY])
 });
 

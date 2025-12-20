@@ -58,8 +58,14 @@ impl NodeKind {
     }
 
     // play_range, bounds, frame_count, dim - now via Node trait (enum_dispatch)
-    
+
     /// Add child layer (only works on CompNode)
+    ///
+    /// # initial_position parameter
+    ///
+    /// Optional starting position for the layer. Used for cameras which need
+    /// Z=-1000 to be pulled back from the scene (at Z=0 they'd see nothing).
+    /// Regular layers use None → default [0,0,0].
     pub fn add_child_layer(
         &mut self,
         source_uuid: Uuid,

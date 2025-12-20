@@ -4,8 +4,19 @@
 //! Forward transform (layer -> comp):
 //! comp = position + R * S * (object - pivot)
 //!
-//! Rotation order: ZYX (AE-style) - rotate Z first, then Y, then X.
-//! Rotation sign: clockwise-positive when looking down axis (user convention).
+//! # Rotation conventions
+//!
+//! - Order: ZYX (AE-style) - rotate Z first, then Y, then X
+//! - Sign: clockwise-positive when looking down axis (user convention)
+//! - glam uses CCW+ (math convention), so we NEGATE angles when calling glam
+//!
+//! # Perspective projection
+//!
+//! CPU compositor uses reverse-mapping: for each output pixel, find source pixel.
+//! With perspective camera, this requires ray-plane intersection because
+//! perspective projection is non-linear (can't just invert the matrix).
+//!
+//! Pipeline: screen pixel → NDC → ray through inv_VP → intersect layer plane → object space
 
 use glam::{Mat4, Vec2, Vec3, Vec4, Quat, EulerRot};
 use half::f16 as F16;
@@ -42,8 +53,16 @@ fn is_orthographic_vp(vp: Mat4) -> bool {
 
 /// Unproject NDC point to world space using ray-plane intersection.
 ///
-/// For perspective projection, casts a ray from camera through NDC point
-/// and intersects with the layer plane (defined by position and normal).
+/// # Why ray-plane intersection?
+///
+/// With perspective projection, we can't just multiply by inverse MVP.
+/// `transform_point3()` doesn't do perspective divide (w-divide).
+/// The correct approach:
+/// 1. Cast ray from camera through screen pixel
+/// 2. Intersect ray with the layer's plane in world space
+/// 3. Get world coordinate, then transform to object space
+///
+/// For orthographic projection, this isn't needed - use simple affine inverse.
 ///
 /// # Arguments
 /// - `ndc` - Normalized device coordinates [-1, 1]
