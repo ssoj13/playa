@@ -26,9 +26,9 @@ use super::ViewportState;
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player::Player;
 use crate::entities::comp_events::SetLayerTransformsEvent;
-use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::keys::{A_POSITION, A_ROTATION, A_SCALE};
+use crate::entities::space;
 
 
 /// Gizmo state - lives in PlayaApp, not saved.
@@ -79,11 +79,8 @@ impl GizmoState {
         }
 
         // Collect layer transforms
-        let comp_size = project
-            .with_comp(comp_uuid, |comp| comp.dim())
-            .unwrap_or((1, 1));
         let (transforms, layer_data) =
-            self.collect_transforms(tool, project, comp_uuid, &selected, comp_size);
+            self.collect_transforms(tool, project, comp_uuid, &selected);
         if transforms.is_empty() {
             return (false, Vec::new());
         }
@@ -112,7 +109,7 @@ impl GizmoState {
         // Interact
         if let Some((_result, new_transforms)) = self.gizmo.interact(ui, &transforms) {
             if let Some(event) =
-                self.build_transform_event(tool, comp_uuid, comp_size, &layer_data, &new_transforms)
+                self.build_transform_event(tool, comp_uuid, &layer_data, &new_transforms)
             {
                 return (true, vec![Box::new(event)]);
             }
@@ -128,7 +125,6 @@ impl GizmoState {
         project: &Project,
         comp_uuid: Uuid,
         selected: &[Uuid],
-        comp_size: (usize, usize),
     ) -> (Vec<Transform>, Vec<(Uuid, [f32; 3], [f32; 3], [f32; 3])>) {
         let mut transforms = Vec::new();
         let mut layer_data = Vec::new();
@@ -136,7 +132,7 @@ impl GizmoState {
         for &layer_uuid in selected {
             if let Some((pos, rot, scale)) = get_layer_transform(project, comp_uuid, layer_uuid)
             {
-                transforms.push(layer_to_gizmo_transform(tool, pos, rot, scale, comp_size));
+                transforms.push(layer_to_gizmo_transform(tool, pos, rot, scale));
                 layer_data.push((layer_uuid, pos, rot, scale));
             }
         }
@@ -148,7 +144,6 @@ impl GizmoState {
         &self,
         tool: ToolMode,
         comp_uuid: Uuid,
-        comp_size: (usize, usize),
         layer_data: &[(Uuid, [f32; 3], [f32; 3], [f32; 3])],
         new_transforms: &[Transform],
     ) -> Option<SetLayerTransformsEvent> {
@@ -159,7 +154,7 @@ impl GizmoState {
             else {
                 continue;
             };
-            let (gizmo_pos, gizmo_rot, gizmo_scale) = gizmo_to_layer_transform(new_t, comp_size);
+            let (gizmo_pos, gizmo_rot, gizmo_scale) = gizmo_to_layer_transform(new_t);
 
             // We normalize the input transform we pass into transform-gizmo (see
             // `layer_to_gizmo_transform`) so gizmo rings/handles render correctly in 2D.
@@ -271,7 +266,6 @@ fn layer_to_gizmo_transform(
     position: [f32; 3],
     rotation: [f32; 3],
     scale: [f32; 3],
-    _comp_size: (usize, usize),
 ) -> Transform {
     use glam::{DQuat, DVec3};
 
@@ -290,13 +284,13 @@ fn layer_to_gizmo_transform(
     // Gizmo view matrix matches renderer view matrix (zoom + pan), so positions
     // in frame space map directly to gizmo world coordinates.
     let translation = DVec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
-    // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
-    // In 2D we only care about Z.
+    // Layer rotation attrs are stored in DEGREES (CW+). Gizmo expects radians (CCW+).
+    // In 2D we only care about Z. Use space::to_math_rot for CW+ -> CCW+ conversion.
     let rotation_quat = DQuat::from_euler(
         glam::EulerRot::XYZ,
         0.0,
         0.0,
-        -((rotation[2] as f64).to_radians()),
+        space::to_math_rot(rotation[2]) as f64,
     );
     let scale_vec = match tool {
         ToolMode::Scale => DVec3::new(scale[0] as f64, scale[1] as f64, 1.0),
@@ -313,10 +307,7 @@ fn layer_to_gizmo_transform(
     )
 }
 
-fn gizmo_to_layer_transform(
-    t: &Transform,
-    _comp_size: (usize, usize),
-) -> ([f32; 3], [f32; 3], [f32; 3]) {
+fn gizmo_to_layer_transform(t: &Transform) -> ([f32; 3], [f32; 3], [f32; 3]) {
     use glam::{DQuat, DVec3};
 
     let translation = DVec3::new(t.translation.x, t.translation.y, t.translation.z);
@@ -325,14 +316,13 @@ fn gizmo_to_layer_transform(
 
     let euler = rotation.to_euler(glam::EulerRot::XYZ);
     // Position from gizmo is already in frame space (shared with renderer).
-
-    // Layer rotation attrs are stored in DEGREES.
+    // Rotation: convert CCW+ radians back to CW+ degrees using space::from_math_rot.
     (
         [translation.x as f32, translation.y as f32, translation.z as f32],
         [
             (euler.0 as f32).to_degrees(),
             (euler.1 as f32).to_degrees(),
-            (-(euler.2 as f32)).to_degrees(),
+            space::from_math_rot(euler.2 as f32),
         ],
         [scale.x as f32, scale.y as f32, scale.z as f32],
     )
