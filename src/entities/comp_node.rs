@@ -980,8 +980,11 @@ impl CompNode {
             renderable_layers.push((idx, pos[2]));
         }
         
-        // Sort by Z position (ascending = farther first, closer renders on top).
-        // For same Z, higher layer index = on top (stable sort preserves this).
+        // Sort by Z position for painter's algorithm (back-to-front).
+        // Camera at +Z looks toward -Z, so:
+        //   - Lower Z = farther from camera = render first (behind)
+        //   - Higher Z = closer to camera = render last (on top)
+        // Ascending sort gives correct order for painter's algorithm.
         renderable_layers.sort_by(|a, b| {
             // Primary: Z position (lower = farther = render first)
             match a.1.partial_cmp(&b.1) {
@@ -992,9 +995,6 @@ impl CompNode {
                 Some(ord) => ord,
             }
         });
-        
-        // Reverse so that closer layers (higher Z) are processed last = end up on top
-        renderable_layers.reverse();
         
         // Get active camera for this frame (if any)
         // Camera provides view-projection matrix for 3D perspective/ortho rendering
