@@ -81,6 +81,7 @@ pub struct ViewportState {
 /// Render-only viewport state (cheap to copy into GL callbacks).
 #[derive(Clone, Copy)]
 pub struct ViewportRenderState {
+    pub model_matrix: [[f32; 4]; 4],
     pub view_matrix: [[f32; 4]; 4],
     pub projection_matrix: [[f32; 4]; 4],
 }
@@ -223,50 +224,46 @@ impl ViewportState {
         self.screen_to_image(screen_pos).is_some()
     }
 
-    /// Convert image space coordinates (0..image_size) to screen space
+    /// Convert image space coordinates (0..image_size) to screen space.
+    /// Uses frame space (centered, pixel coords) as intermediate — matches space.rs.
     pub fn image_to_screen(&self, image_pos: egui::Vec2) -> egui::Vec2 {
-        // image (0..image_size) -> local (-0.5..0.5)
-        let local = egui::vec2(
-            image_pos.x / self.image_size.x - 0.5,
-            image_pos.y / self.image_size.y - 0.5,
+        // image -> frame (centered pixel space)
+        let frame = egui::vec2(
+            image_pos.x - self.image_size.x * 0.5,
+            image_pos.y - self.image_size.y * 0.5,
         );
-
-        // local -> viewport space (apply view transform)
+        // frame -> viewport (apply view: zoom + pan)
         let viewport = egui::vec2(
-            local.x * self.image_size.x * self.zoom + self.pan.x,
-            local.y * self.image_size.y * self.zoom + self.pan.y,
+            frame.x * self.zoom + self.pan.x,
+            frame.y * self.zoom + self.pan.y,
         );
-
-        // viewport -> screen space
+        // viewport -> screen
         egui::vec2(
-            viewport.x + self.viewport_size.x / 2.0,
-            viewport.y + self.viewport_size.y / 2.0,
+            viewport.x + self.viewport_size.x * 0.5,
+            viewport.y + self.viewport_size.y * 0.5,
         )
     }
 
-    /// Convert screen space coordinates to image space (0..image_size)
-    /// Returns None if position is outside the image bounds
+    /// Convert screen space coordinates to image space (0..image_size).
+    /// Returns None if position is outside the image bounds.
     #[allow(dead_code)]
     pub fn screen_to_image(&self, screen_pos: egui::Vec2) -> Option<egui::Vec2> {
-        // screen -> viewport space
+        // screen -> viewport
         let viewport = egui::vec2(
-            screen_pos.x - self.viewport_size.x / 2.0,
-            screen_pos.y - self.viewport_size.y / 2.0,
+            screen_pos.x - self.viewport_size.x * 0.5,
+            screen_pos.y - self.viewport_size.y * 0.5,
         );
-
-        // viewport -> local space (inverse view transform)
-        let local = egui::vec2(
-            (viewport.x - self.pan.x) / (self.image_size.x * self.zoom),
-            (viewport.y - self.pan.y) / (self.image_size.y * self.zoom),
+        // viewport -> frame (inverse view)
+        let frame = egui::vec2(
+            (viewport.x - self.pan.x) / self.zoom,
+            (viewport.y - self.pan.y) / self.zoom,
         );
-
-        // local (-0.5..0.5) -> image (0..image_size)
+        // frame -> image
         let image = egui::vec2(
-            (local.x + 0.5) * self.image_size.x,
-            (local.y + 0.5) * self.image_size.y,
+            frame.x + self.image_size.x * 0.5,
+            frame.y + self.image_size.y * 0.5,
         );
-
-        // Check bounds
+        // bounds check
         if image.x >= 0.0
             && image.x <= self.image_size.x
             && image.y >= 0.0
@@ -350,21 +347,29 @@ impl ViewportState {
     /// Snapshot render-only matrices for GL callbacks.
     pub fn render_state(&self) -> ViewportRenderState {
         ViewportRenderState {
+            model_matrix: self.get_model_matrix(),
             view_matrix: self.get_view_matrix(),
             projection_matrix: self.get_projection_matrix(),
         }
     }
 
-    /// Get view matrix for shader (2D transform: translate + scale)
-    pub fn get_view_matrix(&self) -> [[f32; 4]; 4] {
-        // 2D transform matrix: scale + translate
-        // We center the image in viewport space
-        let aspect_corrected_zoom_x = self.zoom * self.image_size.x;
-        let aspect_corrected_zoom_y = self.zoom * self.image_size.y;
-
+    /// Get model matrix for shader (scales normalized quad to image pixel size).
+    pub fn get_model_matrix(&self) -> [[f32; 4]; 4] {
         [
-            [aspect_corrected_zoom_x, 0.0, 0.0, 0.0],
-            [0.0, aspect_corrected_zoom_y, 0.0, 0.0],
+            [self.image_size.x, 0.0, 0.0, 0.0],
+            [0.0, self.image_size.y, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    }
+
+    /// Get view matrix for shader (zoom + pan only, matches gizmo).
+    pub fn get_view_matrix(&self) -> [[f32; 4]; 4] {
+        // View = zoom + pan (same as gizmo uses)
+        // This keeps renderer and gizmo in sync
+        [
+            [self.zoom, 0.0, 0.0, 0.0],
+            [0.0, self.zoom, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [self.pan.x, self.pan.y, 0.0, 1.0],
         ]

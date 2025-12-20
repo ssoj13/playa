@@ -492,8 +492,17 @@ impl ViewportRenderer {
             gl.use_program(Some(program));
 
             // Set uniforms
+            let model_matrix = viewport_state.model_matrix;
             let view_matrix = viewport_state.view_matrix;
             let proj_matrix = viewport_state.projection_matrix;
+
+            if let Some(loc) = gl.get_uniform_location(program, "u_model") {
+                gl.uniform_matrix_4_f32_slice(
+                    Some(&loc),
+                    false,
+                    bytemuck::cast_slice(&model_matrix),
+                );
+            }
 
             if let Some(loc) = gl.get_uniform_location(program, "u_view") {
                 gl.uniform_matrix_4_f32_slice(

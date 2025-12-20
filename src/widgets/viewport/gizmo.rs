@@ -4,12 +4,14 @@
 //!
 //! ## Coordinate System
 //!
-//! Layer `position` is in **frame space** (same as viewport space):
+//! Layer `position` is in **frame space** (centered, Y-up pixels):
 //! - Origin at CENTER of comp, +Y up
 //! - `position = (0, 0, 0)` = layer centered
 //! - `position = (100, 50, 0)` = layer 100px right, 50px up from center
 //!
-//! Frame space == viewport space, so NO conversion needed for gizmo!
+//! Renderer and gizmo both use the same view matrix (zoom + pan), so layer
+//! positions in frame space map directly to gizmo world coordinates.
+//! See `ViewportState::get_view_matrix()` and `build_gizmo_matrices()`.
 
 use eframe::egui;
 use transform_gizmo_egui::{
@@ -285,7 +287,8 @@ fn layer_to_gizmo_transform(
     // output back into the original layer attrs and only write the edited channel.
     //
     // Position is in frame space (origin at center, Y-up).
-    // Frame space == viewport space, so NO conversion needed!
+    // Gizmo view matrix matches renderer view matrix (zoom + pan), so positions
+    // in frame space map directly to gizmo world coordinates.
     let translation = DVec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
     // Layer rotation attrs are stored in DEGREES. Gizmo expects radians.
     // In 2D we only care about Z.
@@ -321,7 +324,7 @@ fn gizmo_to_layer_transform(
     let scale = DVec3::new(t.scale.x, t.scale.y, t.scale.z);
 
     let euler = rotation.to_euler(glam::EulerRot::XYZ);
-    // Position is already in frame space (same as viewport) - no conversion needed!
+    // Position from gizmo is already in frame space (shared with renderer).
 
     // Layer rotation attrs are stored in DEGREES.
     (

@@ -75,3 +75,21 @@ pub fn src_to_object(p: Vec2, src_size: (usize, usize)) -> Vec2 {
     let h = src_size.1 as f32;
     Vec2::new(p.x - w * 0.5, h * 0.5 - p.y)
 }
+
+// =============================================================================
+// Rotation Convention Helpers
+// =============================================================================
+// User convention: clockwise-positive (CW+) — matches After Effects, common UI expectation.
+// Math convention: counter-clockwise-positive (CCW+) — glam, OpenGL, standard math.
+
+/// Convert user rotation (CW+, degrees) to math rotation (CCW+, radians).
+#[inline]
+pub fn to_math_rot(deg: f32) -> f32 {
+    -deg.to_radians()
+}
+
+/// Convert math rotation (CCW+, radians) to user rotation (CW+, degrees).
+#[inline]
+pub fn from_math_rot(rad: f32) -> f32 {
+    -rad.to_degrees()
+}
