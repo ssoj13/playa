@@ -1,6 +1,28 @@
 //! REST API implementation using rouille.
 //!
-//! Provides HTTP endpoints for remote control of the player.
+//! # Purpose
+//!
+//! Core implementation of the HTTP REST API server. Handles incoming requests,
+//! reads shared state for GET endpoints, and sends commands via channel for
+//! POST endpoints that modify player state.
+//!
+//! # Key types
+//!
+//! - [`ApiServer`] - HTTP server runner, spawns background thread
+//! - [`ApiCommand`] - enum of commands sent to main thread (Play, Pause, SetFrame, etc.)
+//! - [`SharedApiState`] - thread-safe snapshots (player, comp, cache) updated by main thread
+//! - [`PlayerSnapshot`], [`CompSnapshot`], [`CacheSnapshot`] - JSON-serializable state copies
+//!
+//! # Thread safety
+//!
+//! - `SharedApiState` uses `RwLock` for each field - main thread writes, HTTP handlers read
+//! - `ApiCommand` sent via `mpsc::Sender` - thread-safe, non-blocking
+//! - CORS headers added to all responses for browser access
+//!
+//! # Used by
+//!
+//! - `server/mod.rs` - re-exports public types
+//! - `main.rs` - calls `ApiServer::start()`, receives `ApiCommand` via channel
 
 use rouille::{Request, Response};
 use serde::{Deserialize, Serialize};

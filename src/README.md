@@ -8,6 +8,7 @@ src/
 ├── core/           # Core engine (playback, caching, events)
 ├── dialogs/        # Modal dialogs (preferences, encoder)
 ├── entities/       # Data models (comp, frame, project)
+├── server/         # REST API server for remote control
 ├── widgets/        # UI widgets (timeline, viewport, status)
 │
 ├── lib.rs          # Library crate entry point
@@ -79,6 +80,30 @@ Modal dialog windows for specific tasks.
 |--------|-------------|
 | `prefs/` | Preferences dialog (cache, playback, shortcuts) |
 | `encode/` | Export/encode dialog (FFmpeg integration) |
+
+### `server/` - REST API
+
+HTTP REST API server for remote control of playa.
+
+| File | Description |
+|------|-------------|
+| `mod.rs` | Module entry, re-exports, architecture docs |
+| `api.rs` | HTTP handlers, ApiServer, ApiCommand, SharedApiState |
+
+**Architecture:**
+- Runs in background thread (rouille sync HTTP server)
+- Commands sent to main thread via `mpsc::channel`
+- State snapshots (`SharedApiState`) updated by main thread each frame
+- CORS enabled for browser access
+
+**Endpoints:**
+- `GET /api/status` - full status (player/comp/cache)
+- `GET /api/player` - player state only
+- `POST /api/player/play|pause|stop` - control playback
+- `POST /api/player/frame/{n}` - seek to frame
+- `POST /api/player/fps/{n}` - set FPS
+
+**Settings:** Enable/disable and port in Settings -> Web Server
 
 ### `bin/` - Standalone Binaries
 
