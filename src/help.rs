@@ -74,6 +74,7 @@ pub const TIMELINE_HELP: &[HelpEntry] = &[
     HelpEntry::new("Delete", "Remove Selected Layer"),
     HelpEntry::new("F", "Fit to Selection"),
     HelpEntry::new("A", "Fit to Work Area (B/N)"),
+    HelpEntry::new("- / = / +", "Zoom Timeline In/Out"),
     HelpEntry::new("Mouse Wheel", "Zoom Timeline"),
     HelpEntry::new("Middle Drag", "Pan Timeline"),
 ];
