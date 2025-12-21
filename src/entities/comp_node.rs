@@ -694,14 +694,15 @@ impl CompNode {
                 match edge {
                     "in" | "start" => {
                         // Positive delta_source increases trim_in (visible start moves right)
+                        // Negative trim_in = extend before source start (hold first frame)
                         let current = layer.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
-                        layer.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int((current + delta_source).max(0)));
+                        layer.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int(current + delta_source));
                     }
                     "out" | "end" => {
                         // Negative delta means user dragged left -> MORE trim_out
-                        // So we SUBTRACT delta_source (which is negative) -> adds to trim_out
+                        // Negative trim_out = extend after source end (hold last frame)
                         let current = layer.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
-                        layer.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int((current - delta_source).max(0)));
+                        layer.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int(current - delta_source));
                     }
                     _ => {}
                 }
@@ -897,9 +898,9 @@ impl CompNode {
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         let layer_in = layer.attrs.get_i32(A_IN).unwrap_or(0);
         let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
-        // trim_in in source frames
+        // trim_in in source frames (negative = extend before source start)
         let new_trim_in = ((new_play_start - layer_in) as f32 * speed) as i32;
-        layer.attrs.set(A_TRIM_IN, AttrValue::Int(new_trim_in.max(0)));
+        layer.attrs.set(A_TRIM_IN, AttrValue::Int(new_trim_in));
         self.mark_dirty();
         self.rebound();
         Ok(())
@@ -911,9 +912,9 @@ impl CompNode {
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         let layer_end = layer.end();
         let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
-        // trim_out in source frames
+        // trim_out in source frames (negative = extend after source end)
         let new_trim_out = ((layer_end - new_play_end) as f32 * speed) as i32;
-        layer.attrs.set(A_TRIM_OUT, AttrValue::Int(new_trim_out.max(0)));
+        layer.attrs.set(A_TRIM_OUT, AttrValue::Int(new_trim_out));
         self.mark_dirty();
         self.rebound();
         Ok(())
@@ -1038,10 +1039,12 @@ impl CompNode {
                 continue;
             };
             
-            // Convert to source frame
+            // Convert to source frame with hold first/last for extended layers
             let local_frame = layer.parent_to_local(frame_idx);
             let source_in = source_node.attrs().get_i32(A_IN).unwrap_or(0);
-            let source_frame = source_in + local_frame;
+            let source_out = source_node.attrs().get_i32(A_OUT).unwrap_or(0);
+            // Clamp to source range: hold first frame if before, hold last if after
+            let source_frame = (source_in + local_frame).clamp(source_in, source_out);
             
             // Recursively compute source frame
             if let Some(mut frame) = source_node.compute(source_frame, ctx) {
