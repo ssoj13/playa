@@ -1256,6 +1256,25 @@ pub fn render_canvas(
             timeline_hovered = true;
         }
 
+    // Handle zoom controls when timeline is hovered
+    if timeline_hovered {
+        // Ctrl+scroll wheel
+        let scroll_delta = ui.ctx().input(|i| i.raw_scroll_delta.y);
+        if scroll_delta != 0.0 && ui.ctx().input(|i| i.modifiers.ctrl) {
+            let zoom_factor = if scroll_delta > 0.0 { 1.1 } else { 0.9 };
+            state.zoom = (state.zoom * zoom_factor).clamp(0.1, 20.0);
+        }
+        // +/- keys
+        ui.ctx().input(|i| {
+            if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
+                state.zoom = (state.zoom * 1.2).clamp(0.1, 20.0);
+            }
+            if i.key_pressed(egui::Key::Minus) {
+                state.zoom = (state.zoom / 1.2).clamp(0.1, 20.0);
+            }
+        });
+    }
+
     // Handle bookmark hotkeys when timeline is hovered
     if timeline_hovered {
         let current_frame = comp.frame();
