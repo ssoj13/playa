@@ -1008,8 +1008,9 @@ impl CompNode {
             // Primary: Z position (lower = farther = render first)
             match a.1.partial_cmp(&b.1) {
                 Some(std::cmp::Ordering::Equal) | None => {
-                    // Secondary: layer index (lower = render first = behind)
-                    a.0.cmp(&b.0)
+                    // Secondary: layer index - AE convention: layer 0 = on top
+                    // So higher index renders first (behind), lower index last (on top)
+                    b.0.cmp(&a.0)
                 }
                 Some(ord) => ord,
             }
