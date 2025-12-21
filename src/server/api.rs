@@ -24,14 +24,17 @@
 //! - `server/mod.rs` - re-exports public types
 //! - `main.rs` - calls `ApiServer::start()`, receives `ApiCommand` via channel
 
+use crossbeam_channel as crossbeam;
+use eframe::egui;
 use rouille::{Request, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock, mpsc};
 use std::thread;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Commands sent from API handlers to main thread
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ApiCommand {
     /// Start playback
     Play,
@@ -49,6 +52,19 @@ pub enum ApiCommand {
     LoadSequence(String),
     /// Emit arbitrary event by name (JSON payload)
     EmitEvent { event_type: String, payload: String },
+    /// Take screenshot of current frame, returns PNG bytes
+    /// Exit the application
+    Exit,
+    /// Go to next frame
+    NextFrame,
+    /// Go to previous frame
+    PrevFrame,
+    Screenshot {
+        /// If true, capture viewport render; if false, capture raw frame
+        viewport_only: bool,
+        /// Channel to send PNG bytes back
+        response: crossbeam::Sender<Result<Vec<u8>, String>>,
+    },
 }
 
 /// Player state snapshot for API responses
@@ -93,6 +109,8 @@ pub struct SharedApiState {
     pub player: RwLock<PlayerSnapshot>,
     pub comp: RwLock<Option<CompSnapshot>>,
     pub cache: RwLock<CacheSnapshot>,
+    /// egui context for triggering immediate repaint (set lazily from main thread)
+    pub egui_ctx: RwLock<Option<egui::Context>>,
 }
 
 impl Default for SharedApiState {
@@ -110,6 +128,7 @@ impl Default for SharedApiState {
                 memory_used_mb: 0.0,
                 memory_limit_mb: 0.0,
             }),
+            egui_ctx: RwLock::new(None),
         }
     }
 }
@@ -185,9 +204,20 @@ impl ApiServer {
         let state = self.state;
         let tx = self.command_tx;
 
-        rouille::start_server(&addr, move |request| {
+        // Use Server::new for graceful error handling instead of start_server which panics
+        match rouille::Server::new(&addr, move |request| {
             Self::handle_request(request, &state, &tx)
-        });
+        }) {
+            Ok(server) => {
+                log::info!("API server listening on http://{}", addr);
+                server.run();
+            }
+            Err(e) => {
+                log::error!("Failed to start API server on port {}: {}", self.port, e);
+                log::error!("This may be caused by another instance of playa already running.");
+                log::error!("API server will not be available in this session.");
+            }
+        }
     }
 
     fn handle_request(
@@ -260,6 +290,15 @@ impl ApiServer {
                 Self::send_command(tx, ApiCommand::ToggleLoop)
             },
             // Frame/FPS handled separately due to path params
+            (POST) ["/api/player/next"] => {
+                Self::send_command(tx, ApiCommand::NextFrame)
+            },
+            (POST) ["/api/player/prev"] => {
+                Self::send_command(tx, ApiCommand::PrevFrame)
+            },
+            (POST) ["/api/app/exit"] => {
+                Self::send_command(tx, ApiCommand::Exit)
+            },
 
             (POST) ["/api/player/frame"] => {
                 // Fallback - requires /api/player/frame/{n}
@@ -279,6 +318,16 @@ impl ApiServer {
             // Health check
             (GET) ["/api/health"] => {
                 Response::json(&ApiResponse::ok_msg("playa API server"))
+            },
+
+            // Screenshot endpoints
+            // /api/screenshot - full window capture via glReadPixels
+            // /api/screenshot/frame - raw frame data only (no UI)
+            (GET) ["/api/screenshot"] => {
+                Self::handle_screenshot(tx, state, true)  // viewport_only=true means full window
+            },
+            (GET) ["/api/screenshot/frame"] => {
+                Self::handle_screenshot(tx, state, false)  // viewport_only=false means raw frame
             },
 
             // Fallback
@@ -344,6 +393,46 @@ impl ApiServer {
             }
             Err(e) => Response::json(&ApiResponse::err(&format!("Invalid JSON: {}", e)))
                 .with_status_code(400),
+        }
+    }
+
+    /// Handle screenshot request - sends command and waits for JPEG response
+    fn handle_screenshot(tx: &mpsc::Sender<ApiCommand>, state: &SharedApiState, viewport_only: bool) -> Response {
+        // Trigger immediate repaint to minimize wait time
+        if let Some(ctx) = state.egui_ctx.read().unwrap().as_ref() {
+            ctx.request_repaint();
+        }
+
+        // Create oneshot channel for response
+        let (resp_tx, resp_rx) = crossbeam::bounded(1);
+
+        // Send screenshot command
+        let cmd = ApiCommand::Screenshot {
+            viewport_only,
+            response: resp_tx,
+        };
+
+        if let Err(e) = tx.send(cmd) {
+            return Response::json(&ApiResponse::err(&format!("Failed to send command: {}", e)))
+                .with_status_code(500);
+        }
+
+        // Request repaint again after command is queued
+        if let Some(ctx) = state.egui_ctx.read().unwrap().as_ref() {
+            ctx.request_repaint();
+        }
+
+        // Wait for response with timeout
+        match resp_rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(Ok(jpeg_bytes)) => {
+                Response::from_data("image/jpeg", jpeg_bytes)
+            }
+            Ok(Err(err)) => {
+                Response::json(&ApiResponse::err(&err)).with_status_code(500)
+            }
+            Err(_) => {
+                Response::json(&ApiResponse::err("Screenshot timeout")).with_status_code(504)
+            }
         }
     }
 }

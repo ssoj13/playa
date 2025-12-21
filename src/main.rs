@@ -162,6 +162,14 @@ struct PlayaApp {
     /// REST API command receiver (polled each frame)
     #[serde(skip)]
     api_command_rx: Option<std::sync::mpsc::Receiver<playa::server::ApiCommand>>,
+    /// Pending screenshot requests (full window capture via glReadPixels)
+    /// Multiple clients can wait - all receive the same screenshot (broadcast)
+    #[serde(skip)]
+    /// (viewport_only, response_channel) - viewport_only=true means full window, false means raw frame
+    pending_screenshots: Vec<(bool, crossbeam_channel::Sender<Result<Vec<u8>, String>>)>,
+    /// Exit requested via REST API
+    #[serde(skip)]
+    exit_requested: bool,
 }
 
 impl Default for PlayaApp {
@@ -237,6 +245,8 @@ impl Default for PlayaApp {
             gizmo_state: playa::widgets::viewport::gizmo::GizmoState::default(),
             api_state: Arc::new(playa::server::SharedApiState::default()),
             api_command_rx: None,  // Started later when settings are loaded
+            pending_screenshots: Vec::new(),
+            exit_requested: false,
         }
     }
 }
@@ -359,10 +369,13 @@ impl PlayaApp {
     }
 
     /// Start REST API server if enabled in settings.
-    fn start_api_server(&mut self) {
+    fn start_api_server(&mut self, ctx: &egui::Context) {
         if self.api_command_rx.is_some() {
             return; // Already started
         }
+
+        // Store egui context for API thread to trigger repaints
+        *self.api_state.egui_ctx.write().unwrap() = Some(ctx.clone());
 
         let port = self.settings.api_server_port.unwrap_or(9876);
         if self.settings.api_server_enabled {
@@ -470,8 +483,74 @@ impl PlayaApp {
                         }
                     }
                 }
+                ApiCommand::Screenshot { viewport_only, response } => {
+                    self.take_screenshot(viewport_only, response);
+                }
+                ApiCommand::Exit => {
+                    log::info!("Exit command received via REST API");
+                    self.exit_requested = true;
+                }
+                ApiCommand::NextFrame => {
+                    self.event_bus.emit(StepForwardEvent);
+                }
+                ApiCommand::PrevFrame => {
+                    self.event_bus.emit(StepBackwardEvent);
+                }
             }
         }
+    }
+
+    /// Queue screenshot request.
+    /// viewport_only=true: full window via glReadPixels (includes UI)
+    /// viewport_only=false: raw frame data only (no UI)
+    /// Both go through paint callback for unified async handling.
+    fn take_screenshot(&mut self, viewport_only: bool, response: crossbeam_channel::Sender<Result<Vec<u8>, String>>) {
+        self.pending_screenshots.push((viewport_only, response));
+        log::trace!("Screenshot request queued ({} waiting), viewport_only={}", self.pending_screenshots.len(), viewport_only);
+    }
+    /// Capture raw frame data (no GL, immediate).
+    fn capture_raw_frame(&self) -> Result<Vec<u8>, String> {
+        use image::{ImageBuffer, Rgba};
+
+        let frame = match &self.frame {
+            Some(f) => f,
+            None => return Err("No frame loaded".to_string()),
+        };
+
+        let (width, height) = frame.resolution();
+        let buffer = frame.buffer();
+
+        // Convert to RGBA8 if needed (tonemap HDR)
+        let rgba_data: Vec<u8> = match buffer.as_ref() {
+            entities::frame::PixelBuffer::U8(data) => data.clone(),
+            entities::frame::PixelBuffer::F16(_) | entities::frame::PixelBuffer::F32(_) => {
+                let tonemapped = frame.tonemap(entities::frame::TonemapMode::ACES)
+                    .map_err(|e| format!("Tonemap failed: {}", e))?;
+                match tonemapped.buffer().as_ref() {
+                    entities::frame::PixelBuffer::U8(data) => data.clone(),
+                    _ => return Err("Tonemap did not produce U8 buffer".to_string()),
+                }
+            }
+        };
+
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = 
+            ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
+                .ok_or_else(|| "Failed to create image buffer".to_string())?;
+
+        // JPEG is much faster than PNG
+        let mut jpeg_bytes: Vec<u8> = Vec::new();
+        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
+        let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90);
+        encoder.encode(
+            rgb_img.as_raw(),
+            rgb_img.width(),
+            rgb_img.height(),
+            image::ExtendedColorType::Rgb8
+        ).map_err(|e| format!("JPEG encoding failed: {}", e))?;
+
+        log::info!("Raw frame screenshot: {}x{}, {} bytes", width, height, jpeg_bytes.len());
+        Ok(jpeg_bytes)
     }
 
     /// Handle events from event bus.
@@ -1523,11 +1602,16 @@ impl<'a> TabViewer for DockTabs<'a> {
 impl eframe::App for PlayaApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Reset node editor flags each frame - will be set if tab is rendered
+        // Handle exit request from REST API
+        if self.exit_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
         self.node_editor_hovered = false;
         self.node_editor_tab_active = false;
 
         // Start REST API server if enabled (lazy start on first frame)
-        self.start_api_server();
+        self.start_api_server(ctx);
 
         // Get GL context and update compositor backend
         if let Some(gl) = frame.gl() {
@@ -1640,7 +1724,7 @@ impl eframe::App for PlayaApp {
         // 1. Playing (continuous animation)
         // 2. Cache changed (workers loaded frames, need to update indicators)
         let cache_dirty = self.cache_manager.take_dirty();
-        if self.player.is_playing() || cache_dirty {
+        if self.player.is_playing() || cache_dirty || !self.pending_screenshots.is_empty() {
             ctx.request_repaint();
         }
 
@@ -1723,6 +1807,124 @@ impl eframe::App for PlayaApp {
         // Apply settings that affect runtime infrastructure/state.
         // This must not depend on "Settings window opened".
         self.apply_cache_strategy_if_changed();
+
+        // Handle pending screenshots (glReadPixels after all rendering)
+        // Broadcast: one capture serves all waiting clients
+        if !self.pending_screenshots.is_empty() {
+            // Drain all waiters: (viewport_only, sender)
+            let all_waiters: Vec<_> = std::mem::take(&mut self.pending_screenshots);
+            
+            // Split by type
+            let mut window_waiters: Vec<crossbeam_channel::Sender<Result<Vec<u8>, String>>> = Vec::new();
+            let mut frame_waiters: Vec<crossbeam_channel::Sender<Result<Vec<u8>, String>>> = Vec::new();
+            for (viewport_only, sender) in all_waiters {
+                if viewport_only {
+                    window_waiters.push(sender);
+                } else {
+                    frame_waiters.push(sender);
+                }
+            }
+            
+            // Pre-capture raw frame data for frame_waiters (before callback, on main thread)
+            let frame_result: Option<Result<Vec<u8>, String>> = if !frame_waiters.is_empty() {
+                Some(self.capture_raw_frame())
+            } else {
+                None
+            };
+            
+            // Get window size for glReadPixels
+            let screen_rect = ctx.input(|i| i.viewport_rect());
+            let width = screen_rect.width() as i32;
+            let height = screen_rect.height() as i32;
+            log::info!("Screenshot: {} window + {} frame waiters, {}x{}", 
+                window_waiters.len(), frame_waiters.len(), width, height);
+
+            // Wrap both sets of waiters for callback access
+            type WaiterList = Vec<crossbeam_channel::Sender<Result<Vec<u8>, String>>>;
+            let holder: Arc<std::sync::Mutex<(WaiterList, WaiterList, Option<Result<Vec<u8>, String>>)>> = 
+                Arc::new(std::sync::Mutex::new((window_waiters, frame_waiters, frame_result)));
+            let holder_clone = Arc::clone(&holder);
+
+            // Add paint callback via layer_painter
+            let layer_id = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("screenshot_capture"));
+            let painter = ctx.layer_painter(layer_id);
+            painter.add(egui::PaintCallback {
+                rect: screen_rect,
+                callback: Arc::new(egui_glow::CallbackFn::new(move |_info, gl_painter| {
+                    use eframe::glow::HasContext;
+                    let gl = gl_painter.gl();
+
+                    // Take all data (only first callback execution processes)
+                    let (window_waiters, frame_waiters, frame_result) = 
+                        std::mem::take(&mut *holder_clone.lock().unwrap());
+                    if window_waiters.is_empty() && frame_waiters.is_empty() { return; }
+                    
+                    log::info!("PaintCallback: {} window + {} frame waiters", 
+                        window_waiters.len(), frame_waiters.len());
+
+                    // Send pre-captured frame data to frame waiters
+                    if let Some(result) = frame_result {
+                        for waiter in frame_waiters {
+                            let _ = waiter.send(result.clone());
+                        }
+                    }
+
+                    // Capture full window for window waiters
+                    if !window_waiters.is_empty() {
+                        // Allocate buffer for pixels (RGBA)
+                        let mut pixels = vec![0u8; (width * height * 4) as usize];
+
+                        unsafe {
+                            gl.read_pixels(
+                                0, 0,
+                                width, height,
+                                eframe::glow::RGBA,
+                                eframe::glow::UNSIGNED_BYTE,
+                                eframe::glow::PixelPackData::Slice(Some(&mut pixels)),
+                            );
+                        }
+
+                        // Flip vertically (OpenGL origin is bottom-left) - fast row swap
+                        let row_size = (width * 4) as usize;
+                        let half_height = height as usize / 2;
+                        for y in 0..half_height {
+                            let top_start = y * row_size;
+                            let bottom_start = ((height as usize) - 1 - y) * row_size;
+                            let (top_slice, rest) = pixels.split_at_mut(top_start + row_size);
+                            let top_row = &mut top_slice[top_start..];
+                            let bottom_row = &mut rest[bottom_start - top_start - row_size..][..row_size];
+                            top_row.swap_with_slice(bottom_row);
+                        }
+
+                        // Encode to JPEG
+                        use image::{ImageBuffer, Rgba};
+                        let result = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(
+                            width as u32, height as u32, pixels
+                        ).ok_or_else(|| "Failed to create image buffer".to_string())
+                        .and_then(|img| {
+                            let mut jpeg_bytes: Vec<u8> = Vec::new();
+                            let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+                            let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90);
+                            encoder.encode(
+                                rgb_img.as_raw(),
+                                rgb_img.width(),
+                                rgb_img.height(),
+                                image::ExtendedColorType::Rgb8
+                            ).map_err(|e| format!("JPEG encoding failed: {}", e))?;
+                            log::info!("Window screenshot: {}x{}, {} bytes", width, height, jpeg_bytes.len());
+                            Ok(jpeg_bytes)
+                        });
+
+                        // Broadcast to window waiters
+                        for waiter in window_waiters {
+                            let _ = waiter.send(result.clone());
+                        }
+                    }
+                })),
+            });
+            let _ = holder; // Keep alive until callback runs
+        }
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
