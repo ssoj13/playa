@@ -1,5 +1,4 @@
-﻿
-4. В layer src_len всегда должен браться из children comp. если там изменился - то и в layer изменился
+﻿4. В layer src_len всегда должен браться из children comp. если там изменился - то и в layer изменился
 5. подумать как реализовать layer picking.
 6. Чтение EDL или OpenTimelineIO как входного файла
 7. Изучить возможность использования OCIO/OIIO

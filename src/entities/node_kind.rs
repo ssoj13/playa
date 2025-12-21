@@ -5,6 +5,7 @@
 
 use enum_dispatch::enum_dispatch;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use super::attrs::Attrs;

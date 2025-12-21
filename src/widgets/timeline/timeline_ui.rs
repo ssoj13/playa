@@ -448,10 +448,13 @@ pub fn render_canvas(
     let comp_start = comp._in();
     let comp_end = comp._out();
 
+    // Get media for dynamic src_len lookups throughout the function
+    let media = project.media.read().expect("media lock");
+    
     // Calculate extended range to include all layer positions (even beyond comp bounds)
     let (layers_min, layers_max) = comp.layers.iter().fold((comp_start, comp_end), |(min, max), layer| {
-        let start = layer.attrs.full_bar_start();
-        let end = layer.attrs.full_bar_end();
+        let start = layer.start();
+        let end = comp.get_layer_end(layer, &media);
         (min.min(start), max.max(end))
     });
     // Large margin for smooth dragging - scales with visible area
@@ -647,15 +650,14 @@ pub fn render_canvas(
                             let child_uuid = layer.uuid();
                             let attrs = &layer.attrs;
 
-                            // Get full bar start/end (computed from in + src_len/speed)
-                            let child_start = attrs.full_bar_start();
-                            let child_end = attrs.full_bar_end();
+                            // Get full bar start/end using dynamic src_len from source
+                            let child_start = layer.start();
+                            let child_end = comp.get_layer_end(layer, &media);
 
                             // Get precomputed row from layout
                             let row = idx;  // Simple: row = layer index
                             let child_y = row_to_y(row, config, timeline_rect);
-                            let play_start = attrs.layer_start();
-                            let play_end = attrs.layer_end();
+                            let (play_start, play_end) = comp.get_layer_work_area(layer, &media);
                             let is_visible = attrs.get_bool("visible").unwrap_or(true);
 
                             // Calculate layer geometry and cache for interaction pass
@@ -848,7 +850,7 @@ pub fn render_canvas(
                                         };
 
                                         for child_uuid in selection {
-                                            if let Some(attrs) = comp.layers_attrs_get(&child_uuid) {
+                                            if comp.layers_attrs_get(&child_uuid).is_some() {
                                                 let idx_sel = comp.uuid_to_idx(child_uuid).unwrap_or(0);
                                                 let current_row = idx_sel;  // row = layer index
                                                 let target_row = (current_row as i32 + delta_children)
@@ -856,10 +858,12 @@ pub fn render_canvas(
                                                     as usize;
 
                                                 let ghost_child_y = row_to_y(target_row, config, timeline_rect);
-                                                let duration = (attrs.full_bar_end() - attrs.full_bar_start() + 1).max(1);
+                                                let layer_sel = &comp.layers[idx_sel];
+                                                let child_start = layer_sel.start();
+                                                let child_end = comp.get_layer_end(layer_sel, &media);
+                                                let duration = (child_end - child_start + 1).max(1);
 
                                                 // Apply same delta to maintain relative offsets
-                                                let child_start = attrs.full_bar_start();
                                                 let ghost_start = child_start + delta_frames;
 
                                                 draw_drop_preview(
@@ -911,7 +915,7 @@ pub fn render_canvas(
                                             let target_row = *layer_idx;
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let visual_start = new_play_start as f32;
-                                            let layer_end = layer.attrs.full_bar_end() as f32;
+                                            let layer_end = comp.get_layer_end(layer, &media) as f32;
                                             let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
 
@@ -1009,7 +1013,7 @@ pub fn render_canvas(
                                         if let Some(layer) = comp.layers.get(*layer_idx) {
                                             let target_row = *layer_idx;  // row = layer index
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let src_len = layer.attrs.src_len();
+                                            let src_len = comp.get_layer_src_len(layer, &media);
                                             let new_full_bar_end = new_in + (src_len as f32 / speed).ceil() as i32 - 1;
                                             let ghost_x_start = frame_to_screen_x(new_in as f32, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x((new_full_bar_end + 1) as f32, timeline_rect.min.x, config, state);

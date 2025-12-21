@@ -566,7 +566,7 @@ pub fn handle_app_event(
         if let Some(comp_uuid) = player.active_comp() {
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
-                let (min_frame, max_frame) = comp.bounds(true, false);
+                let (min_frame, max_frame) = comp.bounds(true, false, &media);
                 let duration = (max_frame - min_frame + 1).max(1);
                 let pixels_per_frame = e.0 / duration as f32;
                 let default_ppf = 2.0;
@@ -583,7 +583,7 @@ pub fn handle_app_event(
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
                 // If selected_only, use selection bounds (falls back to all if none selected)
-                let (min_frame, max_frame) = comp.bounds(true, e.selected_only);
+                let (min_frame, max_frame) = comp.bounds(true, e.selected_only, &media);
                 let duration = (max_frame - min_frame + 1).max(1);
                 let pixels_per_frame = canvas_width / duration as f32;
                 let default_ppf = 2.0;

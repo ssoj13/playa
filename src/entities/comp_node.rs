@@ -338,14 +338,9 @@ impl CompNode {
         self.rebound();
     }
     
-    /// Calculate actual bounds from all visible layers (read-only).
-    ///
-    /// - `use_trim=true`: uses layer.work_area() (visible/trimmed range)
-    /// - `use_trim=false`: uses layer.start()/end() (full bar range)
-    /// - `selection_only=true`: only selected layers (falls back to all if none selected)
-    ///
-    /// Returns (min_frame, max_frame) or (0, 100) if no visible layers.
-    pub fn bounds(&self, use_trim: bool, selection_only: bool) -> (i32, i32) {
+    /// Calculate actual bounds from all visible layers.
+    /// Uses dynamic src_len from media for accurate layer timing.
+    pub fn bounds(&self, use_trim: bool, selection_only: bool, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
         if self.layers.is_empty() {
             return (0, 100);
         }
@@ -359,21 +354,20 @@ impl CompNode {
             if !layer.is_visible() {
                 continue;
             }
-            // Skip non-selected if selection_only mode
             if use_selection && !self.layer_selection.contains(&layer.uuid()) {
                 continue;
             }
             let (start, end) = if use_trim {
-                layer.work_area()
+                self.get_layer_work_area(layer, media)
             } else {
-                (layer.start(), layer.end())
+                (layer.start(), self.get_layer_end(layer, media))
             };
             min_start = min_start.min(start);
             max_end = max_end.max(end);
         }
         
         if min_start == i32::MAX || max_end == i32::MIN {
-            (0, 100) // No visible layers
+            (0, 100)
         } else {
             (min_start, max_end)
         }
@@ -401,14 +395,29 @@ impl CompNode {
         })
     }
     
+    /// Calculate bounds using stored src_len (for internal use without media access).
+    fn bounds_internal(&self, use_trim: bool) -> (i32, i32) {
+        if self.layers.is_empty() {
+            return (0, 100);
+        }
+        let mut min_start = i32::MAX;
+        let mut max_end = i32::MIN;
+        for layer in &self.layers {
+            if !layer.is_visible() { continue; }
+            let (start, end) = if use_trim { layer.work_area() } else { (layer.start(), layer.end()) };
+            min_start = min_start.min(start);
+            max_end = max_end.max(end);
+        }
+        if min_start == i32::MAX { (0, 100) } else { (min_start, max_end) }
+    }
+
     /// Recalculate comp bounds and dimensions based on layer extents.
-    /// Updates _in/_out to encompass all visible layers.
-    /// Updates width/height from first visible layer.
+    /// Uses stored src_len (acceptable for UI bounds).
     pub fn rebound(&mut self) {
         let old_bounds = (self._in(), self._out());
         let old_work = self.work_area();
         
-        let (new_start, new_end) = self.bounds(true, false);
+        let (new_start, new_end) = self.bounds_internal(true);
         
         self.attrs.set(A_IN, AttrValue::Int(new_start));
         self.attrs.set(A_OUT, AttrValue::Int(new_end));
@@ -533,8 +542,8 @@ impl CompNode {
                 continue;
             }
 
-            // Check if frame is within layer's work area
-            let (play_start, play_end) = layer.work_area();
+            // Check if frame is within layer's work area (dynamic src_len)
+            let (play_start, play_end) = self.get_layer_work_area(layer, media);
             if frame_idx < play_start || frame_idx > play_end {
                 continue;
             }
@@ -557,13 +566,13 @@ impl CompNode {
     /// 
     /// Used to determine if camera projection should be applied.
     /// Returns true if any visible layer has non-zero Z position or XY rotation.
-    pub fn has_3d_content(&self, frame_idx: i32) -> bool {
+    pub fn has_3d_content(&self, frame_idx: i32, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> bool {
         for layer in &self.layers {
             if !layer.is_visible() {
                 continue;
             }
             
-            let (play_start, play_end) = layer.work_area();
+            let (play_start, play_end) = self.get_layer_work_area(layer, media);
             if frame_idx < play_start || frame_idx > play_end {
                 continue;
             }
@@ -647,6 +656,36 @@ impl CompNode {
     /// Get layer work area in absolute frames
     pub fn child_work_area_abs(&self, layer_uuid: Uuid) -> Option<(i32, i32)> {
         self.get_layer(layer_uuid).map(|l| l.work_area())
+    }
+
+    /// Get effective src_len for a layer by looking up its source node.
+    /// For comp sources: returns source.play_frame_count() (dynamic)
+    /// For other sources: returns source.play_frame_count() or stored fallback
+    pub fn get_layer_src_len(&self, layer: &Layer, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> i32 {
+        media.get(&layer.source_uuid())
+            .map(|source| source.play_frame_count())
+            .unwrap_or_else(|| layer.attrs.get_i32(super::keys::A_SRC_LEN).unwrap_or(1))
+    }
+
+    /// Get layer end frame using source's actual duration.
+    /// More accurate than layer.end() which uses stored src_len.
+    pub fn get_layer_end(&self, layer: &Layer, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> i32 {
+        let src_len = self.get_layer_src_len(layer, media);
+        let speed = layer.attrs.get_float(super::keys::A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        layer.start() + ((src_len as f32 / speed) as i32) - 1
+    }
+
+    /// Get layer work area using source's actual duration.
+    pub fn get_layer_work_area(&self, layer: &Layer, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
+        let src_len = self.get_layer_src_len(layer, media);
+        let speed = layer.attrs.get_float(super::keys::A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        let trim_in = layer.attrs.get_i32(super::keys::A_TRIM_IN).unwrap_or(0);
+        let trim_out = layer.attrs.get_i32(super::keys::A_TRIM_OUT).unwrap_or(0);
+        let layer_start = layer.start();
+        let trim_in_scaled = (trim_in as f32 / speed) as i32;
+        let trim_out_scaled = (trim_out as f32 / speed) as i32;
+        let layer_end = layer_start + ((src_len as f32 / speed) as i32) - 1;
+        (layer_start + trim_in_scaled, layer_end - trim_out_scaled)
     }
 
     /// Set multiple attributes on a layer
@@ -973,7 +1012,8 @@ impl CompNode {
         let mut renderable_layers: Vec<(usize, f32)> = Vec::new();
         
         for (idx, layer) in self.layers.iter().enumerate() {
-            let (play_start, play_end) = layer.work_area();
+            // Use dynamic src_len from source node (not stored attr)
+            let (play_start, play_end) = self.get_layer_work_area(layer, ctx.media);
             
             // Skip if outside work area
             if frame_idx < play_start || frame_idx > play_end {
@@ -1233,8 +1273,8 @@ impl Node for CompNode {
         CompNode::play_range(self, use_work_area)
     }
     
-    fn bounds(&self, use_trim: bool, selection_only: bool) -> (i32, i32) {
-        CompNode::bounds(self, use_trim, selection_only)
+    fn bounds(&self, use_trim: bool, selection_only: bool, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
+        CompNode::bounds(self, use_trim, selection_only, media)
     }
     
     // frame_count() and dim() use trait defaults from Node

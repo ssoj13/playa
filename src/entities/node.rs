@@ -143,7 +143,8 @@ pub trait Node: Send + Sync {
     }
     
     /// Content bounds for zoom-to-fit. Default delegates to play_range.
-    fn bounds(&self, use_trim: bool, _selection_only: bool) -> (i32, i32) {
+    /// CompNode overrides to calculate from layers with dynamic src_len from media.
+    fn bounds(&self, use_trim: bool, _selection_only: bool, _media: &std::collections::HashMap<Uuid, Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
         self.play_range(use_trim)
     }
     
@@ -182,6 +183,12 @@ pub trait Node: Send + Sync {
     /// Total source frames: out - in + 1 (inclusive range)
     fn frame_count(&self) -> i32 {
         (self._out() - self._in() + 1).max(0)
+    }
+    
+    /// Play frame count (respects trims): work_area duration
+    fn play_frame_count(&self) -> i32 {
+        let (start, end) = self.work_area();
+        (end - start + 1).max(0)
     }
     
     /// Dimensions (width, height). Default: DEFAULT_DIM (1920x1080)

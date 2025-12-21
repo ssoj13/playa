@@ -302,6 +302,7 @@ impl ViewportRenderer {
         unsafe {
             // Prepare bytes from pixel buffer and map to GL formats
             // For F16 we create an owned byte buffer to avoid borrowing self across calls
+            #[allow(unused_assignments)]
             let mut owned_bytes: Option<Vec<u8>> = None;
             let (pixels_bytes, gl_internal_format, gl_format, gl_type) = match pixel_buffer {
                 PixelBuffer::U8(vec) => (

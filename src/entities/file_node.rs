@@ -221,7 +221,7 @@ impl Node for FileNode {
         self.work_area()
     }
     
-    fn bounds(&self, _use_trim: bool, _selection_only: bool) -> (i32, i32) {
+    fn bounds(&self, _use_trim: bool, _selection_only: bool, _media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
         self.work_area()
     }
     

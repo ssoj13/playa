@@ -409,7 +409,7 @@ impl PlayaApp {
                 //    This prevents flooding cache with requests during rapid slider scrubbing
                 self.enqueue_current_frame_only();
                 self.debounced_preloader.schedule(e.0);
-                // 4. Request viewport refresh
+                // 5. Request viewport refresh
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
             }
