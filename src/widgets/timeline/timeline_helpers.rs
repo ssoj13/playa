@@ -5,6 +5,15 @@ use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::keys::{A_IN, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
+/// Action from ruler interaction
+#[derive(Debug, Clone, Copy)]
+pub enum RulerAction {
+    /// Scrub to frame
+    Scrub(i32),
+    /// Clear bookmark at slot
+    ClearBookmark { comp_uuid: uuid::Uuid, slot: u8 },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum LayerTool {
     AdjustPlayStart,
@@ -165,7 +174,7 @@ pub(super) fn draw_frame_ruler(
     state: &TimelineState,
     timeline_width: f32,
     total_frames: i32,
-) -> (Option<i32>, Rect) {
+) -> (Option<RulerAction>, Rect) {
     let ruler_height = 20.0;
 
     let (rect, ruler_response) = ui.allocate_exact_size(
@@ -173,7 +182,7 @@ pub(super) fn draw_frame_ruler(
         Sense::click_and_drag(),
     );
 
-    let mut frame_clicked = None;
+    let mut action: Option<RulerAction> = None;
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
@@ -285,12 +294,45 @@ pub(super) fn draw_frame_ruler(
 
         if !is_middle_down && (ruler_response.clicked() || ruler_response.dragged())
             && let Some(pos) = ruler_response.interact_pointer_pos() {
-                let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
-                frame_clicked = Some(frame.min(total_frames.saturating_sub(1)));
+                let modifiers = ui.input(|i| i.modifiers);
+                
+                // Ctrl+click: find nearest bookmark within 10px and clear it
+                if modifiers.ctrl && ruler_response.clicked() {
+                    if let Some(bookmarks) = comp.attrs.get_map("bookmarks") {
+                        const THRESHOLD: f32 = 10.0;
+                        // Collect (distance, slot) pairs for bookmarks within threshold
+                        let mut candidates: Vec<(f32, u8)> = bookmarks
+                            .iter()
+                            .filter_map(|(slot_str, value)| {
+                                let bm_frame = match value {
+                                    crate::entities::AttrValue::Int(f) => *f,
+                                    _ => return None,
+                                };
+                                let slot: u8 = slot_str.parse().ok()?;
+                                let marker_x = frame_to_screen_x(bm_frame as f32, rect.min.x, config, state);
+                                let dist = (pos.x - marker_x).abs();
+                                if dist <= THRESHOLD { Some((dist, slot)) } else { None }
+                            })
+                            .collect();
+                        
+                        // Sort by distance, pick nearest
+                        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                        if let Some((_, slot)) = candidates.first() {
+                            action = Some(RulerAction::ClearBookmark {
+                                comp_uuid: comp.uuid(),
+                                slot: *slot,
+                            });
+                        }
+                    }
+                } else {
+                    // Normal click/drag: scrub
+                    let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
+                    action = Some(RulerAction::Scrub(frame.min(total_frames.saturating_sub(1))));
+                }
             }
     }
 
-    (frame_clicked, rect)
+    (action, rect)
 }
 
 /// Convert row index to Y coordinate in timeline

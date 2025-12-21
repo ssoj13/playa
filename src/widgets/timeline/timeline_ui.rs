@@ -28,7 +28,7 @@
 
 use super::timeline_helpers::{
     detect_layer_tool_with_geom, draw_drop_preview, draw_frame_ruler,
-    frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
+    frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame, RulerAction,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use crate::entities::{Comp, Node, frame::FrameStatus};
@@ -521,11 +521,21 @@ pub fn render_canvas(
         }
 
         // Ruler (no ScrollArea; pan/zoom handled via state.pan_offset/state.zoom)
-        let (frame_opt, rect) =
+        let (ruler_action, rect) =
             draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
         ruler_rect = Some(rect);
-        if let Some(frame) = frame_opt {
-            dispatch(Box::new(SetFrameEvent(frame)));
+        match ruler_action {
+            Some(RulerAction::Scrub(frame)) => {
+                dispatch(Box::new(SetFrameEvent(frame)));
+            }
+            Some(RulerAction::ClearBookmark { comp_uuid, slot }) => {
+                dispatch(Box::new(crate::entities::comp_events::SetBookmarkEvent {
+                    comp_uuid,
+                    slot,
+                    frame: None, // None = clear bookmark
+                }));
+            }
+            None => {}
         }
 
         // Middle-drag pan on ruler - initialize only, processing is in main loop
