@@ -1155,6 +1155,43 @@ pub fn handle_app_event(
         return Some(result);
     }
 
+    // === Bookmarks ===
+    if let Some(e) = downcast_event::<SetBookmarkEvent>(event) {
+        use crate::entities::AttrValue;
+        project.modify_comp(e.comp_uuid, |comp| {
+            // Get or create bookmarks map
+            let mut bookmarks = comp.attrs
+                .get_map("bookmarks")
+                .cloned()
+                .unwrap_or_default();
+            
+            let key = e.slot.to_string();
+            if let Some(frame) = e.frame {
+                bookmarks.insert(key, AttrValue::Int(frame));
+            } else {
+                bookmarks.remove(&key);
+            }
+            
+            comp.attrs.set_map("bookmarks", bookmarks);
+        });
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<JumpToBookmarkEvent>(event) {
+        use crate::entities::AttrValue;
+        if let Some(frame) = project.with_comp(e.comp_uuid, |comp| {
+            comp.attrs.get_map("bookmarks").and_then(|m| {
+                m.get(&e.slot.to_string()).and_then(|v| {
+                    if let AttrValue::Int(f) = v { Some(*f) } else { None }
+                })
+            })
+        }).flatten() {
+            project.modify_comp(e.comp_uuid, |comp| {
+                comp.set_frame(frame);
+            });
+        }
+        return Some(result);
+    }
+
     // Event not handled
     None
 }

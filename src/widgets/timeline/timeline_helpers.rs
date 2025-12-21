@@ -245,6 +245,40 @@ pub(super) fn draw_frame_ruler(
             frame += frame_step;
         }
 
+        // Draw bookmark markers (small triangles pointing down)
+        if let Some(bookmarks) = comp.attrs.get_map("bookmarks") {
+        for (slot, value) in bookmarks {
+            let bm_frame = match value {
+                crate::entities::AttrValue::Int(f) => *f,
+                _ => continue,
+            };
+            let x = frame_to_screen_x(bm_frame as f32, rect.min.x, config, state);
+            if x >= rect.min.x && x <= rect.max.x {
+                let marker_size = 6.0;
+                let top_y = rect.min.y + 1.0;
+                // Triangle pointing down
+                let points = [
+                    Pos2::new(x - marker_size * 0.5, top_y),
+                    Pos2::new(x + marker_size * 0.5, top_y),
+                    Pos2::new(x, top_y + marker_size),
+                ];
+                painter.add(egui::Shape::convex_polygon(
+                    points.to_vec(),
+                    Color32::from_rgb(100, 200, 255),
+                    (1.0, Color32::from_rgb(60, 140, 200)),
+                ));
+                // Slot number
+                painter.text(
+                    Pos2::new(x, top_y + marker_size + 1.0),
+                    egui::Align2::CENTER_TOP,
+                    format!("{}", slot),
+                    egui::FontId::monospace(7.0),
+                    Color32::from_rgb(100, 200, 255),
+                );
+            }
+        }
+        } // if let Some(bookmarks)
+
         let is_middle_down = ui
             .ctx()
             .input(|i| i.pointer.button_down(egui::PointerButton::Middle));

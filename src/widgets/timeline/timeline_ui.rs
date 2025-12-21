@@ -1256,6 +1256,44 @@ pub fn render_canvas(
             timeline_hovered = true;
         }
 
+    // Handle bookmark hotkeys when timeline is hovered
+    if timeline_hovered {
+        let current_frame = comp.frame();
+        ui.ctx().input(|i| {
+            // Shift+0-9: set bookmark (via text input due to egui bug #3415)
+            // Shift+digits produce symbols on US layout: !@#$%^&*()
+            let shift_symbols = [
+                (')', 0u8), ('!', 1), ('@', 2), ('#', 3), ('$', 4),
+                ('%', 5), ('^', 6), ('&', 7), ('*', 8), ('(', 9),
+            ];
+            for &(sym, slot) in &shift_symbols {
+                if i.events.iter().any(|e| matches!(e, egui::Event::Text(s) if s.chars().next() == Some(sym))) {
+                    dispatch(Box::new(crate::entities::comp_events::SetBookmarkEvent {
+                        comp_uuid: comp_uuid,
+                        slot,
+                        frame: Some(current_frame),
+                    }));
+                }
+            }
+            
+            // 0-9: jump to bookmark
+            let digit_keys = [
+                (egui::Key::Num0, 0u8), (egui::Key::Num1, 1), (egui::Key::Num2, 2),
+                (egui::Key::Num3, 3), (egui::Key::Num4, 4), (egui::Key::Num5, 5),
+                (egui::Key::Num6, 6), (egui::Key::Num7, 7), (egui::Key::Num8, 8),
+                (egui::Key::Num9, 9),
+            ];
+            for (key, slot) in digit_keys {
+                if i.key_pressed(key) && !i.modifiers.shift {
+                    dispatch(Box::new(crate::entities::comp_events::JumpToBookmarkEvent {
+                        comp_uuid: comp_uuid,
+                        slot,
+                    }));
+                }
+            }
+        });
+    }
+
     // Return actions with hover state
     super::timeline::TimelineActions {
         hovered: timeline_hovered,

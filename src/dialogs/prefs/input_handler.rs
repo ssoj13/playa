@@ -97,9 +97,8 @@ impl HotkeyHandler {
         self.bind(Global, "ArrowUp", TogglePlayPauseEvent);
         self.bind(Global, "K", StopEvent);
         self.bind(Global, "Slash", StopEvent);        // / = K (stop)
-        self.bind(Global, "Num1", JumpToStartEvent);
+        // Num1/Num2 reserved for timeline bookmarks
         self.bind(Global, "Home", JumpToStartEvent);
-        self.bind(Global, "Num2", JumpToEndEvent);
         self.bind(Global, "End", JumpToEndEvent);
         self.bind(Global, "PageDown", StepForwardEvent);
         self.bind(Global, "Shift+PageDown", StepForwardLargeEvent);

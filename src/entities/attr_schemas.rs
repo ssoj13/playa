@@ -99,6 +99,8 @@ const COMP_SPECIFIC: &[AttrDef] = &[
     AttrDef::new("fps", AttrType::Float, DISP),
     // Playhead - NON-DAG! (no cache invalidation on scrub)
     AttrDef::new("frame", AttrType::Int, 0),
+    // Timeline bookmarks: Map of digit "0"-"9" -> frame number
+    AttrDef::new("bookmarks", AttrType::Map, 0),
 ];
 
 pub static COMP_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {

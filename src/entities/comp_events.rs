@@ -61,6 +61,21 @@ pub struct LayersChangedEvent {
 #[derive(Clone, Debug)]
 pub struct AttrsChangedEvent(pub Uuid);
 
+/// Set timeline bookmark (Shift+0-9)
+#[derive(Clone, Debug)]
+pub struct SetBookmarkEvent {
+    pub comp_uuid: Uuid,
+    pub slot: u8,        // 0-9
+    pub frame: Option<i32>, // None = clear bookmark
+}
+
+/// Jump to timeline bookmark (0-9)
+#[derive(Clone, Debug)]
+pub struct JumpToBookmarkEvent {
+    pub comp_uuid: Uuid,
+    pub slot: u8,
+}
+
 // === Layer Operations ===
 
 #[derive(Clone, Debug)]
