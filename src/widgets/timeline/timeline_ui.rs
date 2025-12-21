@@ -307,9 +307,10 @@ pub fn render_outline(
                                     .width(80.0)
                                     .selected_text(blend.clone())
                                     .show_ui(ui, |ui| {
-                                        for mode in
-                                            ["normal", "screen", "add", "subtract", "multiply", "divide"]
-                                        {
+                                        for mode in [
+                                            "normal", "screen", "add", "subtract",
+                                            "multiply", "divide", "difference", "overlay",
+                                        ] {
                                             ui.selectable_value(&mut blend, mode.to_string(), mode);
                                         }
                                     });

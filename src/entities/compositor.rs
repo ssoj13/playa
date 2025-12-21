@@ -44,6 +44,7 @@ pub enum BlendMode {
     Multiply,
     Divide,
     Difference,
+    Overlay,
 }
 
 /// Compositor type enum - allows switching between CPU/GPU backends.
@@ -125,6 +126,14 @@ fn apply_blend(b: f32, t: f32, mode: &BlendMode) -> f32 {
             }
         }
         BlendMode::Difference => (b_clamped - t_clamped).abs(),
+        BlendMode::Overlay => {
+            // Overlay: Multiply if base < 0.5, Screen if base >= 0.5
+            if b_clamped < 0.5 {
+                2.0 * b_clamped * t_clamped
+            } else {
+                1.0 - 2.0 * (1.0 - b_clamped) * (1.0 - t_clamped)
+            }
+        }
     }
 }
 

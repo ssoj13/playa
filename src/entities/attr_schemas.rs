@@ -114,7 +114,7 @@ const LAYER_SPECIFIC: &[AttrDef] = &[
     AttrDef::new("source_uuid", AttrType::Uuid, INT_DAG), // DAG - affects source lookup
     // Compositing
     AttrDef::with_ui("blend_mode", AttrType::String, DAG_DISP,
-        &["normal", "screen", "add", "subtract", "multiply", "divide", "difference"]),
+        &["normal", "screen", "add", "subtract", "multiply", "divide", "difference", "overlay"]),
     AttrDef::new("visible", AttrType::Bool, DAG_DISP),
     AttrDef::new("renderable", AttrType::Bool, DAG_DISP),  // false for camera/light/null/audio
     AttrDef::new("mute", AttrType::Bool, DAG_DISP),

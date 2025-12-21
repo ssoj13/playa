@@ -229,6 +229,7 @@ impl Layer {
                 "multiply" => BlendMode::Multiply,
                 "divide" => BlendMode::Divide,
                 "difference" => BlendMode::Difference,
+                "overlay" => BlendMode::Overlay,
                 _ => BlendMode::Normal,
             })
             .unwrap_or(BlendMode::Normal)

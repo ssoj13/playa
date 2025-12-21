@@ -368,6 +368,13 @@ vec3 blend(vec3 bottom, vec3 top, int mode) {
         return min(bottom / max(top, vec3(0.00001)), vec3(1.0));
     } else if (mode == 6) { // Difference
         return abs(bottom - top);
+    } else if (mode == 7) { // Overlay
+        // Multiply if base < 0.5, Screen if base >= 0.5
+        vec3 result;
+        result.r = bottom.r < 0.5 ? 2.0 * bottom.r * top.r : 1.0 - 2.0 * (1.0 - bottom.r) * (1.0 - top.r);
+        result.g = bottom.g < 0.5 ? 2.0 * bottom.g * top.g : 1.0 - 2.0 * (1.0 - bottom.g) * (1.0 - top.g);
+        result.b = bottom.b < 0.5 ? 2.0 * bottom.b * top.b : 1.0 - 2.0 * (1.0 - bottom.b) * (1.0 - top.b);
+        return result;
     }
     return top; // Fallback to normal
 }
@@ -648,6 +655,7 @@ void main() {
                     BlendMode::Multiply => 4,
                     BlendMode::Divide => 5,
                     BlendMode::Difference => 6,
+                    BlendMode::Overlay => 7,
                 };
                 gl.uniform_1_i32(Some(&loc), mode_id);
             }
