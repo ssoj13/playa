@@ -87,6 +87,14 @@ if ($env:VCPKG_ROOT) {
     Write-Host "[OK] vcpkg configured: $env:VCPKG_ROOT" -ForegroundColor Green
     Write-Host "[OK] triplet: $env:VCPKGRS_TRIPLET" -ForegroundColor Green
 }
+
+# Clear LIBCLANG_PATH if it points to non-MSVC clang (e.g. ESP32 Xtensa)
+# bindgen will use its bundled libclang which works with MSVC headers
+if ($env:LIBCLANG_PATH -and $env:LIBCLANG_PATH -match 'esp|xtensa') {
+    Write-Host "[WARN] Clearing LIBCLANG_PATH (ESP32 clang incompatible with MSVC)" -ForegroundColor Yellow
+    Remove-Item Env:LIBCLANG_PATH -ErrorAction SilentlyContinue
+}
+
 Write-Host ''
 
 Write-Host 'Checking dependencies...'
