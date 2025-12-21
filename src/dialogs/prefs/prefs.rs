@@ -11,6 +11,7 @@ enum SettingsCategory {
     Cache,
     Gizmo,
     Compositing,
+    WebServer,
 }
 
 impl SettingsCategory {
@@ -21,6 +22,7 @@ impl SettingsCategory {
             SettingsCategory::Cache => "Cache",
             SettingsCategory::Gizmo => "Gizmo",
             SettingsCategory::Compositing => "Compositing",
+            SettingsCategory::WebServer => "Web Server",
         }
     }
 
@@ -31,6 +33,7 @@ impl SettingsCategory {
             "Cache" => Some(SettingsCategory::Cache),
             "Gizmo" => Some(SettingsCategory::Gizmo),
             "Compositing" => Some(SettingsCategory::Compositing),
+            "Web Server" => Some(SettingsCategory::WebServer),
             _ => None,
         }
     }
@@ -94,6 +97,10 @@ pub struct AppSettings {
 
     // Internal
     pub selected_settings_category: Option<String>,
+
+    // REST API Server
+    pub api_server_enabled: bool,
+    pub api_server_port: Option<u16>,
 }
 
 impl Default for AppSettings {
@@ -122,15 +129,51 @@ impl Default for AppSettings {
             compositor_backend: CompositorBackend::default(),
             encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
             selected_settings_category: Some("UI".to_string()),
+            api_server_enabled: false,
+            api_server_port: Some(9876),
         }
     }
 }
 
 /// Render General settings category
 fn render_general_settings(ui: &mut egui::Ui, _settings: &mut AppSettings) {
-    ui.label("(No settings yet)");
+    ui.label("General settings will be added here.");
+}
+
+/// Render Web Server settings category
+fn render_webserver_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
+    ui.heading("REST API Server");
     ui.add_space(8.0);
-    ui.label("General settings will be added here in the future.");
+
+    ui.checkbox(&mut settings.api_server_enabled, "Enable REST API server");
+    ui.add_space(8.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Port:");
+        let mut port = settings.api_server_port.unwrap_or(9876) as i32;
+        if ui.add(egui::DragValue::new(&mut port).range(1024..=65535)).changed() {
+            settings.api_server_port = Some(port as u16);
+        }
+    });
+    ui.add_space(12.0);
+
+    if settings.api_server_enabled {
+        let port = settings.api_server_port.unwrap_or(9876);
+        ui.separator();
+        ui.add_space(8.0);
+        ui.label("Server URL:");
+        ui.monospace(format!("http://0.0.0.0:{}", port));
+        ui.add_space(8.0);
+        ui.label("Endpoints:");
+        ui.monospace("GET  /api/status");
+        ui.monospace("GET  /api/player");
+        ui.monospace("POST /api/player/play");
+        ui.monospace("POST /api/player/pause");
+        ui.monospace("POST /api/player/frame/{n}");
+    } else {
+        ui.add_space(8.0);
+        ui.label("Enable to start the REST API server.");
+    }
 }
 
 /// Render UI settings category
@@ -377,6 +420,7 @@ pub fn render_settings_window(
                                 builder.leaf(2, SettingsCategory::Cache.as_str());
                                 builder.leaf(3, SettingsCategory::Gizmo.as_str());
                                 builder.leaf(4, SettingsCategory::Compositing.as_str());
+                                builder.leaf(5, SettingsCategory::WebServer.as_str());
                             });
 
                             // Handle selection from actions
@@ -390,6 +434,7 @@ pub fn render_settings_window(
                                         2 => SettingsCategory::Cache,
                                         3 => SettingsCategory::Gizmo,
                                         4 => SettingsCategory::Compositing,
+                                        5 => SettingsCategory::WebServer,
                                         _ => selected,
                                     };
                                 }
@@ -408,6 +453,7 @@ pub fn render_settings_window(
                                 SettingsCategory::Cache => render_cache_settings(ui, settings),
                                 SettingsCategory::Gizmo => render_gizmo_settings(ui, project, event_bus),
                                 SettingsCategory::Compositing => render_compositing_settings(ui, settings, event_bus),
+                                SettingsCategory::WebServer => render_webserver_settings(ui, settings),
                             }
                         });
                     });

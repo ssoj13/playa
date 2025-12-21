@@ -15,6 +15,7 @@ pub mod config;
 pub mod dialogs;
 pub mod entities;
 pub mod main_events;
+pub mod server;
 pub mod shell;
 pub mod ui;
 pub mod utils;

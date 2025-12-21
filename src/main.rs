@@ -156,6 +156,12 @@ struct PlayaApp {
     /// Gizmo state for viewport transform manipulation
     #[serde(skip)]
     gizmo_state: playa::widgets::viewport::gizmo::GizmoState,
+    /// REST API shared state (updated each frame for remote clients)
+    #[serde(skip)]
+    api_state: Arc<playa::server::SharedApiState>,
+    /// REST API command receiver (polled each frame)
+    #[serde(skip)]
+    api_command_rx: Option<std::sync::mpsc::Receiver<playa::server::ApiCommand>>,
 }
 
 impl Default for PlayaApp {
@@ -229,6 +235,8 @@ impl Default for PlayaApp {
             attributes_state: AttributesState::default(),
             node_editor_state: NodeEditorState::new(),
             gizmo_state: playa::widgets::viewport::gizmo::GizmoState::default(),
+            api_state: Arc::new(playa::server::SharedApiState::default()),
+            api_command_rx: None,  // Started later when settings are loaded
         }
     }
 }
@@ -348,6 +356,122 @@ impl PlayaApp {
         self.project.with_comp(comp_uuid, |comp| {
             comp.signal_preload(&self.workers, &self.project, effective_radius);
         });
+    }
+
+    /// Start REST API server if enabled in settings.
+    fn start_api_server(&mut self) {
+        if self.api_command_rx.is_some() {
+            return; // Already started
+        }
+
+        let port = self.settings.api_server_port.unwrap_or(9876);
+        if self.settings.api_server_enabled {
+            log::info!("Starting REST API server on port {}", port);
+            let rx = playa::server::ApiServer::start(port, self.api_state.clone());
+            self.api_command_rx = Some(rx);
+        }
+    }
+
+    /// Update API state snapshot for remote clients.
+    fn update_api_state(&mut self) {
+        // Update player snapshot
+        {
+            let mut player = self.api_state.player.write().unwrap();
+            player.frame = self.player.current_frame(&self.project);
+            player.fps = self.player.fps_play();
+            player.playing = self.player.is_playing();
+            player.loop_enabled = self.player.loop_enabled();
+            player.active_comp = self.player.active_comp();
+        }
+
+        // Update comp snapshot
+        {
+            let mut comp = self.api_state.comp.write().unwrap();
+            *comp = self.player.active_comp().and_then(|uuid| {
+                self.project.with_comp(uuid, |c| playa::server::CompSnapshot {
+                    uuid,
+                    name: c.name().to_string(),
+                    width: c.dim().0 as u32,
+                    height: c.dim().1 as u32,
+                    duration: c.frame_count(),
+                    in_frame: c._in(),
+                    out_frame: c._out(),
+                })
+            });
+        }
+
+        // Update cache snapshot
+        {
+            let mut cache = self.api_state.cache.write().unwrap();
+            let (used, limit) = self.cache_manager.mem();
+            cache.memory_used_mb = used as f32 / (1024.0 * 1024.0);
+            cache.memory_limit_mb = limit as f32 / (1024.0 * 1024.0);
+        }
+    }
+
+    /// Handle commands from REST API.
+    fn handle_api_commands(&mut self) {
+        use playa::server::ApiCommand;
+        use playa::core::player_events::*;
+
+        // Collect all pending commands first (avoids borrow issues)
+        let commands: Vec<ApiCommand> = if let Some(ref rx) = self.api_command_rx {
+            let mut cmds = Vec::new();
+            while let Ok(cmd) = rx.try_recv() {
+                cmds.push(cmd);
+            }
+            cmds
+        } else {
+            return;
+        };
+
+        // Process collected commands
+        for cmd in commands {
+            log::trace!("API command: {:?}", cmd);
+            match cmd {
+                ApiCommand::Play => {
+                    self.event_bus.emit(TogglePlayPauseEvent);
+                    if !self.player.is_playing() {
+                        self.event_bus.emit(TogglePlayPauseEvent);
+                    }
+                }
+                ApiCommand::Pause => {
+                    if self.player.is_playing() {
+                        self.event_bus.emit(TogglePlayPauseEvent);
+                    }
+                }
+                ApiCommand::Stop => {
+                    self.event_bus.emit(StopEvent);
+                }
+                ApiCommand::SetFrame(frame) => {
+                    self.event_bus.emit(SetFrameEvent(frame));
+                }
+                ApiCommand::SetFps(fps) => {
+                    self.player.set_fps_base(fps);
+                }
+                ApiCommand::ToggleLoop => {
+                    self.event_bus.emit(ToggleLoopEvent);
+                }
+                ApiCommand::LoadSequence(path) => {
+                    let _ = self.load_sequences(vec![std::path::PathBuf::from(path)]);
+                }
+                ApiCommand::EmitEvent { event_type, payload } => {
+                    // Dispatch common events by name
+                    match event_type.as_str() {
+                        "TogglePlayPause" => self.event_bus.emit(TogglePlayPauseEvent),
+                        "Stop" => self.event_bus.emit(StopEvent),
+                        "JumpToStart" => self.event_bus.emit(JumpToStartEvent),
+                        "JumpToEnd" => self.event_bus.emit(JumpToEndEvent),
+                        "StepForward" => self.event_bus.emit(StepForwardEvent),
+                        "StepBackward" => self.event_bus.emit(StepBackwardEvent),
+                        "ToggleLoop" => self.event_bus.emit(ToggleLoopEvent),
+                        _ => {
+                            log::warn!("Unknown event type: {} (payload: {})", event_type, payload);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Handle events from event bus.
@@ -1402,6 +1526,9 @@ impl eframe::App for PlayaApp {
         self.node_editor_hovered = false;
         self.node_editor_tab_active = false;
 
+        // Start REST API server if enabled (lazy start on first frame)
+        self.start_api_server();
+
         // Get GL context and update compositor backend
         if let Some(gl) = frame.gl() {
             self.update_compositor_backend(gl);
@@ -1483,6 +1610,10 @@ impl eframe::App for PlayaApp {
 
         // Handle composition events (SetFrameEvent → triggers frame loading)
         self.handle_events();
+
+        // Update REST API state and handle commands from remote clients
+        self.update_api_state();
+        self.handle_api_commands();
 
         // Sync preload delay from settings and check debounced preloader
         self.debounced_preloader.set_delay(self.settings.preload_delay_ms);

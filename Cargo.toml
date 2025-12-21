@@ -54,6 +54,7 @@ playa-ffmpeg = { version = "8.0.3", features = ["static"] }
 rayon = "1.11"
 regex = "1.12"
 rfd = "0.16"
+rouille = "3.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sysinfo = "0.37"
