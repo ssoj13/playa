@@ -119,12 +119,21 @@ fn render_impl(
     // Track top to draw splitter across table height later
     let table_top = ui.cursor().min;
 
-    // Sort attributes by name for stable order
-    let mut keys: Vec<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
-    keys.sort();
-
-    // Get schema for UI hints
+    // Get schema for UI hints and ordering
     let schema = attrs.schema();
+
+    // Sort attributes by order field from schema (lower = higher in list)
+    let keys: Vec<String> = if let Some(schema) = schema {
+        let mut pairs: Vec<_> = attrs.iter()
+            .map(|(k, _)| (k.clone(), schema.get(k).map(|d| d.order).unwrap_or(999.0)))
+            .collect();
+        pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        pairs.into_iter().map(|(k, _)| k).collect()
+    } else {
+        let mut keys: Vec<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
+        keys.sort();
+        keys
+    };
 
     TableBuilder::new(ui)
         .id_salt("attrs_table")

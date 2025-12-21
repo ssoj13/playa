@@ -83,12 +83,14 @@ pub struct AttrDef {
     pub flags: AttrFlags,
     /// UI hints: combobox options or slider range ["min", "max", "step"]
     pub ui_options: &'static [&'static str],
+    /// Display order in Attribute Editor (lower = higher in list)
+    pub order: f32,
 }
 
 impl AttrDef {
-    /// Create new attribute definition (default: auto UI by type)
+    /// Create new attribute definition (default: auto UI by type, order=99)
     pub const fn new(name: &'static str, attr_type: AttrType, flags: AttrFlags) -> Self {
-        Self { name, attr_type, flags, ui_options: &[] }
+        Self { name, attr_type, flags, ui_options: &[], order: 99.0 }
     }
 
     /// Create attribute with UI options (combobox values or slider range)
@@ -98,7 +100,28 @@ impl AttrDef {
         flags: AttrFlags,
         ui_options: &'static [&'static str],
     ) -> Self {
-        Self { name, attr_type, flags, ui_options }
+        Self { name, attr_type, flags, ui_options, order: 99.0 }
+    }
+    
+    /// Create attribute with order (for AE display sorting)
+    pub const fn with_order(
+        name: &'static str,
+        attr_type: AttrType,
+        flags: AttrFlags,
+        order: f32,
+    ) -> Self {
+        Self { name, attr_type, flags, ui_options: &[], order }
+    }
+    
+    /// Create attribute with UI options and order
+    pub const fn with_ui_order(
+        name: &'static str,
+        attr_type: AttrType,
+        flags: AttrFlags,
+        ui_options: &'static [&'static str],
+        order: f32,
+    ) -> Self {
+        Self { name, attr_type, flags, ui_options, order }
     }
     
     /// Check if attribute affects DAG (render graph)
