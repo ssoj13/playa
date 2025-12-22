@@ -1098,7 +1098,13 @@ impl CompNode {
                 }
                 
                 // Apply layer effects in order (blur, color correction, etc.)
-                // Effects are processed before transform so they work in layer-local space
+                // Effects are processed before transform so they work in layer-local space.
+                //
+                // TODO: Cache effected frames separately from composed frames.
+                // Currently, changing only transform re-runs effects. With per-layer effect cache:
+                // - Key: (source_uuid, source_frame, effects_hash)
+                // - Transform changes reuse cached effected frame
+                // - Effect changes invalidate only that layer's effect cache
                 if !layer.effects.is_empty() {
                     if let Some(fx_frame) = super::effects::apply_all(frame.clone(), &layer.effects) {
                         frame = fx_frame;
