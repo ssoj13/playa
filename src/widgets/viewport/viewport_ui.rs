@@ -1,6 +1,7 @@
 //! Viewport widget - UI rendering
 
 use eframe::egui;
+use glam::{Vec3, Quat, EulerRot};
 use log::info;
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +13,7 @@ use super::tool::ToolMode;
 use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
-use crate::entities::comp_events::CompSelectionChangedEvent;
+use crate::entities::comp_events::{CompSelectionChangedEvent, HoverLayerEvent};
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player::Player;
 use crate::widgets::actions::ActionQueue;
@@ -34,6 +35,7 @@ pub fn render(
     show_help: bool,
     is_fullscreen: bool,
     texture_needs_upload: bool,
+    viewport_hover_highlight: bool,
 ) -> (ViewportActions, f32) {
     let mut actions = ViewportActions::default();
     let mut render_time_ms = 0.0;
@@ -147,6 +149,11 @@ pub fn render(
             actions.events.push(evt);
         }
 
+        // Hover highlight in Select mode: update hovered_layer on mouse move
+        if let Some(evt) = hover_layer_event(&ctx, panel_rect, viewport_state, player, project) {
+            actions.events.push(evt);
+        }
+
         match frame_state {
             // Header = file comp created frame but not loaded yet
             // Loading = worker claimed frame, loading in progress
@@ -180,6 +187,11 @@ pub fn render(
 
         // Draw viewport overlays (scrubber, guides, etc.)
         viewport_state.draw(ui, panel_rect);
+
+        // Draw hover highlight around hovered layer
+        if viewport_hover_highlight {
+            draw_hover_highlight(ui, panel_rect, viewport_state, player, project);
+        }
     }
 
     if show_help {
@@ -456,4 +468,133 @@ fn left_click_pick_event(
         selection,
         anchor,
     }))
+}
+
+/// Emit HoverLayerEvent on mouse move in Select mode.
+fn hover_layer_event(
+    ctx: &egui::Context,
+    panel_rect: egui::Rect,
+    viewport_state: &ViewportState,
+    player: &Player,
+    project: &Project,
+) -> Option<BoxedEvent> {
+    let tool = ToolMode::from_str(&project.tool());
+    if !matches!(tool, ToolMode::Select) {
+        return None;
+    }
+
+    // Get hover position (None if not hovering)
+    let hover_pos = ctx.input(|i| i.pointer.hover_pos())?;
+    if !panel_rect.contains(hover_pos) {
+        return None;
+    }
+
+    let comp_uuid = player.active_comp()?;
+    let frame_idx = player.current_frame(project);
+
+    // Raycast pick
+    let media = project.media.read().ok()?;
+    let hovered = project.with_comp(comp_uuid, |comp| {
+        pick::pick_layer_at(
+            hover_pos,
+            panel_rect,
+            viewport_state,
+            comp,
+            frame_idx,
+            &media,
+        ).layer_uuid
+    }).flatten();
+
+    // Only emit if changed
+    let current = project.with_comp(comp_uuid, |comp| comp.hovered_layer).flatten();
+    if current == hovered {
+        return None;
+    }
+
+    Some(Box::new(HoverLayerEvent {
+        comp_uuid,
+        layer_uuid: hovered,
+    }))
+}
+
+/// Draw highlight rectangle around hovered layer in viewport.
+fn draw_hover_highlight(
+    ui: &egui::Ui,
+    panel_rect: egui::Rect,
+    viewport_state: &ViewportState,
+    player: &Player,
+    project: &Project,
+) {
+    let tool = ToolMode::from_str(&project.tool());
+    if !matches!(tool, ToolMode::Select) {
+        return;
+    }
+
+    let Some(comp_uuid) = player.active_comp() else { return };
+    
+    // Get hovered layer
+    let Some((_layer_uuid, position, rotation_deg, scale, width, height)) = project.with_comp(comp_uuid, |comp| {
+        let layer_uuid = comp.hovered_layer?;
+        let layer = comp.get_layer(layer_uuid)?;
+        
+        let pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
+        let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
+        let scl = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
+        let w = layer.attrs.get_u32("width").unwrap_or(100) as f32;
+        let h = layer.attrs.get_u32("height").unwrap_or(100) as f32;
+        
+        Some((layer_uuid, pos, rot, scl, w, h))
+    }).flatten() else { return };
+
+    // Layer corners in object space (centered, Y-up)
+    let half_w = width * 0.5;
+    let half_h = height * 0.5;
+    let corners_obj = [
+        [-half_w, -half_h],
+        [half_w, -half_h],
+        [half_w, half_h],
+        [-half_w, half_h],
+    ];
+
+    // Build forward transform: object -> comp space
+    let pos = Vec3::from(position);
+    let scl = Vec3::from(scale);
+    let rot_rad = [
+        rotation_deg[0].to_radians(),
+        rotation_deg[1].to_radians(),
+        rotation_deg[2].to_radians(),
+    ];
+    // Rotation: ZYX order, CW+ convention (negate for glam CCW+)
+    let quat = Quat::from_euler(
+        EulerRot::ZYX,
+        -rot_rad[2],
+        -rot_rad[1],
+        -rot_rad[0],
+    );
+
+    // Transform corners to comp space, then to screen space
+    let mut screen_corners = Vec::with_capacity(4);
+    for [ox, oy] in corners_obj {
+        // Object -> comp: pos + R * S * obj
+        let obj_pt = Vec3::new(ox * scl.x, oy * scl.y, 0.0);
+        let comp_pt = pos + quat * obj_pt;
+        
+        // Comp (frame space, Y-up) -> image space (Y-down)
+        let image_x = comp_pt.x + viewport_state.image_size.x * 0.5;
+        let image_y = viewport_state.image_size.y * 0.5 - comp_pt.y;
+        
+        // Image -> screen using viewport transform
+        let screen = viewport_state.image_to_screen(egui::vec2(image_x, image_y));
+        let screen_pos = panel_rect.left_top() + screen;
+        screen_corners.push(egui::pos2(screen_pos.x, screen_pos.y));
+    }
+
+    // Draw rectangle outline
+    let painter = ui.painter();
+    let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 100)); // Orange
+    for i in 0..4 {
+        let p1 = screen_corners[i];
+        let p2 = screen_corners[(i + 1) % 4];
+        painter.line_segment([p1, p2], stroke);
+    }
 }

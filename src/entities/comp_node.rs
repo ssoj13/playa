@@ -253,6 +253,9 @@ pub struct CompNode {
     pub layer_selection: Vec<Uuid>,
     #[serde(default)]
     pub layer_selection_anchor: Option<Uuid>,
+    /// Hovered layer (for viewport hover highlight, runtime only)
+    #[serde(skip)]
+    pub hovered_layer: Option<Uuid>,
 }
 
 impl CompNode {
@@ -281,6 +284,7 @@ impl CompNode {
             layers: Vec::new(),
             layer_selection: Vec::new(),
             layer_selection_anchor: None,
+            hovered_layer: None,
         }
     }
     

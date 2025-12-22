@@ -18,6 +18,11 @@
   - Raycast-based hit testing with inverse transform
   - Click empty space to deselect
 
+- **Hover Highlight**: Visual feedback when hovering layers
+  - Mouse over layer in viewport highlights it in timeline (orange border)
+  - Works in Select mode (Q)
+  - Helps identify layers before clicking
+
 - **3D Transform System**: Full affine transforms with perspective
   - Frame space as primary coordinate system (centered, Y-up)
   - ZYX rotation order (After Effects compatible)

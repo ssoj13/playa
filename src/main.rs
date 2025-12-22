@@ -1264,6 +1264,7 @@ impl PlayaApp {
             self.settings.timeline_outline_top_offset,
             &layout_names,
             &self.settings.current_layout,
+            self.settings.timeline_hover_highlight,
         );
 
         // Store hover state for input routing
@@ -1325,6 +1326,7 @@ impl PlayaApp {
             self.show_help,
             self.is_fullscreen,
             texture_needs_upload,
+            self.settings.viewport_hover_highlight,
         );
         self.last_render_time_ms = render_time;
 

@@ -184,6 +184,13 @@ pub struct CompSelectionChangedEvent {
     pub anchor: Option<Uuid>,
 }
 
+/// Hover layer changed (viewport mouse move in Select mode)
+#[derive(Clone, Debug)]
+pub struct HoverLayerEvent {
+    pub comp_uuid: Uuid,
+    pub layer_uuid: Option<Uuid>,
+}
+
 // === Comp Play Area ===
 
 #[derive(Clone, Debug)]

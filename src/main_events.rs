@@ -501,6 +501,12 @@ pub fn handle_app_event(
         });
         return Some(result);
     }
+    if let Some(e) = downcast_event::<HoverLayerEvent>(event) {
+        project.modify_comp(e.comp_uuid, |comp| {
+            comp.hovered_layer = e.layer_uuid;
+        });
+        return Some(result);
+    }
 
     // === UI State ===
     if downcast_event::<ToggleHelpEvent>(event).is_some() {

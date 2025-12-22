@@ -108,6 +108,8 @@ pub struct AppSettings {
     pub timeline_outline_top_offset: f32, // Fine-tune outline vertical alignment with canvas
     pub timeline_snap_enabled: bool,
     pub timeline_lock_work_area: bool,
+    pub viewport_hover_highlight: bool,
+    pub timeline_hover_highlight: bool,
     pub preload_radius: i32, // Frames to preload around playhead (-1 = all, default 100)
     pub preload_delay_ms: u64, // Delay before full preload after attr change (default 500ms)
 
@@ -155,6 +157,8 @@ impl Default for AppSettings {
             timeline_outline_top_offset: 42.0, // fine-tuned for alignment with canvas
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
+            viewport_hover_highlight: true,
+            timeline_hover_highlight: true,
             preload_radius: -1,
             preload_delay_ms: 500,
             workers_override: 0,
@@ -252,6 +256,8 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 
     ui.checkbox(&mut settings.dark_mode, "Dark Mode");
     ui.checkbox(&mut settings.show_tooltips, "Show Tooltips (2s delay on toolbar controls)");
+    ui.checkbox(&mut settings.viewport_hover_highlight, "Viewport hover highlight");
+    ui.checkbox(&mut settings.timeline_hover_highlight, "Timeline hover highlight");
 
     ui.add_space(16.0);
     ui.heading("Performance");

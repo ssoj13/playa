@@ -176,6 +176,7 @@ pub fn render_timeline_panel(
     outline_top_offset: f32,
     layout_names: &[String],
     current_layout: &str,
+    timeline_hover_highlight: bool,
 ) -> (bool, crate::widgets::timeline::TimelineActions) {
     let old_shader = shader_manager.current_shader.clone();
     let mut timeline_actions = crate::widgets::timeline::TimelineActions::default();
@@ -273,6 +274,7 @@ pub fn render_timeline_panel(
                                 &config,
                                 timeline_state,
                                 timeline_state.view_mode,
+                                timeline_hover_highlight,
                                 |evt| event_bus.emit_boxed(evt),
                             );
                         });
@@ -291,6 +293,7 @@ pub fn render_timeline_panel(
                                 &config,
                                 timeline_state,
                                 timeline_state.view_mode,
+                                timeline_hover_highlight,
                                 |evt| event_bus.emit_boxed(evt),
                             );
                         });

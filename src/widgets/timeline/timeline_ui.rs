@@ -549,6 +549,7 @@ pub fn render_canvas(
     config: &TimelineConfig,
     state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
+    timeline_hover_highlight: bool,
     mut dispatch: impl FnMut(BoxedEvent),
 ) -> super::timeline::TimelineActions {
     // Save canvas width for Fit button calculation
@@ -800,6 +801,7 @@ pub fn render_canvas(
                                 Color32::from_gray(70)
                             };
                             let is_selected = comp.layer_selection.contains(&child_uuid);
+                            let is_hovered = timeline_hover_highlight && comp.hovered_layer == Some(child_uuid);
                             let gray_color = if is_selected {
                                 // Slightly brighter grey with a blue tint when selected
                                 Color32::from_rgba_unmultiplied(110, 140, 190, 130)
@@ -845,13 +847,15 @@ pub fn render_canvas(
                                 }
                             }
 
-                              // Draw outline around full bar (thicker and colored when selected)
+                              // Draw outline around full bar (highlight for selected/hovered)
                               let stroke_color = if is_selected {
-                                  Color32::from_rgb(180, 230, 255)
+                                  Color32::from_rgb(180, 230, 255) // Blue for selected
+                              } else if is_hovered {
+                                  Color32::from_rgb(255, 200, 100) // Orange for hovered
                               } else {
                                   Color32::from_gray(150)
                               };
-                              let stroke_width = 1.0; // Always 1px stroke
+                              let stroke_width = if is_selected || is_hovered { 2.0 } else { 1.0 };
                               painter.rect_stroke(
                                   geom.full_bar_rect,
                                   4.0,
