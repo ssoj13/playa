@@ -75,6 +75,18 @@ pub struct TimelineState {
     pub clipboard: Vec<ClipboardLayer>, // Copied layers for Ctrl-C/Ctrl-V
     #[serde(skip)]
     pub(super) geom_cache: HashMap<usize, LayerGeom>, // Cached layer geometry for interactions
+    
+    // === Layout rename dialog state ===
+    /// Whether the layout rename dialog is currently open.
+    /// Triggered by clicking the rename button (pencil icon) in toolbar.
+    #[serde(skip)]
+    pub rename_dialog_open: bool,
+    /// The new name being edited in the rename dialog text field.
+    #[serde(skip)]
+    pub rename_dialog_name: String,
+    /// The original layout name before rename (needed for LayoutRenamedEvent).
+    #[serde(skip)]
+    pub rename_dialog_old_name: String,
 }
 
 impl std::fmt::Debug for TimelineState {
@@ -92,6 +104,7 @@ impl std::fmt::Debug for TimelineState {
             .field("hatch_texture", &self.hatch_texture.as_ref().map(|_| "TextureHandle"))
             .field("clipboard", &format!("{} layers", self.clipboard.len()))
             .field("geom_cache", &format!("{} entries", self.geom_cache.len()))
+            .field("rename_dialog_open", &self.rename_dialog_open)
             .finish()
     }
 }
@@ -111,6 +124,9 @@ impl Default for TimelineState {
             hatch_texture: None,
             clipboard: Vec::new(),
             geom_cache: HashMap::new(),
+            rename_dialog_open: false,
+            rename_dialog_name: String::new(),
+            rename_dialog_old_name: String::new(),
         }
     }
 }

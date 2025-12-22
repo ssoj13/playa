@@ -664,6 +664,10 @@ impl PlayaApp {
                 self.update_current_layout();
                 continue;
             }
+            if let Some(evt) = downcast_event::<playa::core::layout_events::LayoutRenamedEvent>(&event) {
+                self.rename_layout(&evt.0, &evt.1);
+                continue;
+            }
             // === App events - delegate to main_events module ===
             // log::trace!("[HANDLE] checking event type_id={:?}", (*event).type_id());
             if let Some(result) = main_events::handle_app_event(
@@ -1518,12 +1522,36 @@ impl PlayaApp {
     }
 
     /// Delete a named layout from settings.
+    /// Clears current_layout if the deleted layout was selected.
     fn delete_layout(&mut self, name: &str) {
         if self.settings.layouts.remove(name).is_some() {
             if self.settings.current_layout == name {
                 self.settings.current_layout.clear();
             }
             log::info!("Deleted layout: {}", name);
+        }
+    }
+
+    /// Rename a layout in settings.
+    /// Updates current_layout if the renamed layout was selected.
+    /// Does nothing if old_name doesn't exist or new_name already exists.
+    fn rename_layout(&mut self, old_name: &str, new_name: &str) {
+        // Don't rename to an existing name
+        if self.settings.layouts.contains_key(new_name) {
+            log::warn!("Cannot rename layout: '{}' already exists", new_name);
+            return;
+        }
+        
+        // Remove old and insert with new name
+        if let Some(layout) = self.settings.layouts.remove(old_name) {
+            self.settings.layouts.insert(new_name.to_string(), layout);
+            
+            // Update current_layout if it was the renamed one
+            if self.settings.current_layout == old_name {
+                self.settings.current_layout = new_name.to_string();
+            }
+            
+            log::info!("Renamed layout: '{}' -> '{}'", old_name, new_name);
         }
     }
 

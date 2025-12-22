@@ -171,7 +171,10 @@ pub fn render_toolbar(
 
         ui.separator();
 
-        // Layout selector
+        // === Layout selector and management buttons ===
+        // Allows switching between named UI layouts stored in AppSettings.
+        // Layouts persist dock panel sizes, timeline zoom/pan, and viewport state.
+        // Events dispatched here are handled by main.rs layout event handlers.
         use crate::core::layout_events::{LayoutSelectedEvent, LayoutCreatedEvent, LayoutDeletedEvent};
         
         let display_name = if current_layout.is_empty() { "(none)" } else { current_layout };
@@ -186,19 +189,91 @@ pub fn render_toolbar(
                 }
             });
 
-        // Add layout button
+        // Add layout button - duplicates current UI state into new named layout
         if ui.button("+").on_hover_text("Create new layout").clicked() {
             dispatch(Box::new(LayoutCreatedEvent(None)));
         }
 
-        // Delete layout button (only if there's a current layout)
+        // Delete layout button (only enabled if a layout is selected)
         if ui.add_enabled(!current_layout.is_empty(), egui::Button::new("−"))
             .on_hover_text("Delete current layout")
             .clicked() 
         {
             dispatch(Box::new(LayoutDeletedEvent(current_layout.to_string())));
         }
+
+        // Rename layout button - opens inline rename dialog
+        // Uses pencil icon, only enabled when a layout is selected
+        if ui.add_enabled(!current_layout.is_empty(), egui::Button::new("✎"))
+            .on_hover_text("Rename current layout")
+            .clicked()
+        {
+            state.rename_dialog_open = true;
+            state.rename_dialog_old_name = current_layout.to_string();
+            state.rename_dialog_name = current_layout.to_string();
+        }
     });
+
+    // === Layout rename dialog ===
+    // Modal-like window that appears when user clicks rename button.
+    // Contains text input for new name and OK/Cancel buttons.
+    // Dispatches LayoutRenamedEvent on confirmation.
+    if state.rename_dialog_open {
+        use crate::core::layout_events::LayoutRenamedEvent;
+        
+        let mut should_close = false;
+        let mut should_rename = false;
+        
+        egui::Window::new("Rename Layout")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Name:");
+                    let response = ui.text_edit_singleline(&mut state.rename_dialog_name);
+                    
+                    // Auto-focus the text field when dialog opens
+                    if response.gained_focus() || state.rename_dialog_name == state.rename_dialog_old_name {
+                        response.request_focus();
+                    }
+                    
+                    // Enter key confirms rename
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        should_rename = true;
+                    }
+                });
+                
+                ui.add_space(8.0);
+                
+                ui.horizontal(|ui| {
+                    if ui.button("OK").clicked() {
+                        should_rename = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        should_close = true;
+                    }
+                });
+            });
+        
+        // Handle dialog actions outside the closure to avoid borrow issues
+        if should_rename {
+            let new_name = state.rename_dialog_name.trim().to_string();
+            let old_name = state.rename_dialog_old_name.clone();
+            
+            // Only rename if name actually changed and is not empty
+            if !new_name.is_empty() && new_name != old_name {
+                dispatch(Box::new(LayoutRenamedEvent(old_name, new_name)));
+            }
+            should_close = true;
+        }
+        
+        if should_close {
+            state.rename_dialog_open = false;
+            state.rename_dialog_name.clear();
+            state.rename_dialog_old_name.clear();
+        }
+    }
 }
 
 /// Render left outline: layer list only (no toolbar)

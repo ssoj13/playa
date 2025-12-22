@@ -35,3 +35,8 @@ pub struct LayoutDeletedEvent(pub String);
 /// Does nothing if current_layout is empty or not found.
 #[derive(Clone, Debug)]
 pub struct LayoutUpdatedEvent;
+
+/// Rename a layout. (old_name, new_name)
+/// Updates current_layout if renamed layout was selected.
+#[derive(Clone, Debug)]
+pub struct LayoutRenamedEvent(pub String, pub String);
