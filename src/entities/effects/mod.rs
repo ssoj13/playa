@@ -15,22 +15,48 @@
 //!   source_frame = load_source()
 //!   for effect in layer.effects:
 //!       source_frame = effects::apply(source_frame, effect)
+//!   transform(source_frame, ...)  // effects applied BEFORE transform
 //!   blend(source_frame, ...)
 //! ```
 //!
 //! # Effect Types
 //!
-//! - **GaussianBlur**: Separable Gaussian blur (radius parameter)
-//! - **BrightnessContrast**: Adjust brightness and contrast
-//! - **AdjustHSV**: Hue shift, saturation/value multipliers
+//! | Type | Parameters | Description |
+//! |------|------------|-------------|
+//! | **GaussianBlur** | `radius: 0-100` | Separable blur, O(n*r) per pass |
+//! | **BrightnessContrast** | `brightness: -1..1`, `contrast: -1..1` | Color adjustment |
+//! | **AdjustHSV** | `hue_shift: -180..180`, `saturation: 0..2`, `value: 0..2` | HSV color space |
+//!
+//! # UI Integration
+//!
+//! Effects are managed in the Attribute Editor (F3) under the "Effects" section:
+//! - Add effects via "+" dropdown
+//! - Toggle enabled/disabled with checkbox
+//! - Reorder with arrow buttons
+//! - Remove with "x" button
+//! - Parameters edited via DragValue widgets
 //!
 //! # Usage
 //!
 //! ```ignore
+//! // Add effect to layer
 //! let effect = Effect::new(EffectType::GaussianBlur);
-//! effect.attrs.set("radius", AttrValue::Float(10.0));
 //! layer.effects.push(effect);
+//!
+//! // Modify effect parameters
+//! if let Some(fx) = layer.effects.first_mut() {
+//!     fx.attrs.set("radius", AttrValue::Float(10.0));
+//! }
+//!
+//! // Effects are automatically applied in compose_internal()
 //! ```
+//!
+//! # Adding New Effects
+//!
+//! 1. Add variant to `EffectType` enum
+//! 2. Create schema constant (e.g., `FX_MY_EFFECT_SCHEMA`)
+//! 3. Create implementation file (e.g., `my_effect.rs`) with `apply()` function
+//! 4. Add module to `pub mod` and match arms in `schema()` and `apply()`
 
 pub mod blur;
 pub mod brightness;

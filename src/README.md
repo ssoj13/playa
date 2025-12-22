@@ -47,6 +47,7 @@ Core data structures representing the compositing model.
 | `attr_schemas.rs` | Attribute schema definitions (DAG/display/keyframable flags) |
 | `comp.rs` | Composition - timeline with children, work area, caching |
 | `comp_node.rs` | CompNode - composition as a node with layers |
+| `effects/` | Layer effects system (blur, brightness, HSV adjust) |
 | `comp_events.rs` | Comp-related events (dirty flag, child updates) |
 | `compositor.rs` | CPU frame blending (blend modes, alpha compositing) |
 | `file_node.rs` | FileNode - image/video file source |
@@ -70,7 +71,7 @@ Reusable egui widgets for the application interface.
 | `timeline/` | Timeline editor, layers, work area, keyframes |
 | `status/` | Status bar, memory usage, cache stats |
 | `project/` | Project/playlist panel |
-| `ae/` | After Effects-style attribute editor |
+| `ae/` | After Effects-style attribute editor + effects UI |
 
 ### `dialogs/` - Modal Windows
 

@@ -30,6 +30,7 @@ Professional image sequence player and video compositor. Single binary, cross-pl
 - **Blend modes** - Normal, Screen, Add, Subtract, Multiply, Divide, Difference
 - **3D transforms** - Position, Rotation, Scale with perspective
 - **Interactive gizmos** - Move/Rotate/Scale manipulation in viewport
+- **Layer effects** - Gaussian Blur, Brightness/Contrast, HSV Adjust (CPU)
 
 ### Format Support
 - **EXR** - Via exrs (pure Rust) or OpenEXR C++ (DWAA/DWAB)
@@ -215,6 +216,7 @@ Used for: loop playback, encoding (F4)
 2. Drag clips to timeline
 3. Select layer, use Move/Rotate/Scale tools
 4. Adjust blend mode and opacity in Attributes panel
+5. Add effects in Effects section (Gaussian Blur, Brightness/Contrast, HSV)
 
 ### Remote Control
 

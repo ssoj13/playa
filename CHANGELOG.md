@@ -29,6 +29,14 @@
   - Improved transform handling
   - Better integration with gizmo system
 
+- **Layer Effects System**: Per-layer post-processing effects
+  - Gaussian Blur (separable, O(n*r) per pass)
+  - Brightness/Contrast adjustment
+  - HSV color correction (hue shift, saturation, value)
+  - Effects UI in Attribute Editor with add/remove/reorder
+  - Schema-based parameters with proper validation
+  - Integrated into compositor pipeline (applied before transform)
+
 ### 🏗️ Architecture
 
 - **Arc<NodeKind> in media pool**: Lock-free worker access
