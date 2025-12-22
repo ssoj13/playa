@@ -462,11 +462,11 @@ pub fn render_effects(
     actions
 }
 
-/// Render editable attributes for a single effect.
+/// Render editable attributes for a single effect using same table layout as main attrs.
 fn render_effect_attrs(
     ui: &mut Ui,
     effect: &mut Effect,
-    _state: &mut AttributesState,
+    state: &mut AttributesState,
     actions: &mut Vec<EffectAction>,
 ) {
     let schema = effect.effect_type.schema();
@@ -480,56 +480,93 @@ fn render_effect_attrs(
         pairs.into_iter().map(|(k, _)| k).collect()
     };
     
-    for key in keys {
-        if let Some(value) = effect.attrs.get_mut(&key) {
-            ui.horizontal(|ui| {
-                ui.label(&key);
-                
-                // Get UI hints from schema (ui_options: ["min", "max", "step"])
-                let (min, max, speed) = schema.get(&key)
-                    .map(|def| {
-                        let opts = def.ui_options;
-                        let min = opts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                        let max = opts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(100.0);
-                        let speed = opts.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.1);
-                        (min, max, speed)
-                    })
-                    .unwrap_or((0.0, 100.0, 0.1));
-                
-                match value {
-                    AttrValue::Float(v) => {
-                        let mut temp = *v;
-                        if ui.add(
-                            egui::DragValue::new(&mut temp)
-                                .speed(speed)
-                                .range(min..=max)
-                        ).changed() {
-                            actions.push(EffectAction::AttrChanged(
-                                effect.uuid,
-                                key.clone(),
-                                AttrValue::Float(temp),
-                            ));
-                        }
-                    }
-                    AttrValue::Int(v) => {
-                        let mut temp = *v;
-                        if ui.add(
-                            egui::DragValue::new(&mut temp)
-                                .speed(speed)
-                                .range(min as i32..=max as i32)
-                        ).changed() {
-                            actions.push(EffectAction::AttrChanged(
-                                effect.uuid,
-                                key.clone(),
-                                AttrValue::Int(temp),
-                            ));
-                        }
-                    }
-                    _ => {
-                        ui.label(format!("{:?}", value));
-                    }
-                }
-            });
-        }
+    if keys.is_empty() {
+        return;
     }
+    
+    let row_height = ui.text_style_height(&TextStyle::Body)
+        .max(ui.spacing().interact_size.y);
+    
+    // Use same column width as main attributes
+    let available_width = ui.available_width();
+    let min_label = 100.0;
+    let max_label = (available_width - 120.0).max(min_label);
+    
+    let table_top = ui.cursor().min;
+    
+    TableBuilder::new(ui)
+        .id_salt(format!("fx_attrs_{}", effect.uuid))
+        .striped(false)
+        .column(
+            Column::initial(state.name_column_width)
+                .range(min_label..=max_label)
+                .resizable(false),
+        )
+        .column(Column::remainder())
+        .body(|mut body| {
+            for key in &keys {
+                if let Some(value) = effect.attrs.get_mut(key) {
+                    body.row(row_height, |mut row| {
+                        row.col(|ui| {
+                            ui.label(key);
+                        });
+                        row.col(|ui| {
+                            // Get UI hints from schema
+                            let (min, max, speed) = schema.get(key)
+                                .map(|def| {
+                                    let opts = def.ui_options;
+                                    let min = opts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                                    let max = opts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(100.0);
+                                    let speed = opts.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.1);
+                                    (min, max, speed)
+                                })
+                                .unwrap_or((0.0, 100.0, 0.1));
+                            
+                            match value {
+                                AttrValue::Float(v) => {
+                                    let mut temp = *v;
+                                    if ui.add(
+                                        egui::DragValue::new(&mut temp)
+                                            .speed(speed)
+                                            .range(min..=max)
+                                    ).changed() {
+                                        actions.push(EffectAction::AttrChanged(
+                                            effect.uuid,
+                                            key.clone(),
+                                            AttrValue::Float(temp),
+                                        ));
+                                    }
+                                }
+                                AttrValue::Int(v) => {
+                                    let mut temp = *v;
+                                    if ui.add(
+                                        egui::DragValue::new(&mut temp)
+                                            .speed(speed)
+                                            .range(min as i32..=max as i32)
+                                    ).changed() {
+                                        actions.push(EffectAction::AttrChanged(
+                                            effect.uuid,
+                                            key.clone(),
+                                            AttrValue::Int(temp),
+                                        ));
+                                    }
+                                }
+                                _ => {
+                                    ui.label(format!("{:?}", value));
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+        });
+    
+    // Draw splitter line (aligned with main attributes splitter)
+    let table_bottom = ui.cursor().min;
+    let x = table_top.x + state.name_column_width;
+    let stroke = Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+    ui.painter().line_segment(
+        [Pos2::new(x, table_top.y), Pos2::new(x, table_bottom.y)],
+        stroke,
+    );
 }
