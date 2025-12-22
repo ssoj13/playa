@@ -13,6 +13,11 @@
   - Tool modes: Select, Move, Rotate, Scale
   - Multi-layer selection support
 
+- **Layer Picker**: Click-to-select layers in viewport
+  - Left click in Select mode (Q) picks topmost layer under cursor
+  - Raycast-based hit testing with inverse transform
+  - Click empty space to deselect
+
 - **3D Transform System**: Full affine transforms with perspective
   - Frame space as primary coordinate system (centered, Y-up)
   - ZYX rotation order (After Effects compatible)

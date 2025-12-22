@@ -111,7 +111,8 @@ playa -f sequence.exr --frame 50 -a -F    # Start at frame 50, autoplay, fullscr
 | **Fit to window** | `F` |
 | **100% zoom** | `A` or `H` |
 | **Fullscreen** | `Z` |
-| **Scrub** | Left click + drag on image |
+| **Scrub** | Right click + drag on image |
+| **Pick layer** | Left click (Select mode Q) |
 
 ### Timeline Controls
 
