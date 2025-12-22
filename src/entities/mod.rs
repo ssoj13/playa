@@ -4,6 +4,7 @@
 
 pub mod attrs;
 pub mod attr_schemas;
+pub mod effects;
 pub mod camera_node;
 pub mod comp_events;  // Events for comp/layer manipulation
 pub mod comp_node;
@@ -36,3 +37,4 @@ pub use project::{Project, NodeIter, NodeIterItem};
 pub use camera_node::CameraNode;
 pub use text_node::TextNode;
 pub use traits::{CacheStrategy, CacheStatsSnapshot, FrameCache, WorkerPool};
+pub use effects::{Effect, EffectType};

@@ -60,6 +60,7 @@ use uuid::Uuid;
 
 use super::attr_schemas::{COMP_SCHEMA, LAYER_SCHEMA};
 use super::attrs::{AttrValue, Attrs};
+use super::effects::Effect;
 use super::compositor::{BlendMode, CpuCompositor};
 use super::transform;
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
@@ -112,6 +113,10 @@ thread_local! {
 pub struct Layer {
     /// All layer attributes stored uniformly
     pub attrs: Attrs,
+    /// Ordered list of effects applied to this layer before compositing.
+    /// Effects are processed in order: first blur, then color correction, etc.
+    #[serde(default)]
+    pub effects: Vec<Effect>,
 }
 
 impl Layer {
@@ -148,7 +153,7 @@ impl Layer {
         // Clear dirty after construction - these are initial values, not changes
         attrs.clear_dirty();
         
-        Self { attrs }
+        Self { attrs, effects: Vec::new() }
     }
     
     /// Get layer instance UUID
@@ -166,7 +171,7 @@ impl Layer {
     pub fn from_attrs(source_uuid: Uuid, mut attrs: Attrs) -> Self {
         attrs.set_uuid(A_UUID, Uuid::new_v4());
         attrs.set_uuid("source_uuid", source_uuid);
-        Self { attrs }
+        Self { attrs, effects: Vec::new() }
     }
     
     /// Attach schema after deserialization
@@ -1090,6 +1095,14 @@ impl CompNode {
             if let Some(mut frame) = source_node.compute(source_frame, ctx) {
                 if frame.status() != FrameStatus::Loaded {
                     all_loaded = false;
+                }
+                
+                // Apply layer effects in order (blur, color correction, etc.)
+                // Effects are processed before transform so they work in layer-local space
+                if !layer.effects.is_empty() {
+                    if let Some(fx_frame) = super::effects::apply_all(frame.clone(), &layer.effects) {
+                        frame = fx_frame;
+                    }
                 }
                 
                 // Get layer transform attributes

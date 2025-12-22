@@ -943,6 +943,108 @@ impl PlayaApp {
         // Fallback to Global
         HotkeyWindow::Global
     }
+    
+    /// Handle effect actions from the Attribute Editor effects UI.
+    /// Modifies layer effects and triggers cache invalidation.
+    fn handle_effect_actions(
+        &mut self,
+        comp_uuid: Uuid,
+        layer_uuid: Uuid,
+        actions: Vec<playa::widgets::ae::EffectAction>,
+    ) {
+        use playa::widgets::ae::EffectAction;
+        use playa::entities::effects::Effect;
+        
+        let mut needs_invalidate = false;
+        
+        for action in actions {
+            match action {
+                EffectAction::Add(effect_type) => {
+                    self.project.modify_comp(comp_uuid, |comp| {
+                        if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                            layer.effects.push(Effect::new(effect_type));
+                        }
+                        comp.attrs.mark_dirty(); // Effects changed → comp dirty
+                    });
+                    needs_invalidate = true;
+                }
+                EffectAction::Remove(effect_uuid) => {
+                    self.project.modify_comp(comp_uuid, |comp| {
+                        if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                            layer.effects.retain(|e| e.uuid != effect_uuid);
+                        }
+                        comp.attrs.mark_dirty();
+                    });
+                    needs_invalidate = true;
+                }
+                EffectAction::ToggleEnabled(effect_uuid) => {
+                    self.project.modify_comp(comp_uuid, |comp| {
+                        if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                            if let Some(effect) = layer.effects.iter_mut().find(|e| e.uuid == effect_uuid) {
+                                effect.enabled = !effect.enabled;
+                            }
+                        }
+                        comp.attrs.mark_dirty();
+                    });
+                    needs_invalidate = true;
+                }
+                EffectAction::ToggleCollapsed(effect_uuid) => {
+                    // UI-only state, no invalidation needed
+                    self.project.modify_comp(comp_uuid, |comp| {
+                        if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                            if let Some(effect) = layer.effects.iter_mut().find(|e| e.uuid == effect_uuid) {
+                                effect.collapsed = !effect.collapsed;
+                            }
+                        }
+                    });
+                }
+                EffectAction::AttrChanged(effect_uuid, key, value) => {
+                    self.project.modify_comp(comp_uuid, |comp| {
+                        if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                            if let Some(effect) = layer.effects.iter_mut().find(|e| e.uuid == effect_uuid) {
+                                effect.attrs.set(&key, value);
+                            }
+                        }
+                        comp.attrs.mark_dirty();
+                    });
+                    needs_invalidate = true;
+                }
+                EffectAction::MoveUp(effect_uuid) => {
+                    self.project.modify_comp(comp_uuid, |comp| {
+                        if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                            if let Some(idx) = layer.effects.iter().position(|e| e.uuid == effect_uuid) {
+                                if idx > 0 {
+                                    layer.effects.swap(idx, idx - 1);
+                                }
+                            }
+                        }
+                        comp.attrs.mark_dirty();
+                    });
+                    needs_invalidate = true;
+                }
+                EffectAction::MoveDown(effect_uuid) => {
+                    self.project.modify_comp(comp_uuid, |comp| {
+                        if let Some(layer) = comp.get_layer_mut(layer_uuid) {
+                            if let Some(idx) = layer.effects.iter().position(|e| e.uuid == effect_uuid) {
+                                if idx < layer.effects.len() - 1 {
+                                    layer.effects.swap(idx, idx + 1);
+                                }
+                            }
+                        }
+                        comp.attrs.mark_dirty();
+                    });
+                    needs_invalidate = true;
+                }
+            }
+        }
+        
+        if needs_invalidate {
+            // Invalidate comp cache and trigger refresh
+            self.project.invalidate_with_dependents(comp_uuid, true);
+            self.enqueue_current_frame_only();
+            self.event_bus.emit(ViewportRefreshEvent);
+        }
+    }
 
     fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
         // Don't process hotkeys when text input is active (typing in fields)
@@ -1698,9 +1800,32 @@ impl PlayaApp {
                 if !changed.is_empty() {
                     self.event_bus.emit_boxed(Box::new(SetLayerAttrsEvent {
                         comp_uuid,
-                        layer_uuids: ae_focus,
+                        layer_uuids: ae_focus.clone(),
                         attrs: changed,
                     }));
+                }
+                
+                // === Effects UI (single layer only) ===
+                if ae_focus.len() == 1 {
+                    let layer_uuid = ae_focus[0];
+                    
+                    // Get effects clone for UI rendering (read-only pass)
+                    let effects_opt = self.project.with_comp(comp_uuid, |comp| {
+                        comp.get_layer(layer_uuid).map(|l| l.effects.clone())
+                    }).flatten();
+                    
+                    if let Some(mut effects) = effects_opt {
+                        let effect_actions = playa::widgets::ae::render_effects(
+                            ui,
+                            &mut effects,
+                            &mut self.attributes_state,
+                        );
+                        
+                        // Handle effect actions
+                        if !effect_actions.is_empty() {
+                            self.handle_effect_actions(comp_uuid, layer_uuid, effect_actions);
+                        }
+                    }
                 }
             }
         } else {

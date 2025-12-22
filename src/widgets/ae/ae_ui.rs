@@ -28,9 +28,11 @@
 //! ```
 
 use crate::entities::{AttrValue, Attrs};
+use crate::entities::effects::{Effect, EffectType};
 use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui};
 use egui_extras::{Column, TableBuilder};
 use std::collections::HashSet;
+use uuid::Uuid;
 
 /// Persistent UI state for the Attributes panel.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -331,4 +333,203 @@ fn render_value_editor(
     });
     changed |= scope_changed;
     changed
+}
+
+// ============================================================================
+// Effects UI
+// ============================================================================
+
+/// Actions that can be performed on effects (returned from render_effects).
+#[derive(Debug, Clone)]
+pub enum EffectAction {
+    /// Add new effect of given type
+    Add(EffectType),
+    /// Remove effect by UUID
+    Remove(Uuid),
+    /// Toggle effect enabled state
+    ToggleEnabled(Uuid),
+    /// Toggle effect collapsed state
+    ToggleCollapsed(Uuid),
+    /// Effect attribute changed (effect_uuid, key, value)
+    AttrChanged(Uuid, String, AttrValue),
+    /// Move effect up in stack (lower index = applied first)
+    MoveUp(Uuid),
+    /// Move effect down in stack
+    MoveDown(Uuid),
+}
+
+/// Render effects section for a layer.
+///
+/// Returns list of actions to apply (add, remove, toggle, attr change).
+/// Caller should handle these actions and update the layer's effects Vec.
+pub fn render_effects(
+    ui: &mut Ui,
+    effects: &mut Vec<Effect>,
+    state: &mut AttributesState,
+) -> Vec<EffectAction> {
+    let mut actions: Vec<EffectAction> = Vec::new();
+    
+    ui.add_space(8.0);
+    ui.separator();
+    
+    // Header with Add button
+    ui.horizontal(|ui| {
+        ui.strong("Effects");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Add Effect dropdown
+            let mut selected_type: Option<EffectType> = None;
+            ComboBox::from_id_salt("add_effect")
+                .selected_text("+")
+                .width(100.0)
+                .show_ui(ui, |ui| {
+                    for effect_type in EffectType::all() {
+                        if ui.selectable_label(false, effect_type.display_name()).clicked() {
+                            selected_type = Some(effect_type.clone());
+                        }
+                    }
+                });
+            if let Some(etype) = selected_type {
+                actions.push(EffectAction::Add(etype));
+            }
+        });
+    });
+    
+    if effects.is_empty() {
+        ui.label("No effects");
+        return actions;
+    }
+    
+    // Render each effect
+    let effects_count = effects.len();
+    for (idx, effect) in effects.iter_mut().enumerate() {
+        ui.push_id(effect.uuid, |ui| {
+            ui.horizontal(|ui| {
+                // Collapse toggle
+                let collapse_icon = if effect.collapsed { "▸" } else { "▾" };
+                if ui.small_button(collapse_icon).clicked() {
+                    actions.push(EffectAction::ToggleCollapsed(effect.uuid));
+                }
+                
+                // Enable checkbox
+                let mut enabled = effect.enabled;
+                if ui.checkbox(&mut enabled, "").changed() {
+                    actions.push(EffectAction::ToggleEnabled(effect.uuid));
+                }
+                
+                // Effect name (dimmed if disabled)
+                let name_text = egui::RichText::new(effect.name());
+                let name_text = if effect.enabled {
+                    name_text
+                } else {
+                    name_text.weak()
+                };
+                ui.label(name_text);
+                
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Delete button
+                    if ui.small_button("✕").on_hover_text("Remove effect").clicked() {
+                        actions.push(EffectAction::Remove(effect.uuid));
+                    }
+                    
+                    // Reorder buttons
+                    ui.add_enabled_ui(idx < effects_count - 1, |ui| {
+                        if ui.small_button("▼").on_hover_text("Move down").clicked() {
+                            actions.push(EffectAction::MoveDown(effect.uuid));
+                        }
+                    });
+                    ui.add_enabled_ui(idx > 0, |ui| {
+                        if ui.small_button("▲").on_hover_text("Move up").clicked() {
+                            actions.push(EffectAction::MoveUp(effect.uuid));
+                        }
+                    });
+                });
+            });
+            
+            // Effect parameters (if not collapsed)
+            if !effect.collapsed {
+                ui.indent(effect.uuid, |ui| {
+                    render_effect_attrs(ui, effect, state, &mut actions);
+                });
+            }
+            
+            // Separator between effects
+            if idx < effects_count - 1 {
+                ui.add_space(2.0);
+            }
+        });
+    }
+    
+    actions
+}
+
+/// Render editable attributes for a single effect.
+fn render_effect_attrs(
+    ui: &mut Ui,
+    effect: &mut Effect,
+    _state: &mut AttributesState,
+    actions: &mut Vec<EffectAction>,
+) {
+    let schema = effect.effect_type.schema();
+    
+    // Get attribute keys sorted by order
+    let keys: Vec<String> = {
+        let mut pairs: Vec<_> = effect.attrs.iter()
+            .map(|(k, _)| (k.clone(), schema.get(&k).map(|d| d.order).unwrap_or(999.0)))
+            .collect();
+        pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        pairs.into_iter().map(|(k, _)| k).collect()
+    };
+    
+    for key in keys {
+        if let Some(value) = effect.attrs.get_mut(&key) {
+            ui.horizontal(|ui| {
+                ui.label(&key);
+                
+                // Get UI hints from schema (ui_options: ["min", "max", "step"])
+                let (min, max, speed) = schema.get(&key)
+                    .map(|def| {
+                        let opts = def.ui_options;
+                        let min = opts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                        let max = opts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(100.0);
+                        let speed = opts.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.1);
+                        (min, max, speed)
+                    })
+                    .unwrap_or((0.0, 100.0, 0.1));
+                
+                match value {
+                    AttrValue::Float(v) => {
+                        let mut temp = *v;
+                        if ui.add(
+                            egui::DragValue::new(&mut temp)
+                                .speed(speed)
+                                .range(min..=max)
+                        ).changed() {
+                            actions.push(EffectAction::AttrChanged(
+                                effect.uuid,
+                                key.clone(),
+                                AttrValue::Float(temp),
+                            ));
+                        }
+                    }
+                    AttrValue::Int(v) => {
+                        let mut temp = *v;
+                        if ui.add(
+                            egui::DragValue::new(&mut temp)
+                                .speed(speed)
+                                .range(min as i32..=max as i32)
+                        ).changed() {
+                            actions.push(EffectAction::AttrChanged(
+                                effect.uuid,
+                                key.clone(),
+                                AttrValue::Int(temp),
+                            ));
+                        }
+                    }
+                    _ => {
+                        ui.label(format!("{:?}", value));
+                    }
+                }
+            });
+        }
+    }
 }

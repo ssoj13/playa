@@ -4,4 +4,4 @@
 
 mod ae_ui;
 
-pub use ae_ui::{render, render_with_mixed, AttributesState};
+pub use ae_ui::{render, render_with_mixed, render_effects, AttributesState, EffectAction};
