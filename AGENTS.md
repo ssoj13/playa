@@ -688,6 +688,16 @@ cargo xtask build --release
    - DAG vs non-DAG attributes
    - Auto-emit on dirty
 
+6. **Layer Effects** (`entities/effects/`)
+   - Per-layer post-processing: Gaussian Blur, Brightness/Contrast, HSV
+   - Applied before transform (layer-local space)
+   - UI in Attribute Editor (F3)
+
+7. **Layer Picker** (`widgets/viewport/pick.rs`)
+   - Left click in Select mode (Q) picks topmost layer
+   - Raycast: screen → image → frame space → inverse transform → bounds check
+   - Uses `ViewportState::screen_to_image()` + `space::image_to_frame()`
+
 ### Architecture Changes
 
 - `Arc<NodeKind>` in media pool for lock-free worker access
