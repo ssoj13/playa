@@ -36,6 +36,9 @@ pub fn render(
     is_fullscreen: bool,
     texture_needs_upload: bool,
     viewport_hover_highlight: bool,
+    hover_stroke_width: f32,
+    hover_corner_length: f32,
+    hover_opacity: f32,
 ) -> (ViewportActions, f32) {
     let mut actions = ViewportActions::default();
     let mut render_time_ms = 0.0;
@@ -190,7 +193,7 @@ pub fn render(
 
         // Draw hover highlight around hovered layer
         if viewport_hover_highlight {
-            draw_hover_highlight(ui, panel_rect, viewport_state, player, project);
+            draw_hover_highlight(ui, panel_rect, viewport_state, player, project, hover_stroke_width, hover_corner_length, hover_opacity);
         }
     }
 
@@ -524,6 +527,9 @@ fn draw_hover_highlight(
     viewport_state: &ViewportState,
     player: &Player,
     project: &Project,
+    stroke_width: f32,
+    corner_length: f32,
+    opacity: f32,
 ) {
     let tool = ToolMode::from_str(&project.tool());
     if !matches!(tool, ToolMode::Select) {
@@ -589,12 +595,43 @@ fn draw_hover_highlight(
         screen_corners.push(egui::pos2(screen_pos.x, screen_pos.y));
     }
 
-    // Draw rectangle outline
+    // Draw corner brackets instead of full rectangle
     let painter = ui.painter();
-    let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 200, 100)); // Orange
+    let alpha = (opacity * 255.0) as u8;
+    let stroke = egui::Stroke::new(stroke_width, egui::Color32::from_rgba_unmultiplied(255, 200, 100, alpha));
+    
+    // Use corner length from settings, but clamp to half of shortest edge
+    let edge_lengths: Vec<f32> = (0..4)
+        .map(|i| {
+            let p1 = screen_corners[i];
+            let p2 = screen_corners[(i + 1) % 4];
+            ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt()
+        })
+        .collect();
+    let min_edge = edge_lengths.iter().cloned().fold(f32::INFINITY, f32::min);
+    let bracket_len = corner_length.min(min_edge * 0.5); // Don't exceed half of shortest edge
+    
+    // Draw corner brackets at each corner
     for i in 0..4 {
-        let p1 = screen_corners[i];
-        let p2 = screen_corners[(i + 1) % 4];
-        painter.line_segment([p1, p2], stroke);
+        let corner = screen_corners[i];
+        let prev = screen_corners[(i + 3) % 4];
+        let next = screen_corners[(i + 1) % 4];
+        
+        // Direction to previous corner
+        let to_prev = egui::vec2(prev.x - corner.x, prev.y - corner.y);
+        let len_prev = (to_prev.x.powi(2) + to_prev.y.powi(2)).sqrt();
+        let dir_prev = if len_prev > 0.0 { to_prev / len_prev } else { egui::vec2(0.0, 0.0) };
+        
+        // Direction to next corner
+        let to_next = egui::vec2(next.x - corner.x, next.y - corner.y);
+        let len_next = (to_next.x.powi(2) + to_next.y.powi(2)).sqrt();
+        let dir_next = if len_next > 0.0 { to_next / len_next } else { egui::vec2(0.0, 0.0) };
+        
+        // Draw two bracket lines from corner
+        let end_prev = egui::pos2(corner.x + dir_prev.x * bracket_len, corner.y + dir_prev.y * bracket_len);
+        let end_next = egui::pos2(corner.x + dir_next.x * bracket_len, corner.y + dir_next.y * bracket_len);
+        
+        painter.line_segment([corner, end_prev], stroke);
+        painter.line_segment([corner, end_next], stroke);
     }
 }

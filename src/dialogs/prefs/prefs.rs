@@ -110,6 +110,9 @@ pub struct AppSettings {
     pub timeline_lock_work_area: bool,
     pub viewport_hover_highlight: bool,
     pub timeline_hover_highlight: bool,
+    pub hover_stroke_width: f32,
+    pub hover_corner_length: f32,
+    pub hover_opacity: f32,
     pub preload_radius: i32, // Frames to preload around playhead (-1 = all, default 100)
     pub preload_delay_ms: u64, // Delay before full preload after attr change (default 500ms)
 
@@ -159,6 +162,9 @@ impl Default for AppSettings {
             timeline_lock_work_area: false,
             viewport_hover_highlight: true,
             timeline_hover_highlight: false,
+            hover_stroke_width: 2.0,
+            hover_corner_length: 20.0,
+            hover_opacity: 0.5,
             preload_radius: -1,
             preload_delay_ms: 500,
             workers_override: 0,
@@ -258,6 +264,18 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.checkbox(&mut settings.show_tooltips, "Show Tooltips (2s delay on toolbar controls)");
     ui.checkbox(&mut settings.viewport_hover_highlight, "Viewport hover highlight");
     ui.checkbox(&mut settings.timeline_hover_highlight, "Timeline hover highlight");
+    ui.horizontal(|ui| {
+        ui.label("Hover stroke:");
+        ui.add(egui::Slider::new(&mut settings.hover_stroke_width, 1.0..=5.0).suffix("px").step_by(0.5));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Hover corner:");
+        ui.add(egui::Slider::new(&mut settings.hover_corner_length, 5.0..=50.0).suffix("px").step_by(1.0));
+    });
+    ui.horizontal(|ui| {
+        ui.label("Hover opacity:");
+        ui.add(egui::Slider::new(&mut settings.hover_opacity, 0.1..=1.0).step_by(0.1));
+    });
 
     ui.add_space(16.0);
     ui.heading("Performance");
