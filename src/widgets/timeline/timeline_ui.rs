@@ -613,8 +613,8 @@ pub fn render_canvas(
     let tab_rect = ui.max_rect(); // Full tab rect for hover detection
 
     // Draw ruler with proper layout sync
-    // Zero item_spacing to match outline panel alignment
-    let saved_spacing = ui.spacing().item_spacing.y;
+    // Zero item_spacing to match outline panel alignment (kept zero for entire timeline)
+    let _saved_spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
 
     ui.horizontal(|ui| {
@@ -683,16 +683,16 @@ pub fn render_canvas(
 
     ui.add_space(4.0);
 
-    // Restore spacing for layers area
-    ui.spacing_mut().item_spacing.y = saved_spacing;
-
     // Layers area with vertical scroll (but horizontal pan via state.pan_offset)
     // ScrollArea is needed here because layers can extend beyond visible area vertically
+    // NOTE: item_spacing stays 0 until INSIDE ScrollArea to match outline panel alignment
     egui::ScrollArea::vertical()
         .id_salt("timeline_layers_scroll")
         // Constrain ScrollArea to visible space so the parent panel doesn't grow
         .max_height(ui.available_height())
         .show(ui, |ui| {
+        // Zero spacing kept for layer rows to match outline panel alignment
+
         ui.push_id("timeline_layers", |ui| {
             // child_order computed here, row = index (no smart packing)
 
