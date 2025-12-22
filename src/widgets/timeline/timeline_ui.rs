@@ -1249,16 +1249,16 @@ pub fn render_canvas(
         });
     });
 
-    // Draw playhead once across ruler + bars
-    if let (Some(ruler_rect), Some(timeline_rect)) = (ruler_rect, timeline_rect_global) {
+    // Draw playhead once across ruler + entire tab (including empty area below layers)
+    if let Some(ruler_rect) = ruler_rect {
         let painter = ui.painter();
         let x = frame_to_screen_x(comp.frame() as f32, ruler_rect.min.x, config, state);
         painter.line_segment(
             [
                 Pos2::new(x, ruler_rect.min.y),
-                Pos2::new(x, timeline_rect.max.y),
+                Pos2::new(x, tab_rect.max.y),
             ],
-            (2.0, Color32::from_rgb(255, 220, 100)),
+            (1.0, Color32::from_rgb(255, 220, 100)),
         );
         let triangle_size = 8.0;
         let top_y = ruler_rect.min.y;
