@@ -31,7 +31,7 @@ pub use compositor::CompositorType;
 pub use file_node::FileNode;
 pub use frame::{Frame, FrameStatus};
 // Layer is now only in comp_node.rs (pub use comp_node::Layer as NodeLayer above)
-pub use node::Node;
+pub use node::{Node, ComputeContext};
 pub use node_kind::NodeKind;
 pub use project::{Project, NodeIter, NodeIterItem};
 pub use camera_node::CameraNode;

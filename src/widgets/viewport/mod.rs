@@ -3,6 +3,7 @@
 //! OpenGL renderer with scrubbing support
 
 mod coords;
+mod pick;
 mod renderer;
 pub mod shaders;
 mod viewport;

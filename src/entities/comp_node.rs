@@ -1139,7 +1139,7 @@ impl CompNode {
                 
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
-                
+
                 source_frames.push((frame, opacity, blend, inv_matrix));
                 
                 // Track highest precision
@@ -1172,7 +1172,7 @@ impl CompNode {
         let result = THREAD_COMPOSITOR.with(|comp| {
             comp.borrow_mut().blend_with_dim(source_frames, dim)
         });
-        
+
         // Cleanup compose stack
         COMPOSE_STACK.with(|stack| {
             stack.borrow_mut().remove(&my_uuid);
@@ -1523,7 +1523,7 @@ fn create_base_frame(dim: (usize, usize), format: PixelFormat) -> Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_comp_node_creation() {
         let node = CompNode::new("Test Comp", 0, 100, 24.0);

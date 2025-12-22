@@ -7,10 +7,12 @@ use std::sync::{Arc, Mutex};
 use super::shaders::Shaders;
 use super::{ViewportRenderer, ViewportState};
 use super::gizmo::GizmoState;
+use super::pick;
 use super::tool::ToolMode;
 use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, FrameStatus};
+use crate::entities::comp_events::CompSelectionChangedEvent;
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player::Player;
 use crate::widgets::actions::ActionQueue;
@@ -139,6 +141,11 @@ pub fn render(
         }
 
         // Note: Scrubbing moved to RMB in Select tool (see right_drag_tool_event)
+
+        // LMB click in Select mode: pick layer under cursor
+        if let Some(evt) = left_click_pick_event(&ctx, &response, panel_rect, viewport_state, player, project) {
+            actions.events.push(evt);
+        }
 
         match frame_state {
             // Header = file comp created frame but not loaded yet
@@ -392,4 +399,61 @@ fn render_help_overlay(ui: &egui::Ui, panel_rect: egui::Rect) {
         egui::FontId::proportional(13.0),
         egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128),
     );
+}
+
+/// LMB click handler for layer picking in Select mode.
+///
+/// Raycast through visible layers top-to-bottom, select first hit.
+/// Clicking empty space clears selection.
+fn left_click_pick_event(
+    ctx: &egui::Context,
+    response: &egui::Response,
+    panel_rect: egui::Rect,
+    viewport_state: &ViewportState,
+    player: &Player,
+    project: &Project,
+) -> Option<BoxedEvent> {
+    let tool = ToolMode::from_str(&project.tool());
+    if !matches!(tool, ToolMode::Select) {
+        return None;
+    }
+
+    // Only trigger on single LMB click (not drag, not double-click)
+    if !response.clicked_by(egui::PointerButton::Primary) {
+        return None;
+    }
+
+    // Get click position
+    let click_pos = ctx.input(|i| i.pointer.interact_pos())?;
+    if !panel_rect.contains(click_pos) {
+        return None;
+    }
+
+    let comp_uuid = player.active_comp()?;
+    let frame_idx = player.current_frame(project);
+
+    // Perform raycast pick
+    let media = project.media.read().ok()?;
+    let pick_result = project.with_comp(comp_uuid, |comp| {
+        pick::pick_layer_at(
+            click_pos,
+            panel_rect,
+            viewport_state,
+            comp,
+            frame_idx,
+            &media,
+        )
+    })?;
+
+    // Build selection: picked layer or empty (clear selection)
+    let (selection, anchor) = match pick_result.layer_uuid {
+        Some(uuid) => (vec![uuid], Some(uuid)),
+        None => (vec![], None),
+    };
+
+    Some(Box::new(CompSelectionChangedEvent {
+        comp_uuid,
+        selection,
+        anchor,
+    }))
 }
