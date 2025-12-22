@@ -1,7 +1,7 @@
 //! Viewport widget - UI rendering
 
 use eframe::egui;
-use glam::{Vec3, Quat, EulerRot};
+use glam::{Vec3, Vec4, Mat4, Quat, EulerRot};
 use log::info;
 use std::sync::{Arc, Mutex};
 
@@ -541,6 +541,20 @@ fn draw_hover_highlight(
     opacity: f32,
 ) {
     let Some(comp_uuid) = player.active_comp() else { return };
+    let frame_idx = player.current_frame(project);
+    
+    // Get camera VP matrix if camera is active
+    let camera_vp: Option<Mat4> = {
+        let media = project.media.read().ok();
+        media.and_then(|m| {
+            project.with_comp(comp_uuid, |comp| {
+                let (camera, pos, rot) = comp.active_camera(frame_idx, &m)?;
+                let (comp_w, comp_h) = comp.dim();
+                let aspect = comp_w as f32 / comp_h as f32;
+                Some(camera.view_projection_matrix(pos, rot, aspect, comp_h as f32))
+            }).flatten()
+        })
+    };
     
     // Get layers to highlight based on tool mode
     let layers_data: Vec<([f32; 3], [f32; 3], [f32; 3], f32, f32)> = project.with_comp(comp_uuid, |comp| {
@@ -575,7 +589,7 @@ fn draw_hover_highlight(
         [-half_w, half_h],
     ];
 
-    // Build forward transform: object -> comp space
+    // Build forward transform: object -> comp/world space
     let pos = Vec3::from(position);
     let scl = Vec3::from(scale);
     let rot_rad = [
@@ -591,22 +605,48 @@ fn draw_hover_highlight(
         -rot_rad[0],
     );
 
-    // Transform corners to comp space, then to screen space
+    // Transform corners to screen space
     let mut screen_corners = Vec::with_capacity(4);
     for [ox, oy] in corners_obj {
-        // Object -> comp: pos + R * S * obj
+        // Object -> world/comp: pos + R * S * obj
         let obj_pt = Vec3::new(ox * scl.x, oy * scl.y, 0.0);
-        let comp_pt = pos + quat * obj_pt;
+        let world_pt = pos + quat * obj_pt;
         
-        // Comp (frame space, Y-up) -> image space (Y-down)
-        let image_x = comp_pt.x + viewport_state.image_size.x * 0.5;
-        let image_y = viewport_state.image_size.y * 0.5 - comp_pt.y;
+        // Project to screen based on whether camera is active
+        let screen_pos = if let Some(vp) = camera_vp {
+            // 3D mode: project through camera VP, then apply viewport transform
+            let clip = vp * Vec4::new(world_pt.x, world_pt.y, world_pt.z, 1.0);
+            if clip.w.abs() < 1e-6 {
+                continue; // Behind camera
+            }
+            let ndc = Vec3::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+            
+            // NDC [-1,1] -> frame space -> screen
+            // frame_x = ndc_x * comp_w/2, frame_y = ndc_y * comp_h/2
+            let comp_w = viewport_state.image_size.x;
+            let comp_h = viewport_state.image_size.y;
+            let frame_x = ndc.x * comp_w * 0.5;
+            let frame_y = ndc.y * comp_h * 0.5;
+            
+            // Frame -> viewport (zoom + pan) -> screen
+            let vp_x = frame_x * viewport_state.zoom + viewport_state.pan.x;
+            let vp_y = frame_y * viewport_state.zoom + viewport_state.pan.y;
+            let screen_x = vp_x + viewport_state.viewport_size.x * 0.5;
+            let screen_y = viewport_state.viewport_size.y * 0.5 - vp_y; // Y flip for screen
+            
+            panel_rect.left_top() + egui::vec2(screen_x, screen_y)
+        } else {
+            // 2D mode: simple frame -> image -> screen
+            let image_x = world_pt.x + viewport_state.image_size.x * 0.5;
+            let image_y = viewport_state.image_size.y * 0.5 - world_pt.y;
+            let screen = viewport_state.image_to_screen(egui::vec2(image_x, image_y));
+            panel_rect.left_top() + screen
+        };
         
-        // Image -> screen using viewport transform
-        let screen = viewport_state.image_to_screen(egui::vec2(image_x, image_y));
-        let screen_pos = panel_rect.left_top() + screen;
         screen_corners.push(egui::pos2(screen_pos.x, screen_pos.y));
     }
+    
+    if screen_corners.len() < 4 { continue; } // Some corners behind camera
 
     // Draw corner brackets instead of full rectangle
     let painter = ui.painter();

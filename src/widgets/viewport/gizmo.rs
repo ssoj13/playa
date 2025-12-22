@@ -287,22 +287,43 @@ fn build_gizmo_matrices(
     if let Some((cam_view, cam_proj)) = camera_matrices {
         // 3D mode: use camera view and projection separately
         //
-        // Viewport zoom/pan applied in screen space after projection
-        // We incorporate it into the projection matrix
+        // Camera projection outputs NDC [-1,1] representing comp space.
+        // We need to transform this to screen NDC that matches image_to_screen().
+        //
+        // image_to_screen: frame -> (zoom, pan) -> screen
+        // Camera NDC -> comp image -> frame -> (zoom, pan) -> screen -> screen NDC
         let view_f64 = DMat4::from_cols_array(&cam_view.to_cols_array().map(|v| v as f64));
         let proj_f64 = DMat4::from_cols_array(&cam_proj.to_cols_array().map(|v| v as f64));
 
-        // Viewport transform: zoom and pan in NDC space
-        // This scales and translates after projection
-        let w = clip_rect.width() as f64;
-        let h = clip_rect.height() as f64;
+        // Comp size (what camera renders to) and viewport size
+        let comp_w = viewport_state.image_size.x as f64;
+        let comp_h = viewport_state.image_size.y as f64;
+        let vp_w = clip_rect.width() as f64;
+        let vp_h = clip_rect.height() as f64;
         let zoom = viewport_state.zoom as f64;
-        let pan_x = viewport_state.pan.x as f64 / (w * 0.5); // normalize to NDC
-        let pan_y = viewport_state.pan.y as f64 / (h * 0.5);
+        let pan_x = viewport_state.pan.x as f64;
+        let pan_y = viewport_state.pan.y as f64;
 
-        // Post-projection transform: scale by zoom, translate by pan
-        let viewport_transform = DMat4::from_scale(DVec3::new(zoom, zoom, 1.0))
-            * DMat4::from_translation(DVec3::new(pan_x, pan_y, 0.0));
+        // Transform camera NDC to screen NDC:
+        // 1. Camera NDC [-1,1] represents [-comp/2, comp/2] in world
+        // 2. Screen NDC [-1,1] represents [-viewport/2, viewport/2] in screen
+        // 3. Apply zoom and pan to match image_to_screen()
+        //
+        // screen_pos = world_pos * zoom + pan
+        // screen_NDC = screen_pos / (viewport/2)
+        //            = (cam_NDC * comp/2 * zoom + pan) / (viewport/2)
+        //            = cam_NDC * (comp * zoom / viewport) + pan * 2 / viewport
+        let scale_x = comp_w * zoom / vp_w;
+        let scale_y = comp_h * zoom / vp_h;
+        let trans_x = pan_x * 2.0 / vp_w;
+        let trans_y = pan_y * 2.0 / vp_h;
+
+        let viewport_transform = DMat4::from_cols(
+            glam::DVec4::new(scale_x, 0.0, 0.0, 0.0),
+            glam::DVec4::new(0.0, scale_y, 0.0, 0.0),
+            glam::DVec4::new(0.0, 0.0, 1.0, 0.0),
+            glam::DVec4::new(trans_x, trans_y, 0.0, 1.0),
+        );
 
         // Final projection = viewport_transform * camera_proj
         let final_proj = viewport_transform * proj_f64;
