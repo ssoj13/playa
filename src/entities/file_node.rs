@@ -201,7 +201,8 @@ impl Node for FileNode {
         Some(frame)
     }
     
-    fn is_dirty(&self) -> bool {
+    fn is_dirty(&self, _ctx: Option<&ComputeContext>) -> bool {
+        // FileNode has no sources, so ctx is ignored
         self.attrs.is_dirty()
     }
     

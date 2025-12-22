@@ -219,9 +219,9 @@ impl GlobalFrameCache {
     pub fn insert(&self, comp_uuid: Uuid, frame_idx: i32, frame: Frame) {
         let frame_size = frame.mem();
 
-        // Apply strategy: LastOnly clears previous frames for this comp
+        // Apply strategy: LastOnly clears previous frames for this comp (except current)
         if *self.strategy.lock().unwrap_or_else(|e| e.into_inner()) == CacheStrategy::LastOnly {
-            self.clear_comp(comp_uuid, false); // Full removal for LastOnly strategy
+            self.clear_comp(comp_uuid, false, Some(frame_idx)); // Keep current frame
         }
 
         // Insert frame
@@ -361,16 +361,25 @@ impl GlobalFrameCache {
     /// 3. Recompute runs in background
     /// 4. New frame replaces Expired one smoothly
     ///
-    pub fn clear_comp(&self, comp_uuid: Uuid, dehydrate: bool) {
+    /// Clear/invalidate cached frames for a composition.
+    ///
+    /// # Arguments
+    /// - `comp_uuid`: Composition to clear
+    /// - `dehydrate`: If true, mark frames Expired (keep pixels). If false, remove completely.
+    /// - `except`: If Some(idx), keep that frame (used by LastOnly strategy to preserve current frame)
+    pub fn clear_comp(&self, comp_uuid: Uuid, dehydrate: bool, except: Option<i32>) {
         let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
-        
+
         if dehydrate {
             // Dehydrate mode: keep pixels, just mark stale
             // Frames with Expired status are still returned by get()
             // but signal that recompute is needed
             if let Some(frames) = cache.get_mut(&comp_uuid) {
                 let mut expired_count = 0;
-                for frame in frames.values() {
+                for (&idx, frame) in frames.iter() {
+                    if except == Some(idx) {
+                        continue; // Skip excepted frame
+                    }
                     if frame.status() == crate::entities::frame::FrameStatus::Loaded {
                         let _ = frame.set_status(crate::entities::frame::FrameStatus::Expired);
                         expired_count += 1;
@@ -382,19 +391,37 @@ impl GlobalFrameCache {
             // Full clear: remove frames and free memory
             // Used when node is deleted or user explicitly clears cache
             let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
-            
-            if let Some(frames) = cache.remove(&comp_uuid) {
+
+            if let Some(mut frames) = cache.remove(&comp_uuid) {
                 let mut total_freed = 0usize;
+                let mut removed_count = 0;
+
+                // If except specified, keep that frame
+                let excepted_frame = except.and_then(|idx| frames.remove(&idx));
+
                 for (_, frame) in frames.iter() {
                     let size = frame.mem();
                     self.cache_manager.free_memory(size);
                     total_freed += size;
+                    removed_count += 1;
                 }
-                lru.retain(|k| k.comp_uuid != comp_uuid);
-                
+
+                // Update LRU - remove all except the excepted frame
+                if let Some(except_idx) = except {
+                    lru.retain(|k| k.comp_uuid != comp_uuid || k.frame_idx == except_idx);
+                } else {
+                    lru.retain(|k| k.comp_uuid != comp_uuid);
+                }
+
+                // Re-insert excepted frame if it existed
+                if let Some(frame) = excepted_frame {
+                    cache.entry(comp_uuid).or_default().insert(except.unwrap(), frame);
+                }
+
                 trace!(
-                    "Cleared comp {}: {} frames, {} MB freed",
-                    comp_uuid, frames.len(), total_freed / 1024 / 1024
+                    "Cleared comp {}: {} frames, {} MB freed{}",
+                    comp_uuid, removed_count, total_freed / 1024 / 1024,
+                    except.map(|i| format!(", kept frame {}", i)).unwrap_or_default()
                 );
             }
         }
@@ -624,8 +651,8 @@ mod tests {
         assert_eq!(cache.comp_frame_count(comp1), 100);
         assert_eq!(cache.comp_frame_count(comp2), 1);
 
-        // Clear comp1 - full removal (dehydrate=false)
-        cache.clear_comp(comp1, false);
+        // Clear comp1 - full removal (dehydrate=false, except=None)
+        cache.clear_comp(comp1, false, None);
 
         assert_eq!(cache.comp_frame_count(comp1), 0);
         assert!(!cache.contains(comp1, 0));
@@ -680,7 +707,7 @@ mod tests {
         assert_eq!(cache.len(), 50);
 
         // Clear middle comp (full removal, not dehydrate)
-        cache.clear_comp(comps[2], false);
+        cache.clear_comp(comps[2], false, None);
         assert_eq!(cache.comp_count(), 4);
         assert_eq!(cache.len(), 40);
     }

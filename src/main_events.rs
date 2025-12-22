@@ -668,6 +668,12 @@ pub fn handle_app_event(
 
     // === Layer Operations ===
     if let Some(e) = downcast_event::<AddLayerEvent>(event) {
+        // Cycle check BEFORE any mutation - prevents comp A -> B -> A
+        if project.would_create_cycle(e.comp_uuid, e.source_uuid) {
+            log::error!("Cannot add layer: would create dependency cycle");
+            return Some(result);
+        }
+
         // Get source info and generate name BEFORE write lock
         // Use play_range() to get trimmed duration (respects B/N trim points)
         let source_info = project.with_node(e.source_uuid, |s| {

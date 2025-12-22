@@ -272,10 +272,10 @@ impl Node for CameraNode {
         None
     }
     
-    fn is_dirty(&self) -> bool {
+    fn is_dirty(&self, _ctx: Option<&ComputeContext>) -> bool {
         self.attrs.is_dirty()
     }
-    
+
     fn mark_dirty(&self) {
         self.attrs.mark_dirty();
     }

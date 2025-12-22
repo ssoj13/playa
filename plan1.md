@@ -415,12 +415,17 @@ Frame re-rendered from cache
 
 ## 8. Implementation Plan
 
-### Phase 1: Critical Fixes (P0) - 1 day
+### Phase 1: Critical Fixes (P0) - COMPLETED ✓
 
-- [ ] 1.1 Unify `is_dirty()` semantics
-- [ ] 1.2 Fix LastOnly cache strategy
-- [ ] 1.3 Add cache.clear_comp() on RemoveMediaEvent
-- [ ] 1.4 Global cycle detection
+- [x] 1.1 `is_dirty(ctx)` - added `ctx: Option<&ComputeContext>` parameter for recursive source checking
+  - Modified: `node.rs`, `comp_node.rs`, `file_node.rs`, `camera_node.rs`, `text_node.rs`, `project.rs`
+- [x] 1.2 LastOnly cache strategy - added `except: Option<i32>` to `clear_comp()`
+  - Modified: `global_cache.rs`, `main.rs` (3 calls), `project.rs` (3 calls)
+- [x] 1.3 Memory leak on node delete - VERIFIED NOT A BUG
+  - `del_comp()` → `del_node()` → `clear_comp()` chain already exists
+- [x] 1.4 Cycle prevention - added `would_create_cycle()` validation at add_layer time
+  - Added: `project.rs::would_create_cycle()` using existing `is_ancestor()`
+  - Modified: `main_events.rs` - check before `add_child_layer()`
 
 ### Phase 2: Dead Code Cleanup - 0.5 day
 

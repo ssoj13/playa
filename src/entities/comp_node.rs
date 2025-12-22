@@ -724,7 +724,7 @@ impl CompNode {
         }
         self.mark_dirty();
         self.rebound();
-        log::trace!("move_layers: comp marked dirty, is_dirty={}", self.is_dirty());
+        log::trace!("move_layers: comp marked dirty, is_dirty={}", self.is_dirty(None));
     }
 
     /// Trim layers (adjust trim_in/trim_out)
@@ -1228,13 +1228,8 @@ impl Node for CompNode {
             return None;
         }
         
-        // Check dirty: self, layers, or sources
-        let any_layer_dirty = self.layers.iter().any(|l| l.attrs.is_dirty());
-        let any_source_dirty = self.layers.iter().any(|l| {
-            ctx.media.get(&l.source_uuid())
-                .map(|n| n.is_dirty())
-                .unwrap_or(false)
-        });
+        // Check dirty: self, layers, or sources (recursive via is_dirty(Some(ctx)))
+        let is_dirty = self.is_dirty(Some(ctx));
         // Check cache - if has Loaded frame and no dirty, return cached
         // If cached frame is Loading, recompute to check if sources are now Loaded
         let cached_frame = ctx.cache.get(self.uuid(), frame_idx);
@@ -1242,17 +1237,13 @@ impl Node for CompNode {
             .map(|f| f.status() != FrameStatus::Loaded)
             .unwrap_or(false);
 
-        let needs_recompute = self.attrs.is_dirty()
-            || any_layer_dirty
-            || any_source_dirty
-            || cached_frame.is_none()
-            || cache_is_loading;
+        let needs_recompute = is_dirty || cached_frame.is_none() || cache_is_loading;
 
         // Trace dirty state for debugging
-        if self.attrs.is_dirty() || any_layer_dirty {
+        if is_dirty {
             trace!(
-                "compute() dirty: comp={}, frame={}, self={}, layer={}, source={}, cache_loading={}",
-                self.name(), frame_idx, self.attrs.is_dirty(), any_layer_dirty, any_source_dirty, cache_is_loading
+                "compute() dirty: comp={}, frame={}, dirty={}, cache_loading={}",
+                self.name(), frame_idx, is_dirty, cache_is_loading
             );
         }
 
@@ -1277,8 +1268,25 @@ impl Node for CompNode {
         Some(composed)
     }
     
-    fn is_dirty(&self) -> bool {
-        self.attrs.is_dirty() || self.layers.iter().any(|l| l.attrs.is_dirty())
+    fn is_dirty(&self, ctx: Option<&ComputeContext>) -> bool {
+        // Check self and layers
+        let self_dirty = self.attrs.is_dirty() || self.layers.iter().any(|l| l.attrs.is_dirty());
+        if self_dirty {
+            return true;
+        }
+
+        // If ctx provided, also check source nodes recursively
+        if let Some(ctx) = ctx {
+            for layer in &self.layers {
+                if let Some(source) = ctx.media.get(&layer.source_uuid()) {
+                    if source.is_dirty(Some(ctx)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
     }
     
     fn mark_dirty(&self) {

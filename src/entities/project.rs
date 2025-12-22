@@ -563,7 +563,7 @@ impl Project {
             let node = Arc::make_mut(arc_node);
             f(node);
             // Emit event if node is dirty after modification
-            let dirty = node.is_dirty();
+            let dirty = node.is_dirty(None);
             if dirty && let Some(ref emitter) = self.event_emitter {
                 emitter.emit(AttrsChangedEvent(uuid));
                 node.clear_dirty();
@@ -596,7 +596,7 @@ impl Project {
                 // Emit event if comp or any layer is dirty after modification.
                 // This ensures ALL changes that affect render trigger cache invalidation,
                 // even when multiple modify_comp calls happen before next render.
-                let dirty = comp.is_dirty();
+                let dirty = comp.is_dirty(None);
                 if dirty && let Some(ref emitter) = self.event_emitter {
                     emitter.emit(AttrsChangedEvent(uuid));
                     // Clear dirty immediately after emit to prevent re-emit on next modify_comp.
@@ -732,10 +732,10 @@ impl Project {
         // 2. Invalidate caches (no media lock held)
         if let Some(ref cache) = self.global_cache {
             // Source node's own cache
-            cache.clear_comp(source_uuid, true);
+            cache.clear_comp(source_uuid, true, None);
             // All dependent comps
             for comp_uuid in dependents {
-                cache.clear_comp(comp_uuid, true);
+                cache.clear_comp(comp_uuid, true, None);
             }
         }
     }
@@ -749,7 +749,7 @@ impl Project {
 
         // 2. Clear cached frames (full removal, not dehydrate)
         if let Some(ref cache) = self.global_cache {
-            cache.clear_comp(uuid, false);
+            cache.clear_comp(uuid, false, None);
             log::trace!("Cleared cache for removed node: {}", uuid);
         }
 
@@ -820,6 +820,26 @@ impl Project {
         self.iter_node(ancestor, -1)
             .skip(1) // Skip root itself
             .any(|item| item.uuid == descendant)
+    }
+
+    /// Check if adding source_uuid as layer in comp_uuid would create a cycle.
+    ///
+    /// A cycle exists if source_uuid (transitively) contains comp_uuid,
+    /// because then: comp_uuid → source_uuid → ... → comp_uuid.
+    ///
+    /// # Arguments
+    /// * `comp_uuid` - The composition receiving the new layer
+    /// * `source_uuid` - The node being added as layer source
+    ///
+    /// # Returns
+    /// true if adding would create a cycle, false if safe
+    pub fn would_create_cycle(&self, comp_uuid: Uuid, source_uuid: Uuid) -> bool {
+        // Direct self-reference
+        if comp_uuid == source_uuid {
+            return true;
+        }
+        // Check if source transitively contains comp (would create cycle)
+        self.is_ancestor(source_uuid, comp_uuid)
     }
 }
 

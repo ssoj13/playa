@@ -590,7 +590,7 @@ impl PlayaApp {
                 if let Some(ref cache) = self.project.global_cache {
                     match e.affected_range {
                         Some((start, end)) => cache.clear_range(e.comp_uuid, start, end),
-                        None => cache.clear_comp(e.comp_uuid, true),
+                        None => cache.clear_comp(e.comp_uuid, true, None),
                     }
                 }
                 continue;
@@ -606,7 +606,7 @@ impl PlayaApp {
                 }
                 // 2. Clear all cached frames - any attribute could affect rendering
                 if let Some(ref cache) = self.project.global_cache {
-                    cache.clear_comp(e.0, true);
+                    cache.clear_comp(e.0, true, None);
                 }
                 // 3. Debounced preload: current frame immediately, full preload after delay
                 //    This prevents flooding cache with requests during rapid slider scrubbing
@@ -751,7 +751,7 @@ impl PlayaApp {
                         manager.increment_epoch();
                     }
                     if let Some(ref cache) = self.project.global_cache {
-                        cache.clear_comp(e.0, true);
+                        cache.clear_comp(e.0, true, None);
                     }
                     // Debounced preload: current frame immediately, full preload after delay
                     self.enqueue_current_frame_only();

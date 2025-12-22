@@ -85,8 +85,11 @@ pub trait Node: Send + Sync {
     /// Returns None if computation fails or no frame available.
     fn compute(&self, frame: i32, ctx: &ComputeContext) -> Option<Frame>;
     
-    /// Check if node needs recomputation (attrs changed)
-    fn is_dirty(&self) -> bool;
+    /// Check if node needs recomputation (attrs changed).
+    ///
+    /// # Arguments
+    /// - `ctx`: If Some, also checks source nodes recursively. If None, checks only self.
+    fn is_dirty(&self, ctx: Option<&ComputeContext>) -> bool;
     
     /// Mark node as needing recomputation
     fn mark_dirty(&self);
