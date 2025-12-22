@@ -489,15 +489,18 @@ pub fn transform_frame_with_camera(
     let transform_point = |frame_pt: Vec2| -> Option<Vec2> {
         match camera_info {
             Some((_vp, inv_vp, is_ortho)) => {
-                if is_ortho {
-                    // Orthographic: use simple affine transform
-                    // inv_vp is affine, so we can just multiply
+                // Both ortho and perspective need ray-plane intersection when layer is rotated.
+                // For tilted layers, ortho rays are parallel but not perpendicular to layer plane.
+                let layer_is_tilted = (plane_normal - Vec3::Z).length_squared() > 1e-6;
+                
+                if is_ortho && !layer_is_tilted {
+                    // Flat layer in ortho: simple affine transform (fast path)
                     let ndc = Vec3::new(frame_pt.x / half_w, frame_pt.y / half_h, 0.0);
                     let world_pt = inv_vp.transform_point3(ndc);
                     let obj_pt3 = inv_model.transform_point3(world_pt);
                     Some(Vec2::new(obj_pt3.x, obj_pt3.y))
                 } else {
-                    // Perspective: use ray-plane intersection
+                    // Tilted layer or perspective: use ray-plane intersection
                     let ndc = Vec2::new(frame_pt.x / half_w, frame_pt.y / half_h);
                     let world_pt = unproject_to_plane(ndc, inv_vp, plane_point, plane_normal)?;
                     let obj_pt3 = inv_model.transform_point3(world_pt);
@@ -505,10 +508,29 @@ pub fn transform_frame_with_camera(
                 }
             }
             None => {
-                // No camera: direct affine transform
-                let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
-                let obj_pt3 = inv_model.transform_point3(frame_pt3);
-                Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+                // No camera: 2D ortho view with potential X/Y rotation
+                let layer_is_tilted = (plane_normal - Vec3::Z).length_squared() > 1e-6;
+                
+                if layer_is_tilted {
+                    // Cast ray parallel to Z axis, intersect with tilted layer plane
+                    let ray_origin = Vec3::new(frame_pt.x, frame_pt.y, 10000.0);
+                    let ray_dir = Vec3::NEG_Z;
+                    
+                    let denom = ray_dir.dot(plane_normal);
+                    if denom.abs() < 1e-6 {
+                        return None; // Ray parallel to plane (layer edge-on)
+                    }
+                    let t = (plane_point - ray_origin).dot(plane_normal) / denom;
+                    let world_pt = ray_origin + ray_dir * t;
+                    
+                    let obj_pt3 = inv_model.transform_point3(world_pt);
+                    Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+                } else {
+                    // Flat layer: direct affine transform (fast path)
+                    let frame_pt3 = Vec3::new(frame_pt.x, frame_pt.y, 0.0);
+                    let obj_pt3 = inv_model.transform_point3(frame_pt3);
+                    Some(Vec2::new(obj_pt3.x, obj_pt3.y))
+                }
             }
         }
     };
