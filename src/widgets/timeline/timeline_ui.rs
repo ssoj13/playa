@@ -80,12 +80,14 @@ fn compute_layer_selection(
     }
 }
 
-/// Render timeline toolbar (transport controls, zoom, snap, loop, view mode)
+/// Render timeline toolbar (transport controls, zoom, snap, loop, view mode, layouts)
 pub fn render_toolbar(
     ui: &mut Ui,
     state: &mut TimelineState,
     loop_enabled: bool,
     show_tooltips: bool,
+    layout_names: &[String],
+    current_layout: &str,
     mut dispatch: impl FnMut(BoxedEvent),
 ) {
     ui.horizontal(|ui| {
@@ -165,6 +167,36 @@ pub fn render_toolbar(
             if ui.selectable_label(state.view_mode == mode, label).clicked() {
                 state.view_mode = mode;
             }
+        }
+
+        ui.separator();
+
+        // Layout selector
+        use crate::core::layout_events::{LayoutSelectedEvent, LayoutCreatedEvent, LayoutDeletedEvent};
+        
+        let display_name = if current_layout.is_empty() { "(none)" } else { current_layout };
+        egui::ComboBox::from_id_salt("layout_selector")
+            .selected_text(display_name)
+            .width(100.0)
+            .show_ui(ui, |ui| {
+                for name in layout_names {
+                    if ui.selectable_label(current_layout == name, name).clicked() {
+                        dispatch(Box::new(LayoutSelectedEvent(name.clone())));
+                    }
+                }
+            });
+
+        // Add layout button
+        if ui.button("+").on_hover_text("Create new layout").clicked() {
+            dispatch(Box::new(LayoutCreatedEvent(None)));
+        }
+
+        // Delete layout button (only if there's a current layout)
+        if ui.add_enabled(!current_layout.is_empty(), egui::Button::new("−"))
+            .on_hover_text("Delete current layout")
+            .clicked() 
+        {
+            dispatch(Box::new(LayoutDeletedEvent(current_layout.to_string())));
         }
     });
 }

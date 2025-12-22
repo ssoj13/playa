@@ -6,6 +6,7 @@ pub mod cache_man;
 pub mod debounced_preloader;
 pub mod event_bus;
 pub mod global_cache;
+pub mod layout_events;
 pub mod player;
 pub mod player_events;
 pub mod workers;

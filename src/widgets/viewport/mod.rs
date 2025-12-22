@@ -13,6 +13,6 @@ pub mod gizmo;
 
 pub use renderer::ViewportRenderer;
 pub use shaders::Shaders;
-pub use viewport::{ViewportState, ViewportRenderState};
+pub use viewport::{ViewportMode, ViewportState, ViewportRenderState};
 pub use viewport_ui::render;
 pub use viewport_events::ViewportRefreshEvent;

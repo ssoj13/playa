@@ -173,6 +173,8 @@ pub fn render_timeline_panel(
     show_tooltips: bool,
     layer_height: f32,
     name_column_width: f32,
+    layout_names: &[String],
+    current_layout: &str,
 ) -> (bool, crate::widgets::timeline::TimelineActions) {
     let old_shader = shader_manager.current_shader.clone();
     let mut timeline_actions = crate::widgets::timeline::TimelineActions::default();
@@ -204,7 +206,7 @@ pub fn render_timeline_panel(
                 // incorrect height and egui will add unwanted vertical scrollbar.
 
                 // Toolbar with transport, zoom, snap, lock, loop, and view mode selector
-                render_toolbar(ui, timeline_state, player.loop_enabled(), show_tooltips, |evt| event_bus.emit_boxed(evt));
+                render_toolbar(ui, timeline_state, player.loop_enabled(), show_tooltips, layout_names, current_layout, |evt| event_bus.emit_boxed(evt));
                 ui.add_space(4.0);
 
                 // Now calculate remaining height for panels

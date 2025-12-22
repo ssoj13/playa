@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_ltreeview::TreeView;
+use std::collections::HashMap;
 
 use super::prefs_events::SetGizmoPrefsEvent;
 
@@ -55,6 +56,34 @@ pub struct CompositorBackendChangedEvent {
 }
 
 
+/// UI Layout configuration (dock splits, timeline/viewport state)
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct Layout {
+    pub dock_state_json: String,
+    pub timeline_zoom: f32,
+    pub timeline_pan_offset: f32,
+    pub timeline_outline_width: f32,
+    pub timeline_view_mode: String,
+    pub viewport_zoom: f32,
+    pub viewport_pan: [f32; 2],
+    pub viewport_mode: String,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self {
+            dock_state_json: String::new(),
+            timeline_zoom: 1.0,
+            timeline_pan_offset: 0.0,
+            timeline_outline_width: 400.0,
+            timeline_view_mode: "Split".to_string(),
+            viewport_zoom: 1.0,
+            viewport_pan: [0.0, 0.0],
+            viewport_mode: "AutoFit".to_string(),
+        }
+    }
+}
+
 /// Application settings
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -101,6 +130,10 @@ pub struct AppSettings {
     // REST API Server
     pub api_server_enabled: bool,
     pub api_server_port: Option<u16>,
+
+    // Layouts (named UI configurations)
+    pub layouts: HashMap<String, Layout>,
+    pub current_layout: String,
 }
 
 impl Default for AppSettings {
@@ -116,8 +149,8 @@ impl Default for AppSettings {
             show_tooltips: true,
             dark_mode: true,
             font_size: 11.0,
-            timeline_layer_height: 32.0,
-            timeline_name_column_width: 150.0,
+            timeline_layer_height: 30.0,
+            timeline_name_column_width: 80.0,
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             preload_radius: -1,
@@ -131,6 +164,8 @@ impl Default for AppSettings {
             selected_settings_category: Some("UI".to_string()),
             api_server_enabled: false,
             api_server_port: Some(9876),
+            layouts: HashMap::new(),
+            current_layout: String::new(),
         }
     }
 }

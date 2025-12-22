@@ -253,8 +253,8 @@ impl Default for PlayaApp {
 
 impl PlayaApp {
     fn default_dock_state() -> DockState<DockTab> {
-        // By default show both Project and Attributes with default split position
-        Self::build_dock_state(true, true, 0.6)
+        // Default layout with saved proportions (Project/Attributes split at 33%)
+        Self::build_dock_state(true, true, 0.33)
     }
 
     /// Attach composition event emitter to all comps in the current project.
@@ -632,6 +632,36 @@ impl PlayaApp {
                     cache.clear_all();
                 }
                 self.event_bus.emit(ViewportRefreshEvent);
+                continue;
+            }
+            // Layout events - save/load/reset UI layout
+            if downcast_event::<playa::core::layout_events::SaveLayoutEvent>(&event).is_some() {
+                self.save_layout_to_attrs();
+                continue;
+            }
+            if downcast_event::<playa::core::layout_events::LoadLayoutEvent>(&event).is_some() {
+                self.load_layout_from_attrs();
+                continue;
+            }
+            if downcast_event::<playa::core::layout_events::ResetLayoutEvent>(&event).is_some() {
+                self.reset_layout();
+                continue;
+            }
+            // Named layout events
+            if let Some(evt) = downcast_event::<playa::core::layout_events::LayoutSelectedEvent>(&event) {
+                self.select_layout(&evt.0);
+                continue;
+            }
+            if let Some(evt) = downcast_event::<playa::core::layout_events::LayoutCreatedEvent>(&event) {
+                self.create_layout(evt.0.clone());
+                continue;
+            }
+            if let Some(evt) = downcast_event::<playa::core::layout_events::LayoutDeletedEvent>(&event) {
+                self.delete_layout(&evt.0);
+                continue;
+            }
+            if downcast_event::<playa::core::layout_events::LayoutUpdatedEvent>(&event).is_some() {
+                self.update_current_layout();
                 continue;
             }
             // === App events - delegate to main_events module ===
@@ -1111,6 +1141,9 @@ impl PlayaApp {
         self.timeline_state.snap_enabled = self.settings.timeline_snap_enabled;
         self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
 
+        // Collect layout names for ComboBox
+        let layout_names: Vec<String> = self.settings.layouts.keys().cloned().collect();
+
         // Render timeline panel with transport controls
         let (shader_changed, timeline_actions) = ui::render_timeline_panel(
             ui,
@@ -1122,6 +1155,8 @@ impl PlayaApp {
             self.settings.show_tooltips,
             self.settings.timeline_layer_height,
             self.settings.timeline_name_column_width,
+            &layout_names,
+            &self.settings.current_layout,
         );
 
         // Store hover state for input routing
@@ -1256,11 +1291,11 @@ impl PlayaApp {
     fn build_dock_state(show_project: bool, show_attributes: bool, split_pos: f32) -> DockState<DockTab> {
         let mut dock_state = DockState::new(vec![DockTab::Viewport]);
 
-        // Always split viewport and timeline vertically
+        // Always split viewport and timeline vertically (timeline at bottom ~23%)
         // NodeEditor is a tab next to Timeline (same panel, tab switching)
         let [viewport, _timeline] = dock_state.main_surface_mut().split_below(
             NodeIndex::root(),
-            0.65,
+            0.77,
             vec![DockTab::Timeline, DockTab::NodeEditor],
         );
 
@@ -1269,7 +1304,7 @@ impl PlayaApp {
                 // Both: create right panel with Project, then split it to add Attributes below
                 let [_viewport, right_panel] = dock_state
                     .main_surface_mut()
-                    .split_right(viewport, 0.75, vec![DockTab::Project]);
+                    .split_right(viewport, 0.77, vec![DockTab::Project]);
 
                 // Split right panel vertically: Project stays on top, Attributes below
                 // Use saved split position
@@ -1282,16 +1317,227 @@ impl PlayaApp {
                 // Only Project
                 let _ = dock_state
                     .main_surface_mut()
-                    .split_right(viewport, 0.75, vec![DockTab::Project]);
+                    .split_right(viewport, 0.77, vec![DockTab::Project]);
             } else {
                 // Only Attributes
                 let _ = dock_state
                     .main_surface_mut()
-                    .split_right(viewport, 0.75, vec![DockTab::Attributes]);
+                    .split_right(viewport, 0.77, vec![DockTab::Attributes]);
             }
         }
 
         dock_state
+    }
+
+    /// Save current layout to project attrs.
+    /// dock_state is serialized as JSON, timeline/viewport as individual fields.
+    fn save_layout_to_attrs(&mut self) {
+        use crate::entities::AttrValue;
+
+        // Serialize dock_state as JSON
+        if let Ok(dock_json) = serde_json::to_string(&self.dock_state) {
+            self.project.attrs.set("layout.dock_state", AttrValue::Str(dock_json));
+        }
+
+        // Timeline state - individual fields
+        self.project.attrs.set("layout.timeline.zoom", AttrValue::Float(self.timeline_state.zoom));
+        self.project.attrs.set("layout.timeline.pan_offset", AttrValue::Float(self.timeline_state.pan_offset));
+        self.project.attrs.set("layout.timeline.outline_width", AttrValue::Float(self.timeline_state.outline_width));
+        let view_mode_str = match self.timeline_state.view_mode {
+            playa::widgets::timeline::TimelineViewMode::Split => "Split",
+            playa::widgets::timeline::TimelineViewMode::CanvasOnly => "CanvasOnly",
+            playa::widgets::timeline::TimelineViewMode::OutlineOnly => "OutlineOnly",
+        };
+        self.project.attrs.set("layout.timeline.view_mode", AttrValue::Str(view_mode_str.to_string()));
+
+        // Viewport state - individual fields
+        self.project.attrs.set("layout.viewport.zoom", AttrValue::Float(self.viewport_state.zoom));
+        self.project.attrs.set("layout.viewport.pan_x", AttrValue::Float(self.viewport_state.pan.x));
+        self.project.attrs.set("layout.viewport.pan_y", AttrValue::Float(self.viewport_state.pan.y));
+        let mode_str = match self.viewport_state.mode {
+            playa::widgets::viewport::ViewportMode::Manual => "Manual",
+            playa::widgets::viewport::ViewportMode::AutoFit => "AutoFit",
+            playa::widgets::viewport::ViewportMode::Auto100 => "Auto100",
+        };
+        self.project.attrs.set("layout.viewport.mode", AttrValue::Str(mode_str.to_string()));
+
+        log::debug!("Layout saved to project attrs");
+    }
+
+    /// Load layout from project attrs.
+    /// Restores dock_state, timeline_state, viewport_state from saved values.
+    fn load_layout_from_attrs(&mut self) {
+        // Load dock_state from JSON
+        if let Some(dock_json) = self.project.attrs.get_str("layout.dock_state") {
+            if let Ok(dock) = serde_json::from_str(dock_json) {
+                self.dock_state = dock;
+                log::debug!("Dock state loaded from attrs");
+            }
+        }
+
+        // Load timeline state
+        if let Some(zoom) = self.project.attrs.get_float("layout.timeline.zoom") {
+            self.timeline_state.zoom = zoom;
+        }
+        if let Some(pan) = self.project.attrs.get_float("layout.timeline.pan_offset") {
+            self.timeline_state.pan_offset = pan;
+        }
+        if let Some(width) = self.project.attrs.get_float("layout.timeline.outline_width") {
+            self.timeline_state.outline_width = width;
+        }
+        if let Some(mode_str) = self.project.attrs.get_str("layout.timeline.view_mode") {
+            self.timeline_state.view_mode = match mode_str {
+                "CanvasOnly" => playa::widgets::timeline::TimelineViewMode::CanvasOnly,
+                "OutlineOnly" => playa::widgets::timeline::TimelineViewMode::OutlineOnly,
+                _ => playa::widgets::timeline::TimelineViewMode::Split,
+            };
+        }
+
+        // Load viewport state
+        if let Some(zoom) = self.project.attrs.get_float("layout.viewport.zoom") {
+            self.viewport_state.zoom = zoom;
+        }
+        if let Some(pan_x) = self.project.attrs.get_float("layout.viewport.pan_x") {
+            self.viewport_state.pan.x = pan_x;
+        }
+        if let Some(pan_y) = self.project.attrs.get_float("layout.viewport.pan_y") {
+            self.viewport_state.pan.y = pan_y;
+        }
+        if let Some(mode_str) = self.project.attrs.get_str("layout.viewport.mode") {
+            self.viewport_state.mode = match mode_str {
+                "Manual" => playa::widgets::viewport::ViewportMode::Manual,
+                "Auto100" => playa::widgets::viewport::ViewportMode::Auto100,
+                _ => playa::widgets::viewport::ViewportMode::AutoFit,
+            };
+        }
+
+        log::debug!("Layout loaded from project attrs");
+    }
+
+    /// Reset layout to defaults.
+    fn reset_layout(&mut self) {
+        self.dock_state = Self::default_dock_state();
+        self.timeline_state = Default::default();
+        self.viewport_state = Default::default();
+
+        // Clear saved layout from attrs
+        self.project.attrs.remove("layout.dock_state");
+        self.project.attrs.remove("layout.timeline.zoom");
+        self.project.attrs.remove("layout.timeline.pan_offset");
+        self.project.attrs.remove("layout.timeline.outline_width");
+        self.project.attrs.remove("layout.timeline.view_mode");
+        self.project.attrs.remove("layout.viewport.zoom");
+        self.project.attrs.remove("layout.viewport.pan_x");
+        self.project.attrs.remove("layout.viewport.pan_y");
+        self.project.attrs.remove("layout.viewport.mode");
+
+        log::info!("Layout reset to defaults");
+    }
+
+    // === Named Layouts (stored in AppSettings) ===
+
+    /// Capture current UI state into a Layout struct.
+    fn capture_current_layout(&self) -> playa::dialogs::prefs::prefs::Layout {
+        let dock_json = serde_json::to_string(&self.dock_state).unwrap_or_default();
+        let view_mode_str = match self.timeline_state.view_mode {
+            playa::widgets::timeline::TimelineViewMode::Split => "Split",
+            playa::widgets::timeline::TimelineViewMode::CanvasOnly => "CanvasOnly",
+            playa::widgets::timeline::TimelineViewMode::OutlineOnly => "OutlineOnly",
+        };
+        let mode_str = match self.viewport_state.mode {
+            playa::widgets::viewport::ViewportMode::Manual => "Manual",
+            playa::widgets::viewport::ViewportMode::AutoFit => "AutoFit",
+            playa::widgets::viewport::ViewportMode::Auto100 => "Auto100",
+        };
+        playa::dialogs::prefs::prefs::Layout {
+            dock_state_json: dock_json,
+            timeline_zoom: self.timeline_state.zoom,
+            timeline_pan_offset: self.timeline_state.pan_offset,
+            timeline_outline_width: self.timeline_state.outline_width,
+            timeline_view_mode: view_mode_str.to_string(),
+            viewport_zoom: self.viewport_state.zoom,
+            viewport_pan: [self.viewport_state.pan.x, self.viewport_state.pan.y],
+            viewport_mode: mode_str.to_string(),
+        }
+    }
+
+    /// Apply a Layout struct to current UI state.
+    fn apply_layout(&mut self, layout: &playa::dialogs::prefs::prefs::Layout) {
+        // Restore dock_state
+        if let Ok(dock) = serde_json::from_str(&layout.dock_state_json) {
+            self.dock_state = dock;
+        }
+        // Restore timeline state
+        self.timeline_state.zoom = layout.timeline_zoom;
+        self.timeline_state.pan_offset = layout.timeline_pan_offset;
+        self.timeline_state.outline_width = layout.timeline_outline_width;
+        self.timeline_state.view_mode = match layout.timeline_view_mode.as_str() {
+            "CanvasOnly" => playa::widgets::timeline::TimelineViewMode::CanvasOnly,
+            "OutlineOnly" => playa::widgets::timeline::TimelineViewMode::OutlineOnly,
+            _ => playa::widgets::timeline::TimelineViewMode::Split,
+        };
+        // Restore viewport state
+        self.viewport_state.zoom = layout.viewport_zoom;
+        self.viewport_state.pan.x = layout.viewport_pan[0];
+        self.viewport_state.pan.y = layout.viewport_pan[1];
+        self.viewport_state.mode = match layout.viewport_mode.as_str() {
+            "Manual" => playa::widgets::viewport::ViewportMode::Manual,
+            "Auto100" => playa::widgets::viewport::ViewportMode::Auto100,
+            _ => playa::widgets::viewport::ViewportMode::AutoFit,
+        };
+    }
+
+    /// Select a named layout from settings and apply it.
+    fn select_layout(&mut self, name: &str) {
+        if let Some(layout) = self.settings.layouts.get(name).cloned() {
+            self.apply_layout(&layout);
+            self.settings.current_layout = name.to_string();
+            log::info!("Selected layout: {}", name);
+        } else {
+            log::warn!("Layout not found: {}", name);
+        }
+    }
+
+    /// Create a new named layout from current UI state.
+    fn create_layout(&mut self, name: Option<String>) {
+        let name = name.unwrap_or_else(|| {
+            // Auto-generate name: "Layout 1", "Layout 2", etc.
+            let mut n = 1;
+            loop {
+                let candidate = format!("Layout {}", n);
+                if !self.settings.layouts.contains_key(&candidate) {
+                    break candidate;
+                }
+                n += 1;
+            }
+        });
+        let layout = self.capture_current_layout();
+        self.settings.layouts.insert(name.clone(), layout);
+        self.settings.current_layout = name.clone();
+        log::info!("Created layout: {}", name);
+    }
+
+    /// Delete a named layout from settings.
+    fn delete_layout(&mut self, name: &str) {
+        if self.settings.layouts.remove(name).is_some() {
+            if self.settings.current_layout == name {
+                self.settings.current_layout.clear();
+            }
+            log::info!("Deleted layout: {}", name);
+        }
+    }
+
+    /// Update the current layout with current UI state.
+    fn update_current_layout(&mut self) {
+        if self.settings.current_layout.is_empty() {
+            return; // No layout selected, nothing to update
+        }
+        let name = self.settings.current_layout.clone();
+        if self.settings.layouts.contains_key(&name) {
+            let layout = self.capture_current_layout();
+            self.settings.layouts.insert(name.clone(), layout);
+            log::trace!("Updated layout: {}", name);
+        }
     }
 
     /// Render node editor tab (composition as node graph).
@@ -1756,6 +2002,10 @@ impl eframe::App for PlayaApp {
                 let dock_style = egui_dock::Style::from_egui(ctx.style().as_ref());
                 let mut dock_state =
                     std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
+
+                // Snapshot dock state before rendering (for change detection)
+                let dock_before = serde_json::to_string(&dock_state).ok();
+
                 {
                     let mut tabs = DockTabs { app: self };
                     DockArea::new(&mut dock_state)
@@ -1766,6 +2016,12 @@ impl eframe::App for PlayaApp {
 
                 // Save split positions after DockArea rendering (only if changed by user)
                 self.save_dock_split_positions();
+
+                // Detect dock state changes and update current layout
+                let dock_after = serde_json::to_string(&self.dock_state).ok();
+                if dock_before != dock_after {
+                    self.event_bus.emit(playa::core::layout_events::LayoutUpdatedEvent);
+                }
             }
         });
 
@@ -2078,6 +2334,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 env!("CARGO_PKG_VERSION"),
                 BACKEND
             ))
+            .with_inner_size([1852.0, 1089.0])
             .with_resizable(true)
             .with_drag_and_drop(true),
         persist_window: true,
