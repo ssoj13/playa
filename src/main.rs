@@ -1327,6 +1327,7 @@ impl PlayaApp {
             self.is_fullscreen,
             texture_needs_upload,
             self.settings.viewport_hover_highlight,
+            self.settings.tools_selection_highlight,
             self.settings.hover_stroke_width,
             self.settings.hover_corner_length,
             self.settings.hover_opacity,

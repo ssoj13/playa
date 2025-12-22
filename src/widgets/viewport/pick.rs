@@ -14,7 +14,7 @@
 //!
 //! Complexity: O(visible_layers) per click - negligible for typical layer counts.
 
-use glam::{Vec2, Vec3};
+use glam::{EulerRot, Quat, Vec2, Vec3};
 use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +25,18 @@ use crate::entities::node_kind::NodeKind;
 use crate::entities::space;
 use crate::entities::transform::build_inverse_transform;
 use super::ViewportState;
+
+/// Compute layer plane normal from rotation (same as transform.rs).
+#[inline]
+fn layer_plane_normal(rotation: [f32; 3]) -> Vec3 {
+    let quat = Quat::from_euler(
+        EulerRot::ZYX,
+        -rotation[2],
+        -rotation[1],
+        -rotation[0],
+    );
+    quat * Vec3::Z
+}
 
 /// Result of a pick operation.
 #[derive(Debug, Clone)]
@@ -112,11 +124,34 @@ pub fn pick_layer_at(
 
         // Build inverse transform: comp -> object space
         let inv_transform = build_inverse_transform(position, rotation, scale, pivot);
-
+        
+        // Check if layer is tilted (X/Y rotation)
+        let plane_normal = layer_plane_normal(rotation);
+        let layer_is_tilted = (plane_normal - Vec3::Z).length_squared() > 1e-6;
+        
         // Transform comp position to object space
-        let comp_pos_3d = Vec3::new(comp_pos.x, comp_pos.y, 0.0);
-        let obj_pos_3d = inv_transform.transform_point3(comp_pos_3d);
-        let obj_pos = Vec2::new(obj_pos_3d.x, obj_pos_3d.y);
+        // For tilted layers, use ray-plane intersection (same as compositor)
+        let obj_pos = if layer_is_tilted {
+            let plane_point = Vec3::from(position);
+            let ray_origin = Vec3::new(comp_pos.x, comp_pos.y, 10000.0);
+            let ray_dir = Vec3::NEG_Z;
+            
+            let denom = ray_dir.dot(plane_normal);
+            if denom.abs() < 1e-6 {
+                // Ray parallel to plane - can't hit
+                debug!("[pick] layer={} SKIP (edge-on)", name);
+                continue;
+            }
+            let t = (plane_point - ray_origin).dot(plane_normal) / denom;
+            let world_pt = ray_origin + ray_dir * t;
+            let obj_pt3 = inv_transform.transform_point3(world_pt);
+            Vec2::new(obj_pt3.x, obj_pt3.y)
+        } else {
+            // Flat layer: direct affine transform
+            let comp_pos_3d = Vec3::new(comp_pos.x, comp_pos.y, 0.0);
+            let obj_pos_3d = inv_transform.transform_point3(comp_pos_3d);
+            Vec2::new(obj_pos_3d.x, obj_pos_3d.y)
+        };
 
         // Get layer dimensions (object space bounds are [-w/2, w/2] x [-h/2, h/2])
         let layer_w = layer.attrs.get_u32("width").unwrap_or(100) as f32;

@@ -36,6 +36,7 @@ pub fn render(
     is_fullscreen: bool,
     texture_needs_upload: bool,
     viewport_hover_highlight: bool,
+    tools_selection_highlight: bool,
     hover_stroke_width: f32,
     hover_corner_length: f32,
     hover_opacity: f32,
@@ -152,8 +153,8 @@ pub fn render(
             actions.events.push(evt);
         }
 
-        // Hover highlight in Select mode: update hovered_layer on mouse move
-        if let Some(evt) = hover_layer_event(&ctx, panel_rect, viewport_state, player, project) {
+        // Hover/selection highlight: update hovered_layer based on tool mode
+        if let Some(evt) = hover_layer_event(&ctx, panel_rect, viewport_state, player, project, tools_selection_highlight) {
             actions.events.push(evt);
         }
 
@@ -191,9 +192,14 @@ pub fn render(
         // Draw viewport overlays (scrubber, guides, etc.)
         viewport_state.draw(ui, panel_rect);
 
-        // Draw hover highlight around hovered layer
-        if viewport_hover_highlight {
-            draw_hover_highlight(ui, panel_rect, viewport_state, player, project, hover_stroke_width, hover_corner_length, hover_opacity);
+        // Draw hover/selection highlight
+        let tool = ToolMode::from_str(&project.tool());
+        let show_highlight = match tool {
+            ToolMode::Select => viewport_hover_highlight,
+            ToolMode::Move | ToolMode::Rotate | ToolMode::Scale => tools_selection_highlight,
+        };
+        if show_highlight {
+            draw_hover_highlight(ui, panel_rect, viewport_state, player, project, tool, hover_stroke_width, hover_corner_length, hover_opacity);
         }
     }
 
@@ -474,16 +480,18 @@ fn left_click_pick_event(
 }
 
 /// Emit HoverLayerEvent on mouse move in Select mode.
+/// Tools mode uses layer_selection directly for highlight (no hover detection).
 fn hover_layer_event(
     ctx: &egui::Context,
     panel_rect: egui::Rect,
     viewport_state: &ViewportState,
     player: &Player,
     project: &Project,
+    _tools_selection_highlight: bool, // unused, kept for API compat
 ) -> Option<BoxedEvent> {
     let tool = ToolMode::from_str(&project.tool());
     if !matches!(tool, ToolMode::Select) {
-        return None;
+        return None; // Tools mode uses layer_selection directly
     }
 
     // Get hover position (None if not hovering)
@@ -520,37 +528,42 @@ fn hover_layer_event(
     }))
 }
 
-/// Draw highlight rectangle around hovered layer in viewport.
+/// Draw highlight around hovered layer (Select mode) or selected layers (Tools mode).
 fn draw_hover_highlight(
     ui: &egui::Ui,
     panel_rect: egui::Rect,
     viewport_state: &ViewportState,
     player: &Player,
     project: &Project,
+    tool: ToolMode,
     stroke_width: f32,
     corner_length: f32,
     opacity: f32,
 ) {
-    let tool = ToolMode::from_str(&project.tool());
-    if !matches!(tool, ToolMode::Select) {
-        return;
-    }
-
     let Some(comp_uuid) = player.active_comp() else { return };
     
-    // Get hovered layer
-    let Some((_layer_uuid, position, rotation_deg, scale, width, height)) = project.with_comp(comp_uuid, |comp| {
-        let layer_uuid = comp.hovered_layer?;
-        let layer = comp.get_layer(layer_uuid)?;
+    // Get layers to highlight based on tool mode
+    let layers_data: Vec<([f32; 3], [f32; 3], [f32; 3], f32, f32)> = project.with_comp(comp_uuid, |comp| {
+        let layer_uuids: Vec<uuid::Uuid> = match tool {
+            ToolMode::Select => comp.hovered_layer.into_iter().collect(),
+            ToolMode::Move | ToolMode::Rotate | ToolMode::Scale => comp.layer_selection.clone(),
+        };
         
-        let pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
-        let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
-        let scl = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
-        let w = layer.attrs.get_u32("width").unwrap_or(100) as f32;
-        let h = layer.attrs.get_u32("height").unwrap_or(100) as f32;
-        
-        Some((layer_uuid, pos, rot, scl, w, h))
-    }).flatten() else { return };
+        layer_uuids.into_iter().filter_map(|uuid| {
+            let layer = comp.get_layer(uuid)?;
+            let pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
+            let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
+            let scl = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
+            let w = layer.attrs.get_u32("width").unwrap_or(100) as f32;
+            let h = layer.attrs.get_u32("height").unwrap_or(100) as f32;
+            Some((pos, rot, scl, w, h))
+        }).collect()
+    }).unwrap_or_default();
+    
+    if layers_data.is_empty() { return }
+    
+    // Draw highlight for each layer
+    for (position, rotation_deg, scale, width, height) in layers_data {
 
     // Layer corners in object space (centered, Y-up)
     let half_w = width * 0.5;
@@ -634,4 +647,5 @@ fn draw_hover_highlight(
         painter.line_segment([corner, end_prev], stroke);
         painter.line_segment([corner, end_next], stroke);
     }
+    } // end for each layer
 }

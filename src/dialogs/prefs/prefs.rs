@@ -109,6 +109,7 @@ pub struct AppSettings {
     pub timeline_snap_enabled: bool,
     pub timeline_lock_work_area: bool,
     pub viewport_hover_highlight: bool,
+    pub tools_selection_highlight: bool,  // Show highlight for selected layer in Move/Rotate/Scale modes
     pub timeline_hover_highlight: bool,
     pub hover_stroke_width: f32,
     pub hover_corner_length: f32,
@@ -161,6 +162,7 @@ impl Default for AppSettings {
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             viewport_hover_highlight: true,
+            tools_selection_highlight: true,
             timeline_hover_highlight: false,
             hover_stroke_width: 2.0,
             hover_corner_length: 20.0,
@@ -262,7 +264,8 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 
     ui.checkbox(&mut settings.dark_mode, "Dark Mode");
     ui.checkbox(&mut settings.show_tooltips, "Show Tooltips (2s delay on toolbar controls)");
-    ui.checkbox(&mut settings.viewport_hover_highlight, "Viewport hover highlight");
+    ui.checkbox(&mut settings.viewport_hover_highlight, "Viewport hover highlight (Select mode)");
+    ui.checkbox(&mut settings.tools_selection_highlight, "Tools selection highlight (Move/Rotate/Scale)");
     ui.checkbox(&mut settings.timeline_hover_highlight, "Timeline hover highlight");
     ui.horizontal(|ui| {
         ui.label("Hover stroke:");
