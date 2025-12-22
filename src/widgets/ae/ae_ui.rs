@@ -447,9 +447,7 @@ pub fn render_effects(
             
             // Effect parameters (if not collapsed)
             if !effect.collapsed {
-                ui.indent(effect.uuid, |ui| {
-                    render_effect_attrs(ui, effect, state, &mut actions);
-                });
+                render_effect_attrs(ui, effect, state, &mut actions);
             }
             
             // Separator between effects
@@ -496,7 +494,7 @@ fn render_effect_attrs(
     
     TableBuilder::new(ui)
         .id_salt(format!("fx_attrs_{}", effect.uuid))
-        .striped(false)
+        .striped(true)
         .column(
             Column::initial(state.name_column_width)
                 .range(min_label..=max_label)
