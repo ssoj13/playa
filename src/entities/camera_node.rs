@@ -168,12 +168,14 @@ impl CameraNode {
             Mat4::look_at_rh(eye, center, up)
         } else {
             // Rotation mode: use Euler angles (degrees)
-            let rot_x = rotation[0].to_radians();
-            let rot_y = rotation[1].to_radians();
-            let rot_z = rotation[2].to_radians();
+            // ZYX order (AE-style), angles negated for CW→CCW convention
+            // This matches layer rotation in transform.rs
+            let rot_x = -rotation[0].to_radians();
+            let rot_y = -rotation[1].to_radians();
+            let rot_z = -rotation[2].to_radians();
 
-            // Build rotation matrix (XYZ order)
-            let rot_mat = Mat4::from_euler(glam::EulerRot::XYZ, rot_x, rot_y, rot_z);
+            // Build rotation matrix (ZYX order, same as layers)
+            let rot_mat = Mat4::from_euler(glam::EulerRot::ZYX, rot_z, rot_y, rot_x);
             let translation = Mat4::from_translation(-eye);
 
             rot_mat * translation

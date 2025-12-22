@@ -250,17 +250,17 @@ fn get_camera_matrices(
     project: &Project,
     comp_uuid: Uuid,
     frame_idx: i32,
-    viewport_rect: egui::Rect,
+    _viewport_rect: egui::Rect,
 ) -> Option<(glam::Mat4, glam::Mat4)> {
     let media = project.media.read().ok()?;
 
     project.with_comp(comp_uuid, |comp| {
         let (camera, pos, rot) = comp.active_camera(frame_idx, &media)?;
 
-        // Use VIEWPORT aspect for gizmo projection (not comp aspect).
-        // Gizmo is drawn in viewport space, so projection must match viewport.
-        let (_, comp_h) = comp.dim();
-        let aspect = viewport_rect.width() / viewport_rect.height();
+        // Use COMP aspect for gizmo projection (same as compositor).
+        // Gizmo must match how compositor rendered the scene, not viewport stretch.
+        let (comp_w, comp_h) = comp.dim();
+        let aspect = comp_w as f32 / comp_h as f32;
 
         let view = camera.view_matrix(pos, rot);
         let proj = camera.projection_matrix(aspect, comp_h as f32);
