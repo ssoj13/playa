@@ -68,12 +68,22 @@
   - Coordinate system reference
 - Remove obsolete DATAFLOW.txt (content merged into AGENTS.md)
 - Add src/README.md with module structure
+- **Projection Math Rustdocs** (Dec 21, 2025):
+  - `camera_node.rs::view_matrix()`: Rotation convention (ZYX, CW+→CCW-)
+  - `gizmo.rs::get_camera_matrices()`: Why comp aspect, not viewport aspect
+  - `gizmo.rs::build_gizmo_matrices()`: Full viewport_transform derivation
+  - `viewport_ui.rs::draw_hover_highlight()`: 2D/3D projection pipelines
 
 ### 🐛 Bug Fixes
 
 - Fix event downcasting with blanket impl types
 - Improved dirty tracking in modify_comp() pattern
 - Better epoch-based cancellation handling
+- **Camera/Gizmo Math Unification** (Dec 21, 2025):
+  - Fix camera rotation order: XYZ → ZYX with angle negation (matches layer convention)
+  - Fix gizmo aspect ratio: viewport → comp (gizmo now aligns with rendered layers)
+  - Fix gizmo viewport transform formula for correct 3D camera projection
+  - Fix highlight to use camera VP when active (was ignoring camera entirely)
 
 ### ⚙️ Miscellaneous Tasks
 
