@@ -529,6 +529,45 @@ fn hover_layer_event(
 }
 
 /// Draw highlight around hovered layer (Select mode) or selected layers (Tools mode).
+///
+/// # Coordinate Pipeline
+///
+/// Layer corners must be projected to screen space matching the rendered output.
+/// The pipeline differs based on whether a 3D camera is active:
+///
+/// ## 2D Mode (no camera)
+///
+/// ```text
+/// object -> world (pos + R*S*obj) -> frame -> image -> screen
+///                                    \____ image_to_screen() ____/
+/// ```
+///
+/// ## 3D Mode (with camera)
+///
+/// ```text
+/// object -> world -> camera VP -> NDC -> frame -> viewport -> screen
+///                    \__ clip coords __/
+///
+/// Steps:
+/// 1. world_pt = pos + quat * (obj * scale)     // object -> world
+/// 2. clip = VP * world_pt                       // world -> clip space
+/// 3. ndc = clip.xyz / clip.w                    // perspective divide
+/// 4. frame = ndc * comp_size/2                  // NDC -> frame space
+/// 5. viewport = frame * zoom + pan              // apply viewport transform
+/// 6. screen = viewport + viewport_size/2        // center on screen
+/// 7. screen.y = viewport_size - screen.y        // Y flip for egui (Y-down)
+/// ```
+///
+/// # Aspect Ratio
+///
+/// Camera VP uses **comp aspect** (same as compositor), not viewport aspect.
+/// This ensures highlight matches rendered layer position regardless of
+/// viewport window shape.
+///
+/// # Rotation Convention
+///
+/// Uses ZYX order with negated angles (CW+ user convention -> CCW+ glam).
+/// Same as `transform.rs::build_model_matrix()` and `camera_node.rs::view_matrix()`.
 fn draw_hover_highlight(
     ui: &egui::Ui,
     panel_rect: egui::Rect,

@@ -244,8 +244,21 @@ impl ToolMode {
 
 /// Get camera view and projection matrices if 3D camera is active.
 ///
-/// Returns (view, projection) separately for gizmo library.
-/// Returns None if no camera in comp (2D mode).
+/// Returns `(view, projection)` separately for gizmo library.
+/// Returns `None` if no camera in comp (2D mode).
+///
+/// # Aspect Ratio
+///
+/// Uses **comp aspect** (`comp_w / comp_h`), NOT viewport aspect.
+///
+/// Why: Compositor renders the scene with comp aspect ratio. The viewport
+/// then stretches/letterboxes this texture to fit. Gizmo must match the
+/// compositor's projection, not the viewport's display stretch.
+///
+/// ```text
+/// WRONG: aspect = viewport_w / viewport_h  (gizmo misaligned with layer)
+/// RIGHT: aspect = comp_w / comp_h          (gizmo matches layer exactly)
+/// ```
 fn get_camera_matrices(
     project: &Project,
     comp_uuid: Uuid,
@@ -271,12 +284,57 @@ fn get_camera_matrices(
 
 /// Build view and projection matrices for gizmo.
 ///
-/// # 3D Camera Support
+/// # Coordinate Pipeline
 ///
-/// When camera matrices are provided, gizmo uses perspective projection
-/// matching the rendered view. Viewport zoom/pan is applied to the view matrix.
+/// The gizmo must appear at the same screen position as the rendered layer.
+/// This requires matching the compositor's projection with viewport's display transform.
 ///
-/// When None (2D mode), uses simple ortho projection with viewport zoom/pan.
+/// ```text
+/// COMPOSITOR (renders to texture):          VIEWPORT (displays texture):
+/// world -> camera VP -> comp texture        comp texture -> zoom/pan -> screen
+///
+/// GIZMO (must match both):
+/// world -> camera VP -> viewport_transform -> screen NDC
+/// ```
+///
+/// # 3D Mode (with camera)
+///
+/// When camera is active, we chain: `camera_view * camera_proj * viewport_transform`
+///
+/// The viewport_transform converts camera NDC to screen NDC:
+///
+/// ```text
+/// Camera NDC [-1,1] represents world coords [-comp/2, comp/2]
+/// Screen NDC [-1,1] represents screen coords [-viewport/2, viewport/2]
+///
+/// To match image_to_screen():
+///   screen_pos = world_pos * zoom + pan
+///   screen_NDC = screen_pos / (viewport/2)
+///
+/// Substituting world_pos = cam_NDC * comp/2:
+///   screen_NDC = (cam_NDC * comp/2 * zoom + pan) / (viewport/2)
+///              = cam_NDC * (comp * zoom / viewport) + pan * 2 / viewport
+///
+/// This gives us the viewport_transform matrix:
+///   | comp_w*zoom/vp_w    0                   0    pan_x*2/vp_w |
+///   | 0                   comp_h*zoom/vp_h    0    pan_y*2/vp_h |
+///   | 0                   0                   1    0            |
+///   | 0                   0                   0    1            |
+/// ```
+///
+/// # 2D Mode (no camera)
+///
+/// Without camera, layer positions are already in frame space (centered, Y-up).
+/// We use simple orthographic projection with zoom/pan in the view matrix.
+///
+/// # Aspect Ratio (IMPORTANT)
+///
+/// Camera projection uses **comp aspect** (not viewport aspect) because:
+/// - Compositor renders with comp aspect
+/// - Viewport stretches the result to fit
+/// - Gizmo must match compositor, not viewport stretch
+///
+/// See `get_camera_matrices()` where aspect is computed from `comp.dim()`.
 fn build_gizmo_matrices(
     viewport_state: &ViewportState,
     clip_rect: egui::Rect,

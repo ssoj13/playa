@@ -154,9 +154,25 @@ impl CameraNode {
     /// - `use_poi=true`: look_at mode, camera points at point_of_interest
     /// - `use_poi=false`: rotation mode, use Euler angles from layer
     ///
+    /// # Rotation Convention (IMPORTANT)
+    ///
+    /// Camera uses the **same rotation convention as layers** for consistency:
+    ///
+    /// - **Order**: ZYX (After Effects style) - rotate Z first, then Y, then X
+    /// - **Sign**: Clockwise-positive (CW+) - user convention, matches AE
+    /// - **glam**: Uses counter-clockwise-positive (CCW+), so angles are **negated**
+    ///
+    /// ```text
+    /// User input (degrees, CW+)  -->  negate  -->  glam (radians, CCW+)
+    /// rotation = [10, 20, 30]    -->  [-10, -20, -30] in radians
+    /// ```
+    ///
+    /// This ensures camera and layer rotations behave identically.
+    /// See also: `transform.rs::build_model_matrix()`, `gizmo.rs::layer_to_gizmo_transform()`
+    ///
     /// # Arguments
     /// - `position` - camera position from layer attrs [x, y, z]
-    /// - `rotation` - camera rotation from layer attrs [rx, ry, rz] in degrees
+    /// - `rotation` - camera rotation from layer attrs [rx, ry, rz] in degrees (CW+)
     pub fn view_matrix(&self, position: [f32; 3], rotation: [f32; 3]) -> Mat4 {
         let eye = Vec3::from(position);
         let up = Vec3::Y; // Y-up convention
