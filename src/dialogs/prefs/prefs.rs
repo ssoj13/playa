@@ -152,7 +152,7 @@ impl Default for AppSettings {
             font_size: 11.0,
             timeline_layer_height: 30.0,
             timeline_name_column_width: 80.0,
-            timeline_outline_top_offset: 28.0, // ruler(20) + status(2) + gap(4) + fine-tune(2)
+            timeline_outline_top_offset: 42.0, // fine-tuned for alignment with canvas
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             preload_radius: -1,
