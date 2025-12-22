@@ -172,7 +172,7 @@ fn check_cycle(parent: Uuid, child: Uuid) -> bool {
 - `MAX_QUEUE_SIZE = 1000` may be insufficient
 - Events lost during rapid scrubbing
 - No backpressure mechanism
-- Long wait on Esc key press
+- Long wait on Esc key press - investigate
 
 ### 2.4 Multiple Bounds Methods
 - `bounds(use_trim, selection_only, media)` - dynamic
@@ -224,7 +224,7 @@ fn check_cycle(parent: Uuid, child: Uuid) -> bool {
 **Files:** `blur.rs`, `brightness.rs`, `hsv.rs`
 **Duplication:** 3x identical conversion code (~150 lines total)
 
-**Solution:** Create `EffectBuffer` helper:
+**Solution:** Create `Effect` trait:
 
 ```rust
 // src/entities/effects/effect_buffer.rs
