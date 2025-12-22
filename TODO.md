@@ -166,12 +166,13 @@ fn check_cycle(parent: Uuid, child: Uuid) -> bool {
 
 ### 2.2 Event Emission Inconsistency
 - Some operations auto-emit via `modify_comp()`
-- Others require manual `mark_dirty()`
+- Others require manual `mark_dirty()`. We always need to use the EventBus.
 
 ### 2.3 Event Queue Eviction Under Load
 - `MAX_QUEUE_SIZE = 1000` may be insufficient
 - Events lost during rapid scrubbing
 - No backpressure mechanism
+- Long wait on Esc key press
 
 ### 2.4 Multiple Bounds Methods
 - `bounds(use_trim, selection_only, media)` - dynamic
