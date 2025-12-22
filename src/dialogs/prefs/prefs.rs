@@ -158,7 +158,7 @@ impl Default for AppSettings {
             timeline_snap_enabled: true,
             timeline_lock_work_area: false,
             viewport_hover_highlight: true,
-            timeline_hover_highlight: true,
+            timeline_hover_highlight: false,
             preload_radius: -1,
             preload_delay_ms: 500,
             workers_override: 0,
