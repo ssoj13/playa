@@ -178,6 +178,7 @@ fn check_cycle(parent: Uuid, child: Uuid) -> bool {
 - `bounds(use_trim, selection_only, media)` - dynamic
 - `bounds_internal(use_trim)` - stored src_len (may be stale)
 - `rebound()` uses internal, not dynamic
+- We need just one method, .rebound(), make sure logic is not violated
 
 ### 2.5 Race Condition in Preload
 - Status check before lock allows duplicate compute
