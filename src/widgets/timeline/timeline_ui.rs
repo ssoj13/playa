@@ -277,6 +277,12 @@ pub fn render_toolbar(
 }
 
 /// Render left outline: layer list only (no toolbar)
+/// Render left outline panel: layer list with controls (visibility, name, blend mode, opacity).
+/// 
+/// # Parameters
+/// - `outline_top_offset`: Vertical offset to align with canvas (from AppSettings.timeline_outline_top_offset)
+/// 
+/// Called from ui.rs in Split and OutlineOnly view modes.
 pub fn render_outline(
     ui: &mut Ui,
     comp_uuid: Uuid,
@@ -284,15 +290,14 @@ pub fn render_outline(
     config: &TimelineConfig,
     _state: &mut TimelineState,
     view_mode: super::TimelineViewMode,
+    outline_top_offset: f32,
     mut dispatch: impl FnMut(BoxedEvent),
 ) {
     let comp_id = comp_uuid;
 
     // Match the top padding of the timeline canvas (ruler + status bar + spacing)
-    // Must be OUTSIDE ScrollArea to stay in sync with canvas
-    // Note: Both panels now use Frame::none() so no offset compensation needed
-    let status_bar_height = 2.0; // Status strip is always shown
-    ui.add_space(20.0 + status_bar_height + 4.0);
+    // Configurable via AppSettings.timeline_outline_top_offset for fine-tuning alignment
+    ui.add_space(outline_top_offset);
 
     // Render layer list with DnD inside a ScrollArea to avoid growing the parent panel.
     let mut child_order: Vec<usize> = (0..comp.layers.len()).collect();

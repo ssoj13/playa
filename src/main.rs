@@ -1159,6 +1159,7 @@ impl PlayaApp {
             self.settings.show_tooltips,
             self.settings.timeline_layer_height,
             self.settings.timeline_name_column_width,
+            self.settings.timeline_outline_top_offset,
             &layout_names,
             &self.settings.current_layout,
         );
