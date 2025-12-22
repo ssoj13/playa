@@ -615,9 +615,12 @@ pub fn render_canvas(
             }
 
         // Middle-drag pan on canvas - initialize only if not already dragging
-        if timeline_response.hovered() && state.drag_state.is_none()
-            && ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle))
-                && let Some(pos) = ui.ctx().pointer_hover_pos() {
+        // Use tab_rect (entire timeline tab) instead of timeline_response to allow
+        // panning from empty area below layers
+        if let Some(pos) = ui.ctx().pointer_hover_pos()
+            && tab_rect.contains(pos)
+            && state.drag_state.is_none()
+            && ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
                     state.drag_state = Some(GlobalDragState::TimelinePan {
                         drag_start_pos: pos,
                         initial_pan_offset: state.pan_offset,
@@ -1166,26 +1169,32 @@ pub fn render_canvas(
                                 }
             } else if state.drag_state.is_none() && global_drag.is_none() {
                 // Handle click/drag interaction only if no active drag state
-                if (timeline_response.clicked() || timeline_response.dragged())
-                    && !ui
-                        .ctx()
-                        .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
-                    && let Some(pos) = timeline_response.interact_pointer_pos() {
+                // Use tab_rect instead of timeline_response to handle clicks in empty area
+                // Exclude ruler_rect to avoid interfering with ruler scrubbing
+                if let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos())
+                    && tab_rect.contains(pos)
+                    && !ruler_rect.map(|r| r.contains(pos)).unwrap_or(false)
+                    && ui.ctx().input(|i| i.pointer.primary_clicked() || i.pointer.primary_down())
+                    && !ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
                         // If click is within any layer row, select that layer;
                         // otherwise treat it as a frame scrub on empty space.
                         let mut clicked_layer: Option<usize> = None;
-                        for &original_idx in child_order_inner.iter() {
-                            // row = layer index
-                            let row = original_idx;
-                            let layer_y = row_to_y(row, config, timeline_rect);
+                        
+                        // Only check layer rows if click is within timeline_rect
+                        if timeline_rect.contains(pos) {
+                            for &original_idx in child_order_inner.iter() {
+                                // row = layer index
+                                let row = original_idx;
+                                let layer_y = row_to_y(row, config, timeline_rect);
 
-                            let row_rect = Rect::from_min_max(
-                                Pos2::new(timeline_rect.min.x, layer_y),
-                                Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
-                            );
-                            if row_rect.contains(pos) {
-                                clicked_layer = Some(original_idx);
-                                break;
+                                let row_rect = Rect::from_min_max(
+                                    Pos2::new(timeline_rect.min.x, layer_y),
+                                    Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
+                                );
+                                if row_rect.contains(pos) {
+                                    clicked_layer = Some(original_idx);
+                                    break;
+                                }
                             }
                         }
 
@@ -1209,22 +1218,24 @@ pub fn render_canvas(
                                 dispatch(Box::new(SelectionFocusEvent(selection)));
                             }
                         } else {
-                            // Click on empty space
-                            let frame = screen_x_to_frame(
-                                pos.x,
-                                timeline_rect.min.x,
-                                config,
-                                state,
-                            )
-                            .round() as i32;
-                            dispatch(Box::new(SetFrameEvent(
-                                frame.min(total_frames.saturating_sub(1)),
-                            )));
+                            // Click on empty space - clear selection
+                            // Only scrub frame if click is within timeline_rect horizontally
+                            if pos.x >= timeline_rect.min.x && pos.x <= timeline_rect.max.x {
+                                let frame = screen_x_to_frame(
+                                    pos.x,
+                                    timeline_rect.min.x,
+                                    config,
+                                    state,
+                                )
+                                .round() as i32;
+                                dispatch(Box::new(SetFrameEvent(
+                                    frame.min(total_frames.saturating_sub(1)),
+                                )));
+                            }
 
-                            // If click is BELOW all layers, clear selection
-                            let max_layer_y = comp.layers.len() as f32 * config.layer_height + timeline_rect.min.y;
-                            if pos.y > max_layer_y && !comp.layer_selection.is_empty() {
-                                log::trace!("Canvas: click below layers at y={}, clearing selection", pos.y);
+                            // Clear selection when clicking empty area (below layers or outside timeline_rect)
+                            if !comp.layer_selection.is_empty() {
+                                log::trace!("Canvas: click in empty area at pos={:?}, clearing selection", pos);
                                 dispatch(Box::new(CompSelectionChangedEvent {
                                     comp_uuid: comp_id,
                                     selection: vec![],

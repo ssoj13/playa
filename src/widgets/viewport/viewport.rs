@@ -458,13 +458,16 @@ impl ViewportScrubber {
                 (a * 255.0) as u8,
             );
 
-            let line_top = egui::pos2(visual_x, panel_rect.top());
-            let line_bottom = egui::pos2(visual_x, panel_rect.bottom());
+            // Convert local X coordinate to screen coordinates
+            // visual_x is relative to viewport, panel_rect.min.x is the screen offset
+            let screen_x = panel_rect.min.x + visual_x;
+            let line_top = egui::pos2(screen_x, panel_rect.top());
+            let line_bottom = egui::pos2(screen_x, panel_rect.bottom());
             painter.line_segment([line_top, line_bottom], egui::Stroke::new(1.0, line_color));
 
             if let Some(frame) = self.current_frame {
                 let text = format!("{}", frame);
-                let text_pos = egui::pos2(visual_x + 10.0, panel_rect.top() + 10.0);
+                let text_pos = egui::pos2(screen_x + 10.0, panel_rect.top() + 10.0);
                 painter.text(
                     text_pos,
                     egui::Align2::LEFT_TOP,
