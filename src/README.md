@@ -4,6 +4,7 @@
 
 ```
 src/
+├── app/            # Main application logic (PlayaApp, eframe impl)
 ├── bin/            # Standalone binary entry points
 ├── core/           # Core engine (playback, caching, events)
 ├── dialogs/        # Modal dialogs (preferences, encoder)
@@ -22,6 +23,32 @@ src/
 ```
 
 ## Modules
+
+### `app/` - Application
+
+Main application state and eframe integration. Refactored from monolithic main.rs (~2700 lines) into modular structure.
+
+| File | Description |
+|------|-------------|
+| `mod.rs` | PlayaApp struct, DockTab enum, Default impl |
+| `run.rs` | eframe::App impl (update, save, on_exit) |
+| `events.rs` | Event handling (keyboard, effects, event bus) |
+| `tabs.rs` | Tab rendering (viewport, timeline, project, attrs, node editor) + DockTabs TabViewer |
+| `layout.rs` | Layout management (save/load/apply dock layouts) |
+| `project_io.rs` | Project load/save, sequence loading |
+| `api.rs` | REST API integration (start server, handle commands, screenshots) |
+
+**Architecture:**
+- PlayaApp is the main state container (47 fields)
+- eframe::App::update() is the main loop entry point
+- DockTabs wraps PlayaApp for egui_dock TabViewer
+- Events processed via EventBus for decoupled communication
+
+**Data Flow:**
+```
+update() -> handle_events() -> render tabs -> handle_api_commands()
+         -> player.update()  -> DockArea    -> update_api_state()
+```
 
 ### `core/` - Engine
 
