@@ -12,6 +12,10 @@ pub mod core;
 // Main application (PlayaApp struct and related)
 pub mod app;
 
+// Application runner (entry point for CLI and Python)
+pub mod runner;
+pub use runner::run_app;
+
 // App modules
 pub mod cli;
 pub mod config;

@@ -171,6 +171,55 @@ if ($args[0] -eq 'publish') {
     exit $LASTEXITCODE
 }
 
+if ($args[0] -eq 'python') {
+    Write-Host 'Building Python module (playa-py)...'
+    Write-Host ''
+    
+    # Check if maturin is installed
+    if (-not (Get-Command maturin -ErrorAction SilentlyContinue)) {
+        Write-Host 'Installing maturin...'
+        cargo binstall maturin --no-confirm
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host '  Falling back to pip install...'
+            pip install maturin
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host 'Error: Failed to install maturin' -ForegroundColor Red
+                exit 1
+            }
+        }
+        Write-Host '[OK] maturin installed' -ForegroundColor Green
+    } else {
+        Write-Host '[OK] maturin found' -ForegroundColor Green
+    }
+    Write-Host ''
+    
+    # Build Python wheel
+    $manifestPath = 'crates\playa-py\Cargo.toml'
+    if ($args[1] -eq 'develop' -or $args[1] -eq 'dev') {
+        # Development install (editable)
+        Write-Host 'Installing in development mode...'
+        maturin develop --manifest-path $manifestPath --release
+    } elseif ($args[1] -eq 'install') {
+        # Build and install
+        Write-Host 'Building and installing...'
+        maturin develop --manifest-path $manifestPath --release
+    } else {
+        # Default: build wheel only
+        Write-Host 'Building wheel...'
+        maturin build --manifest-path $manifestPath --release
+    }
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host ''
+        Write-Host '[OK] Python module built successfully!' -ForegroundColor Green
+        Write-Host ''
+        Write-Host 'Usage:'
+        Write-Host '  import playa'
+        Write-Host '  playa.run(file="path/to/image.exr", autoplay=True)'
+    }
+    exit $LASTEXITCODE
+}
+
 if ($args[0] -eq 'install') {
     Write-Host 'Checking FFmpeg dependencies...'
     Write-Host ''
@@ -260,6 +309,9 @@ if ($args.Count -eq 0) {
     Write-Host 'SPECIAL COMMANDS:'
     Write-Host '  install            Install playa from crates.io (checks FFmpeg deps)'
     Write-Host '  publish            Publish crate to crates.io'
+    Write-Host '  python             Build Python wheel only'
+    Write-Host '  python install     Build and install Python module'
+    Write-Host '  python dev         Install in development mode (editable)'
     Write-Host ''
     Write-Host 'XTASK COMMANDS (forwarded to cargo xtask):'
     Write-Host '  build              Build playa (use --openexr for full EXR support)'
