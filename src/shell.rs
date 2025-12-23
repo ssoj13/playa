@@ -7,13 +7,14 @@ use std::sync::Arc;
 
 use crate::core::cache_man::CacheManager;
 use crate::dialogs::prefs::AppSettings;
-use crate::entities::{Comp, Project};
+use crate::entities::Project;
 use crate::core::event_bus::{CompEventEmitter, EventBus};
-use crate::core::global_cache::CacheStrategy;
+use crate::entities::CacheStrategy;
 use crate::main_events::{handle_app_event, EventResult};
 use crate::core::player::Player;
 use crate::widgets::timeline::TimelineState;
 use crate::widgets::viewport::ViewportState;
+use crate::widgets::node_editor::NodeEditorState;
 
 /// Common shell state shared by all standalone binaries
 pub struct Shell {
@@ -53,29 +54,44 @@ impl Shell {
 
     /// Load a sequence from path
     pub fn load_sequence(&mut self, path: &str) {
+        use crate::entities::FileNode;
+        use crate::entities::node::Node;
+        
         let path_buf = PathBuf::from(path);
         if !path_buf.exists() {
             self.error_msg = Some(format!("Test sequence not found: {}", path));
             log::warn!("Test sequence not found: {}", path);
             return;
         }
-
-        match Comp::detect_from_paths(vec![path_buf]) {
-            Ok(comps) => {
-                for mut comp in comps {
-                    comp.set_event_emitter(self.comp_emitter.clone());
-                    let uuid = comp.get_uuid();
-                    self.project.add_comp(comp);
-
-                    if self.player.active_comp().is_none() {
-                        self.player.set_active_comp(Some(uuid), &mut self.project);
+        
+        match FileNode::detect_from_paths(vec![path_buf]) {
+            Ok(nodes) => {
+                if nodes.is_empty() {
+                    self.error_msg = Some("No valid sequences detected".to_string());
+                    log::warn!("No valid sequences detected from: {}", path);
+                    return;
+                }
+                
+                let mut first_uuid = None;
+                for node in nodes {
+                    let uuid = node.uuid();
+                    log::info!("Adding FileNode: {} ({})", node.name(), uuid);
+                    self.project.add_node(node.into());
+                    if first_uuid.is_none() {
+                        first_uuid = Some(uuid);
                     }
                 }
-                log::info!("Loaded test sequence from {}", path);
+                
+                // Activate first loaded sequence
+                if let Some(uuid) = first_uuid {
+                    self.player.set_active_comp(Some(uuid), &mut self.project);
+                }
+                
+                self.error_msg = None;
             }
             Err(e) => {
-                self.error_msg = Some(format!("Failed to load: {}", e));
-                log::error!("Failed to load sequence: {}", e);
+                self.error_msg = Some(format!("Failed to load sequence: {}", e));
+                log::warn!("Failed to load sequence {}: {}", path, e);
             }
         }
     }
@@ -87,6 +103,7 @@ impl Shell {
 
         // Dummy state for unused parameters
         let mut timeline_state = TimelineState::default();
+        let mut node_editor_state = NodeEditorState::new();
         let mut viewport_state = ViewportState::new();
         let mut settings = AppSettings::default();
         let mut show_help = false;
@@ -105,6 +122,7 @@ impl Shell {
                 &mut self.player,
                 &mut self.project,
                 &mut timeline_state,
+                &mut node_editor_state,
                 &mut viewport_state,
                 &mut settings,
                 &mut show_help,
@@ -135,6 +153,7 @@ impl Shell {
         let mut merged = EventResult::default();
         let mut any_handled = false;
 
+        let mut node_editor_state = NodeEditorState::new();
         let mut show_help = false;
         let mut show_playlist = false;
         let mut show_settings = false;
@@ -151,6 +170,7 @@ impl Shell {
                 &mut self.player,
                 &mut self.project,
                 timeline_state,
+                &mut node_editor_state,
                 viewport_state,
                 settings,
                 &mut show_help,
@@ -194,10 +214,15 @@ impl Shell {
         if let Some(path) = result.load_project {
             match Project::from_json(&path) {
                 Ok(mut loaded) => {
-                    loaded.rebuild_with_manager(Arc::clone(&self.cache_manager), Some(self.comp_emitter.clone()));
+                    loaded.attach_schemas();
+                    loaded.rebuild_with_manager(
+                        Arc::clone(&self.cache_manager),
+                        CacheStrategy::All,
+                        Some(self.comp_emitter.clone()),
+                    );
                     self.project = loaded;
                     self.project.set_last_save_path(Some(path));
-                    let first = self.project.comps_order().first().cloned();
+                    let first = self.project.order().first().cloned();
                     self.player.set_active_comp(first, &mut self.project);
                     log::info!("Project loaded");
                 }
@@ -215,13 +240,11 @@ impl Shell {
         }
 
         // Quick save
-        if result.quick_save {
-            if let Some(path) = self.project.last_save_path() {
-                if let Err(e) = self.project.to_json(&path) {
+        if result.quick_save
+            && let Some(path) = self.project.last_save_path()
+                && let Err(e) = self.project.to_json(&path) {
                     self.error_msg = Some(format!("Quick save failed: {}", e));
                 }
-            }
-        }
     }
 }
 

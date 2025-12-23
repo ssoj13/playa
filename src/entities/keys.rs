@@ -60,8 +60,6 @@ pub const A_SPEED: &str = "speed";
 // === Relationships ===
 /// Source comp UUID (for linked comps)
 pub const A_SOURCE_UUID: &str = "source_uuid";
-/// Parent comp UUID
-pub const A_PARENT: &str = "parent";
 /// Children list (Vec<Attrs>)
 pub const A_CHILDREN: &str = "children";
 
@@ -80,4 +78,8 @@ pub const A_FILE_END: &str = "file_end";
 pub const A_WIDTH: &str = "width";
 /// Height in pixels (0 = auto-detect)
 pub const A_HEIGHT: &str = "height";
+
+// === Layer attributes ===
+/// Source length in frames (invariant, doesn't change with speed)
+pub const A_SRC_LEN: &str = "src_len";
 

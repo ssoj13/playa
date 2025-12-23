@@ -11,7 +11,7 @@
 //! This provides true pub/sub with egui-friendly deferred processing.
 
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use log::warn;
 
@@ -51,7 +51,7 @@ pub type BoxedEvent = Box<dyn Event>;
 #[derive(Clone)]
 pub struct EventBus {
     subscribers: Arc<RwLock<HashMap<TypeId, Vec<Callback>>>>,
-    queue: Arc<Mutex<Vec<BoxedEvent>>>,
+    queue: Arc<Mutex<VecDeque<BoxedEvent>>>,
 }
 
 impl Default for EventBus {
@@ -64,7 +64,7 @@ impl EventBus {
     pub fn new() -> Self {
         Self {
             subscribers: Arc::new(RwLock::new(HashMap::new())),
-            queue: Arc::new(Mutex::new(Vec::new())),
+            queue: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
@@ -110,7 +110,11 @@ impl EventBus {
         let type_id = TypeId::of::<E>();
 
         // Invoke immediate callbacks
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb(&event);
             }
@@ -121,9 +125,11 @@ impl EventBus {
         if queue.len() >= MAX_QUEUE_SIZE {
             let evict_count = queue.len() / 2;
             warn!("EventBus queue full ({} events), evicting oldest {}", queue.len(), evict_count);
-            queue.drain(0..evict_count);
+            for _ in 0..evict_count {
+                queue.pop_front();
+            }
         }
-        queue.push(Box::new(event));
+        queue.push_back(Box::new(event));
     }
 
     /// Emit boxed event (for dynamic dispatch).
@@ -133,7 +139,11 @@ impl EventBus {
         // Invoke immediate callbacks
         // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable,
         // not Box<dyn Event>'s blanket impl (see downcast_event docs)
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb((*event).as_any());
             }
@@ -144,9 +154,11 @@ impl EventBus {
         if queue.len() >= MAX_QUEUE_SIZE {
             let evict_count = queue.len() / 2;
             warn!("EventBus queue full ({} events), evicting oldest {}", queue.len(), evict_count);
-            queue.drain(0..evict_count);
+            for _ in 0..evict_count {
+                queue.pop_front();
+            }
         }
-        queue.push(event);
+        queue.push_back(event);
     }
 
     // ========== Deferred Processing ==========
@@ -160,7 +172,8 @@ impl EventBus {
     /// }
     /// ```
     pub fn poll(&self) -> Vec<BoxedEvent> {
-        std::mem::take(&mut *self.queue.lock().unwrap_or_else(|e| e.into_inner()))
+        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
+        queue.drain(..).collect()
     }
 
     // ========== Handle & Utilities ==========
@@ -206,7 +219,7 @@ impl EventBus {
 #[derive(Clone)]
 pub struct EventEmitter {
     subscribers: Arc<RwLock<HashMap<TypeId, Vec<Callback>>>>,
-    queue: Arc<Mutex<Vec<BoxedEvent>>>,
+    queue: Arc<Mutex<VecDeque<BoxedEvent>>>,
 }
 
 impl std::fmt::Debug for EventEmitter {
@@ -224,7 +237,11 @@ impl EventEmitter {
         let type_id = TypeId::of::<E>();
 
         // Invoke immediate callbacks
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb(&event);
             }
@@ -235,9 +252,11 @@ impl EventEmitter {
         if queue.len() >= MAX_QUEUE_SIZE {
             let evict_count = queue.len() / 2;
             warn!("EventEmitter queue full ({} events), evicting oldest {}", queue.len(), evict_count);
-            queue.drain(0..evict_count);
+            for _ in 0..evict_count {
+                queue.pop_front();
+            }
         }
-        queue.push(Box::new(event));
+        queue.push_back(Box::new(event));
     }
 
     /// Emit boxed event
@@ -246,7 +265,11 @@ impl EventEmitter {
 
         // Invoke immediate callbacks
         // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable
-        if let Some(cbs) = self.subscribers.read().unwrap_or_else(|e| e.into_inner()).get(&type_id) {
+        let callbacks = {
+            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
+            subs.get(&type_id).cloned()
+        };
+        if let Some(cbs) = callbacks {
             for cb in cbs {
                 cb((*event).as_any());
             }
@@ -257,9 +280,11 @@ impl EventEmitter {
         if queue.len() >= MAX_QUEUE_SIZE {
             let evict_count = queue.len() / 2;
             warn!("EventEmitter queue full ({} events), evicting oldest {}", queue.len(), evict_count);
-            queue.drain(0..evict_count);
+            for _ in 0..evict_count {
+                queue.pop_front();
+            }
         }
-        queue.push(event);
+        queue.push_back(event);
     }
 }
 

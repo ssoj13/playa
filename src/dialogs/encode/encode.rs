@@ -7,6 +7,8 @@
 //! timeline/project -> `encode_comp` -> frame retrieval (Comp.get_frame) -> pixel
 //! format conversion -> muxed video on disk.
 
+#![allow(clippy::items_after_test_module)] // SwsContext etc. placed after tests for readability
+
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -1277,6 +1279,8 @@ mod tests {
             }
         }
 
+        // Note: This panic!() is TEST-ONLY - skips test if FFmpeg lacks encoders.
+        // Bug hunt false positive: not production code (Plan2/Plan3).
         if found_encoder.is_none() {
             panic!(
                 "NO VIDEO ENCODERS FOUND - FFmpeg build has no encoding support! Skipping test."
@@ -1340,8 +1344,8 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
-        // Build File-mode comp that always returns placeholder frames (no disk IO)
-        let mut comp = crate::entities::comp::Comp::new_file_comp(
+        // Build CompNode for testing (produces placeholder frames)
+        let mut comp = crate::entities::CompNode::new(
             "placeholder",
             play_start,
             play_end,
@@ -1349,9 +1353,9 @@ mod tests {
         );
         // Keep predictable dimensions for encoded video
         comp.attrs
-            .set("width", crate::entities::AttrValue::UInt(64));
+            .set(crate::entities::keys::A_WIDTH, crate::entities::AttrValue::UInt(64));
         comp.attrs
-            .set("height", crate::entities::AttrValue::UInt(64));
+            .set(crate::entities::keys::A_HEIGHT, crate::entities::AttrValue::UInt(64));
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let project = crate::entities::project::Project::new(manager);
 
@@ -1362,7 +1366,6 @@ mod tests {
             play_end,
             output_path.display()
         );
-        let settings = settings;
         let mut final_output = output_path.clone();
 
         let result = encode_comp(&comp, &project, &settings, tx.clone(), cancel_flag.clone());
@@ -1478,7 +1481,7 @@ mod tests {
         }
 
         // Cleanup
-        // let _ = std::fs::remove_file(&output_path);
+        let _ = std::fs::remove_file(&output_path);
     }
 }
 

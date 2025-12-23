@@ -1,3 +1,97 @@
+## [Unreleased] - dev4 Branch
+
+### 🚀 Features
+
+- **REST API Server**: New HTTP API for remote control of Playa
+  - Endpoints: `/api/status`, `/api/player/*`, `/api/screenshot`
+  - Configurable port in Settings -> Web Server
+  - CORS enabled for browser access
+  - Commands: Play, Pause, Stop, SetFrame, SetFps, Screenshot, Exit
+
+- **Viewport Gizmo**: Interactive transform manipulation
+  - Move/Rotate/Scale gizmos via transform-gizmo-egui
+  - Tool modes: Select, Move, Rotate, Scale
+  - Multi-layer selection support
+
+- **Layer Picker**: Click-to-select layers in viewport
+  - Left click in Select mode (Q) picks topmost layer under cursor
+  - Raycast-based hit testing with inverse transform
+  - Click empty space to deselect
+
+- **Hover Highlight**: Visual feedback when hovering layers
+  - Mouse over layer in viewport highlights it in timeline (orange border)
+  - Works in Select mode (Q)
+  - Helps identify layers before clicking
+
+- **3D Transform System**: Full affine transforms with perspective
+  - Frame space as primary coordinate system (centered, Y-up)
+  - ZYX rotation order (After Effects compatible)
+  - Ray-plane intersection for perspective unproject
+  - Improved coordinate space conversions
+
+- **Timeline Improvements**
+  - Trim hotkeys: `[`/`]` snap edges to cursor
+  - `Alt-[`/`Alt-]` trim at cursor regardless of mouse
+  - Layer selection and multi-select
+  - Jump to layer edges navigation
+
+- **Camera Node Enhancements**
+  - Improved transform handling
+  - Better integration with gizmo system
+
+- **Layer Effects System**: Per-layer post-processing effects
+  - Gaussian Blur (separable, O(n*r) per pass)
+  - Brightness/Contrast adjustment
+  - HSV color correction (hue shift, saturation, value)
+  - Effects UI in Attribute Editor with add/remove/reorder
+  - Schema-based parameters with proper validation
+  - Integrated into compositor pipeline (applied before transform)
+
+### 🏗️ Architecture
+
+- **Arc<NodeKind> in media pool**: Lock-free worker access
+  - Workers clone Arc (nanoseconds), release lock immediately
+  - UI can acquire write lock without waiting for compute
+  - Eliminates jank during heavy computation
+
+- **Attribute System Improvements**
+  - Schema-based validation for all node types
+  - DAG vs non-DAG attribute distinction
+  - Auto-emit AttrsChangedEvent on dirty
+
+### 📚 Documentation
+
+- Create comprehensive AGENTS.md with:
+  - Component architecture documentation
+  - Dataflow diagrams (integrated from DATAFLOW.txt)
+  - AI assistant guidelines
+  - Coordinate system reference
+- Remove obsolete DATAFLOW.txt (content merged into AGENTS.md)
+- Add src/README.md with module structure
+- **Projection Math Rustdocs** (Dec 21, 2025):
+  - `camera_node.rs::view_matrix()`: Rotation convention (ZYX, CW+→CCW-)
+  - `gizmo.rs::get_camera_matrices()`: Why comp aspect, not viewport aspect
+  - `gizmo.rs::build_gizmo_matrices()`: Full viewport_transform derivation
+  - `viewport_ui.rs::draw_hover_highlight()`: 2D/3D projection pipelines
+
+### 🐛 Bug Fixes
+
+- Fix event downcasting with blanket impl types
+- Improved dirty tracking in modify_comp() pattern
+- Better epoch-based cancellation handling
+- **Camera/Gizmo Math Unification** (Dec 21, 2025):
+  - Fix camera rotation order: XYZ → ZYX with angle negation (matches layer convention)
+  - Fix gizmo aspect ratio: viewport → comp (gizmo now aligns with rendered layers)
+  - Fix gizmo viewport transform formula for correct 3D camera projection
+  - Fix highlight to use camera VP when active (was ignoring camera entirely)
+
+### ⚙️ Miscellaneous Tasks
+
+- Multiple WIP commits during active development (Dec 19-21, 2025)
+- Cleanup of temporary plan/report files
+
+---
+
 ## [0.1.133] - 2025-11-15
 
 ### 🚀 Features

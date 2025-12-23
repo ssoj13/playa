@@ -1,5 +1,7 @@
 //! Preferences/settings events.
 
+use crate::entities::project::GizmoPrefs;
+
 #[derive(Clone, Debug)]
 pub struct ResetSettingsEvent;
 
@@ -24,6 +26,10 @@ pub struct ToggleFullscreenEvent;
 #[derive(Clone, Debug)]
 pub struct ToggleFrameNumbersEvent;
 
+/// Apply gizmo preferences to the current Project (stored under attrs.prefs).
+#[derive(Clone, Debug)]
+pub struct SetGizmoPrefsEvent(pub GizmoPrefs);
+
 /// Hotkey window context for context-aware shortcuts
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HotkeyWindow {
@@ -31,4 +37,6 @@ pub enum HotkeyWindow {
     Viewport,
     Timeline,
     Project,
+    NodeEditor,
 }
+

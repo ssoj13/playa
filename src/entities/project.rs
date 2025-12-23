@@ -3,6 +3,33 @@
 //! Holds clips (MediaPool) and compositions (Comps) that reference clips.
 //! Project is the unit of serialization: scenes are saved and loaded via
 //! `Project::to_json` / `Project::from_json`.
+//!
+//! # Auto-Emit & Cache Invalidation
+//!
+//! Project has an `event_emitter` field (runtime-only, `#[serde(skip)]`) that
+//! enables automatic cache invalidation when comp attributes change.
+//!
+//! ## `modify_comp()` Pattern
+//!
+//! All comp modifications should go through `modify_comp()` which:
+//! 1. Executes the closure (may call `attrs.set()` → dirty=true)
+//! 2. If comp or any layer is dirty → emits `AttrsChangedEvent`
+//!
+//! ```text
+//! project.modify_comp(uuid, |comp| {
+//!     comp.set_child_attrs(...);  // attrs.set() → dirty=true
+//! });
+//! // Auto-emits AttrsChangedEvent if comp/layers dirty
+//! // → triggers cache.clear_comp() and viewport refresh
+//! ```
+//!
+//! ## Important: Event Emitter Restoration
+//!
+//! Since `event_emitter` has `#[serde(skip)]`, it's lost during deserialization.
+//! Must call `project.set_event_emitter()` after:
+//! - `Project::from_json()` (load project)
+//! - eframe's persisted state deserialization
+//! - Any clone/rebuild operation
 
 use std::collections::HashMap;
 use std::fs;
@@ -12,25 +39,85 @@ use std::sync::{Arc, Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{Attrs, Comp, CompositorType};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectPrefs {
+    pub gizmo: GizmoPrefs,
+}
+
+impl Default for ProjectPrefs {
+    fn default() -> Self {
+        Self {
+            gizmo: GizmoPrefs::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GizmoPrefs {
+    /// Gizmo size in pixels (logical points). Default matches upstream crate.
+    pub pref_manip_size: f32,
+    /// Stroke width (thickness) in pixels (logical points).
+    pub pref_manip_stroke_width: f32,
+    /// Inactive alpha multiplier.
+    pub pref_manip_inactive_alpha: f32,
+    /// Highlight/active alpha multiplier.
+    pub pref_manip_highlight_alpha: f32,
+}
+
+impl Default for GizmoPrefs {
+    fn default() -> Self {
+        Self {
+            pref_manip_size: 128.0,
+            pref_manip_stroke_width: 5.0,
+            pref_manip_inactive_alpha: 0.7,
+            pref_manip_highlight_alpha: 1.0,
+        }
+    }
+}
+
+use super::attr_schemas::PROJECT_SCHEMA;
+use super::{Attrs, CompositorType};
+use super::attrs::AttrValue;
+use super::node::Node;
+use super::node_kind::NodeKind;
+use super::comp_node::CompNode;
+use super::file_node::FileNode;
+use super::frame::Frame;
+use super::keys::*;
 use crate::core::cache_man::CacheManager;
-use crate::core::global_cache::{CacheStrategy, GlobalFrameCache};
+use crate::core::event_bus::EventEmitter;
+use crate::core::global_cache::GlobalFrameCache;
+use super::CacheStrategy;
+use super::comp_events::AttrsChangedEvent;
 
 /// Top-level project / scene.
 ///
 /// **Attrs keys** (stored in `attrs`):
-/// - `comps_order`: Vec<Uuid> as JSON - UI order of media items
-/// - `selection`: Vec<Uuid> as JSON - current selection (ordered)
-/// - `active`: Option<Uuid> as JSON - currently active item
+/// - `order`: List<Uuid> - UI order of media items
+/// - `selection`: List<Uuid> - current selection (ordered)
+/// - `active`: Uuid (optional, missing key = None) - currently active item
+/// - `prefs`: Map - project preferences
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Project {
-    /// All serializable project state (includes comps_order, selection, active)
+    /// All serializable project state (includes order, selection, active)
     pub attrs: Attrs,
 
-    /// Unified media pool: all comps (both Layer and File modes) keyed by UUID
-    /// Thread-safe for concurrent reads from background composition workers
+    /// Unified media pool: all nodes (FileNode, CompNode) keyed by UUID.
+    /// 
+    /// ## Why Arc<NodeKind>?
+    /// 
+    /// Worker threads need to read nodes during frame computation, but UI thread
+    /// needs write access for playhead updates. Without Arc, workers hold read lock
+    /// during long compute operations (50-500ms), blocking UI writes → jank.
+    /// 
+    /// With Arc<NodeKind>:
+    /// - Workers clone Arc (nanoseconds), release lock immediately
+    /// - UI can acquire write lock without waiting for compute
+    /// - Arc::make_mut provides copy-on-write for mutations
     #[serde(with = "arc_rwlock_hashmap")]
-    pub media: Arc<RwLock<HashMap<Uuid, Comp>>>,
+    pub media: Arc<RwLock<HashMap<Uuid, Arc<NodeKind>>>>,
 
     /// Runtime-only selection anchor for shift-click range
     #[serde(skip)]
@@ -55,6 +142,10 @@ pub struct Project {
     /// Last save path for quick save (runtime-only)
     #[serde(skip)]
     last_save_path: Option<std::path::PathBuf>,
+
+    /// Event emitter for auto-emitting AttrsChangedEvent (runtime-only)
+    #[serde(skip)]
+    event_emitter: Option<EventEmitter>,
 }
 
 impl Clone for Project {
@@ -70,6 +161,7 @@ impl Clone for Project {
             cache_manager: self.cache_manager.clone(),
             global_cache: self.global_cache.clone(),
             last_save_path: self.last_save_path.clone(),
+            event_emitter: self.event_emitter.clone(),
         }
     }
 }
@@ -94,11 +186,11 @@ impl Project {
             strategy,
         ));
 
-        // Initialize attrs with default values
-        let mut attrs = Attrs::new();
-        attrs.set_json("comps_order", &Vec::<Uuid>::new());
-        attrs.set_json("selection", &Vec::<Uuid>::new());
-        attrs.set_json("active", &None::<Uuid>);
+        // Initialize attrs with schema
+        let mut attrs = Attrs::with_schema(&*PROJECT_SCHEMA);
+        attrs.set_uuid_list("order", &[]);
+        attrs.set_uuid_list("selection", &[]);
+        attrs.set_map("prefs", Self::prefs_to_map(&ProjectPrefs::default()));
 
         Self {
             attrs,
@@ -108,43 +200,121 @@ impl Project {
             cache_manager: Some(cache_manager),
             global_cache: Some(global_cache),
             last_save_path: None,
+            event_emitter: None,
         }
+    }
+
+    /// Set event emitter for auto-emitting AttrsChangedEvent on comp modifications.
+    /// Called once during App initialization to enable automatic cache invalidation.
+    pub fn set_event_emitter(&mut self, emitter: EventEmitter) {
+        self.event_emitter = Some(emitter);
+    }
+    
+    /// Attach schemas to all entities after deserialization.
+    /// Must be called after from_json() since schemas are not serialized.
+    pub fn attach_schemas(&mut self) {
+        // Project schema
+        self.attrs.attach_schema(&*PROJECT_SCHEMA);
+        
+        // All nodes in media pool
+        // Arc::make_mut: if refcount == 1, mutates in place; otherwise clones.
+        // Safe here because attach_schemas runs at startup before workers start.
+        if let Ok(mut media) = self.media.write() {
+            for arc_node in media.values_mut() {
+                let node = Arc::make_mut(arc_node);
+                match node {
+                    NodeKind::File(f) => f.attach_schema(),
+                    NodeKind::Comp(c) => c.attach_schema(),
+                    NodeKind::Camera(c) => c.attach_schema(),
+                    NodeKind::Text(t) => t.attach_schema(),
+                }
+            }
+        }
+    }
+
+    fn prefs_to_map(prefs: &ProjectPrefs) -> std::collections::HashMap<String, AttrValue> {
+        use std::collections::HashMap;
+        let mut gizmo = HashMap::new();
+        gizmo.insert("pref_manip_size".to_string(), AttrValue::Float(prefs.gizmo.pref_manip_size));
+        gizmo.insert(
+            "pref_manip_stroke_width".to_string(),
+            AttrValue::Float(prefs.gizmo.pref_manip_stroke_width),
+        );
+        gizmo.insert(
+            "pref_manip_inactive_alpha".to_string(),
+            AttrValue::Float(prefs.gizmo.pref_manip_inactive_alpha),
+        );
+        gizmo.insert(
+            "pref_manip_highlight_alpha".to_string(),
+            AttrValue::Float(prefs.gizmo.pref_manip_highlight_alpha),
+        );
+
+        let mut map = HashMap::new();
+        map.insert("gizmo".to_string(), AttrValue::Map(gizmo));
+        map
+    }
+
+    fn prefs_from_map(map: &std::collections::HashMap<String, AttrValue>) -> ProjectPrefs {
+        let mut prefs = ProjectPrefs::default();
+        let Some(AttrValue::Map(gizmo)) = map.get("gizmo") else {
+            return prefs;
+        };
+
+        let read_f32 = |m: &std::collections::HashMap<String, AttrValue>, key: &str, default: f32| -> f32 {
+            match m.get(key) {
+                Some(AttrValue::Float(v)) => *v,
+                Some(AttrValue::Int(v)) => *v as f32,
+                Some(AttrValue::UInt(v)) => *v as f32,
+                _ => default,
+            }
+        };
+
+        prefs.gizmo.pref_manip_size =
+            read_f32(gizmo, "pref_manip_size", prefs.gizmo.pref_manip_size);
+        prefs.gizmo.pref_manip_stroke_width =
+            read_f32(gizmo, "pref_manip_stroke_width", prefs.gizmo.pref_manip_stroke_width);
+        prefs.gizmo.pref_manip_inactive_alpha =
+            read_f32(gizmo, "pref_manip_inactive_alpha", prefs.gizmo.pref_manip_inactive_alpha);
+        prefs.gizmo.pref_manip_highlight_alpha =
+            read_f32(gizmo, "pref_manip_highlight_alpha", prefs.gizmo.pref_manip_highlight_alpha);
+
+        prefs
     }
 
     // === Accessor methods for attrs fields ===
 
     /// Get comps order (Vec<Uuid>)
-    pub fn comps_order(&self) -> Vec<Uuid> {
-        self.attrs.get_json("comps_order").unwrap_or_default()
+    pub fn order(&self) -> Vec<Uuid> {
+        self.attrs.get_uuid_list("order").unwrap_or_default()
     }
 
     /// Set comps order
-    pub fn set_comps_order(&mut self, order: Vec<Uuid>) {
-        self.attrs.set_json("comps_order", &order);
+    pub fn set_order(&mut self, order: Vec<Uuid>) {
+        self.attrs.set_uuid_list("order", &order);
     }
 
-    /// Push UUID to comps_order
-    pub fn push_comps_order(&mut self, uuid: Uuid) {
-        let mut order = self.comps_order();
+    /// Push UUID to order
+    pub fn push_order(&mut self, uuid: Uuid) {
+        let mut order = self.order();
         order.push(uuid);
-        self.set_comps_order(order);
+        self.set_order(order);
     }
 
-    /// Retain comps_order by predicate
-    pub fn retain_comps_order<F>(&mut self, f: F) where F: FnMut(&Uuid) -> bool {
-        let mut order = self.comps_order();
+    /// Retain order by predicate
+    pub fn retain_order<F>(&mut self, f: F) where F: FnMut(&Uuid) -> bool {
+        let mut order = self.order();
         order.retain(f);
-        self.set_comps_order(order);
+        self.set_order(order);
     }
 
     /// Get selection (Vec<Uuid>)
     pub fn selection(&self) -> Vec<Uuid> {
-        self.attrs.get_json("selection").unwrap_or_default()
+        self.attrs.get_uuid_list("selection").unwrap_or_default()
     }
 
     /// Set selection
     pub fn set_selection(&mut self, sel: Vec<Uuid>) {
-        self.attrs.set_json("selection", &sel);
+        self.attrs.set_uuid_list("selection", &sel);
     }
 
     /// Push UUID to selection
@@ -163,12 +333,54 @@ impl Project {
 
     /// Get active comp UUID
     pub fn active(&self) -> Option<Uuid> {
-        self.attrs.get_json("active").unwrap_or(None)
+        self.attrs.get_uuid("active")
     }
 
     /// Set active comp UUID
     pub fn set_active(&mut self, uuid: Option<Uuid>) {
-        self.attrs.set_json("active", &uuid);
+        match uuid {
+            Some(id) => self.attrs.set_uuid("active", id),
+            None => {
+                let _ = self.attrs.remove("active");
+            }
+        }
+    }
+
+    /// Get viewport tool mode (select/move/rotate/scale).
+    pub fn tool(&self) -> String {
+        self.attrs.get_str("tool")
+            .unwrap_or("select")
+            .to_string()
+    }
+
+    /// Set viewport tool mode.
+    pub fn set_tool(&mut self, tool: &str) {
+        self.attrs.set("tool", super::attrs::AttrValue::Str(tool.to_string()));
+    }
+
+    /// Read project preferences (stored as Map under `attrs["prefs"]`).
+    pub fn prefs(&self) -> ProjectPrefs {
+        self.attrs
+            .get_map("prefs")
+            .map(Self::prefs_from_map)
+            .unwrap_or_default()
+    }
+
+    /// Overwrite project preferences.
+    pub fn set_prefs(&mut self, prefs: &ProjectPrefs) {
+        self.attrs.set_map("prefs", Self::prefs_to_map(prefs));
+    }
+
+    /// Convenience: get gizmo prefs.
+    pub fn gizmo_prefs(&self) -> GizmoPrefs {
+        self.prefs().gizmo
+    }
+
+    /// Convenience: set gizmo prefs (preserves other preference sections).
+    pub fn set_gizmo_prefs(&mut self, gizmo: &GizmoPrefs) {
+        let mut prefs = self.prefs();
+        prefs.gizmo = gizmo.clone();
+        self.set_prefs(&prefs);
     }
 
     /// Get last save path for quick save
@@ -215,54 +427,33 @@ impl Project {
     ///
     /// Returns UUID of the default/first comp.
     pub fn ensure_default_comp(&mut self) -> Uuid {
-        // Check if we have any comps in media (Layer mode comps in comps_order)
-        let order = self.comps_order();
+        let order = self.order();
         let has_comps = !order.is_empty();
 
         if !has_comps {
-            let comp = Comp::new("Main", 0, 0, 24.0);
-            let uuid = comp.get_uuid();
-            self.media.write().expect("media lock poisoned").insert(uuid, comp);
-            self.push_comps_order(uuid);
+            let comp = CompNode::new("Main", 0, 0, 24.0);
+            let uuid = comp.uuid();
+            self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(NodeKind::Comp(comp)));
+            self.push_order(uuid);
             log::info!("Created default comp: {}", uuid);
             uuid
         } else {
-            // Return first comp UUID from order
             order.first().copied().unwrap_or_else(|| {
-                // Fallback: create new if order is broken
-                let comp = Comp::new("Main", 0, 0, 24.0);
-                let uuid = comp.get_uuid();
-                self.media.write().expect("media lock poisoned").insert(uuid, comp);
-                self.push_comps_order(uuid);
+                let comp = CompNode::new("Main", 0, 0, 24.0);
+                let uuid = comp.uuid();
+                self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(NodeKind::Comp(comp)));
+                self.push_order(uuid);
                 uuid
             })
         }
     }
 
     /// Rebuild runtime-only state after deserialization.
-    ///
-    /// - Reinitializes compositor to default (CPU).
-    /// - Sets event emitter and global_cache for all comps.
-    pub fn rebuild_runtime(&mut self, event_emitter: Option<crate::core::event_bus::CompEventEmitter>) {
+    /// Reinitializes compositor to default (CPU).
+    pub fn rebuild_runtime(&mut self, _event_emitter: Option<crate::core::event_bus::CompEventEmitter>) {
         // Reinitialize compositor (not serialized)
         *self.compositor.lock().unwrap_or_else(|e| e.into_inner()) = CompositorType::default();
-
-        // Rebuild comps in unified media HashMap
-        let mut media = self.media.write().expect("media lock poisoned");
-        for comp in media.values_mut() {
-            // NOTE: No need to clear cache - GlobalFrameCache is project-level
-            // Cache will be naturally invalidated via dirty tracking
-
-            // Set event emitter for comps if provided
-            if let Some(ref emitter) = event_emitter {
-                comp.set_event_emitter(emitter.clone());
-            }
-
-            // Set global_cache reference for each comp
-            if let Some(ref cache) = self.global_cache {
-                comp.set_global_cache(Arc::clone(cache));
-            }
-        }
+        // NodeKind doesn't need event emitters or cache refs - they're passed via ComputeContext
     }
 
     /// Rebuild runtime state AND set cache manager (unified after deserialization).
@@ -272,6 +463,7 @@ impl Project {
     pub fn rebuild_with_manager(
         &mut self,
         manager: Arc<CacheManager>,
+        cache_strategy: CacheStrategy,
         event_emitter: Option<crate::core::event_bus::CompEventEmitter>,
     ) {
         log::info!("Project::rebuild_with_manager() - unified rebuild");
@@ -281,7 +473,7 @@ impl Project {
         let global_cache = Arc::new(GlobalFrameCache::new(
             10000,
             manager,
-            CacheStrategy::All,
+            cache_strategy,
         ));
         self.global_cache = Some(global_cache);
 
@@ -297,74 +489,163 @@ impl Project {
         *self.compositor.lock().unwrap_or_else(|e| e.into_inner()) = compositor;
     }
 
-    /// Get cloned composition by UUID.
-    /// Returns owned Comp (cloned from media pool).
-    pub fn get_comp(&self, uuid: Uuid) -> Option<Comp> {
-        self.media.read().expect("media lock poisoned").get(&uuid).cloned()
+    // === Node access methods ===
+
+    /// Access node by reference via closure (no clone).
+    /// Closure runs under read lock - keep it short to avoid blocking writes.
+    pub fn with_node<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
+    where
+        F: FnOnce(&NodeKind) -> R,
+    {
+        let media = self.media.read().expect("media lock poisoned");
+        // arc.as_ref() dereferences Arc to get &NodeKind
+        media.get(&uuid).map(|arc| f(arc.as_ref()))
     }
 
-    /// Update composition in media pool.
-    /// Replaces existing comp with same UUID.
-    pub fn update_comp(&self, comp: Comp) {
-        self.media.write().expect("media lock poisoned").insert(comp.get_uuid(), comp);
+    /// Access CompNode by reference via closure (no clone)
+    pub fn with_comp<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
+    where
+        F: FnOnce(&CompNode) -> R,
+    {
+        let media = self.media.read().expect("media lock poisoned");
+        media.get(&uuid).and_then(|arc| arc.as_comp()).map(f)
     }
 
-    /// Check if composition exists in media pool.
-    pub fn contains_comp(&self, uuid: Uuid) -> bool {
+    /// Access FileNode by reference via closure (no clone)
+    pub fn with_file<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
+    where
+        F: FnOnce(&FileNode) -> R,
+    {
+        let media = self.media.read().expect("media lock poisoned");
+        media.get(&uuid).and_then(|arc| arc.as_file()).map(f)
+    }
+
+    /// Get cached frame for comp (non-blocking, returns None if not in cache)
+    /// Viewport uses this - actual computation happens in workers via preload.
+    pub fn compute_frame(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
+        let cache = self.global_cache.as_ref()?;
+        cache.get(comp_uuid, frame_idx)
+    }
+
+    /// Update node in media pool
+    pub fn update_node(&self, node: NodeKind) {
+        let uuid = node.uuid();
+        self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(node));
+    }
+
+    /// Check if node exists in media pool
+    pub fn contains_node(&self, uuid: Uuid) -> bool {
         self.media.read().expect("media lock poisoned").contains_key(&uuid)
     }
 
-    /// Modify composition in-place via closure.
-    /// Acquires write lock, calls closure with mutable reference, releases lock.
-    /// Returns true if comp was found and modified.
-    pub fn modify_comp<F>(&self, uuid: Uuid, f: F) -> bool
+    /// Alias for contains_node (compat)
+    pub fn contains_comp(&self, uuid: Uuid) -> bool {
+        self.contains_node(uuid)
+    }
+
+    /// Modify node in-place via closure.
+    ///
+    /// Auto-emits `AttrsChangedEvent` if node is dirty after modification,
+    /// triggering cache invalidation and viewport refresh.
+    ///
+    /// ## Arc::make_mut semantics
+    /// - If refcount == 1: mutates in place (no allocation)
+    /// - If refcount > 1: clones node, replaces Arc, mutates clone
+    /// 
+    /// This is safe because workers only hold Arc clones for reading.
+    /// They get a snapshot; UI mutations create a new version.
+    pub fn modify_node<F>(&self, uuid: Uuid, f: F) -> bool
     where
-        F: FnOnce(&mut Comp),
+        F: FnOnce(&mut NodeKind),
     {
-        if let Some(comp) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
-            f(comp);
+        if let Some(arc_node) = self.media.write().expect("media lock poisoned").get_mut(&uuid) {
+            // Arc::make_mut: copy-on-write if workers hold references
+            let node = Arc::make_mut(arc_node);
+            f(node);
+            // Emit event if node is dirty after modification
+            let dirty = node.is_dirty(None);
+            if dirty && let Some(ref emitter) = self.event_emitter {
+                emitter.emit(AttrsChangedEvent(uuid));
+                node.clear_dirty();
+            } else if dirty {
+                log::warn!("modify_node: dirty but no emitter! uuid={}", uuid);
+                node.clear_dirty();
+            }
             true
         } else {
             false
         }
     }
 
-    /// Add a composition to the project (automatically sets cache_manager and global_cache)
-    pub fn add_comp(&mut self, mut comp: Comp) {
-        // Automatically set cache_manager if available
-        if let Some(ref manager) = self.cache_manager {
-            comp.set_cache_manager(Arc::clone(manager));
-        }
-
-        // Automatically set global_cache if available
-        if let Some(ref cache) = self.global_cache {
-            comp.set_global_cache(Arc::clone(cache));
-        }
-
-        let uuid = comp.get_uuid();
-        self.media.write().expect("media lock poisoned").insert(uuid, comp);
-        self.push_comps_order(uuid);
+    /// Modify CompNode in-place via closure.
+    ///
+    /// Auto-emits `AttrsChangedEvent` if comp or any layer is dirty after modification,
+    /// triggering cache invalidation and viewport refresh.
+    ///
+    /// ## Why Arc::make_mut here?
+    /// Workers may hold Arc clones while computing frames. make_mut ensures:
+    /// - Workers keep their snapshot (old Arc) for consistent reads
+    /// - UI gets a fresh copy to mutate without affecting in-flight computes
+    pub fn modify_comp<F>(&self, uuid: Uuid, f: F) -> bool
+    where
+        F: FnOnce(&mut CompNode),
+    {
+        if let Some(arc_node) = self.media.write().expect("media lock poisoned").get_mut(&uuid)
+            && let Some(comp) = Arc::make_mut(arc_node).as_comp_mut() {
+                f(comp);
+                // Emit event if comp or any layer is dirty after modification.
+                // This ensures ALL changes that affect render trigger cache invalidation,
+                // even when multiple modify_comp calls happen before next render.
+                let dirty = comp.is_dirty(None);
+                if dirty && let Some(ref emitter) = self.event_emitter {
+                    emitter.emit(AttrsChangedEvent(uuid));
+                    // Clear dirty immediately after emit to prevent re-emit on next modify_comp.
+                    // Without this, rapid scrubbing would trigger multiple cache clears.
+                    comp.clear_dirty();
+                } else if dirty {
+                    log::warn!("modify_comp: dirty but no emitter! uuid={}", uuid);
+                    comp.clear_dirty(); // Clear anyway to prevent stale dirty state
+                }
+                return true;
+            }
+        false
     }
 
-    /// Create and add a new composition, returns its UUID
+    /// Add node to project.
+    /// 
+    /// Wraps in Arc for cheap cloning by worker threads.
+    /// Workers can Arc::clone() and release lock immediately,
+    /// avoiding lock contention during long compute operations.
+    pub fn add_node(&mut self, node: NodeKind) {
+        let uuid = node.uuid();
+        self.media.write().expect("media lock poisoned").insert(uuid, Arc::new(node));
+        self.push_order(uuid);
+    }
+
+    /// Create and add new CompNode, returns its UUID
     pub fn create_comp(
         &mut self,
         name: &str,
         fps: f32,
-        event_emitter: crate::core::event_bus::CompEventEmitter,
+        _event_emitter: crate::core::event_bus::CompEventEmitter,
     ) -> Uuid {
-        let end = (fps * 5.0) as i32; // 5 seconds default duration
-        let mut comp = Comp::new(name, 0, end, fps);
-        comp.set_event_emitter(event_emitter);
-        let uuid = comp.get_uuid();
-        self.add_comp(comp);
+        let end = (fps * 5.0) as i32;
+        let comp = CompNode::new(name, 0, end, fps);
+        let uuid = comp.uuid();
+        self.add_node(NodeKind::Comp(comp));
+        uuid
+    }
+
+    /// Create and add new FileNode, returns its UUID
+    pub fn create_file(&mut self, file_mask: String, start: i32, end: i32, fps: f32) -> Uuid {
+        let file = FileNode::new(file_mask, start, end, fps);
+        let uuid = file.uuid();
+        self.add_node(NodeKind::File(file));
         uuid
     }
 
     /// Generate unique layer name based on source name
-    /// Strips trailing numbers, scans ALL names in project.media, returns "base_N"
     pub fn gen_name(&self, source_name: &str) -> String {
-        // Strip extension and trailing numbers: "clip_0017.exr" -> "clip"
         let base = {
             let name = source_name.rsplit_once('.').map(|(n, _)| n).unwrap_or(source_name);
             let name = name.trim_end_matches(|c: char| c.is_ascii_digit());
@@ -372,61 +653,38 @@ impl Project {
             if name.is_empty() { "layer" } else { name }
         };
 
-        // Find max existing number for this base across ALL comps and their children
         let mut max_num = 0u32;
         let media = self.media.read().expect("media lock poisoned");
-        for comp in media.values() {
-            // Check comp name
-            if comp.name().starts_with(base) {
-                let suffix = comp.name()[base.len()..].trim_start_matches('_');
+        for node in media.values() {
+            // Check node name
+            if node.name().starts_with(base) {
+                let suffix = node.name()[base.len()..].trim_start_matches('_');
                 if let Ok(n) = suffix.parse::<u32>() {
                     max_num = max_num.max(n);
                 }
             }
-            // Check all children names
-            for (_, attrs) in comp.get_children() {
-                if let Some(name) = attrs.get_str("name") {
-                    if name.starts_with(base) {
-                        let suffix = name[base.len()..].trim_start_matches('_');
-                        if let Ok(n) = suffix.parse::<u32>() {
-                            max_num = max_num.max(n);
+            // Check layer names for CompNode
+            if let Some(comp) = node.as_comp() {
+                for layer in &comp.layers {
+                    if let Some(name) = layer.attrs.get_str(A_NAME)
+                        && name.starts_with(base) {
+                            let suffix = name[base.len()..].trim_start_matches('_');
+                            if let Ok(n) = suffix.parse::<u32>() {
+                                max_num = max_num.max(n);
+                            }
                         }
-                    }
                 }
             }
         }
         format!("{}_{}", base, max_num + 1)
     }
 
-    /// Remove media and clean up all references to it in other comps
-    pub fn remove_media_with_cleanup(&mut self, uuid: Uuid) {
-        // Remove references from other comps (layers using this media as source)
-        {
-            let mut media = self.media.write().expect("media lock poisoned");
-            for (_comp_uuid, comp) in media.iter_mut() {
-                let children_to_remove = comp.find_children_by_source(uuid);
-                for child_uuid in children_to_remove {
-                    comp.remove_child(child_uuid);
-                }
-            }
-        }
-        // Remove the media itself
-        self.remove_media(uuid);
-        // Fix selection
-        self.retain_selection(|u| *u != uuid);
-    }
-
-    /// Set CacheManager for project and all existing comps (call after deserialization)
+    /// Set CacheManager for project
     pub fn set_cache_manager(&mut self, manager: Arc<CacheManager>) {
         let media = self.media.read().expect("media lock poisoned");
-        log::info!("Project::set_cache_manager() called, setting for {} comps", media.len());
-        drop(media); // Release read lock before acquiring write lock
-
-        self.cache_manager = Some(Arc::clone(&manager));
-        let mut media = self.media.write().expect("media lock poisoned");
-        for comp in media.values_mut() {
-            comp.set_cache_manager(Arc::clone(&manager));
-        }
+        log::info!("Project::set_cache_manager() called, {} nodes", media.len());
+        drop(media);
+        self.cache_manager = Some(manager);
     }
 
     /// Get reference to cache manager
@@ -437,73 +695,246 @@ impl Project {
         self.cache_manager.as_ref()
     }
 
-    /// Remove media (clip or comp) by UUID.
-    /// Automatically clears cached frames and cancels pending worker tasks.
-    pub fn remove_media(&mut self, uuid: Uuid) {
-        // 1. Increment epoch to cancel pending worker tasks for this media
-        // Why: Workers may still have tasks for this UUID; let them skip silently
+    /// Invalidate cache for source node and all comps that depend on it.
+    /// 
+    /// With `recursive=true`, traverses full dependency graph:
+    /// TextNode → compA (direct) → compB (uses compA) → ...
+    /// 
+    /// Uses dehydrate mode (keeps old pixels visible during recompute).
+    pub fn invalidate_with_dependents(&self, source_uuid: Uuid, recursive: bool) {
+        // 1. Collect all dependent comp UUIDs (media lock held only here)
+        let dependents: Vec<Uuid> = {
+            let media = self.media.read().expect("media lock");
+            let mut result = Vec::new();
+            let mut to_check = vec![source_uuid];
+            let mut checked = std::collections::HashSet::new();
+            
+            while let Some(check_uuid) = to_check.pop() {
+                if !checked.insert(check_uuid) {
+                    continue; // Already processed (cycle protection)
+                }
+                for (comp_uuid, node) in media.iter() {
+                    if let Some(comp) = node.as_comp() {
+                        let uses_source = comp.layers.iter()
+                            .any(|l| l.source_uuid() == check_uuid);
+                        if uses_source && !result.contains(comp_uuid) {
+                            result.push(*comp_uuid);
+                            if recursive {
+                                to_check.push(*comp_uuid);
+                            }
+                        }
+                    }
+                }
+            }
+            result
+        }; // media lock released
+        
+        // 2. Invalidate caches (no media lock held)
+        if let Some(ref cache) = self.global_cache {
+            // Source node's own cache
+            cache.clear_comp(source_uuid, true, None);
+            // All dependent comps
+            for comp_uuid in dependents {
+                cache.clear_comp(comp_uuid, true, None);
+            }
+        }
+    }
+
+    /// Remove node by UUID. Clears cache, removes layer references.
+    pub fn del_node(&mut self, uuid: Uuid) {
+        // 1. Cancel pending workers
         if let Some(ref manager) = self.cache_manager {
             manager.increment_epoch();
         }
 
-        // 2. Clear cached frames for this comp
+        // 2. Clear cached frames (full removal, not dehydrate)
         if let Some(ref cache) = self.global_cache {
-            cache.clear_comp(uuid);
-            log::debug!("Cleared cache for removed comp: {}", uuid);
+            cache.clear_comp(uuid, false, None);
+            log::trace!("Cleared cache for removed node: {}", uuid);
         }
 
-        // 3. Remove from media pool and order
+        // 3. Remove layer references from CompNodes and collect affected comps.
+        //    Direct comp.layers.retain() requires explicit mark_dirty() + event emit.
+        //    Can't use modify_comp() here because we have &mut self.
+        let mut affected_comps = Vec::new();
+        {
+            let mut media = self.media.write().expect("media lock poisoned");
+            for (comp_uuid, arc_node) in media.iter_mut() {
+                // Arc::make_mut: copy-on-write if workers hold refs
+                let node = Arc::make_mut(arc_node);
+                if let Some(comp) = node.as_comp_mut() {
+                    let before = comp.layers.len();
+                    comp.layers.retain(|layer| layer.source_uuid() != uuid);
+                    if comp.layers.len() != before {
+                        // Direct field change → explicit mark_dirty()
+                        comp.mark_dirty();
+                        affected_comps.push(*comp_uuid);
+                    }
+                }
+            }
+        }
+        // Emit AttrsChangedEvent for each affected comp (like modify_comp() does)
+        if let Some(ref emitter) = self.event_emitter {
+            for comp_uuid in affected_comps {
+                emitter.emit(AttrsChangedEvent(comp_uuid));
+            }
+        }
+
+        // 4. Remove from media pool and order
         self.media.write().expect("media lock poisoned").remove(&uuid);
-        self.retain_comps_order(|u| *u != uuid);
+        self.retain_order(|u| *u != uuid);
+
+        // 5. Fix selection
+        self.retain_selection(|u| *u != uuid);
     }
 
-    /// Cascade invalidation: mark all parent comps as dirty
+    /// Alias for del_node (compat)
+    pub fn del_comp(&mut self, uuid: Uuid) {
+        self.del_node(uuid);
+    }
+
+    // === Node iteration ===
+
+    /// Iterate node tree depth-first starting from root.
+    /// 
+    /// # Arguments
+    /// * `root` - Starting node UUID
+    /// * `depth` - Max depth to traverse (-1 = unlimited, 0 = root only, 1 = direct children, etc.)
+    /// 
+    /// # Returns
+    /// Iterator yielding NodeIterItem with uuid, depth, and is_leaf flag
+    pub fn iter_node(&self, root: Uuid, depth: i32) -> NodeIter<'_> {
+        NodeIter::new(self, root, depth)
+    }
+
+    /// Get all descendant UUIDs of a node (including the node itself)
+    pub fn descendants(&self, root: Uuid) -> Vec<Uuid> {
+        self.iter_node(root, -1).map(|item| item.uuid).collect()
+    }
+
+    /// Check if ancestor contains descendant (directly or indirectly)
+    pub fn is_ancestor(&self, ancestor: Uuid, descendant: Uuid) -> bool {
+        if ancestor == descendant {
+            return true;
+        }
+        self.iter_node(ancestor, -1)
+            .skip(1) // Skip root itself
+            .any(|item| item.uuid == descendant)
+    }
+
+    /// Check if adding source_uuid as layer in comp_uuid would create a cycle.
     ///
-    /// When a comp's attrs are modified, all parent comps that reference it
-    /// must be invalidated to force recomposition.
-    /// This method recursively traverses up the parent hierarchy.
-    pub fn invalidate_cascade(&mut self, comp_uuid: Uuid) {
-        log::debug!("Cascade invalidation starting from comp: {}", comp_uuid);
+    /// A cycle exists if source_uuid (transitively) contains comp_uuid,
+    /// because then: comp_uuid → source_uuid → ... → comp_uuid.
+    ///
+    /// # Arguments
+    /// * `comp_uuid` - The composition receiving the new layer
+    /// * `source_uuid` - The node being added as layer source
+    ///
+    /// # Returns
+    /// true if adding would create a cycle, false if safe
+    pub fn would_create_cycle(&self, comp_uuid: Uuid, source_uuid: Uuid) -> bool {
+        // Direct self-reference
+        if comp_uuid == source_uuid {
+            return true;
+        }
+        // Check if source transitively contains comp (would create cycle)
+        self.is_ancestor(source_uuid, comp_uuid)
+    }
+}
 
-        // Find all parents recursively
-        let mut parents_to_invalidate = Vec::new();
-        let mut current_uuid = comp_uuid;
+/// Item yielded by NodeIter
+#[derive(Debug, Clone)]
+pub struct NodeIterItem {
+    /// Node UUID
+    pub uuid: Uuid,
+    /// Depth from root (0 = root)
+    pub depth: i32,
+    /// True if node has no children
+    pub is_leaf: bool,
+}
 
-        {
-            let media = self.media.read().expect("media lock poisoned");
-            loop {
-                // Find parent of current comp
-                let parent_uuid = media.get(&current_uuid)
-                    .and_then(|comp| comp.get_parent());
+/// Depth-first iterator over node tree
+pub struct NodeIter<'a> {
+    project: &'a Project,
+    stack: Vec<(Uuid, i32)>, // (uuid, current_depth)
+    max_depth: i32,
+}
 
-                match parent_uuid {
-                    Some(parent) => {
-                        parents_to_invalidate.push(parent);
-                        current_uuid = parent;
-                    }
-                    None => break, // Reached root
-                }
-            }
-        } // Release read lock
+impl<'a> NodeIter<'a> {
+    fn new(project: &'a Project, root: Uuid, max_depth: i32) -> Self {
+        Self {
+            project,
+            stack: vec![(root, 0)],
+            max_depth,
+        }
+    }
+}
 
-        // Mark all parents as dirty and clear their caches
-        let mut media = self.media.write().expect("media lock poisoned");
-        for parent_uuid in &parents_to_invalidate {
-            if let Some(parent_comp) = media.get_mut(parent_uuid) {
-                log::debug!("Invalidating parent comp: {}", parent_uuid);
-                parent_comp.attrs.mark_dirty();
+impl<'a> Iterator for NodeIter<'a> {
+    type Item = NodeIterItem;
 
-                // Clear cached frames for this parent comp
-                if let Some(ref cache) = self.global_cache {
-                    cache.clear_comp(*parent_uuid);
-                }
+    fn next(&mut self) -> Option<Self::Item> {
+        let (uuid, depth) = self.stack.pop()?;
+
+        // Get children (layer source UUIDs) from media pool
+        let children: Vec<Uuid> = {
+            let media = self.project.media.read().expect("media lock poisoned");
+            media.get(&uuid)
+                .and_then(|node| node.as_comp())
+                .map(|comp| comp.layers.iter().map(|l| l.source_uuid()).collect())
+                .unwrap_or_default()
+        };
+
+        let is_leaf = children.is_empty();
+
+        // Push children to stack if within depth limit
+        // depth=-1 means unlimited
+        if self.max_depth < 0 || depth < self.max_depth {
+            // Push in reverse order so first child is processed first
+            for child_uuid in children.into_iter().rev() {
+                self.stack.push((child_uuid, depth + 1));
             }
         }
 
-        log::debug!(
-            "Cascade invalidation complete: {} parents invalidated",
-            parents_to_invalidate.len()
-        );
+        Some(NodeIterItem {
+            uuid,
+            depth,
+            is_leaf,
+        })
+    }
+}
+
+// Serde helper for Arc<RwLock<HashMap<Uuid, NodeKind>>>
+mod arc_rwlock_hashmap {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+    use serde::ser::SerializeMap;
+
+    pub fn serialize<S>(
+        map: &Arc<RwLock<HashMap<Uuid, Arc<NodeKind>>>>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let guard = map.read().expect("media lock poisoned");
+        let mut map_ser = serializer.serialize_map(Some(guard.len()))?;
+        for (k, v) in guard.iter() {
+            map_ser.serialize_entry(k, v.as_ref())?;
+        }
+        map_ser.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<RwLock<HashMap<Uuid, Arc<NodeKind>>>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let map = HashMap::<Uuid, NodeKind>::deserialize(deserializer)?;
+        let arc_map: HashMap<Uuid, Arc<NodeKind>> = map.into_iter()
+            .map(|(k, v)| (k, Arc::new(v)))
+            .collect();
+        Ok(Arc::new(RwLock::new(arc_map)))
     }
 }
 
@@ -512,111 +943,61 @@ mod tests {
     use super::*;
     use crate::core::cache_man::CacheManager;
 
-    #[test]
-    fn test_cascade_invalidation() {
-        let manager = Arc::new(CacheManager::new(0.75, 2.0));
-        let mut project = Project::new(manager);
-
-        // Create hierarchy: grandparent -> parent -> child
-        let mut child = Comp::new("Child", 0, 100, 24.0);
-        let child_uuid = child.get_uuid();
-
-        let mut parent = Comp::new("Parent", 0, 100, 24.0);
-        let parent_uuid = parent.get_uuid();
-        parent.children.push((child_uuid, crate::entities::Attrs::new()));
-        child.set_parent(Some(parent_uuid));
-
-        let mut grandparent = Comp::new("Grandparent", 0, 100, 24.0);
-        let grandparent_uuid = grandparent.get_uuid();
-        grandparent.children.push((parent_uuid, crate::entities::Attrs::new()));
-        parent.set_parent(Some(grandparent_uuid));
-
-        // Add comps to project
-        {
-            let mut media = project.media.write().expect("media lock poisoned");
-            media.insert(child_uuid, child);
-            media.insert(parent_uuid, parent);
-            media.insert(grandparent_uuid, grandparent);
-        }
-
-        // Clear dirty flags (Comp::new() marks attrs as dirty)
-        {
-            let mut media = project.media.write().expect("media lock poisoned");
-            media.get_mut(&child_uuid).unwrap().attrs.clear_dirty();
-            media.get_mut(&parent_uuid).unwrap().attrs.clear_dirty();
-            media.get_mut(&grandparent_uuid).unwrap().attrs.clear_dirty();
-        }
-
-        // Mark only child as dirty
-        {
-            let mut media = project.media.write().expect("media lock poisoned");
-            media.get_mut(&child_uuid).unwrap().attrs.mark_dirty();
-        }
-        assert!(project.media.read().expect("media lock poisoned").get(&child_uuid).unwrap().attrs.is_dirty());
-
-        // Parent and grandparent should be clean
-        {
-            let media = project.media.read().expect("media lock poisoned");
-            assert!(!media.get(&parent_uuid).unwrap().attrs.is_dirty());
-            assert!(!media.get(&grandparent_uuid).unwrap().attrs.is_dirty());
-        }
-
-        // Trigger cascade invalidation from child
-        project.invalidate_cascade(child_uuid);
-
-        // After cascade, both parent and grandparent should be dirty
-        {
-            let media = project.media.read().expect("media lock poisoned");
-            assert!(
-                media.get(&parent_uuid).unwrap().attrs.is_dirty(),
-                "Parent should be dirty after cascade"
-            );
-            assert!(
-                media.get(&grandparent_uuid).unwrap().attrs.is_dirty(),
-                "Grandparent should be dirty after cascade"
-            );
-        }
+    fn test_project() -> Project {
+        let cache_manager = Arc::new(CacheManager::new(0.75, 2.0));
+        Project::new(cache_manager)
     }
 
     #[test]
-    fn test_cascade_invalidation_no_parents() {
-        let manager = Arc::new(CacheManager::new(0.75, 2.0));
-        let mut project = Project::new(manager);
-
-        // Create orphan comp (no parents)
-        let comp = Comp::new("Orphan", 0, 100, 24.0);
-        let comp_uuid = comp.get_uuid();
-
-        project.media.write().expect("media lock poisoned").insert(comp_uuid, comp);
-
-        // Cascade invalidation should not crash
-        project.invalidate_cascade(comp_uuid);
-
-        // Comp should still be dirty
-        assert!(project.media.read().expect("media lock poisoned").get(&comp_uuid).unwrap().attrs.is_dirty());
-    }
-}
-
-// Serde helper for Arc<RwLock<HashMap<Uuid, Comp>>>
-mod arc_rwlock_hashmap {
-    use super::*;
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S>(
-        map: &Arc<RwLock<HashMap<Uuid, Comp>>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        map.read().expect("media lock poisoned").serialize(serializer)
+    fn test_iter_node_empty() {
+        let project = test_project();
+        let fake_uuid = Uuid::new_v4();
+        
+        // Iterating non-existent node returns just the root (with is_leaf=true)
+        let items: Vec<_> = project.iter_node(fake_uuid, -1).collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].uuid, fake_uuid);
+        assert_eq!(items[0].depth, 0);
+        assert!(items[0].is_leaf);
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<RwLock<HashMap<Uuid, Comp>>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let map = HashMap::<Uuid, Comp>::deserialize(deserializer)?;
-        Ok(Arc::new(RwLock::new(map)))
+    #[test]
+    fn test_iter_node_depth_limit() {
+        let project = test_project();
+        let root = Uuid::new_v4();
+        
+        // depth=0 returns only root
+        let items: Vec<_> = project.iter_node(root, 0).collect();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].depth, 0);
+    }
+
+    #[test]
+    fn test_descendants() {
+        let project = test_project();
+        let root = Uuid::new_v4();
+        
+        let desc = project.descendants(root);
+        assert_eq!(desc.len(), 1);
+        assert_eq!(desc[0], root);
+    }
+
+    #[test]
+    fn test_is_ancestor_self() {
+        let project = test_project();
+        let uuid = Uuid::new_v4();
+        
+        // Node is ancestor of itself
+        assert!(project.is_ancestor(uuid, uuid));
+    }
+
+    #[test]
+    fn test_is_ancestor_different() {
+        let project = test_project();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        
+        // Unrelated nodes are not ancestors
+        assert!(!project.is_ancestor(a, b));
     }
 }

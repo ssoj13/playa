@@ -5,8 +5,8 @@
 //!
 //! **Used by**: App (global singleton), Comp (per-comp cache tracking)
 
-use log::{debug, info};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use log::{info, trace};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use sysinfo::System;
 
@@ -31,6 +31,9 @@ pub struct CacheManager {
     max_memory_bytes: AtomicUsize,
     /// Epoch counter for cancelling stale requests
     current_epoch: Arc<AtomicU64>,
+    /// Dirty flag for UI repaint: set when cache changes, cleared by main loop
+    /// Workers set this when frames load; main loop checks and triggers repaint
+    dirty_repaint: Arc<AtomicBool>,
 }
 
 impl CacheManager {
@@ -68,6 +71,7 @@ impl CacheManager {
             memory_usage: Arc::new(AtomicUsize::new(0)),
             max_memory_bytes: AtomicUsize::new(max_memory_bytes),
             current_epoch: Arc::new(AtomicU64::new(0)),
+            dirty_repaint: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -76,7 +80,7 @@ impl CacheManager {
     /// Call this when current time changes to cancel all pending preload requests.
     pub fn increment_epoch(&self) -> u64 {
         let new_epoch = self.current_epoch.fetch_add(1, Ordering::Relaxed) + 1;
-        debug!("Epoch incremented: {}", new_epoch);
+        trace!("Epoch incremented: {}", new_epoch);
         new_epoch
     }
 
@@ -88,6 +92,20 @@ impl CacheManager {
     /// Get shared epoch counter (for Workers)
     pub fn epoch_ref(&self) -> Arc<AtomicU64> {
         Arc::clone(&self.current_epoch)
+    }
+
+    /// Mark cache as dirty (frame loaded/changed)
+    /// Called by GlobalFrameCache when frames are inserted.
+    /// Main loop checks this to trigger UI repaint.
+    pub fn mark_dirty(&self) {
+        self.dirty_repaint.store(true, Ordering::Relaxed);
+    }
+
+    /// Check and clear dirty flag (atomic swap)
+    /// Returns true if cache changed since last check.
+    /// Main loop calls this to decide if repaint needed.
+    pub fn take_dirty(&self) -> bool {
+        self.dirty_repaint.swap(false, Ordering::Relaxed)
     }
 
     /// Check if memory limit exceeded
@@ -118,7 +136,7 @@ impl CacheManager {
         let new_usage = self.memory_usage.fetch_add(bytes, Ordering::Relaxed) + bytes;
         let limit = self.max_memory_bytes.load(Ordering::Relaxed);
         if new_usage > limit {
-            debug!(
+            trace!(
                 "Memory limit exceeded: {} MB / {} MB",
                 new_usage / 1024 / 1024,
                 limit / 1024 / 1024
@@ -129,12 +147,13 @@ impl CacheManager {
     /// Free memory usage (saturating subtraction to prevent underflow)
     pub fn free_memory(&self, bytes: usize) {
         // Use compare-exchange loop for saturating subtraction
+        // AcqRel ensures proper synchronization with add_memory and check_memory_limit
         loop {
-            let current = self.memory_usage.load(Ordering::Relaxed);
+            let current = self.memory_usage.load(Ordering::Acquire);
             let new_val = current.saturating_sub(bytes);
             if self
                 .memory_usage
-                .compare_exchange_weak(current, new_val, Ordering::Relaxed, Ordering::Relaxed)
+                .compare_exchange_weak(current, new_val, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
                 break;

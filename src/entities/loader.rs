@@ -6,13 +6,14 @@
 //! - Feature "openexr": openexr-rs (C++ bindings, full DWAA/DWAB support)
 
 use half::f16 as F16;
-use log::debug;
+use log::trace;
 use std::path::Path;
 
 use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
 use crate::entities::loader_video;
 use crate::entities::{AttrValue, Attrs};
 use crate::utils::media;
+use super::keys::{A_FPS, A_HEIGHT, A_WIDTH};
 
 /// Image loader with metadata support
 pub struct Loader;
@@ -62,15 +63,15 @@ impl Loader {
         let meta = loader_video::VideoMetadata::from_file(&actual_path)?;
 
         let mut meta_attrs = Attrs::new();
-        meta_attrs.set("width", AttrValue::UInt(meta.width));
-        meta_attrs.set("height", AttrValue::UInt(meta.height));
+        meta_attrs.set(A_WIDTH, AttrValue::UInt(meta.width));
+        meta_attrs.set(A_HEIGHT, AttrValue::UInt(meta.height));
         meta_attrs.set(
             "format",
             AttrValue::Str(format!("Video ({})", actual_path.display())),
         );
         meta_attrs.set("channels", AttrValue::UInt(3));
         meta_attrs.set("frames", AttrValue::UInt(meta.frame_count as u32));
-        meta_attrs.set("fps", AttrValue::Float(meta.fps as f32));
+        meta_attrs.set(A_FPS, AttrValue::Float(meta.fps as f32));
 
         Ok(meta_attrs)
     }
@@ -89,7 +90,7 @@ impl Loader {
 
     #[cfg(feature = "openexr")]
     fn header_exr(path: &Path) -> Result<Attrs, FrameError> {
-        debug!("Reading EXR header with openexr: {}", path.display());
+        trace!("Reading EXR header with openexr: {}", path.display());
 
         use openexr::prelude::*;
 
@@ -102,8 +103,8 @@ impl Loader {
         let height = (data_window.max.y - data_window.min.y + 1) as usize;
 
         let mut meta = Attrs::new();
-        meta.set("width", AttrValue::UInt(width as u32));
-        meta.set("height", AttrValue::UInt(height as u32));
+        meta.set(A_WIDTH, AttrValue::UInt(width as u32));
+        meta.set(A_HEIGHT, AttrValue::UInt(height as u32));
         meta.set("format", AttrValue::Str("EXR (OpenEXR)".to_string()));
 
         // Extract channel count
@@ -115,7 +116,7 @@ impl Loader {
 
     #[cfg(not(feature = "openexr"))]
     fn header_exr(path: &Path) -> Result<Attrs, FrameError> {
-        debug!("Reading EXR header with image crate: {}", path.display());
+        trace!("Reading EXR header with image crate: {}", path.display());
 
         // Use image crate for header reading (it uses exrs internally)
         let reader = image::ImageReader::open(path)
@@ -138,8 +139,8 @@ impl Loader {
         })?;
 
         let mut meta = Attrs::new();
-        meta.set("width", AttrValue::UInt(img.width()));
-        meta.set("height", AttrValue::UInt(img.height()));
+        meta.set(A_WIDTH, AttrValue::UInt(img.width()));
+        meta.set(A_HEIGHT, AttrValue::UInt(img.height()));
         meta.set("format", AttrValue::Str(format!("EXR ({:?})", format)));
 
         // Determine channel count from color type
@@ -157,7 +158,7 @@ impl Loader {
 
     #[cfg(feature = "openexr")]
     fn load_exr(path: &Path) -> Result<Frame, FrameError> {
-        debug!("Loading EXR with openexr: {}", path.display());
+        trace!("Loading EXR with openexr: {}", path.display());
 
         use openexr::prelude::*;
 
@@ -210,7 +211,7 @@ impl Loader {
 
     #[cfg(not(feature = "openexr"))]
     fn load_exr(path: &Path) -> Result<Frame, FrameError> {
-        debug!("Loading EXR with image crate: {}", path.display());
+        trace!("Loading EXR with image crate: {}", path.display());
 
         let img = image::open(path).map_err(|e| {
             let err_str = e.to_string();
@@ -247,7 +248,7 @@ impl Loader {
     // ===== Generic Image Loading (PNG, JPEG, TIFF, etc.) =====
 
     fn header_generic(path: &Path) -> Result<Attrs, FrameError> {
-        debug!("Reading generic image header: {}", path.display());
+        trace!("Reading generic image header: {}", path.display());
 
         let reader = image::ImageReader::open(path)
             .map_err(|e| FrameError::Image(format!("Failed to open image: {}", e)))?;
@@ -261,8 +262,8 @@ impl Loader {
             .map_err(|e| FrameError::Image(format!("Image decode error: {}", e)))?;
 
         let mut meta = Attrs::new();
-        meta.set("width", AttrValue::UInt(img.width()));
-        meta.set("height", AttrValue::UInt(img.height()));
+        meta.set(A_WIDTH, AttrValue::UInt(img.width()));
+        meta.set(A_HEIGHT, AttrValue::UInt(img.height()));
         meta.set("format", AttrValue::Str(format!("{:?}", format)));
 
         let channels = match img.color() {
@@ -278,7 +279,7 @@ impl Loader {
     }
 
     fn load_generic(path: &Path) -> Result<Frame, FrameError> {
-        debug!("Loading generic image: {}", path.display());
+        trace!("Loading generic image: {}", path.display());
 
         let img =
             image::open(path).map_err(|e| FrameError::Image(format!("Image load error: {}", e)))?;

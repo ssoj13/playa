@@ -25,7 +25,7 @@
 //! Uses `InputFile + Frame<f32>` API for native f32 reading (no f16 intermediate).
 //! Critical for ACES/linear workflows where precision matters.
 
-use log::{debug, info};
+use log::{info, trace};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -35,6 +35,7 @@ use half::f16 as F16;
 // Import utilities
 use crate::entities::Attrs;
 use crate::utils::media;
+use super::keys::{A_HEIGHT, A_WIDTH};
 
 /// Pixel buffer format - stores different precision levels
 #[derive(Debug, Clone)]
@@ -84,7 +85,9 @@ pub enum TonemapMode {
 pub enum FrameStatus {
     Placeholder, // No filename, green placeholder
     Header,      // Filename set, header loaded (resolution known), buffer is green placeholder
-    Loading,     // Async loading in progress
+    Loading,     // Async file loading in progress (FileNode)
+    Composing,   // Async composition in progress (CompNode)
+    Expired,     // Was Loaded, now stale - pixels valid but need recompute
     Loaded,      // Cached: File mode = image loaded into buffer, Layer mode = composed result cached
     Error,       // Loading failed
 }
@@ -96,7 +99,9 @@ impl FrameStatus {
         match self {
             FrameStatus::Placeholder => Color32::from_rgba_unmultiplied(40, 40, 45, 128),
             FrameStatus::Header => Color32::from_rgba_unmultiplied(60, 100, 180, 128),
-            FrameStatus::Loading => Color32::from_rgba_unmultiplied(220, 160, 60, 128),
+            FrameStatus::Loading => Color32::from_rgba_unmultiplied(220, 160, 60, 128),   // orange - file loading
+            FrameStatus::Composing => Color32::from_rgba_unmultiplied(180, 100, 220, 128), // purple - compositing
+            FrameStatus::Expired => Color32::from_rgba_unmultiplied(160, 140, 80, 128),   // tan - stale, needs refresh
             FrameStatus::Loaded => Color32::from_rgba_unmultiplied(80, 200, 120, 128),
             FrameStatus::Error => Color32::from_rgba_unmultiplied(200, 60, 60, 128),
         }
@@ -221,6 +226,11 @@ impl Frame {
                 }
             }
         }
+    }
+
+    /// Create U8 placeholder frame (convenience alias for Frame::new with U8 depth)
+    pub fn placeholder(width: usize, height: usize) -> Self {
+        Self::new(width, height, PixelDepth::U8)
     }
 
     /// Convenience method: Create 16-bit half-float F16 frame
@@ -363,17 +373,17 @@ impl Frame {
 
     /// Create composing placeholder (for layer mode cache reservation)
     ///
-    /// Creates minimal 1x1 frame with Loading status to prevent
+    /// Creates minimal 1x1 frame with Composing status to prevent
     /// race conditions where multiple workers try to compose same frame.
     pub fn new_composing() -> Self {
-        let buffer_u8 = vec![0, 50, 100, 255]; // 1 pixel blue-ish (composing indicator)
+        let buffer_u8 = vec![100, 50, 150, 255]; // 1 pixel purple-ish (composing indicator)
 
         let data = FrameData {
             buffer: Arc::new(PixelBuffer::U8(buffer_u8)),
             pixel_format: PixelFormat::Rgba8,
             width: 1,
             height: 1,
-            status: FrameStatus::Loading, // Mark as composing in progress
+            status: FrameStatus::Composing, // Mark as composing in progress
             attrs: Attrs::new(),
         };
 
@@ -442,15 +452,15 @@ impl Frame {
             data.height = height;
             data.status = FrameStatus::Header;
 
-            debug!("Loaded video header: {}x{}", width, height);
+            trace!("Loaded video header: {}x{}", width, height);
             return Ok(0);
         }
 
         // For images, use unified Loader
         let attrs = super::loader::Loader::header(&actual_path)?;
 
-        let width = attrs.get_u32("width").unwrap_or(1) as usize;
-        let height = attrs.get_u32("height").unwrap_or(1) as usize;
+        let width = attrs.get_u32(A_WIDTH).unwrap_or(1) as usize;
+        let height = attrs.get_u32(A_HEIGHT).unwrap_or(1) as usize;
 
         let mut data = self.data.lock().unwrap();
         data.width = width;
@@ -459,7 +469,7 @@ impl Frame {
         data.attrs = attrs;
 
         let attr_count = data.attrs.len();
-        debug!("Loaded header: {}x{} ({} attrs)", width, height, attr_count);
+        trace!("Loaded header: {}x{} ({} attrs)", width, height, attr_count);
         Ok(0)
     }
 
@@ -548,7 +558,7 @@ impl Frame {
 
     /// Load EXR file - delegate to unified Loader
     fn load_exr<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
-        debug!("Loading EXR: {}", path.as_ref().display());
+        trace!("Loading EXR: {}", path.as_ref().display());
 
         // Load via unified Loader
         let frame = super::loader::Loader::load(path.as_ref())?;
@@ -571,7 +581,7 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        debug!(
+        trace!(
             "Loaded EXR: {}x{} ({:?}), {} bytes",
             width, height, pixel_format, mem_size
         );
@@ -580,7 +590,7 @@ impl Frame {
 
     /// Load Radiance HDR format
     fn load_hdr<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
-        debug!("Loading HDR: {}", path.as_ref().display());
+        trace!("Loading HDR: {}", path.as_ref().display());
 
         let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
 
@@ -618,7 +628,7 @@ impl Frame {
 
     /// Load standard image formats
     fn load_image<P: AsRef<Path>>(&self, path: P) -> Result<usize, FrameError> {
-        debug!("Loading image: {}", path.as_ref().display());
+        trace!("Loading image: {}", path.as_ref().display());
 
         let img = image::open(path.as_ref()).map_err(|e| FrameError::Image(e.to_string()))?;
 
@@ -640,7 +650,7 @@ impl Frame {
 
     /// Load video frame
     fn load_video<P: AsRef<Path>>(&self, path: P, frame_num: usize) -> Result<usize, FrameError> {
-        debug!(
+        trace!(
             "Loading video frame {}: {}",
             frame_num,
             path.as_ref().display()
@@ -663,7 +673,7 @@ impl Frame {
         data.width = width;
         data.height = height;
 
-        debug!(
+        trace!(
             "Loaded video frame {}: {}x{}, {} bytes",
             frame_num, width, height, mem_size
         );
@@ -729,7 +739,7 @@ impl Frame {
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
-                debug!(
+                trace!(
                     "Unloaded frame to Header: {}x{}, freed {} bytes",
                     data.width, data.height, freed_bytes
                 );
@@ -765,7 +775,7 @@ impl Frame {
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
-                debug!("Reset error to Header: {}x{}", data.width, data.height);
+                trace!("Reset error to Header: {}x{}", data.width, data.height);
                 Ok(0)
             }
 
@@ -774,7 +784,7 @@ impl Frame {
             (FrameStatus::Loading, FrameStatus::Header) => {
                 let mut data = self.data.lock().unwrap();
                 data.status = FrameStatus::Header;
-                debug!("Cancelled loading, marked as Header");
+                trace!("Cancelled loading, marked as Header");
                 Ok(0)
             }
 
@@ -1293,27 +1303,30 @@ mod tests {
 
     /// Test: PixelBuffer variant sizes
     /// Validates: Different pixel formats have expected memory layout
+    ///
+    /// Note: panic!() calls below are TEST-ONLY assertions, not production code.
+    /// Bug hunt false positive: these never execute in production (Plan2/Plan3).
     #[test]
     fn test_pixel_buffer_types() {
         // U8: 4 bytes per pixel (RGBA)
         let buf_u8 = PixelBuffer::U8(vec![0u8; 1920 * 1080 * 4]);
         match buf_u8 {
             PixelBuffer::U8(v) => assert_eq!(v.len(), 1920 * 1080 * 4),
-            _ => panic!("Wrong variant"),
+            _ => panic!("Wrong variant"), // Test-only: unreachable in prod
         }
 
         // F16: 4 half-floats per pixel (RGBA)
         let buf_f16 = PixelBuffer::F16(vec![F16::ZERO; 1920 * 1080 * 4]);
         match buf_f16 {
             PixelBuffer::F16(v) => assert_eq!(v.len(), 1920 * 1080 * 4),
-            _ => panic!("Wrong variant"),
+            _ => panic!("Wrong variant"), // Test-only: unreachable in prod
         }
 
         // F32: 4 floats per pixel (RGBA)
         let buf_f32 = PixelBuffer::F32(vec![0.0f32; 1920 * 1080 * 4]);
         match buf_f32 {
             PixelBuffer::F32(v) => assert_eq!(v.len(), 1920 * 1080 * 4),
-            _ => panic!("Wrong variant"),
+            _ => panic!("Wrong variant"), // Test-only: unreachable in prod
         }
     }
 

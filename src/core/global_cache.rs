@@ -10,24 +10,15 @@
 //! - Memory tracking via CacheManager
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::hash::{Hash, Hasher};
 use indexmap::IndexSet;
-use log::{debug, trace};
+use log::trace;
 use uuid::Uuid;
 
 use crate::core::cache_man::CacheManager;
-use crate::entities::Frame;
-
-/// Cache strategy for frame retention
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CacheStrategy {
-    /// Cache only the last accessed frame per comp (minimal memory)
-    LastOnly,
-    /// Cache all frames within work area (maximum performance)
-    All,
-}
+use crate::entities::{Frame, CacheStrategy, CacheStatsSnapshot, FrameCache};
 
 /// Cache statistics for monitoring performance
 #[derive(Debug, Default)]
@@ -98,7 +89,8 @@ impl Hash for CacheKey {
 #[derive(Debug)]
 pub struct GlobalFrameCache {
     /// Nested cache: comp_uuid -> (frame_idx -> Frame)
-    cache: Arc<Mutex<HashMap<Uuid, HashMap<i32, Frame>>>>,
+    /// RwLock for concurrent reads, serialized writes
+    cache: Arc<RwLock<HashMap<Uuid, HashMap<i32, Frame>>>>,
     /// LRU eviction queue: IndexSet preserves insertion order, O(1) remove by key
     lru_order: Arc<Mutex<IndexSet<CacheKey>>>,
     /// Cache manager for memory tracking
@@ -121,13 +113,13 @@ impl GlobalFrameCache {
     pub fn new(capacity: usize, manager: Arc<CacheManager>, strategy: CacheStrategy) -> Self {
         let capacity = capacity.max(100); // Min 100 frames
 
-        debug!(
+        trace!(
             "GlobalFrameCache created: capacity={}, strategy={:?} (nested HashMap)",
             capacity, strategy
         );
 
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(HashMap::new())),
             lru_order: Arc::new(Mutex::new(IndexSet::with_capacity(capacity))),
             cache_manager: manager,
             strategy: Arc::new(Mutex::new(strategy)),
@@ -143,7 +135,7 @@ impl GlobalFrameCache {
     pub fn get(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
         // Minimize lock hold time - release cache lock before LRU update
         let result = {
-            let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
             cache
                 .get(&comp_uuid)
                 .and_then(|frames| frames.get(&frame_idx))
@@ -168,7 +160,7 @@ impl GlobalFrameCache {
 
     /// Check if frame exists in cache (without updating LRU)
     pub fn contains(&self, comp_uuid: Uuid, frame_idx: i32) -> bool {
-        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         cache
             .get(&comp_uuid)
             .map(|frames| frames.contains_key(&frame_idx))
@@ -177,7 +169,7 @@ impl GlobalFrameCache {
 
     /// Get frame status without cloning the frame (lightweight query for UI)
     pub fn get_status(&self, comp_uuid: Uuid, frame_idx: i32) -> Option<crate::entities::FrameStatus> {
-        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         cache
             .get(&comp_uuid)
             .and_then(|frames| frames.get(&frame_idx))
@@ -188,7 +180,7 @@ impl GlobalFrameCache {
     /// Returns (frame, was_inserted) - true if we inserted, false if already existed.
     /// This prevents race conditions where two threads both check and insert.
     pub fn get_or_insert(&self, comp_uuid: Uuid, frame_idx: i32, make_frame: impl FnOnce() -> Frame) -> (Frame, bool) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
 
         // Check if frame already exists
         if let Some(existing) = cache.get(&comp_uuid).and_then(|f| f.get(&frame_idx)) {
@@ -209,6 +201,10 @@ impl GlobalFrameCache {
             self.cache_manager.add_memory(frame_size);
         }
 
+        // Signal UI that cache changed
+        self.cache_manager.mark_dirty();
+        self.enforce_limits();
+
         (frame_clone, true)
     }
 
@@ -223,28 +219,14 @@ impl GlobalFrameCache {
     pub fn insert(&self, comp_uuid: Uuid, frame_idx: i32, frame: Frame) {
         let frame_size = frame.mem();
 
-        // Apply strategy: LastOnly clears previous frames for this comp
+        // Apply strategy: LastOnly clears previous frames for this comp (except current)
         if *self.strategy.lock().unwrap_or_else(|e| e.into_inner()) == CacheStrategy::LastOnly {
-            self.clear_comp(comp_uuid);
-        }
-
-        // Eviction: both memory limit and capacity limit
-        // First evict if over memory limit
-        while self.cache_manager.check_memory_limit() {
-            if !self.evict_oldest() {
-                break; // Nothing to evict
-            }
-        }
-        // Then evict if over capacity limit (allow up to capacity entries)
-        while self.len() > self.capacity {
-            if !self.evict_oldest() {
-                break;
-            }
+            self.clear_comp(comp_uuid, false, Some(frame_idx)); // Keep current frame
         }
 
         // Insert frame
         {
-            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
             let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
             // Remove old frame if exists (prevents memory leak)
@@ -270,13 +252,31 @@ impl GlobalFrameCache {
 
         // Spammy per-frame log
         trace!("Cached frame: {}:{} ({} bytes)", comp_uuid, frame_idx, frame_size);
+
+        // Signal UI that cache changed - triggers repaint to update indicators
+        self.cache_manager.mark_dirty();
+        self.enforce_limits();
+    }
+
+    /// Enforce memory and capacity limits after insertions.
+    fn enforce_limits(&self) {
+        while self.cache_manager.check_memory_limit() {
+            if !self.evict_oldest() {
+                break; // Nothing to evict
+            }
+        }
+        while self.len() > self.capacity {
+            if !self.evict_oldest() {
+                break;
+            }
+        }
     }
 
     /// Evict oldest frame from cache
     ///
     /// Returns true if a frame was evicted, false if cache empty.
     fn evict_oldest(&self) -> bool {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         // Get oldest key from front of queue (first inserted = oldest)
@@ -297,7 +297,7 @@ impl GlobalFrameCache {
                     cache.remove(&key.comp_uuid);
                 }
 
-                debug!(
+                trace!(
                     "LRU evicted: {}:{} (freed {} MB)",
                     key.comp_uuid,
                     key.frame_idx,
@@ -315,7 +315,7 @@ impl GlobalFrameCache {
     /// Use this for light attribute changes (opacity, blend_mode) that only
     /// require recomposing the current frame, not the entire comp.
     pub fn clear_frame(&self, comp_uuid: Uuid, frame_idx: i32) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(frame) = cache.get_mut(&comp_uuid).and_then(|f| f.remove(&frame_idx)) {
@@ -326,39 +326,104 @@ impl GlobalFrameCache {
             let key = CacheKey { comp_uuid, frame_idx };
             lru.shift_remove(&key);
 
-            log::debug!(
+            log::trace!(
                 "Cleared single frame {}:{} ({} bytes freed)",
                 comp_uuid, frame_idx, size
             );
         }
     }
 
-    /// Clear all cached frames for a specific comp - O(1)
+    /// Clear/invalidate cached frames for a specific comp or source node.
     ///
-    /// This is the main benefit of nested HashMap structure.
-    pub fn clear_comp(&self, comp_uuid: Uuid) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
+    /// # Dehydrate vs Full Clear
+    /// 
+    /// **Dehydrate (dehydrate=true)**:
+    /// - Marks frames as `Expired` but KEEPS pixel data in memory
+    /// - Viewport continues displaying old pixels while new ones compute
+    /// - Prevents black flash during attribute changes
+    /// - Use when: user edits attributes, comp structure changes
+    /// 
+    /// **Full Clear (dehydrate=false)**:
+    /// - Removes frames entirely, frees memory
+    /// - Next access returns None until recomputed  
+    /// - Use when: node deleted, explicit cache clear request
+    ///
+    /// # Why This Matters
+    /// 
+    /// Without dehydrate, changing a TextNode's text would:
+    /// 1. Clear cache completely
+    /// 2. Viewport finds no frame → shows black
+    /// 3. User sees black flash until recompute finishes
+    ///
+    /// With dehydrate:
+    /// 1. Mark frames Expired (pixels still valid)
+    /// 2. Viewport shows old frame (Expired status)
+    /// 3. Recompute runs in background
+    /// 4. New frame replaces Expired one smoothly
+    ///
+    /// Clear/invalidate cached frames for a composition.
+    ///
+    /// # Arguments
+    /// - `comp_uuid`: Composition to clear
+    /// - `dehydrate`: If true, mark frames Expired (keep pixels). If false, remove completely.
+    /// - `except`: If Some(idx), keep that frame (used by LastOnly strategy to preserve current frame)
+    pub fn clear_comp(&self, comp_uuid: Uuid, dehydrate: bool, except: Option<i32>) {
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
 
-        // Remove entire inner HashMap in O(1)
-        if let Some(frames) = cache.remove(&comp_uuid) {
-            // Free memory for all frames
-            let mut total_freed = 0usize;
-            for (_, frame) in frames.iter() {
-                let size = frame.mem();
-                self.cache_manager.free_memory(size);
-                total_freed += size;
+        if dehydrate {
+            // Dehydrate mode: keep pixels, just mark stale
+            // Frames with Expired status are still returned by get()
+            // but signal that recompute is needed
+            if let Some(frames) = cache.get_mut(&comp_uuid) {
+                let mut expired_count = 0;
+                for (&idx, frame) in frames.iter() {
+                    if except == Some(idx) {
+                        continue; // Skip excepted frame
+                    }
+                    if frame.status() == crate::entities::frame::FrameStatus::Loaded {
+                        let _ = frame.set_status(crate::entities::frame::FrameStatus::Expired);
+                        expired_count += 1;
+                    }
+                }
+                trace!("Dehydrated comp {}: {} frames marked Expired", comp_uuid, expired_count);
             }
+        } else {
+            // Full clear: remove frames and free memory
+            // Used when node is deleted or user explicitly clears cache
+            let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
-            // Remove from LRU queue
-            lru.retain(|k| k.comp_uuid != comp_uuid);
+            if let Some(mut frames) = cache.remove(&comp_uuid) {
+                let mut total_freed = 0usize;
+                let mut removed_count = 0;
 
-            debug!(
-                "Cleared comp {}: {} frames, {} MB freed",
-                comp_uuid,
-                frames.len(),
-                total_freed / 1024 / 1024
-            );
+                // If except specified, keep that frame
+                let excepted_frame = except.and_then(|idx| frames.remove(&idx));
+
+                for (_, frame) in frames.iter() {
+                    let size = frame.mem();
+                    self.cache_manager.free_memory(size);
+                    total_freed += size;
+                    removed_count += 1;
+                }
+
+                // Update LRU - remove all except the excepted frame
+                if let Some(except_idx) = except {
+                    lru.retain(|k| k.comp_uuid != comp_uuid || k.frame_idx == except_idx);
+                } else {
+                    lru.retain(|k| k.comp_uuid != comp_uuid);
+                }
+
+                // Re-insert excepted frame if it existed
+                if let Some(frame) = excepted_frame {
+                    cache.entry(comp_uuid).or_default().insert(except.unwrap(), frame);
+                }
+
+                trace!(
+                    "Cleared comp {}: {} frames, {} MB freed{}",
+                    comp_uuid, removed_count, total_freed / 1024 / 1024,
+                    except.map(|i| format!(", kept frame {}", i)).unwrap_or_default()
+                );
+            }
         }
     }
 
@@ -367,7 +432,7 @@ impl GlobalFrameCache {
     /// More efficient than clear_comp when only part of timeline changed.
     /// Frames will be recreated as Header on next access.
     pub fn clear_range(&self, comp_uuid: Uuid, start: i32, end: i32) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         let Some(frames) = cache.get_mut(&comp_uuid) else {
@@ -402,7 +467,7 @@ impl GlobalFrameCache {
         }
 
         if count > 0 {
-            debug!(
+            trace!(
                 "Cleared range {}:[{}..{}]: {} frames, {} MB freed",
                 comp_uuid, start, end, count, total_freed / 1024 / 1024
             );
@@ -411,7 +476,7 @@ impl GlobalFrameCache {
 
     /// Clear entire cache
     pub fn clear_all(&self) {
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
         // Free all memory
@@ -424,14 +489,14 @@ impl GlobalFrameCache {
         cache.clear();
         lru.clear();
 
-        debug!("Cleared entire cache");
+        trace!("Cleared entire cache");
     }
 
     /// Change caching strategy
     pub fn set_strategy(&self, strategy: CacheStrategy) {
         let mut current = self.strategy.lock().unwrap_or_else(|e| e.into_inner());
         if *current != strategy {
-            debug!("Cache strategy: {:?} -> {:?}", *current, strategy);
+            trace!("Cache strategy: {:?} -> {:?}", *current, strategy);
             *current = strategy;
 
             // If switching to LastOnly, clear all
@@ -449,33 +514,71 @@ impl GlobalFrameCache {
 
     /// Get current cache size (total number of frames)
     pub fn len(&self) -> usize {
-        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        cache.values().map(|frames| frames.len()).sum()
+        self.lru_order.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Get number of cached comps
     pub fn comp_count(&self) -> usize {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.cache.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Check if cache has any frames for a comp
     pub fn has_comp(&self, comp_uuid: Uuid) -> bool {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&comp_uuid)
+        self.cache.read().unwrap_or_else(|e| e.into_inner()).contains_key(&comp_uuid)
     }
 
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
+        self.cache.read().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     /// Get frame count for specific comp
     pub fn comp_frame_count(&self, comp_uuid: Uuid) -> usize {
         self.cache
-            .lock()
-            .unwrap()
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .get(&comp_uuid)
             .map(|frames| frames.len())
             .unwrap_or(0)
+    }
+    
+    /// Get cache statistics snapshot (for trait impl)
+    pub fn stats_snapshot(&self) -> CacheStatsSnapshot {
+        CacheStatsSnapshot {
+            hits: self.stats.hits(),
+            misses: self.stats.misses(),
+            size: self.len(),
+        }
+    }
+}
+
+// ============================================================================
+// FrameCache Trait Implementation
+// ============================================================================
+
+impl FrameCache for GlobalFrameCache {
+    fn get(&self, node_uuid: Uuid, frame_idx: i32) -> Option<Frame> {
+        GlobalFrameCache::get(self, node_uuid, frame_idx)
+    }
+
+    fn insert(&self, node_uuid: Uuid, frame_idx: i32, frame: Frame) {
+        GlobalFrameCache::insert(self, node_uuid, frame_idx, frame)
+    }
+
+    fn get_status(&self, node_uuid: Uuid, frame_idx: i32) -> Option<crate::entities::FrameStatus> {
+        GlobalFrameCache::get_status(self, node_uuid, frame_idx)
+    }
+
+    fn len(&self) -> usize {
+        GlobalFrameCache::len(self)
+    }
+
+    fn set_strategy(&self, strategy: CacheStrategy) {
+        GlobalFrameCache::set_strategy(self, strategy)
+    }
+
+    fn stats_snapshot(&self) -> CacheStatsSnapshot {
+        GlobalFrameCache::stats_snapshot(self)
     }
 }
 
@@ -548,8 +651,8 @@ mod tests {
         assert_eq!(cache.comp_frame_count(comp1), 100);
         assert_eq!(cache.comp_frame_count(comp2), 1);
 
-        // Clear comp1 - should be O(1) on HashMap level
-        cache.clear_comp(comp1);
+        // Clear comp1 - full removal (dehydrate=false, except=None)
+        cache.clear_comp(comp1, false, None);
 
         assert_eq!(cache.comp_frame_count(comp1), 0);
         assert!(!cache.contains(comp1, 0));
@@ -603,8 +706,8 @@ mod tests {
         assert_eq!(cache.comp_count(), 5);
         assert_eq!(cache.len(), 50);
 
-        // Clear middle comp
-        cache.clear_comp(comps[2]);
+        // Clear middle comp (full removal, not dehydrate)
+        cache.clear_comp(comps[2], false, None);
         assert_eq!(cache.comp_count(), 4);
         assert_eq!(cache.len(), 40);
     }

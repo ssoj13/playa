@@ -1,4 +1,5 @@
 use crate::core::cache_man::CacheManager;
+use crate::entities::node::Node;
 use crate::entities::Project;
 use crate::entities::frame::{Frame, PixelFormat};
 use crate::core::event_bus::BoxedEvent;

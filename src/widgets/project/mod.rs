@@ -4,6 +4,8 @@
 
 mod project;
 pub mod project_ui;
+pub mod project_events;
 
 pub use project::ProjectActions;
 pub use project_ui::render;
+pub use project_events::*;

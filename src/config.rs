@@ -1,5 +1,17 @@
+//! Application configuration: paths, defaults, and theme colors.
+//!
+//! Combines:
+//! - Path configuration (PathConfig) for config/data file locations
+//! - Default values for app constants (fps, speed, dimensions)
+//! - Theme colors for consistent UI appearance
+
 use anyhow::{Context, Result};
+use eframe::egui::Color32;
 use std::path::PathBuf;
+
+// ============================================================================
+// Path Configuration
+// ============================================================================
 
 /// Configuration for overriding default application paths
 #[derive(Debug, Clone)]
@@ -11,7 +23,7 @@ pub struct PathConfig {
 impl PathConfig {
     /// Create PathConfig from CLI arguments and environment variables
     ///
-    /// Priority: CLI args → ENV var (PLAYA_CONFIG_DIR) → None (use defaults)
+    /// Priority: CLI args -> ENV var (PLAYA_CONFIG_DIR) -> None (use defaults)
     pub fn from_env_and_cli(cli_dir: Option<PathBuf>) -> Self {
         let config_dir =
             cli_dir.or_else(|| std::env::var("PLAYA_CONFIG_DIR").ok().map(PathBuf::from));
@@ -128,6 +140,95 @@ fn get_data_dir(config: &PathConfig) -> PathBuf {
     // Fallback: "." if everything else fails
     PathBuf::from(".")
 }
+
+// ============================================================================
+// Default Values
+// ============================================================================
+
+/// Default frames per second for new comps/files.
+pub const DEFAULT_FPS: f32 = 24.0;
+
+/// Default playback speed multiplier.
+pub const DEFAULT_SPEED: f32 = 1.0;
+
+/// Default layer opacity.
+pub const DEFAULT_OPACITY: f32 = 1.0;
+
+/// Default composition dimensions (width, height).
+pub const DEFAULT_DIM: (usize, usize) = (1920, 1080);
+
+/// Default camera near clip plane.
+pub const DEFAULT_NEAR_CLIP: f32 = 1.0;
+
+/// Default camera far clip plane.
+pub const DEFAULT_FAR_CLIP: f32 = 10000.0;
+
+/// Default camera field of view (AE default).
+pub const DEFAULT_FOV: f32 = 39.6;
+
+/// Minimum speed value (prevents division by zero).
+pub const MIN_SPEED: f32 = 0.001;
+
+/// Default source length for new nodes.
+pub const DEFAULT_SRC_LEN: i32 = 100;
+
+// ============================================================================
+// Frame Status Colors (for cache visualization)
+// ============================================================================
+
+pub mod frame_status {
+    use super::*;
+    
+    pub const PLACEHOLDER: Color32 = Color32::from_rgba_premultiplied(40, 40, 45, 128);
+    pub const HEADER: Color32 = Color32::from_rgba_premultiplied(60, 100, 180, 128);
+    pub const LOADING: Color32 = Color32::from_rgba_premultiplied(220, 160, 60, 128);
+    pub const COMPOSING: Color32 = Color32::from_rgba_premultiplied(180, 100, 220, 128);
+    pub const EXPIRED: Color32 = Color32::from_rgba_premultiplied(160, 140, 80, 128);
+    pub const LOADED: Color32 = Color32::from_rgba_premultiplied(80, 200, 120, 128);
+    pub const ERROR: Color32 = Color32::from_rgba_premultiplied(200, 60, 60, 128);
+}
+
+// ============================================================================
+// Timeline Colors
+// ============================================================================
+
+pub mod timeline {
+    use super::*;
+    
+    /// Selected clip/layer background
+    pub const SELECTED_BG: Color32 = Color32::from_rgb(70, 100, 140);
+    /// Hovered clip/layer background
+    pub const HOVERED_BG: Color32 = Color32::from_rgb(60, 70, 85);
+    /// Normal clip/layer background
+    pub const NORMAL_BG: Color32 = Color32::from_rgb(45, 50, 60);
+    /// Playhead color
+    pub const PLAYHEAD: Color32 = Color32::from_rgb(220, 60, 60);
+    /// Work area bounds color
+    pub const WORK_AREA: Color32 = Color32::from_rgba_premultiplied(100, 140, 200, 80);
+}
+
+// ============================================================================
+// UI Colors
+// ============================================================================
+
+pub mod ui {
+    use super::*;
+    
+    /// Panel background
+    pub const PANEL_BG: Color32 = Color32::from_rgb(30, 32, 36);
+    /// Separator line
+    pub const SEPARATOR: Color32 = Color32::from_rgb(50, 55, 65);
+    /// Text primary
+    pub const TEXT_PRIMARY: Color32 = Color32::from_rgb(220, 220, 225);
+    /// Text secondary/dimmed
+    pub const TEXT_SECONDARY: Color32 = Color32::from_rgb(140, 145, 155);
+    /// Accent color
+    pub const ACCENT: Color32 = Color32::from_rgb(80, 140, 220);
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {

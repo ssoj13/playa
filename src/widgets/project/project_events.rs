@@ -1,0 +1,101 @@
+//! Project management and selection events.
+
+use std::path::PathBuf;
+use uuid::Uuid;
+
+// === Project Management ===
+
+#[derive(Clone, Debug)]
+pub struct AddClipEvent(pub PathBuf);
+
+#[derive(Clone, Debug)]
+pub struct AddClipsEvent(pub Vec<PathBuf>);
+
+/// Add folder event - scans directory recursively for media files
+#[derive(Clone, Debug)]
+pub struct AddFolderEvent(pub PathBuf);
+
+#[derive(Clone, Debug)]
+pub struct AddCompEvent {
+    pub name: String,
+    pub fps: f32,
+}
+
+#[derive(Clone, Debug)]
+pub struct AddCameraEvent {
+    pub name: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct AddTextEvent {
+    pub name: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct RemoveMediaEvent(pub Uuid);
+
+#[derive(Clone, Debug)]
+pub struct RemoveSelectedMediaEvent;
+
+#[derive(Clone, Debug)]
+pub struct ClearAllMediaEvent;
+
+#[derive(Clone, Debug)]
+pub struct SaveProjectEvent(pub PathBuf);
+
+#[derive(Clone, Debug)]
+pub struct LoadProjectEvent(pub PathBuf);
+
+/// Quick save event - saves to last known path or shows dialog
+#[derive(Clone, Debug)]
+pub struct QuickSaveEvent;
+
+/// Open project dialog event - shows file picker
+#[derive(Clone, Debug)]
+pub struct OpenProjectDialogEvent;
+
+// === Selection ===
+
+#[derive(Clone, Debug)]
+pub struct SelectMediaEvent(pub Uuid);
+
+#[derive(Clone, Debug)]
+pub struct ProjectSelectionChangedEvent {
+    pub selection: Vec<Uuid>,
+    pub anchor: Option<usize>,
+}
+
+/// Event to switch active comp (e.g., double-click on layer to dive into nested comp)
+#[derive(Clone, Debug)]
+pub struct ProjectActiveChangedEvent {
+    pub uuid: Uuid,
+    /// If Some, set this frame after switching comp.
+    /// Used for dive-into-comp to preserve playhead position.
+    pub target_frame: Option<i32>,
+}
+
+impl ProjectActiveChangedEvent {
+    /// Create event to switch comp without changing frame
+    pub fn new(uuid: Uuid) -> Self {
+        Self { uuid, target_frame: None }
+    }
+    
+    /// Create event to switch comp and set specific frame
+    pub fn with_frame(uuid: Uuid, frame: i32) -> Self {
+        Self { uuid, target_frame: Some(frame) }
+    }
+}
+
+/// Navigate back to previous comp (U key)
+#[derive(Clone, Debug)]
+pub struct ProjectPreviousCompEvent;
+
+/// Clear all cached frames (Ctrl+Alt+NumpadSlash)
+#[derive(Clone, Debug)]
+pub struct ClearCacheEvent;
+
+/// Selection focus event - tells AE which entities to show attributes for.
+/// Emitted when user clicks in Project panel, Timeline, or NodeEditor.
+#[derive(Clone, Debug)]
+pub struct SelectionFocusEvent(pub Vec<Uuid>);

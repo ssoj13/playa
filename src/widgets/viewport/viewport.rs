@@ -18,7 +18,9 @@
 //! Call `request_refresh()` to force re-render (resets both tracking values).
 
 use eframe::egui;
-use log::{debug, info};
+use log::{info, trace};
+
+use super::coords;
 
 /// Scrubber line color when inside image bounds (white, 50% transparent)
 const SCRUB_NORMAL: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.5);
@@ -32,7 +34,7 @@ const ZOOM_IN_FACTOR: f32 = 1.0 + ZOOM_STEP;
 const ZOOM_OUT_FACTOR: f32 = 1.0 / ZOOM_IN_FACTOR;
 
 /// Linear interpolation: maps value from [old_min, old_max] to [new_min, new_max]
-fn fit(value: f32, old_min: f32, old_max: f32, new_min: f32, new_max: f32) -> f32 {
+pub fn fit(value: f32, old_min: f32, old_max: f32, new_min: f32, new_max: f32) -> f32 {
     if (old_max - old_min).abs() < f32::EPSILON {
         return new_min;
     }
@@ -63,12 +65,25 @@ pub struct ViewportState {
     pub viewport_size: egui::Vec2,
     #[serde(skip)]
     pub scrubber: ViewportScrubber,
+    /// True while RMB tool drag is active (latched on press inside viewport).
+    /// Used by viewport UI to implement "no-aim" transform drags without relying on hover_pos,
+    /// which may be None during drags depending on platform/backend.
+    #[serde(skip)]
+    pub rmb_tool_drag_active: bool,
     /// Last rendered cache epoch (0 = needs refresh)
     #[serde(skip)]
     pub last_rendered_epoch: u64,
     /// Last rendered frame number (for detecting frame changes)
     #[serde(skip)]
     pub last_rendered_frame: Option<i32>,
+}
+
+/// Render-only viewport state (cheap to copy into GL callbacks).
+#[derive(Clone, Copy)]
+pub struct ViewportRenderState {
+    pub model_matrix: [[f32; 4]; 4],
+    pub view_matrix: [[f32; 4]; 4],
+    pub projection_matrix: [[f32; 4]; 4],
 }
 
 impl Default for ViewportState {
@@ -80,6 +95,7 @@ impl Default for ViewportState {
             image_size: egui::Vec2::new(1920.0, 1080.0),
             viewport_size: egui::Vec2::new(1920.0, 1080.0),
             scrubber: ViewportScrubber::new(),
+            rmb_tool_drag_active: false,
             last_rendered_epoch: 0,
             last_rendered_frame: None,
         }
@@ -179,11 +195,10 @@ impl ViewportState {
 
         // Adjust pan to keep the point under the cursor stationary
         let zoom_ratio = self.zoom / old_zoom;
-        let mut cursor_to_center = cursor_pos - self.viewport_size * 0.5;
-        cursor_to_center.y = -cursor_to_center.y;
+        let cursor_to_center = coords::screen_to_viewport_centered(cursor_pos, self.viewport_size);
         self.pan = cursor_to_center - (cursor_to_center - self.pan) * zoom_ratio;
 
-        debug!(
+        trace!(
             "Zoom: {:.2}x, Pan: ({:.1}, {:.1})",
             self.zoom, self.pan.x, self.pan.y
         );
@@ -192,8 +207,8 @@ impl ViewportState {
     /// Handle pan (switches to Manual mode)
     pub fn handle_pan(&mut self, delta: egui::Vec2) {
         self.mode = ViewportMode::Manual;
-        self.pan += egui::vec2(delta.x, -delta.y);
-        debug!("Pan: ({:.1}, {:.1})", self.pan.x, self.pan.y);
+        self.pan += coords::screen_delta_to_viewport(delta);
+        trace!("Pan: ({:.1}, {:.1})", self.pan.x, self.pan.y);
     }
 
     /// Get image bounds in screen space
@@ -209,50 +224,46 @@ impl ViewportState {
         self.screen_to_image(screen_pos).is_some()
     }
 
-    /// Convert image space coordinates (0..image_size) to screen space
+    /// Convert image space coordinates (0..image_size) to screen space.
+    /// Uses frame space (centered, pixel coords) as intermediate — matches space.rs.
     pub fn image_to_screen(&self, image_pos: egui::Vec2) -> egui::Vec2 {
-        // image (0..image_size) -> local (-0.5..0.5)
-        let local = egui::vec2(
-            image_pos.x / self.image_size.x - 0.5,
-            image_pos.y / self.image_size.y - 0.5,
+        // image -> frame (centered pixel space)
+        let frame = egui::vec2(
+            image_pos.x - self.image_size.x * 0.5,
+            image_pos.y - self.image_size.y * 0.5,
         );
-
-        // local -> viewport space (apply view transform)
+        // frame -> viewport (apply view: zoom + pan)
         let viewport = egui::vec2(
-            local.x * self.image_size.x * self.zoom + self.pan.x,
-            local.y * self.image_size.y * self.zoom + self.pan.y,
+            frame.x * self.zoom + self.pan.x,
+            frame.y * self.zoom + self.pan.y,
         );
-
-        // viewport -> screen space
+        // viewport -> screen
         egui::vec2(
-            viewport.x + self.viewport_size.x / 2.0,
-            viewport.y + self.viewport_size.y / 2.0,
+            viewport.x + self.viewport_size.x * 0.5,
+            viewport.y + self.viewport_size.y * 0.5,
         )
     }
 
-    /// Convert screen space coordinates to image space (0..image_size)
-    /// Returns None if position is outside the image bounds
+    /// Convert screen space coordinates to image space (0..image_size).
+    /// Returns None if position is outside the image bounds.
     #[allow(dead_code)]
     pub fn screen_to_image(&self, screen_pos: egui::Vec2) -> Option<egui::Vec2> {
-        // screen -> viewport space
+        // screen -> viewport
         let viewport = egui::vec2(
-            screen_pos.x - self.viewport_size.x / 2.0,
-            screen_pos.y - self.viewport_size.y / 2.0,
+            screen_pos.x - self.viewport_size.x * 0.5,
+            screen_pos.y - self.viewport_size.y * 0.5,
         );
-
-        // viewport -> local space (inverse view transform)
-        let local = egui::vec2(
-            (viewport.x - self.pan.x) / (self.image_size.x * self.zoom),
-            (viewport.y - self.pan.y) / (self.image_size.y * self.zoom),
+        // viewport -> frame (inverse view)
+        let frame = egui::vec2(
+            (viewport.x - self.pan.x) / self.zoom,
+            (viewport.y - self.pan.y) / self.zoom,
         );
-
-        // local (-0.5..0.5) -> image (0..image_size)
+        // frame -> image
         let image = egui::vec2(
-            (local.x + 0.5) * self.image_size.x,
-            (local.y + 0.5) * self.image_size.y,
+            frame.x + self.image_size.x * 0.5,
+            frame.y + self.image_size.y * 0.5,
         );
-
-        // Check bounds
+        // bounds check
         if image.x >= 0.0
             && image.x <= self.image_size.x
             && image.y >= 0.0
@@ -267,9 +278,17 @@ impl ViewportState {
     /// High-level scrubbing handler. Returns Some(frame_idx) when scrubbing
     /// requests a new frame, or None if nothing changed.
     /// Maps mouse X from image bounds directly to [play_start, play_end] frame range.
+    /// 
+    /// # Coordinate System
+    /// - `panel_rect` is in screen coordinates (absolute)
+    /// - `response.interact_pointer_pos()` returns screen coordinates
+    /// - `get_image_screen_bounds()` returns local coordinates (relative to viewport panel)
+    /// 
+    /// We convert mouse_pos to local coords by subtracting panel_rect.min.
     pub fn handle_scrubbing(
         &mut self,
         response: &egui::Response,
+        panel_rect: egui::Rect,
         double_clicked: bool,
         play_start: i32,
         play_end: i32,
@@ -285,20 +304,24 @@ impl ViewportState {
         // Start or continue scrubbing on primary click/drag
         if (response.clicked_by(egui::PointerButton::Primary)
             || response.dragged_by(egui::PointerButton::Primary))
-            && let Some(mouse_pos) = response.interact_pointer_pos()
+            && let Some(screen_pos) = response.interact_pointer_pos()
         {
+            // Convert screen coords to local (viewport-relative) coords.
+            // This fixes scrubbing when panels are docked left of viewport.
+            let local_x = screen_pos.x - panel_rect.min.x;
+
             // Start scrubbing - freeze bounds
             if !scrubber.is_active() {
                 scrubber.start_scrubbing(current_bounds, current_size, 0.5);
-                scrubber.set_last_mouse_x(mouse_pos.x);
+                scrubber.set_last_mouse_x(local_x);
             }
 
-            // Use frozen bounds for entire scrubbing session
+            // Use frozen bounds for entire scrubbing session (bounds are in local coords)
             let image_bounds = scrubber.frozen_bounds().unwrap_or(current_bounds);
 
             // Simple fit: mouse_x in [image_left, image_right] -> frame in [play_start, play_end]
             let frame = fit(
-                mouse_pos.x,
+                local_x,
                 image_bounds.min.x, image_bounds.max.x,
                 play_start as f32, play_end as f32,
             ).round() as i32;
@@ -309,8 +332,8 @@ impl ViewportState {
 
             scrubber.set_clamped(is_clamped);
             scrubber.set_current_frame(frame_clamped);
-            scrubber.set_visual_x(mouse_pos.x);
-            scrubber.set_last_mouse_x(mouse_pos.x);
+            scrubber.set_visual_x(local_x);
+            scrubber.set_last_mouse_x(local_x);
 
             Some(frame_clamped)
         } else if response.drag_stopped() || response.clicked() {
@@ -321,16 +344,32 @@ impl ViewportState {
         }
     }
 
-    /// Get view matrix for shader (2D transform: translate + scale)
-    pub fn get_view_matrix(&self) -> [[f32; 4]; 4] {
-        // 2D transform matrix: scale + translate
-        // We center the image in viewport space
-        let aspect_corrected_zoom_x = self.zoom * self.image_size.x;
-        let aspect_corrected_zoom_y = self.zoom * self.image_size.y;
+    /// Snapshot render-only matrices for GL callbacks.
+    pub fn render_state(&self) -> ViewportRenderState {
+        ViewportRenderState {
+            model_matrix: self.get_model_matrix(),
+            view_matrix: self.get_view_matrix(),
+            projection_matrix: self.get_projection_matrix(),
+        }
+    }
 
+    /// Get model matrix for shader (scales normalized quad to image pixel size).
+    pub fn get_model_matrix(&self) -> [[f32; 4]; 4] {
         [
-            [aspect_corrected_zoom_x, 0.0, 0.0, 0.0],
-            [0.0, aspect_corrected_zoom_y, 0.0, 0.0],
+            [self.image_size.x, 0.0, 0.0, 0.0],
+            [0.0, self.image_size.y, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    }
+
+    /// Get view matrix for shader (zoom + pan only, matches gizmo).
+    pub fn get_view_matrix(&self) -> [[f32; 4]; 4] {
+        // View = zoom + pan (same as gizmo uses)
+        // This keeps renderer and gizmo in sync
+        [
+            [self.zoom, 0.0, 0.0, 0.0],
+            [0.0, self.zoom, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0],
             [self.pan.x, self.pan.y, 0.0, 1.0],
         ]
@@ -419,13 +458,16 @@ impl ViewportScrubber {
                 (a * 255.0) as u8,
             );
 
-            let line_top = egui::pos2(visual_x, panel_rect.top());
-            let line_bottom = egui::pos2(visual_x, panel_rect.bottom());
+            // Convert local X coordinate to screen coordinates
+            // visual_x is relative to viewport, panel_rect.min.x is the screen offset
+            let screen_x = panel_rect.min.x + visual_x;
+            let line_top = egui::pos2(screen_x, panel_rect.top());
+            let line_bottom = egui::pos2(screen_x, panel_rect.bottom());
             painter.line_segment([line_top, line_bottom], egui::Stroke::new(1.0, line_color));
 
             if let Some(frame) = self.current_frame {
                 let text = format!("{}", frame);
-                let text_pos = egui::pos2(visual_x + 10.0, panel_rect.top() + 10.0);
+                let text_pos = egui::pos2(screen_x + 10.0, panel_rect.top() + 10.0);
                 painter.text(
                     text_pos,
                     egui::Align2::LEFT_TOP,

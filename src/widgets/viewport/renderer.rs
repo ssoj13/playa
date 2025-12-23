@@ -1,8 +1,8 @@
-use super::ViewportState;
+use super::ViewportRenderState;
 use super::shaders::Shaders;
 use crate::entities::frame::{PixelBuffer, PixelFormat};
 use eframe::glow::{self, HasContext};
-use log::{debug, error, info};
+use log::{error, info, trace};
 
 /// OpenGL renderer for viewport
 pub struct ViewportRenderer {
@@ -32,6 +32,12 @@ pub struct ViewportRenderer {
 
     // Last shader error message (if any)
     last_error: Option<String>,
+}
+
+impl Default for ViewportRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ViewportRenderer {
@@ -274,7 +280,7 @@ impl ViewportRenderer {
             self.pbo_width = width;
             self.pbo_height = height;
             self.pbo_pixel_format = pixel_format;
-            debug!(
+            trace!(
                 "Recreated PBOs for size {}x{} format {:?} (buffer_size: {} bytes)",
                 width, height, pixel_format, buffer_size
             );
@@ -296,6 +302,7 @@ impl ViewportRenderer {
         unsafe {
             // Prepare bytes from pixel buffer and map to GL formats
             // For F16 we create an owned byte buffer to avoid borrowing self across calls
+            #[allow(unused_assignments)]
             let mut owned_bytes: Option<Vec<u8>> = None;
             let (pixels_bytes, gl_internal_format, gl_format, gl_type) = match pixel_buffer {
                 PixelBuffer::U8(vec) => (
@@ -377,7 +384,7 @@ impl ViewportRenderer {
 
                 self.texture_width = width;
                 self.texture_height = height;
-                debug!(
+                trace!(
                     "Recreated texture for size {}x{} format {:?}",
                     width, height, pixel_format
                 );
@@ -396,7 +403,6 @@ impl ViewportRenderer {
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
 
             let write_pbo_index = self.pbo_index;
-            let transfer_pbo_index = (self.pbo_index + 1) % 2;
 
             // --- Step 1: Write current frame's data to the "write" PBO ---
             if let Some(write_pbo) = self.pbos[write_pbo_index] {
@@ -425,42 +431,23 @@ impl ViewportRenderer {
             }
 
             // --- Step 2: Transfer data to texture ---
-            if is_initial_upload {
-                // On the first upload, we do a synchronous transfer from the PBO we just wrote to.
-                // This populates the texture immediately.
-                if let Some(write_pbo) = self.pbos[write_pbo_index] {
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(write_pbo));
-                    gl.tex_sub_image_2d(
-                        glow::TEXTURE_2D,
-                        0,
-                        0,
-                        0,
-                        width as i32,
-                        height as i32,
-                        gl_format,
-                        gl_type,
-                        glow::PixelUnpackData::BufferOffset(0),
-                    );
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
-                }
-            } else {
-                // On subsequent frames, we do an asynchronous transfer from the *other* PBO
-                // (which contains the data from the previous frame).
-                if let Some(transfer_pbo) = self.pbos[transfer_pbo_index] {
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(transfer_pbo));
-                    gl.tex_sub_image_2d(
-                        glow::TEXTURE_2D,
-                        0,
-                        0,
-                        0,
-                        width as i32,
-                        height as i32,
-                        gl_format,
-                        gl_type,
-                        glow::PixelUnpackData::BufferOffset(0),
-                    );
-                    gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
-                }
+            // Always use synchronous upload from write_pbo (the one we just wrote to).
+            // Double-buffered async upload (using transfer_pbo) causes 1-frame delay which
+            // breaks immediate visual feedback when composition is edited.
+            if let Some(write_pbo) = self.pbos[write_pbo_index] {
+                gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(write_pbo));
+                gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    width as i32,
+                    height as i32,
+                    gl_format,
+                    gl_type,
+                    glow::PixelUnpackData::BufferOffset(0),
+                );
+                gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
             }
 
             gl.bind_texture(glow::TEXTURE_2D, None);
@@ -476,7 +463,7 @@ impl ViewportRenderer {
     }
 
     /// Render the viewport
-    pub fn render(&mut self, gl: &glow::Context, viewport_state: &ViewportState) {
+    pub fn render(&mut self, gl: &glow::Context, viewport_state: &ViewportRenderState) {
         // Check if we need to (re)compile shaders - store values to avoid borrow checker issues
         let needs_recompile = self.needs_recompile || self.program.is_none();
         if needs_recompile {
@@ -506,8 +493,17 @@ impl ViewportRenderer {
             gl.use_program(Some(program));
 
             // Set uniforms
-            let view_matrix = viewport_state.get_view_matrix();
-            let proj_matrix = viewport_state.get_projection_matrix();
+            let model_matrix = viewport_state.model_matrix;
+            let view_matrix = viewport_state.view_matrix;
+            let proj_matrix = viewport_state.projection_matrix;
+
+            if let Some(loc) = gl.get_uniform_location(program, "u_model") {
+                gl.uniform_matrix_4_f32_slice(
+                    Some(&loc),
+                    false,
+                    bytemuck::cast_slice(&model_matrix),
+                );
+            }
 
             if let Some(loc) = gl.get_uniform_location(program, "u_view") {
                 gl.uniform_matrix_4_f32_slice(

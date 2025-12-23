@@ -8,10 +8,12 @@
 //! Epoch mechanism allows cancelling stale requests during fast timeline scrubbing.
 
 use crossbeam::deque::{Injector, Worker};
-use log::debug;
+use log::trace;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+
+use crate::entities::WorkerPool;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
@@ -70,7 +72,7 @@ impl Workers {
             let handle = thread::Builder::new()
                 .name(format!("playa-worker-{}", worker_id))
                 .spawn(move || {
-                    debug!("Worker {} started", worker_id);
+                    trace!("Worker {} started", worker_id);
 
                     // Work-stealing loop
                     loop {
@@ -110,14 +112,14 @@ impl Workers {
                         thread::sleep(std::time::Duration::from_millis(1));
                     }
 
-                    debug!("Worker {} stopped", worker_id);
+                    trace!("Worker {} stopped", worker_id);
                 })
                 .expect("Failed to spawn worker thread");
 
             handles.push(handle);
         }
 
-        debug!("Workers initialized: {} threads (work-stealing)", num_threads);
+        trace!("Workers initialized: {} threads (work-stealing)", num_threads);
 
         Self {
             injector,
@@ -188,16 +190,45 @@ impl Workers {
 
 impl Drop for Workers {
     fn drop(&mut self) {
-        debug!("Workers shutting down ({} threads)...", self.handles.len());
+        use std::time::{Duration, Instant};
+
+        let num_threads = self.handles.len();
+        trace!("Workers shutting down ({} threads)...", num_threads);
+
         // Signal all workers to stop
         self.shutdown.store(true, Ordering::SeqCst);
-        
-        // Join all worker threads to ensure clean shutdown
-        for handle in self.handles.drain(..) {
-            if let Err(e) = handle.join() {
-                debug!("Worker thread panicked during shutdown: {:?}", e);
+
+        // Wait with timeout (500ms total for all threads)
+        // After on_exit() increments epoch, pending tasks with epoch check are skipped,
+        // so threads should finish quickly. Timeout is a safety net.
+        let deadline = Instant::now() + Duration::from_millis(500);
+
+        let handles = std::mem::take(&mut self.handles);
+        for handle in handles {
+            // Poll until thread finished or timeout
+            while !handle.is_finished() {
+                if Instant::now() >= deadline {
+                    trace!("Shutdown timeout reached, exiting anyway");
+                    // Don't join remaining threads - they'll die with process
+                    return;
+                }
+                thread::sleep(Duration::from_millis(1));
             }
+            // Thread finished, join to clean up handle
+            let _ = handle.join();
         }
-        debug!("All workers stopped");
+
+        trace!("All {} workers stopped gracefully", num_threads);
+    }
+}
+
+// ============================================================================
+// WorkerPool Trait Implementation
+// ============================================================================
+
+impl WorkerPool for Workers {
+    fn execute_with_epoch(&self, epoch: u64, f: Box<dyn FnOnce() + Send + 'static>) {
+        // Delegate to inherent method, unboxing is handled
+        Workers::execute_with_epoch(self, epoch, f)
     }
 }

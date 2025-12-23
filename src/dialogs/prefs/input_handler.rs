@@ -3,10 +3,12 @@
 use crate::dialogs::prefs::prefs_events::HotkeyWindow;
 use crate::core::event_bus::BoxedEvent;
 use crate::core::player_events::*;
-use crate::core::project_events::*;
+use crate::widgets::project::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
+use crate::widgets::viewport::tool::{ToolMode, SetToolEvent};
+use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 use eframe::egui;
 use std::collections::HashMap;
@@ -40,14 +42,16 @@ impl HotkeyHandler {
     pub fn handle_key(&self, key: &str) -> Option<BoxedEvent> {
         // Try current focused window first
         if let Some(factory) = self.bindings.get(&(self.focused_window, key.to_string())) {
+            log::trace!("Hotkey: ({:?}, {}) -> matched", self.focused_window, key);
             return Some(factory());
         }
         // Fallback: try Global
-        if self.focused_window != HotkeyWindow::Global {
-            if let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
+        if self.focused_window != HotkeyWindow::Global
+            && let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
+                log::trace!("Hotkey: (Global, {}) -> matched (fallback)", key);
                 return Some(factory());
             }
-        }
+        log::trace!("Hotkey: ({:?}, {}) -> NO MATCH", self.focused_window, key);
         None
     }
 
@@ -93,9 +97,8 @@ impl HotkeyHandler {
         self.bind(Global, "ArrowUp", TogglePlayPauseEvent);
         self.bind(Global, "K", StopEvent);
         self.bind(Global, "Slash", StopEvent);        // / = K (stop)
-        self.bind(Global, "Num1", JumpToStartEvent);
+        // Num1/Num2 reserved for timeline bookmarks
         self.bind(Global, "Home", JumpToStartEvent);
-        self.bind(Global, "Num2", JumpToEndEvent);
         self.bind(Global, "End", JumpToEndEvent);
         self.bind(Global, "PageDown", StepForwardEvent);
         self.bind(Global, "Shift+PageDown", StepForwardLargeEvent);
@@ -114,9 +117,9 @@ impl HotkeyHandler {
         self.bind(Global, "ArrowDown", StopEvent);
         // J/K/L style: < = J, / = K, > = L
         self.bind(Global, "J", JogBackwardEvent);
-        self.bind(Global, "Comma", JogBackwardEvent);  // , or < = J (jog back)
+        self.bind(Global, "Comma", DecreaseFPSBaseEvent);  // , = decrease base FPS
         self.bind(Global, "L", JogForwardEvent);
-        self.bind(Global, "Period", JogForwardEvent);  // . or > = L (jog forward)
+        self.bind(Global, "Period", IncreaseFPSBaseEvent);  // . = increase base FPS
         self.bind(Global, "Semicolon", JumpToPrevEdgeEvent);
         self.bind(Global, "Quote", JumpToNextEdgeEvent);
         self.bind(Global, "Backtick", ToggleLoopEvent);
@@ -131,14 +134,20 @@ impl HotkeyHandler {
         self.bind(Global, "Ctrl+O", OpenProjectDialogEvent);
         self.bind(Global, "Z", ToggleFullscreenEvent);
         self.bind(Global, "U", ProjectPreviousCompEvent);
+        self.bind(Global, "Ctrl+Alt+Slash", ClearCacheEvent);  // Clear all cached frames
         self.bind(Global, "F", FitViewportEvent);
         self.bind(Global, "A", Viewport100Event);
         self.bind(Global, "H", Viewport100Event);
+        // Tool hotkeys (Q/W/E/R like Maya)
+        self.bind(Global, "Q", SetToolEvent(ToolMode::Select));
+        self.bind(Global, "W", SetToolEvent(ToolMode::Move));
+        self.bind(Global, "E", SetToolEvent(ToolMode::Rotate));
+        self.bind(Global, "R", SetToolEvent(ToolMode::Scale));
 
         // Timeline-specific
         self.bind(Timeline, "Delete", RemoveSelectedLayerEvent);
-        self.bind(Timeline, "F", TimelineFitEvent);
-        self.bind(Timeline, "A", TimelineResetZoomEvent);
+        self.bind(Timeline, "F", TimelineFitEvent::selected());  // Fit to selected (or all if none)
+        self.bind(Timeline, "A", TimelineFitWorkAreaEvent);        // Fit to work area (B/N range)
         self.bind(Timeline, "OpenBracket", AlignLayersStartEvent(Uuid::nil()));
         self.bind(Timeline, "CloseBracket", AlignLayersEndEvent(Uuid::nil()));
         self.bind(Timeline, "Alt+OpenBracket", TrimLayersStartEvent(Uuid::nil()));
@@ -160,6 +169,11 @@ impl HotkeyHandler {
         self.bind(Viewport, "F", FitViewportEvent);
         self.bind(Viewport, "A", Viewport100Event);
         self.bind(Viewport, "H", Viewport100Event);
+
+        // Node editor-specific
+        self.bind(NodeEditor, "A", NodeEditorFitAllEvent);
+        self.bind(NodeEditor, "F", NodeEditorFitSelectedEvent);
+        self.bind(NodeEditor, "L", NodeEditorLayoutEvent);
     }
 
     /// Handle keyboard input
@@ -168,19 +182,19 @@ impl HotkeyHandler {
             // Handle egui's semantic Copy/Cut/Paste events (Ctrl+C/X/V are converted to these)
             match event {
                 egui::Event::Copy => {
-                    log::debug!("Event::Copy (window={:?})", self.focused_window);
+                    log::trace!("Event::Copy (window={:?})", self.focused_window);
                     if let Some(ev) = self.handle_key("Ctrl+C") {
                         return Some(ev);
                     }
                 }
                 egui::Event::Cut => {
-                    log::debug!("Event::Cut (window={:?})", self.focused_window);
+                    log::trace!("Event::Cut (window={:?})", self.focused_window);
                     if let Some(ev) = self.handle_key("Ctrl+X") {
                         return Some(ev);
                     }
                 }
                 egui::Event::Paste(_) => {
-                    log::debug!("Event::Paste (window={:?})", self.focused_window);
+                    log::trace!("Event::Paste (window={:?})", self.focused_window);
                     if let Some(ev) = self.handle_key("Ctrl+V") {
                         return Some(ev);
                     }
@@ -206,14 +220,17 @@ impl HotkeyHandler {
                         modifiers.shift,
                         modifiers.alt,
                     ) {
-                        log::debug!("Hotkey matched: {} (window={:?})", combo, self.focused_window);
+                        log::trace!("[HOTKEY] matched: {} (window={:?})", combo, self.focused_window);
                         return Some(ev);
                     }
-                    if !modifiers.any() {
-                        if let Some(ev) = self.handle_key(&key_str) {
-                            log::debug!("Hotkey matched (no mod): {} (window={:?})", key_str, self.focused_window);
+                    if !modifiers.any()
+                        && let Some(ev) = self.handle_key(&key_str) {
+                            log::trace!("[HOTKEY] matched (no mod): {} (window={:?})", key_str, self.focused_window);
                             return Some(ev);
                         }
+                    // Debug: log F/A when NOT matched
+                    if !modifiers.any() && (key_str == "F" || key_str == "A") {
+                        log::trace!("[HOTKEY] F/A NOT matched: key={} window={:?}", key_str, self.focused_window);
                     }
                 }
                 _ => {}

@@ -184,7 +184,7 @@
 //!     let result = project.compositor.borrow_mut().blend_with_dim(source_frames, dim);
 //!     let elapsed = start.elapsed();
 //!
-//!     debug!("Compositor took: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+//!     trace!("Compositor took: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
 //!
 //!     result
 //! }
@@ -193,7 +193,7 @@
 use super::compositor::BlendMode;
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
 use eframe::glow::{self, HasContext};
-use log::{debug, warn};
+use log::{trace, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -249,7 +249,7 @@ pub struct GpuCompositor {
 impl GpuCompositor {
     /// Create new GPU compositor with OpenGL context
     pub fn new(gl: Arc<glow::Context>) -> Self {
-        debug!("GpuCompositor::new() - initializing");
+        trace!("GpuCompositor::new() - initializing");
         Self {
             gl,
             fbo: None,
@@ -267,7 +267,7 @@ impl GpuCompositor {
             return Ok(());
         }
 
-        debug!("GpuCompositor::ensure_initialized() - creating OpenGL resources");
+        trace!("GpuCompositor::ensure_initialized() - creating OpenGL resources");
 
         unsafe {
             let gl = &self.gl;
@@ -320,7 +320,7 @@ impl GpuCompositor {
                 .map_err(|e| format!("Failed to create FBO: {}", e))?;
             self.fbo = Some(fbo);
 
-            debug!("GpuCompositor initialized successfully");
+            trace!("GpuCompositor initialized successfully");
             Ok(())
         }
     }
@@ -345,6 +345,9 @@ uniform sampler2D u_bottom;
 uniform sampler2D u_top;
 uniform float u_opacity;
 uniform int u_blend_mode;
+uniform mat3 u_top_transform;  // Inverse transform for sampling top layer
+uniform vec2 u_canvas_size;    // Output canvas size in pixels
+uniform vec2 u_top_size;       // Top layer size in pixels
 
 in vec2 v_texcoord;
 out vec4 frag_color;
@@ -365,13 +368,37 @@ vec3 blend(vec3 bottom, vec3 top, int mode) {
         return min(bottom / max(top, vec3(0.00001)), vec3(1.0));
     } else if (mode == 6) { // Difference
         return abs(bottom - top);
+    } else if (mode == 7) { // Overlay
+        // Multiply if base < 0.5, Screen if base >= 0.5
+        vec3 result;
+        result.r = bottom.r < 0.5 ? 2.0 * bottom.r * top.r : 1.0 - 2.0 * (1.0 - bottom.r) * (1.0 - top.r);
+        result.g = bottom.g < 0.5 ? 2.0 * bottom.g * top.g : 1.0 - 2.0 * (1.0 - bottom.g) * (1.0 - top.g);
+        result.b = bottom.b < 0.5 ? 2.0 * bottom.b * top.b : 1.0 - 2.0 * (1.0 - bottom.b) * (1.0 - top.b);
+        return result;
     }
     return top; // Fallback to normal
 }
 
 void main() {
     vec4 bottom_color = texture(u_bottom, v_texcoord);
-    vec4 top_color = texture(u_top, v_texcoord);
+    
+    // Convert UV (0-1) to pixel coordinates on canvas
+    vec2 canvas_pixel = v_texcoord * u_canvas_size;
+    
+    // Apply inverse transform (in pixel space)
+    vec3 transformed = u_top_transform * vec3(canvas_pixel, 1.0);
+    
+    // Convert back to UV coordinates for top layer
+    vec2 top_texcoord = transformed.xy / u_top_size;
+    
+    // Sample top with bounds check (transparent outside 0-1 range)
+    vec4 top_color;
+    if (top_texcoord.x < 0.0 || top_texcoord.x > 1.0 || 
+        top_texcoord.y < 0.0 || top_texcoord.y > 1.0) {
+        top_color = vec4(0.0);
+    } else {
+        top_color = texture(u_top, top_texcoord);
+    }
 
     float top_alpha = top_color.a * u_opacity;
     vec3 blended = blend(bottom_color.rgb, top_color.rgb, u_blend_mode);
@@ -429,7 +456,7 @@ void main() {
             gl.delete_shader(vertex_shader);
             gl.delete_shader(fragment_shader);
 
-            debug!("Blend shader compiled successfully");
+            trace!("Blend shader compiled successfully");
             Ok(program)
         }
     }
@@ -559,12 +586,16 @@ void main() {
     }
 
     /// Blend two textures using shader
+    /// transform: inverse 3x3 matrix for top layer (column-major)
+    /// top_size: dimensions of top layer texture (for UV conversion)
     fn blend_textures(
         &mut self,
         bottom: glow::Texture,
         top: glow::Texture,
         opacity: f32,
         mode: &BlendMode,
+        transform: &[f32; 9],
+        top_size: (usize, usize),
         width: usize,
         height: usize,
         format: PixelFormat,
@@ -624,8 +655,18 @@ void main() {
                     BlendMode::Multiply => 4,
                     BlendMode::Divide => 5,
                     BlendMode::Difference => 6,
+                    BlendMode::Overlay => 7,
                 };
                 gl.uniform_1_i32(Some(&loc), mode_id);
+            }
+            if let Some(loc) = gl.get_uniform_location(program, "u_top_transform") {
+                gl.uniform_matrix_3_f32_slice(Some(&loc), false, transform);
+            }
+            if let Some(loc) = gl.get_uniform_location(program, "u_canvas_size") {
+                gl.uniform_2_f32(Some(&loc), width as f32, height as f32);
+            }
+            if let Some(loc) = gl.get_uniform_location(program, "u_top_size") {
+                gl.uniform_2_f32(Some(&loc), top_size.0 as f32, top_size.1 as f32);
             }
 
             // Draw fullscreen quad
@@ -707,7 +748,7 @@ void main() {
     }
 
     /// Blend frames using GPU with fallback to CPU on error
-    pub(crate) fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode)>) -> Option<Frame> {
+    pub(crate) fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
         // Try GPU blend first
         match self.blend_impl(frames.clone()) {
             Ok(result) => Some(result),
@@ -721,7 +762,7 @@ void main() {
     }
 
     /// Internal GPU blend implementation (can fail)
-    fn blend_impl(&mut self, frames: Vec<(Frame, f32, BlendMode)>) -> Result<Frame, String> {
+    fn blend_impl(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Result<Frame, String> {
         use crate::entities::frame::FrameStatus;
 
         if frames.is_empty() {
@@ -732,12 +773,12 @@ void main() {
         // Composition is only as good as its worst component
         let min_status = frames
             .iter()
-            .map(|(f, _, _)| f.status())
+            .map(|(f, _, _, _)| f.status())
             .min_by_key(|s| match s {
                 FrameStatus::Error => 0,
                 FrameStatus::Placeholder => 1,
                 FrameStatus::Header => 2,
-                FrameStatus::Loading => 3,
+                FrameStatus::Loading | FrameStatus::Composing | FrameStatus::Expired => 3,
                 FrameStatus::Loaded => 4,
             })
             .unwrap_or(FrameStatus::Placeholder);
@@ -746,12 +787,12 @@ void main() {
         self.ensure_initialized()?;
 
         // Use first frame as dimension reference
-        let (first_frame, _, _) = &frames[0];
+        let (first_frame, _, _, _) = &frames[0];
         let width = first_frame.width();
         let height = first_frame.height();
         let format = first_frame.pixel_format();
 
-        debug!(
+        trace!(
             "GPU blend: {} frames, {}x{}, format: {:?}, min_status: {:?}",
             frames.len(),
             width,
@@ -762,7 +803,7 @@ void main() {
 
         // Upload all frames to textures with RAII guard for cleanup on error
         let mut guard = TextureGuard::new(Arc::clone(&self.gl));
-        for (frame, _, _) in &frames {
+        for (frame, _, _, _) in &frames {
             let texture = self.upload_frame_to_texture(frame)?;
             guard.push(texture);
         }
@@ -771,14 +812,17 @@ void main() {
         let mut result_texture = guard.textures[0];
         for i in 1..guard.textures.len() {
             let top_texture = guard.textures[i];
-            let (_, opacity, mode) = &frames[i];
-
+            let (top_frame, opacity, mode, transform) = &frames[i];
+            let top_size = (top_frame.width(), top_frame.height());
+            
             // blend_textures creates new texture, add to guard
             let new_result = self.blend_textures(
                 result_texture,
                 top_texture,
                 *opacity,
                 mode,
+                transform,
+                top_size,
                 width,
                 height,
                 format,
@@ -799,14 +843,14 @@ void main() {
         // This happens automatically - no manual cleanup needed
         drop(guard);
 
-        debug!("GPU blend completed successfully with status: {:?}", min_status);
+        trace!("GPU blend completed successfully with status: {:?}", min_status);
         Ok(result_frame)
     }
 
     /// Blend frames with explicit canvas dimensions
     pub(crate) fn blend_with_dim(
         &mut self,
-        frames: Vec<(Frame, f32, BlendMode)>,
+        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         // For now, just use regular blend and crop result
@@ -843,6 +887,6 @@ impl Drop for GpuCompositor {
                 self.gl.delete_framebuffer(fbo);
             }
         }
-        debug!("GpuCompositor dropped and resources cleaned up");
+        trace!("GpuCompositor dropped and resources cleaned up");
     }
 }

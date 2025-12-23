@@ -4,10 +4,12 @@
 
 ```
 src/
+├── app/            # Main application logic (PlayaApp, eframe impl)
 ├── bin/            # Standalone binary entry points
 ├── core/           # Core engine (playback, caching, events)
 ├── dialogs/        # Modal dialogs (preferences, encoder)
 ├── entities/       # Data models (comp, frame, project)
+├── server/         # REST API server for remote control
 ├── widgets/        # UI widgets (timeline, viewport, status)
 │
 ├── lib.rs          # Library crate entry point
@@ -21,6 +23,32 @@ src/
 ```
 
 ## Modules
+
+### `app/` - Application
+
+Main application state and eframe integration. Refactored from monolithic main.rs (~2700 lines) into modular structure.
+
+| File | Description |
+|------|-------------|
+| `mod.rs` | PlayaApp struct, DockTab enum, Default impl |
+| `run.rs` | eframe::App impl (update, save, on_exit) |
+| `events.rs` | Event handling (keyboard, effects, event bus) |
+| `tabs.rs` | Tab rendering (viewport, timeline, project, attrs, node editor) + DockTabs TabViewer |
+| `layout.rs` | Layout management (save/load/apply dock layouts) |
+| `project_io.rs` | Project load/save, sequence loading |
+| `api.rs` | REST API integration (start server, handle commands, screenshots) |
+
+**Architecture:**
+- PlayaApp is the main state container (47 fields)
+- eframe::App::update() is the main loop entry point
+- DockTabs wraps PlayaApp for egui_dock TabViewer
+- Events processed via EventBus for decoupled communication
+
+**Data Flow:**
+```
+update() -> handle_events() -> render tabs -> handle_api_commands()
+         -> player.update()  -> DockArea    -> update_api_state()
+```
 
 ### `core/` - Engine
 
@@ -43,14 +71,21 @@ Core data structures representing the compositing model.
 | File | Description |
 |------|-------------|
 | `attrs.rs` | Generic attribute container (key-value with types) |
+| `attr_schemas.rs` | Attribute schema definitions (DAG/display/keyframable flags) |
 | `comp.rs` | Composition - timeline with children, work area, caching |
+| `comp_node.rs` | CompNode - composition as a node with layers |
+| `effects/` | Layer effects system (blur, brightness, HSV adjust) |
 | `comp_events.rs` | Comp-related events (dirty flag, child updates) |
 | `compositor.rs` | CPU frame blending (blend modes, alpha compositing) |
+| `file_node.rs` | FileNode - image/video file source |
 | `frame.rs` | Frame buffer (U8/F16/F32), loading, crop, tonemap |
 | `gpu_compositor.rs` | GPU-accelerated compositing via wgpu |
-| `keys.rs` | Keyframe interpolation |
+| `keys.rs` | Attribute key constants (A_IN, A_SPEED, etc.) |
 | `loader.rs` | Image format loaders (PNG, EXR, JPEG, etc.) |
 | `loader_video.rs` | Video frame extraction via FFmpeg |
+| `node.rs` | Node trait + NodeKind enum (enum_dispatch) |
+| `camera_node.rs` | CameraNode - pan/zoom/rotate transform |
+| `text_node.rs` | TextNode - rasterized text via cosmic-text |
 | `project.rs` | Project container (media library, active comp, settings) |
 
 ### `widgets/` - UI Components
@@ -63,7 +98,7 @@ Reusable egui widgets for the application interface.
 | `timeline/` | Timeline editor, layers, work area, keyframes |
 | `status/` | Status bar, memory usage, cache stats |
 | `project/` | Project/playlist panel |
-| `ae/` | After Effects-style attribute editor |
+| `ae/` | After Effects-style attribute editor + effects UI |
 
 ### `dialogs/` - Modal Windows
 
@@ -73,6 +108,30 @@ Modal dialog windows for specific tasks.
 |--------|-------------|
 | `prefs/` | Preferences dialog (cache, playback, shortcuts) |
 | `encode/` | Export/encode dialog (FFmpeg integration) |
+
+### `server/` - REST API
+
+HTTP REST API server for remote control of playa.
+
+| File | Description |
+|------|-------------|
+| `mod.rs` | Module entry, re-exports, architecture docs |
+| `api.rs` | HTTP handlers, ApiServer, ApiCommand, SharedApiState |
+
+**Architecture:**
+- Runs in background thread (rouille sync HTTP server)
+- Commands sent to main thread via `mpsc::channel`
+- State snapshots (`SharedApiState`) updated by main thread each frame
+- CORS enabled for browser access
+
+**Endpoints:**
+- `GET /api/status` - full status (player/comp/cache)
+- `GET /api/player` - player state only
+- `POST /api/player/play|pause|stop` - control playback
+- `POST /api/player/frame/{n}` - seek to frame
+- `POST /api/player/fps/{n}` - set FPS
+
+**Settings:** Enable/disable and port in Settings -> Web Server
 
 ### `bin/` - Standalone Binaries
 
@@ -88,6 +147,34 @@ Development/debug binaries for testing individual components.
 | `attributes.rs` | Standalone attributes editor |
 
 ## Architecture Notes
+
+### Node System (enum_dispatch)
+
+All compositing elements implement the `Node` trait via `enum_dispatch` for zero-cost polymorphism:
+
+```rust
+#[enum_dispatch(Node)]
+pub enum NodeKind {
+    FileNode,    // Image/video source
+    CompNode,    // Composition with layers
+    CameraNode,  // Pan/zoom/rotate transform
+    TextNode,    // Rasterized text
+}
+```
+
+**Node trait provides:**
+- `compute(frame, ctx)` - render frame at given time
+- `attrs()` / `attrs_mut()` - attribute access
+- `play_range()` - visible frame range after trims
+- `bounds()` - spatial bounding box
+- `is_dirty()` / `mark_dirty()` - cache invalidation
+
+**Attribute schemas** (`attr_schemas.rs`) define per-attribute flags:
+- `DAG` - changes invalidate render cache
+- `DISP` - show in Attribute Editor
+- `KEY` - keyframable
+
+Non-DAG attributes (e.g. `node_pos` for Node Editor positions) don't trigger recompute.
 
 ### Event-Driven Communication
 
@@ -109,3 +196,25 @@ Components communicate via `EventBus` with typed events:
 - `CacheManager` tracks global memory usage
 - `GlobalFrameCache` evicts LRU frames when limit exceeded
 - Epoch mechanism cancels stale preload requests during scrubbing
+
+## Python Bindings
+
+Python module in `crates/playa-py/` via PyO3/maturin.
+
+**Build:**
+```powershell
+.\bootstrap.ps1 python           # Build wheel only
+.\bootstrap.ps1 python install   # Build and install
+.\bootstrap.ps1 python dev       # Development mode (editable)
+```
+
+**Usage:**
+```python
+import playa
+
+playa.run(file="image.exr", autoplay=True, fullscreen=False)
+playa.run(files=["a.exr", "b.exr"], loop_playback=True)
+print(playa.version())
+```
+
+**Parameters:** `file`, `files`, `autoplay`, `loop_playback`, `fullscreen`, `frame`, `start`, `end`

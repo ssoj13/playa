@@ -61,6 +61,21 @@ pub struct LayersChangedEvent {
 #[derive(Clone, Debug)]
 pub struct AttrsChangedEvent(pub Uuid);
 
+/// Set timeline bookmark (Shift+0-9)
+#[derive(Clone, Debug)]
+pub struct SetBookmarkEvent {
+    pub comp_uuid: Uuid,
+    pub slot: u8,        // 0-9
+    pub frame: Option<i32>, // None = clear bookmark
+}
+
+/// Jump to timeline bookmark (0-9)
+#[derive(Clone, Debug)]
+pub struct JumpToBookmarkEvent {
+    pub comp_uuid: Uuid,
+    pub slot: u8,
+}
+
 // === Layer Operations ===
 
 #[derive(Clone, Debug)]
@@ -68,7 +83,8 @@ pub struct AddLayerEvent {
     pub comp_uuid: Uuid,
     pub source_uuid: Uuid,
     pub start_frame: i32,
-    pub target_row: Option<usize>,
+    /// Insert position in children array (row index where layer is dropped)
+    pub insert_idx: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +150,7 @@ pub struct LayerAttributesChangedEvent {
     pub comp_uuid: Uuid,
     pub layer_uuids: Vec<Uuid>,  // Multiple layers for multi-selection support
     pub visible: bool,
+    pub solo: bool,
     pub opacity: f32,
     pub blend_mode: String,
     pub speed: f32,
@@ -148,6 +165,16 @@ pub struct SetLayerAttrsEvent {
     pub attrs: Vec<(String, crate::entities::AttrValue)>,
 }
 
+/// Batch update of per-layer transforms (used by viewport gizmo).
+///
+/// One event updates multiple layers in one `modify_comp()` call to avoid extra locking
+/// and keep transform changes in sync.
+#[derive(Clone, Debug)]
+pub struct SetLayerTransformsEvent {
+    pub comp_uuid: Uuid,
+    pub updates: Vec<(Uuid, [f32; 3], [f32; 3], [f32; 3])>, // (layer_uuid, pos, rot, scale)
+}
+
 // === Comp Selection ===
 
 #[derive(Clone, Debug)]
@@ -155,6 +182,13 @@ pub struct CompSelectionChangedEvent {
     pub comp_uuid: Uuid,
     pub selection: Vec<Uuid>,
     pub anchor: Option<Uuid>,
+}
+
+/// Hover layer changed (viewport mouse move in Select mode)
+#[derive(Clone, Debug)]
+pub struct HoverLayerEvent {
+    pub comp_uuid: Uuid,
+    pub layer_uuid: Option<Uuid>,
 }
 
 // === Comp Play Area ===
