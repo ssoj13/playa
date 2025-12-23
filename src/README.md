@@ -196,3 +196,25 @@ Components communicate via `EventBus` with typed events:
 - `CacheManager` tracks global memory usage
 - `GlobalFrameCache` evicts LRU frames when limit exceeded
 - Epoch mechanism cancels stale preload requests during scrubbing
+
+## Python Bindings
+
+Python module in `crates/playa-py/` via PyO3/maturin.
+
+**Build:**
+```powershell
+.\bootstrap.ps1 python           # Build wheel only
+.\bootstrap.ps1 python install   # Build and install
+.\bootstrap.ps1 python dev       # Development mode (editable)
+```
+
+**Usage:**
+```python
+import playa
+
+playa.run(file="image.exr", autoplay=True, fullscreen=False)
+playa.run(files=["a.exr", "b.exr"], loop_playback=True)
+print(playa.version())
+```
+
+**Parameters:** `file`, `files`, `autoplay`, `loop_playback`, `fullscreen`, `frame`, `start`, `end`
