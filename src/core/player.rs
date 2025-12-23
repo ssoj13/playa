@@ -575,10 +575,7 @@ impl Player {
         if let Some(idx) = FPS_PRESETS.iter().position(|&f| f > fps_base) {
             let new_fps = FPS_PRESETS[idx];
             self.set_fps_base(new_fps);
-            // If not playing, update fps_play too
-            if !self.is_playing() {
-                self.set_fps_play(new_fps);
-            }
+            self.set_fps_play(new_fps); // Sync play FPS with base
             trace!("Base FPS increased to {}", new_fps);
         }
     }
@@ -590,10 +587,7 @@ impl Player {
         if let Some(idx) = FPS_PRESETS.iter().rposition(|&f| f < fps_base) {
             let new_fps = FPS_PRESETS[idx];
             self.set_fps_base(new_fps);
-            // If not playing, update fps_play too
-            if !self.is_playing() {
-                self.set_fps_play(new_fps);
-            }
+            self.set_fps_play(new_fps); // Sync play FPS with base
             trace!("Base FPS decreased to {}", new_fps);
         }
     }

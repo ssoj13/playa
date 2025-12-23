@@ -117,9 +117,9 @@ impl HotkeyHandler {
         self.bind(Global, "ArrowDown", StopEvent);
         // J/K/L style: < = J, / = K, > = L
         self.bind(Global, "J", JogBackwardEvent);
-        self.bind(Global, "Comma", JogBackwardEvent);  // , or < = J (jog back)
+        self.bind(Global, "Comma", DecreaseFPSBaseEvent);  // , = decrease base FPS
         self.bind(Global, "L", JogForwardEvent);
-        self.bind(Global, "Period", JogForwardEvent);  // . or > = L (jog forward)
+        self.bind(Global, "Period", IncreaseFPSBaseEvent);  // . = increase base FPS
         self.bind(Global, "Semicolon", JumpToPrevEdgeEvent);
         self.bind(Global, "Quote", JumpToNextEdgeEvent);
         self.bind(Global, "Backtick", ToggleLoopEvent);
