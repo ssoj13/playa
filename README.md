@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/ssoj13/playa)](LICENSE)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
-Professional image sequence player and video compositor. Single binary, cross-platform.
+Image sequence player and video compositor. Single binary, cross-platform.
 
 ![Screenshot](.github/screenshot.jpg)
 
@@ -17,7 +17,7 @@ Professional image sequence player and video compositor. Single binary, cross-pl
 - **Instant response** - Epoch-based cache cancellation keeps UI responsive during fast scrubbing
 - **Smart memory management** - Automatic LRU cache, never runs out of memory
 - **Parallel loading** - Uses 75% of CPU cores for background frame loading
-- **JKL shuttle control** - Professional transport controls with speed ramping
+- **JKL shuttle control** - Standard transport controls with speed ramping
 
 ### Video & Encoding
 - **Video playback** - MP4, MOV, AVI, MKV via FFmpeg
