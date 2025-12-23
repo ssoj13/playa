@@ -9,6 +9,9 @@
 // Core engine (cache, events, player, workers)
 pub mod core;
 
+// Main application (PlayaApp struct and related)
+pub mod app;
+
 // App modules
 pub mod cli;
 pub mod config;
