@@ -9,11 +9,13 @@
 //!
 //! Also includes DockTabs wrapper for egui_dock TabViewer.
 
+use eframe::egui;
 use egui_dock::TabViewer;
 
 use crate::app::{DockTab, PlayaApp};
-use crate::events::ViewportRefreshEvent;
-use crate::node_editor::render_node_editor;
+use crate::entities::node::Node;
+use crate::widgets::node_editor::render_node_editor;
+use crate::widgets::viewport::ViewportRefreshEvent;
 use crate::ui;
 use crate::widgets;
 
@@ -150,7 +152,7 @@ impl PlayaApp {
     pub fn render_node_editor_tab(&mut self, ui: &mut egui::Ui) {
         let Some(comp_uuid) = self.player.active_comp() else {
             self.node_editor_hovered = false;
-            ui.centered_and_justified(|ui| {
+            ui.centered_and_justified(|ui: &mut egui::Ui| {
                 ui.label("No composition selected");
             });
             return;
@@ -178,9 +180,6 @@ impl PlayaApp {
     /// and node attributes (File, Comp, Camera, Text nodes).
     /// Effects UI rendered for single layer selection.
     pub fn render_attributes_tab(&mut self, ui: &mut egui::Ui) {
-        use crate::entities::comp_events::SetLayerAttrsEvent;
-        use crate::entities::node::Node;
-
         let ae_focus = self.ae_focus.clone();
         let active = self.player.active_comp();
 
@@ -343,7 +342,6 @@ impl PlayaApp {
 
     /// Render node attributes (File, Comp, Camera, Text nodes).
     fn render_node_attributes(&mut self, ui: &mut egui::Ui, ae_focus: &[uuid::Uuid]) {
-        use crate::entities::node::Node;
 
         if ae_focus.len() == 1 {
             // Single node - edit directly

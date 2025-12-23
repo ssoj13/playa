@@ -9,6 +9,7 @@
 use super::PlayaApp;
 use crate::core::player_events::*;
 use crate::entities::frame::{PixelBuffer, TonemapMode};
+use crate::entities::node::Node;
 use crate::server::ApiCommand;
 
 use eframe::egui;

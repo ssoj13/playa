@@ -8,11 +8,11 @@
 
 use std::sync::Arc;
 
-use eframe::glow;
+use eframe::{egui, glow};
 use egui_dock::DockArea;
 use log::{info, trace};
 
-use crate::app::{DockTab, DockTabs, PlayaApp};
+use crate::app::{DockTabs, PlayaApp};
 use crate::dialogs::prefs::render_settings_window;
 
 impl eframe::App for PlayaApp {

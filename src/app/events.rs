@@ -10,6 +10,7 @@ use super::PlayaApp;
 use crate::core::event_bus::downcast_event;
 use crate::dialogs::prefs::prefs_events::HotkeyWindow;
 use crate::entities::comp_events::*;
+use crate::entities::node::Node;
 use crate::main_events;
 use crate::widgets::ae::EffectAction;
 use crate::widgets::project::project_events::ClearCacheEvent;
