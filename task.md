@@ -18,5 +18,5 @@
 7. Изучить возможность использования OCIO/OIIO
 8. изучить вопрос добавления таймкода
 9. Интеграция с Shotgrid.
-10. Python API через RustPython.
-
+10. Python API через RustPython, expose all major classes, widgets, dialogs, core.
+11. Learn the possibility to use core without the GUI just with Python API.
