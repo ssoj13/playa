@@ -2363,6 +2363,12 @@ impl eframe::App for PlayaApp {
     }
 
     fn on_exit(&mut self, gl: Option<&glow::Context>) {
+        // Cancel all pending frame loads by incrementing epoch
+        // Workers check epoch before executing, so stale tasks will be skipped
+        self.cache_manager.increment_epoch();
+        self.debounced_preloader.cancel();
+        trace!("Cancelled pending frame loads for fast shutdown");
+
         // Cleanup OpenGL resources
         if let Some(gl) = gl {
             let mut renderer = self.viewport_renderer.lock().unwrap();

@@ -190,17 +190,35 @@ impl Workers {
 
 impl Drop for Workers {
     fn drop(&mut self) {
-        trace!("Workers shutting down ({} threads)...", self.handles.len());
+        use std::time::{Duration, Instant};
+
+        let num_threads = self.handles.len();
+        trace!("Workers shutting down ({} threads)...", num_threads);
+
         // Signal all workers to stop
         self.shutdown.store(true, Ordering::SeqCst);
-        
-        // Join all worker threads to ensure clean shutdown
-        for handle in self.handles.drain(..) {
-            if let Err(e) = handle.join() {
-                trace!("Worker thread panicked during shutdown: {:?}", e);
+
+        // Wait with timeout (500ms total for all threads)
+        // After on_exit() increments epoch, pending tasks with epoch check are skipped,
+        // so threads should finish quickly. Timeout is a safety net.
+        let deadline = Instant::now() + Duration::from_millis(500);
+
+        let handles = std::mem::take(&mut self.handles);
+        for handle in handles {
+            // Poll until thread finished or timeout
+            while !handle.is_finished() {
+                if Instant::now() >= deadline {
+                    trace!("Shutdown timeout reached, exiting anyway");
+                    // Don't join remaining threads - they'll die with process
+                    return;
+                }
+                thread::sleep(Duration::from_millis(1));
             }
+            // Thread finished, join to clean up handle
+            let _ = handle.join();
         }
-        trace!("All workers stopped");
+
+        trace!("All {} workers stopped gracefully", num_threads);
     }
 }
 
