@@ -27,6 +27,7 @@ anyhow = "1.0"
 bytemuck = "1.24"
 cosmic-text = "0.15"
 clap = { version = "4.5", features = ["derive"] }
+const_format = "0.2"
 crossbeam = "0.8.4"
 crossbeam-channel = "0.5"
 dirs-next = "2.0"

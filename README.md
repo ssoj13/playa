@@ -5,50 +5,63 @@
 [![License](https://img.shields.io/github/license/ssoj13/playa)](LICENSE)
 [![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-blue)](CHANGELOG.md)
 
-Image sequence player and video compositor. Single binary, cross-platform.
-
 ![Screenshot](.github/screenshot.jpg)
+
+---
+
+## Why Playa?
+
+**The problem**: Reviewing VFX renders and animations means scrubbing through thousands of high-resolution frames. Most players freeze during fast scrubbing, load frames sequentially, or run out of memory on long sequences.
+
+**Playa solves this** with three key architectural decisions:
+
+1. **Epoch-based cancellation** - When you scrub fast, outdated frame requests are immediately cancelled. The UI never waits for frames you've already scrolled past. Result: instant response, always.
+
+2. **Work-stealing thread pool** - Frame loading runs in parallel across 75% of CPU cores. Workers steal tasks from each other to balance load automatically. No idle cores, no bottlenecks.
+
+3. **LRU cache with memory limits** - Frames are cached in RAM with automatic eviction when memory runs low. You set a limit (e.g., 75% of RAM), and Playa handles the rest. No more out-of-memory crashes.
+
+**Single binary, cross-platform** - One executable, no dependencies. Download and run on Windows, macOS, or Linux.
 
 ---
 
 ## Key Features
 
-### Playback & Performance
-- **Instant response** - Epoch-based cache cancellation keeps UI responsive during fast scrubbing
-- **Smart memory management** - Automatic LRU cache, never runs out of memory
-- **Parallel loading** - Uses 75% of CPU cores for background frame loading
-- **JKL shuttle control** - Standard transport controls with speed ramping
+### Performance
+- **Instant scrubbing** - Epoch-based cache keeps UI responsive at any speed
+- **Parallel loading** - Work-stealing across CPU cores
+- **Smart memory** - LRU cache with configurable memory limit
+- **JKL shuttle** - Industry-standard transport with speed ramping
 
-### Video & Encoding
-- **Video playback** - MP4, MOV, AVI, MKV via FFmpeg
+### Format Support
+- **EXR** - Via exrs (pure Rust) or OpenEXR C++ (DWAA/DWAB compression)
+- **Images** - PNG, JPEG, TIFF, TGA, HDR
+- **Video** - MP4, MOV, AVI, MKV via FFmpeg
+- **Pixel formats** - 8-bit, 16-bit half-float, 32-bit float
+
+### Video Export
 - **Hardware encoding** - NVENC (NVIDIA), QSV (Intel), AMF (AMD)
 - **Software encoding** - H.264, H.265 via libx264/libx265
-- **Play range export** - Encode only selected frame range (B/N markers)
+- **Range export** - Encode only selected frame range (B/N markers)
 
 ### Compositing
 - **Node-based** - FileNode, CompNode, CameraNode, TextNode
 - **Blend modes** - Normal, Screen, Add, Subtract, Multiply, Divide, Difference
-- **3D transforms** - Position, Rotation, Scale with perspective
+- **3D transforms** - Position, Rotation, Scale with perspective camera
+- **Layer effects** - Gaussian Blur, Brightness/Contrast, HSV (CPU)
 - **Interactive gizmos** - Move/Rotate/Scale manipulation in viewport
-- **Layer effects** - Gaussian Blur, Brightness/Contrast, HSV Adjust (CPU)
 
-### Format Support
-- **EXR** - Via exrs (pure Rust) or OpenEXR C++ (DWAA/DWAB)
-- **Images** - PNG, JPEG, TIFF, TGA, HDR
-- **Pixel formats** - U8, F16 (half-float), F32
-
-### Additional Features
+### Integration
 - **Smart sequence detection** - Load one frame, finds all automatically
-- **Custom GLSL shaders** - Drop shaders in `shaders/` folder
 - **REST API** - Remote control via HTTP endpoints
-- **Persistent settings** - Remembers state between sessions
-- **Cross-platform** - Windows, macOS, Linux
+- **Custom GLSL shaders** - Drop shaders in `shaders/` folder
+- **Persistent state** - Remembers settings between sessions
 
 ---
 
 ## Installation
 
-### Download Pre-built Binaries (Recommended)
+### Download Pre-built Binaries
 
 Download from [Releases](https://github.com/ssoj13/playa/releases/latest):
 
@@ -58,17 +71,17 @@ Download from [Releases](https://github.com/ssoj13/playa/releases/latest):
 | **macOS** | `playa-x.x.x-exrs.dmg` | OpenEXR variant for DWAA/DWAB |
 | **Linux** | `playa-x.x.x-exrs.AppImage` | `.deb` package |
 
-**macOS**: All DMG releases are code-signed and notarized - no Gatekeeper warnings.
+**macOS**: All DMG releases are code-signed and notarized.
 
 ### Build from Source
 
-See [DEVELOP.md](DEVELOP.md) for build instructions, FFmpeg setup, and vcpkg configuration.
+See [DEVELOP.md](DEVELOP.md) for build instructions.
 
-```bash
-# Quick build (requires Rust)
+```powershell
 git clone https://github.com/ssoj13/playa.git && cd playa
-.\bootstrap.ps1 build   # Windows
-./bootstrap.sh build    # Linux/macOS
+./bootstrap.ps1 build              # Windows (exrs backend)
+./bootstrap.ps1 build --openexr    # Windows (OpenEXR C++)
+./bootstrap.sh build               # Linux/macOS
 ```
 
 ---
@@ -83,7 +96,15 @@ playa
 playa render.0001.exr
 
 # Load with options
-playa -f sequence.exr --frame 50 -a -F    # Start at frame 50, autoplay, fullscreen
+playa -f sequence.exr --frame 50 -a -F    # Frame 50, autoplay, fullscreen
+```
+
+**Version info** (`-V`):
+```
+playa 0.1.135
+EXR:    openexr-rs 0.11 (C++, DWAA/DWAB)
+Video:  playa-ffmpeg 8.0 (static)
+Target: x86_64-windows
 ```
 
 ---
@@ -94,109 +115,54 @@ playa -f sequence.exr --frame 50 -a -F    # Start at frame 50, autoplay, fullscr
 
 | Panel | Hotkey | Description |
 |-------|--------|-------------|
-| **Viewport** | - | Main image display with zoom/pan |
-| **Timeline** | - | Layer timeline with trim, move, selection |
-| **Project** | `F2` | Media pool - all loaded clips |
-| **Attributes** | `F3` | Properties of selected layer/node |
-| **Encode** | `F4` | Video export dialog |
-| **Settings** | `F12` | Preferences dialog |
-| **Help** | `F1` | Keyboard shortcuts overlay |
+| **Viewport** | - | Image display with zoom/pan |
+| **Timeline** | - | Layer timeline with trim/move |
+| **Project** | `F2` | Media pool |
+| **Attributes** | `F3` | Layer properties |
+| **Encode** | `F4` | Video export |
+| **Settings** | `F12` | Preferences |
+| **Help** | `F1` | Keyboard shortcuts |
 
-### Viewport Controls
+### Viewport
 
 | Action | Control |
 |--------|---------|
 | **Zoom** | Mouse wheel (centers on cursor) |
 | **Pan** | Middle mouse drag |
-| **Fit to window** | `F` |
-| **100% zoom** | `A` or `H` |
+| **Fit** | `F` |
+| **100%** | `A` or `H` |
 | **Fullscreen** | `Z` |
-| **Scrub** | Right click + drag on image |
+| **Scrub** | Right click + drag |
 | **Pick layer** | Left click (Select mode Q) |
-| **Toggle frame numbers** | `Backspace` |
 
-### Timeline Controls
+### Tools
 
-| Action | Control |
-|--------|---------|
-| **Select layer** | Click |
-| **Multi-select** | Ctrl/Shift + click |
-| **Move layer** | Drag selected layer |
-| **Zoom timeline** | `-` / `=` / `+` or Mouse wheel |
-| **Pan timeline** | Middle mouse drag |
-| **Align start to cursor** | `[` |
-| **Align end to cursor** | `]` |
-| **Trim start to cursor** | `Alt+[` |
-| **Trim end to cursor** | `Alt+]` |
-| **Delete layer** | `Delete` |
-| **Duplicate layers** | `Ctrl+D` |
-| **Copy layers** | `Ctrl+C` |
-| **Paste layers** | `Ctrl+V` |
-| **Select all layers** | `Ctrl+A` |
-| **Reset trims** | `Ctrl+R` |
-| **Fit to selection** | `F` |
-| **Fit to work area** | `A` |
-
-### Node Editor
-
-| Action | Control |
-|--------|---------|
-| **Fit all nodes** | `A` |
-| **Fit selected nodes** | `F` |
-| **Re-layout nodes** | `L` |
-| **Delete node** | `Delete` |
-| **Zoom** | Mouse wheel |
-| **Pan** | Middle mouse drag |
-
-### Tool Modes
-
-| Key | Tool | Description |
-|-----|------|-------------|
-| `Q` | **Select** | Scrub/selection mode |
-| `W` | **Move** | Position gizmo |
-| `E` | **Rotate** | Rotation gizmo |
-| `R` | **Scale** | Scale gizmo |
+| Key | Tool |
+|-----|------|
+| `Q` | Select/Scrub |
+| `W` | Move |
+| `E` | Rotate |
+| `R` | Scale |
 
 ---
 
 ## Keyboard Shortcuts
 
-### Global
-
-| Key | Action |
-|-----|--------|
-| `F1` | Help overlay |
-| `F2` | Project panel |
-| `F3` | Attributes panel |
-| `F4` | Encode dialog |
-| `F12` | Settings/Preferences |
-| `Z` | Toggle fullscreen |
-| `Esc` | Exit fullscreen / Quit |
-| `U` | Previous comp |
-| `Ctrl+S` | Save project |
-| `Ctrl+O` | Open project |
-| `Ctrl+Alt+/` | Clear frame cache |
-
 ### Playback
 
 | Key | Action |
 |-----|--------|
-| `Space` / `Insert` | Play/Pause |
-| `K` / `/` | Stop |
-| `J` / `,` | Jog backward (cumulative speed) |
-| `L` / `.` | Jog forward (cumulative speed) |
+| `Space` | Play/Pause |
+| `K` | Stop |
+| `J` / `L` | Jog backward/forward (cumulative) |
 | `Left` / `Right` | Step 1 frame |
 | `Shift+Arrows` | Step 25 frames |
-| `Ctrl+Left` / `Ctrl+Right` | Jump to Start/End |
-| `1` / `Home` | Jump to start |
-| `2` / `End` | Jump to end |
+| `Home` / `End` | Jump to start/end |
 | `;` / `'` | Prev/Next layer edge |
 | `` ` `` | Toggle loop |
-| `-` / `=` / `+` | Decrease/Increase FPS |
+| `-` / `=` | Decrease/Increase FPS |
 
-FPS Presets: 1, 2, 4, 8, 12, 24, 30, 60, 120, 240
-
-### Play Range (Work Area)
+### Play Range
 
 | Key | Action |
 |-----|--------|
@@ -204,38 +170,58 @@ FPS Presets: 1, 2, 4, 8, 12, 24, 30, 60, 120, 240
 | `N` | Set range end |
 | `Ctrl+B` | Reset to full range |
 
-Used for: loop playback, encoding (F4)
+### Timeline
+
+| Key | Action |
+|-----|--------|
+| `[` | Align start to cursor |
+| `]` | Align end to cursor |
+| `Alt+[` | Trim start to cursor |
+| `Alt+]` | Trim end to cursor |
+| `Ctrl+D` | Duplicate layers |
+| `Delete` | Delete layer |
+
+### Global
+
+| Key | Action |
+|-----|--------|
+| `F1` | Help |
+| `F2` | Project panel |
+| `F3` | Attributes panel |
+| `F4` | Encode dialog |
+| `F12` | Settings |
+| `Z` | Fullscreen |
+| `Ctrl+S` | Save project |
+| `Ctrl+O` | Open project |
 
 ---
 
-## Typical Workflows
+## Workflows
 
-### Review Image Sequence
+### Review Sequence
 
 1. Drag-drop folder or `playa render.0001.exr`
-2. Press `Space` to play
-3. Use `J`/`L` for shuttle control
-4. Mouse wheel to zoom, middle-drag to pan
+2. `Space` to play, `J`/`L` for shuttle
+3. Mouse wheel to zoom, middle-drag to pan
 
 ### Export to Video
 
 1. Load sequence
-2. Set play range: `B` (start), `N` (end)
-3. Press `F4` to open encode dialog
-4. Select codec and quality
-5. Click "Encode"
+2. Set range: `B` (start), `N` (end)
+3. `F4` - encode dialog
+4. Select codec, click "Encode"
 
 ### Composite Layers
 
-1. Create composition (right-click in Project panel)
+1. Create composition (right-click in Project)
 2. Drag clips to timeline
-3. Select layer, use Move/Rotate/Scale tools
-4. Adjust blend mode and opacity in Attributes panel
-5. Add effects in Effects section (Gaussian Blur, Brightness/Contrast, HSV)
+3. Transform with W/E/R tools
+4. Adjust blend mode in Attributes (F3)
+5. Add effects (Blur, Brightness, HSV)
 
 ### Remote Control
 
-Enable in Settings > Web Server, then:
+Enable in Settings > Web Server:
 
 ```bash
 curl http://localhost:8080/api/status
@@ -245,42 +231,31 @@ curl -X POST http://localhost:8080/api/player/frame/100
 
 ---
 
-## Timeline Visual Feedback
-
-The timeline provides visual cues for multi-sequence work:
-
-- **Color-coded zones** - Each sequence has unique color
-- **Load indicator** - Shows frame status:
-  - Dark gray: Not requested
-  - Blue: Header only
-  - Orange: Loading
-  - Green: Loaded
-  - Red: Error
-- **Play range** - Highlighted region between B/N markers
-- **Layer edges** - White dividers between sequences
-
----
-
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│                    PlayaApp                       │
-├──────────────────────────────────────────────────┤
-│  Player          │  Viewport      │  Timeline    │
-│  (state machine) │  (OpenGL)      │  (layers)    │
-├──────────────────────────────────────────────────┤
-│  EventBus        │  GlobalCache   │  Workers     │
-│  (pub/sub)       │  (LRU + epoch) │  (parallel)  │
-├──────────────────────────────────────────────────┤
-│  Project (media pool) │ Nodes (File/Comp/Camera) │
-└──────────────────────────────────────────────────┘
++--------------------------------------------------+
+|                    PlayaApp                       |
++--------------------------------------------------+
+|  Player          |  Viewport      |  Timeline    |
+|  (state machine) |  (OpenGL)      |  (layers)    |
++--------------------------------------------------+
+|  EventBus        |  GlobalCache   |  Workers     |
+|  (pub/sub)       |  (LRU + epoch) |  (parallel)  |
++--------------------------------------------------+
+|  Project (media pool) | Nodes (File/Comp/Camera) |
++--------------------------------------------------+
 ```
 
-**Key concepts:**
-- **Event-driven** - UI emits events, handlers update state
-- **Epoch-based cancellation** - Stale frame requests are skipped
-- **Work-stealing** - Background loading distributes work across cores
+**How acceleration works:**
+
+1. **User scrubs** - SetFrameEvent emitted
+2. **Epoch increments** - Previous frame requests marked stale
+3. **Cache check** - Return immediately if cached
+4. **Worker dispatch** - Job added to work-stealing queue
+5. **Parallel load** - Workers compete to process jobs
+6. **Epoch validation** - Workers skip stale requests
+7. **Cache insert** - Result stored, UI repainted
 
 For detailed architecture, see [AGENTS.md](AGENTS.md).
 
@@ -290,21 +265,19 @@ For detailed architecture, see [AGENTS.md](AGENTS.md).
 
 | Document | Description |
 |----------|-------------|
-| [DEVELOP.md](DEVELOP.md) | Build from source, FFmpeg setup, xtask commands |
-| [AGENTS.md](AGENTS.md) | Architecture, dataflow diagrams, AI guidelines |
+| [DEVELOP.md](DEVELOP.md) | Build from source, FFmpeg setup |
+| [AGENTS.md](AGENTS.md) | Architecture, dataflow diagrams |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
 
 ---
 
 ## About
 
-This is a learning project exploring Rust and AI-assisted development. Built with Claude Code and Codex.
+Built with Rust. Powered by exrs, openexr-rs, playa-ffmpeg, egui, and the Rust ecosystem.
 
-**Acknowledgements:**
-- App icon from [Flaticon by Yasashii std](http://flaticon.com/packs/halloween-18020037)
-- Powered by exrs, openexr-rs, rust-ffmpeg, and the amazing Rust ecosystem
+**Icon**: [Flaticon by Yasashii std](http://flaticon.com/packs/halloween-18020037)
 
 ---
 
-*For build instructions, see [DEVELOP.md](DEVELOP.md).*  
+*For build instructions, see [DEVELOP.md](DEVELOP.md).*
 *For architecture details, see [AGENTS.md](AGENTS.md).*

@@ -1,9 +1,23 @@
 use clap::Parser;
 use std::path::PathBuf;
 
+// EXR backend info (compile-time)
+#[cfg(feature = "openexr")]
+const EXR_BACKEND: &str = "openexr-rs 0.11 (C++, DWAA/DWAB)";
+#[cfg(not(feature = "openexr"))]
+const EXR_BACKEND: &str = "exrs (pure Rust)";
+
+// Build version with backend info
+const VERSION_INFO: &str = const_format::concatcp!(
+    env!("CARGO_PKG_VERSION"), "\n",
+    "EXR:    ", EXR_BACKEND, "\n",
+    "Video:  playa-ffmpeg 8.0 (static)\n",
+    "Target: ", std::env::consts::ARCH, "-", std::env::consts::OS
+);
+
 /// Image sequence player
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = VERSION_INFO, about, long_about = None)]
 pub struct Args {
     /// Path to the image file to load (EXR, PNG, JPEG, TIFF, TGA) - optional, can also drag-and-drop
     #[arg(value_name = "FILE")]
