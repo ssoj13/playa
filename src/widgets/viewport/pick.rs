@@ -100,6 +100,12 @@ pub fn pick_layer_at(
             continue;
         }
 
+        // Skip non-renderable layers (camera, light, null, audio)
+        if !layer.attrs.get_bool("renderable").unwrap_or(true) {
+            debug!("[pick] layer[{}] = {} SKIP (non-renderable)", i, name);
+            continue;
+        }
+
         // Check if frame is within layer's work area
         let (play_start, play_end) = comp.get_layer_work_area(layer, media);
         if frame_idx < play_start || frame_idx > play_end {

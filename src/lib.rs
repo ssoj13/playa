@@ -21,6 +21,7 @@ pub mod cli;
 pub mod config;
 pub mod dialogs;
 pub mod entities;
+pub mod help;
 pub mod main_events;
 pub mod server;
 pub mod shell;

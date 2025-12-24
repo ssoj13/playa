@@ -112,6 +112,10 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     Some(c) => c,
                     None => continue,
                 };
+                // Skip unlisted items (preview comp)
+                if !comp.is_listed() {
+                    continue;
+                }
                 let Some(clicked_idx) = order_index.get(comp_uuid).copied() else {
                     continue;
                 };
@@ -270,6 +274,10 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     }));
                     actions.events.push(Box::new(SelectionFocusEvent(sel)));
                 }
+                // Double-click: activate node (show in timeline/viewport)
+                // Emits ProjectActiveChangedEvent → main_events.rs handles:
+                // - Comp nodes: activate directly
+                // - Non-Comp (File/Text/Camera): wrap in preview comp singleton
                 if response.double_clicked() {
                     let (sel, anchor) = compute_selection(
                         &order,
@@ -283,9 +291,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                         anchor,
                     }));
                     actions.events.push(Box::new(SelectionFocusEvent(sel)));
-                    actions
-                        .events
-                        .push(Box::new(ProjectActiveChangedEvent::new(*comp_uuid)));
+                    actions.events.push(Box::new(ProjectActiveChangedEvent::new(*comp_uuid)));
                 }
 
                 // Drag handling

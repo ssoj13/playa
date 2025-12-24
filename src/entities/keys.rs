@@ -38,6 +38,8 @@ pub const A_SOLO: &str = "solo";
 pub const A_MUTE: &str = "mute";
 /// Visibility flag
 pub const A_VISIBLE: &str = "visible";
+/// Listed in Project UI (false = hidden preview comp)
+pub const A_LISTED: &str = "listed";
 /// Blend mode (normal, screen, add, multiply, etc.)
 pub const A_BLEND_MODE: &str = "blend_mode";
 
