@@ -26,10 +26,10 @@ pub const GLOBAL_HELP: &[HelpEntry] = &[
     HelpEntry::new("F4", "Toggle Encoder dialog"),
     HelpEntry::new("F12", "Toggle Preferences"),
     HelpEntry::new("ESC", "Exit Fullscreen / Quit"),
+    HelpEntry::new("Z", "Toggle Fullscreen"),
+    HelpEntry::new("U", "Previous Comp"),
     HelpEntry::new("Ctrl+S", "Save Project"),
     HelpEntry::new("Ctrl+O", "Open Project"),
-    HelpEntry::new("Z", "Toggle Fullscreen"),
-    HelpEntry::new("Ctrl+R", "Reset Settings"),
     HelpEntry::new("Ctrl+Alt+/", "Clear Frame Cache"),
 ];
 
@@ -77,6 +77,11 @@ pub const TIMELINE_HELP: &[HelpEntry] = &[
     HelpEntry::new("- / = / +", "Zoom Timeline In/Out"),
     HelpEntry::new("Mouse Wheel", "Zoom Timeline"),
     HelpEntry::new("Middle Drag", "Pan Timeline"),
+    HelpEntry::new("Ctrl+D", "Duplicate Layers"),
+    HelpEntry::new("Ctrl+C", "Copy Layers"),
+    HelpEntry::new("Ctrl+V", "Paste Layers"),
+    HelpEntry::new("Ctrl+A", "Select All Layers"),
+    HelpEntry::new("Ctrl+R", "Reset Trims"),
 ];
 
 /// Project panel help
@@ -94,26 +99,35 @@ pub const AE_HELP: &[HelpEntry] = &[
     HelpEntry::new("Shift+Tab", "Previous Field"),
 ];
 
-/// Render help overlay for a widget
+/// Node Editor help
+pub const NODE_HELP: &[HelpEntry] = &[
+    HelpEntry::new("A", "Fit All Nodes"),
+    HelpEntry::new("F", "Fit Selected Nodes"),
+    HelpEntry::new("L", "Re-layout Nodes"),
+    HelpEntry::new("Delete", "Remove Selected Node"),
+    HelpEntry::new("Middle Drag", "Pan"),
+    HelpEntry::new("Mouse Wheel", "Zoom"),
+];
+
+/// Render help overlay for a widget (two-column layout)
 pub fn render_help_overlay(ui: &mut egui::Ui, entries: &[HelpEntry], include_global: bool) {
-    let font_id = egui::FontId::proportional(13.0);
+    let font_id = egui::FontId::proportional(12.0);
     let text_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200);
     let key_color = egui::Color32::from_rgb(255, 200, 100);
+    let section_color = egui::Color32::GRAY;
 
-    // Calculate max key width for alignment (estimate based on char count)
-    let max_key_len = entries
-        .iter()
-        .chain(if include_global { GLOBAL_HELP.iter() } else { [].iter() })
-        .map(|e| e.key.len())
-        .max()
-        .unwrap_or(10);
-    let max_key_width = (max_key_len as f32) * 8.0 + 20.0;
-
-    let render_entries = |ui: &mut egui::Ui, entries: &[HelpEntry]| {
+    // Helper to render a section
+    let render_section = |ui: &mut egui::Ui, title: &str, entries: &[HelpEntry]| {
+        ui.label(
+            egui::RichText::new(title)
+                .font(font_id.clone())
+                .color(section_color),
+        );
+        ui.add_space(4.0);
         for entry in entries {
             ui.horizontal(|ui| {
                 ui.add_sized(
-                    [max_key_width, 18.0],
+                    [110.0, 16.0],
                     egui::Label::new(
                         egui::RichText::new(entry.key)
                             .font(font_id.clone())
@@ -130,24 +144,34 @@ pub fn render_help_overlay(ui: &mut egui::Ui, entries: &[HelpEntry], include_glo
     };
 
     egui::Frame::NONE
-        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 180))
-        .inner_margin(12.0)
-        .corner_radius(4.0)
+        .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 200))
+        .inner_margin(16.0)
+        .corner_radius(6.0)
         .show(ui, |ui| {
-            render_entries(ui, entries);
+            // Two-column layout
+            ui.horizontal(|ui| {
+                // Left column: context-specific + playback
+                ui.vertical(|ui| {
+                    ui.set_min_width(260.0);
+                    
+                    if !entries.is_empty() {
+                        render_section(ui, "Context", entries);
+                        ui.add_space(8.0);
+                    }
+                    
+                    render_section(ui, "Playback", PLAYBACK_HELP);
+                });
 
-            if include_global && !GLOBAL_HELP.is_empty() {
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new("Global")
-                        .font(font_id.clone())
-                        .color(egui::Color32::GRAY),
-                );
-                ui.add_space(4.0);
-                render_entries(ui, GLOBAL_HELP);
-            }
+                ui.add_space(24.0);
+
+                // Right column: global
+                ui.vertical(|ui| {
+                    ui.set_min_width(220.0);
+
+                    if include_global && !GLOBAL_HELP.is_empty() {
+                        render_section(ui, "Global", GLOBAL_HELP);
+                    }
+                });
+            });
         });
 }
-

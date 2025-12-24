@@ -113,6 +113,7 @@ playa -f sequence.exr --frame 50 -a -F    # Start at frame 50, autoplay, fullscr
 | **Fullscreen** | `Z` |
 | **Scrub** | Right click + drag on image |
 | **Pick layer** | Left click (Select mode Q) |
+| **Toggle frame numbers** | `Backspace` |
 
 ### Timeline Controls
 
@@ -128,6 +129,24 @@ playa -f sequence.exr --frame 50 -a -F    # Start at frame 50, autoplay, fullscr
 | **Trim start to cursor** | `Alt+[` |
 | **Trim end to cursor** | `Alt+]` |
 | **Delete layer** | `Delete` |
+| **Duplicate layers** | `Ctrl+D` |
+| **Copy layers** | `Ctrl+C` |
+| **Paste layers** | `Ctrl+V` |
+| **Select all layers** | `Ctrl+A` |
+| **Reset trims** | `Ctrl+R` |
+| **Fit to selection** | `F` |
+| **Fit to work area** | `A` |
+
+### Node Editor
+
+| Action | Control |
+|--------|---------|
+| **Fit all nodes** | `A` |
+| **Fit selected nodes** | `F` |
+| **Re-layout nodes** | `L` |
+| **Delete node** | `Delete` |
+| **Zoom** | Mouse wheel |
+| **Pan** | Middle mouse drag |
 
 ### Tool Modes
 
@@ -141,6 +160,22 @@ playa -f sequence.exr --frame 50 -a -F    # Start at frame 50, autoplay, fullscr
 ---
 
 ## Keyboard Shortcuts
+
+### Global
+
+| Key | Action |
+|-----|--------|
+| `F1` | Help overlay |
+| `F2` | Project panel |
+| `F3` | Attributes panel |
+| `F4` | Encode dialog |
+| `F12` | Settings/Preferences |
+| `Z` | Toggle fullscreen |
+| `Esc` | Exit fullscreen / Quit |
+| `U` | Previous comp |
+| `Ctrl+S` | Save project |
+| `Ctrl+O` | Open project |
+| `Ctrl+Alt+/` | Clear frame cache |
 
 ### Playback
 
@@ -157,40 +192,19 @@ playa -f sequence.exr --frame 50 -a -F    # Start at frame 50, autoplay, fullscr
 | `2` / `End` | Jump to end |
 | `;` / `'` | Prev/Next layer edge |
 | `` ` `` | Toggle loop |
+| `-` / `=` / `+` | Decrease/Increase FPS |
 
-### FPS Control
-
-| Key | Action |
-|-----|--------|
-| `-` | Decrease base FPS |
-| `=` / `+` | Increase base FPS |
-
-Presets: 1, 2, 4, 8, 12, 24, 30, 60, 120, 240
+FPS Presets: 1, 2, 4, 8, 12, 24, 30, 60, 120, 240
 
 ### Play Range (Work Area)
 
 | Key | Action |
 |-----|--------|
-| `B` | Set range start (begin) |
+| `B` | Set range start |
 | `N` | Set range end |
 | `Ctrl+B` | Reset to full range |
 
 Used for: loop playback, encoding (F4)
-
-### UI
-
-| Key | Action |
-|-----|--------|
-| `F1` | Help overlay |
-| `F2` | Project panel |
-| `F3` | Attributes panel |
-| `F4` | Encode dialog |
-| `F12` | Settings/Preferences |
-| `Z` | Fullscreen |
-| `Backspace` | Toggle frame numbers |
-| `Esc` | Exit fullscreen / Quit |
-| `Ctrl+S` | Save project |
-| `Ctrl+O` | Open project |
 
 ---
 
