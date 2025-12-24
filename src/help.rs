@@ -122,10 +122,10 @@ pub const AE_HELP: &[HelpEntry] = &[
 // Rendering
 // =============================================================================
 
-/// Render main help overlay (two-column layout, positioned at rect center)
+/// Render main help overlay (two-column layout, top-left corner)
 pub fn render_main_help(ui: &mut egui::Ui, rect: egui::Rect) {
     let font = egui::FontId::proportional(12.0);
-    let text_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200);
+    let text_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 220);
     let key_color = egui::Color32::from_rgb(255, 200, 100);
     let section_color = egui::Color32::GRAY;
 
@@ -157,20 +157,11 @@ pub fn render_main_help(ui: &mut egui::Ui, rect: egui::Rect) {
         ui.add_space(6.0);
     };
 
-    // Overlay frame
+    // Top-left corner, no background overlay
     let overlay_size = egui::vec2(520.0, 340.0);
-    let overlay_pos = rect.center() - overlay_size / 2.0;
-    let overlay_rect = egui::Rect::from_min_size(overlay_pos, overlay_size);
+    let overlay_pos = rect.min + egui::vec2(16.0, 16.0);
+    let content_rect = egui::Rect::from_min_size(overlay_pos, overlay_size);
 
-    // Background
-    ui.painter().rect_filled(
-        overlay_rect,
-        6.0,
-        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 220),
-    );
-
-    // Content area
-    let content_rect = overlay_rect.shrink(16.0);
     let mut child_ui = ui.new_child(egui::UiBuilder::new().max_rect(content_rect));
 
     child_ui.horizontal(|ui| {
