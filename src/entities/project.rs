@@ -392,12 +392,30 @@ impl Project {
         self.last_save_path = path;
     }
 
-    // === Preview Comp Singleton (for viewing non-Comp nodes) ===
+    // =========================================================================
+    // Preview Comp Singleton
+    // =========================================================================
+    //
+    // Allows viewing non-Comp nodes (FileNode, TextNode, CameraNode) in 
+    // timeline and viewport by wrapping them in a transient composition.
+    //
+    // Architecture:
+    // - Single "__preview__" comp lives in media pool (reused, not recreated)
+    // - Has `listed=false` attribute → hidden in Project UI panel
+    // - Not serialized (filtered in arc_rwlock_hashmap::serialize)
+    // - On double-click non-Comp: ProjectActiveChangedEvent → main_events.rs
+    //   → preview_source() → player.set_active_comp(preview_uuid)
+    //
+    // Why singleton in media pool (not RefCell):
+    // - Workers/cache/viewport all read from media pool
+    // - RefCell would require patching every access point
+    // - Media pool gives us free threading, caching, rendering support
+    // =========================================================================
     
-    /// Special name for preview comp singleton
+    /// Special name for preview comp singleton (prefix __ = internal)
     pub const PREVIEW_COMP_NAME: &'static str = "__preview__";
 
-    /// Find preview comp UUID in media pool (by name)
+    /// Find preview comp UUID in media pool (by special name)
     pub fn preview_comp_uuid(&self) -> Option<Uuid> {
         let media = self.media.read().expect("media lock poisoned");
         media.values()
@@ -410,8 +428,9 @@ impl Project {
         self.with_node(uuid, |n| n.name() == Self::PREVIEW_COMP_NAME).unwrap_or(false)
     }
 
-    /// Get or create preview comp, set its content to source node.
-    /// Returns preview comp UUID.
+    /// Get or create preview comp, populate with source node as single layer.
+    /// Called from main_events.rs on ProjectActiveChangedEvent for non-Comp nodes.
+    /// Returns preview comp UUID to be set as active.
     pub fn preview_source(&self, source_uuid: Uuid) -> Option<Uuid> {
         // Get source info
         let (name, dim, duration, fps, renderable) = self.with_node(source_uuid, |node| {

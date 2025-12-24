@@ -471,18 +471,21 @@ pub fn handle_app_event(
         result.ae_focus_update = Some(e.0.clone());
         return Some(result);
     }
+    // ProjectActiveChangedEvent: switch active comp (double-click in Project panel)
+    // Flow: project_ui double-click → ProjectActiveChangedEvent → here
+    //       → if Comp: activate directly
+    //       → if non-Comp (File/Text/Camera): wrap in preview comp singleton
+    //       → player.set_active_comp() → viewport/timeline update
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(event) {
-        // Check if uuid is a Comp or needs preview wrapping
         let is_comp = project.with_node(e.uuid, |n| n.as_comp().is_some()).unwrap_or(false);
         
         let active_uuid = if is_comp {
-            // Regular comp - use directly
             e.uuid
         } else {
-            // Non-comp (File, Text, Camera) - create preview comp
+            // Wrap non-comp in preview comp (see Project::preview_source docs)
             match project.preview_source(e.uuid) {
                 Some(preview_uuid) => {
-                    trace!("Created preview comp {} for source {}", preview_uuid, e.uuid);
+                    trace!("Preview comp {} for source {}", preview_uuid, e.uuid);
                     preview_uuid
                 }
                 None => {

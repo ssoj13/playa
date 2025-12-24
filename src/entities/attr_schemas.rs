@@ -30,10 +30,13 @@ const INT_DAG: u8 = FLAG_INTERNAL | FLAG_DAG;
 // ============================================================================
 
 /// Identity: name + uuid + listed (used by all entities)
+/// - `listed`: controls visibility in Project UI panel (default true)
+///   Used by preview comp singleton which has listed=false to stay hidden.
+///   Also filtered during serialization - unlisted nodes not saved.
 const IDENTITY: &[AttrDef] = &[
     AttrDef::with_order("name", AttrType::String, DISP, 0.0),
     AttrDef::with_order("uuid", AttrType::Uuid, INT, 0.1),
-    AttrDef::with_order("listed", AttrType::Bool, INT, 0.2),  // false = hidden in Project UI
+    AttrDef::with_order("listed", AttrType::Bool, INT, 0.2),
 ];
 
 /// Timing attributes: in/out points, trim, speed (used by timed entities)
