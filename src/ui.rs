@@ -199,8 +199,8 @@ pub fn render_timeline_panel(
                 timeline_state.last_comp_uuid = Some(comp_uuid);
             }
 
-            let media = project.media.read().expect("media lock poisoned");
-            if let Some(comp) = media.get(&comp_uuid).and_then(|n| n.as_comp()) {
+            if let Some(comp) = project.clone_comp(comp_uuid) {
+                let comp = &comp; // reborrow for compatibility
                 let config = TimelineConfig::new(layer_height, name_column_width);
 
                 // CRITICAL ORDER: Toolbar MUST be rendered BEFORE calculating splitter_height.

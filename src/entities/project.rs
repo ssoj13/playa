@@ -154,7 +154,6 @@ impl Clone for Project {
             attrs: self.attrs.clone(),
             media: Arc::clone(&self.media),
             selection_anchor: self.selection_anchor,
-            // Clone compositor by locking and cloning inner value
             compositor: Mutex::new(
                 self.compositor.lock().unwrap_or_else(|e| e.into_inner()).clone()
             ),
@@ -196,7 +195,7 @@ impl Project {
             attrs,
             media: Arc::new(RwLock::new(HashMap::new())),
             selection_anchor: None,
-            compositor: Mutex::new(CompositorType::default()), // CPU compositor by default
+            compositor: Mutex::new(CompositorType::default()),
             cache_manager: Some(cache_manager),
             global_cache: Some(global_cache),
             last_save_path: None,
@@ -393,6 +392,90 @@ impl Project {
         self.last_save_path = path;
     }
 
+    // === Preview Comp Singleton (for viewing non-Comp nodes) ===
+    
+    /// Special name for preview comp singleton
+    pub const PREVIEW_COMP_NAME: &'static str = "__preview__";
+
+    /// Find preview comp UUID in media pool (by name)
+    pub fn preview_comp_uuid(&self) -> Option<Uuid> {
+        let media = self.media.read().expect("media lock poisoned");
+        media.values()
+            .find(|n| n.name() == Self::PREVIEW_COMP_NAME)
+            .map(|n| n.uuid())
+    }
+
+    /// Check if UUID is the preview comp
+    pub fn is_preview_comp(&self, uuid: Uuid) -> bool {
+        self.with_node(uuid, |n| n.name() == Self::PREVIEW_COMP_NAME).unwrap_or(false)
+    }
+
+    /// Get or create preview comp, set its content to source node.
+    /// Returns preview comp UUID.
+    pub fn preview_source(&self, source_uuid: Uuid) -> Option<Uuid> {
+        // Get source info
+        let (name, dim, duration, fps, renderable) = self.with_node(source_uuid, |node| {
+            let name = node.name().to_string();
+            let dim = node.dim();
+            let duration = node.frame_count();
+            let fps = node.fps();
+            let renderable = node.is_renderable();
+            (name, dim, duration, fps, renderable)
+        })?;
+
+        // Find or create preview comp
+        let preview_uuid = self.preview_comp_uuid();
+        
+        if let Some(uuid) = preview_uuid {
+            // Update existing preview comp
+            self.modify_comp(uuid, |comp| {
+                // Clear layers and add new one
+                comp.layers.clear();
+                let _ = comp.add_child_layer(
+                    source_uuid,
+                    &name,
+                    0,
+                    duration,
+                    None,
+                    dim,
+                    renderable,
+                    None,
+                );
+                // Update timing
+                comp.attrs_mut().set(A_IN, super::attrs::AttrValue::Int(0));
+                comp.attrs_mut().set(A_OUT, super::attrs::AttrValue::Int(duration));
+                comp.attrs_mut().set(A_FPS, super::attrs::AttrValue::Float(fps));
+                comp.attrs_mut().set(A_FRAME, super::attrs::AttrValue::Int(0));
+            });
+            log::info!("Updated preview comp {} for source {}", uuid, source_uuid);
+            Some(uuid)
+        } else {
+            // Create new preview comp
+            let mut comp = CompNode::new(Self::PREVIEW_COMP_NAME, 0, duration, fps);
+            // Mark as unlisted
+            comp.attrs_mut().set(A_LISTED, super::attrs::AttrValue::Bool(false));
+            
+            let _ = comp.add_child_layer(
+                source_uuid,
+                &name,
+                0,
+                duration,
+                None,
+                dim,
+                renderable,
+                None,
+            );
+
+            let uuid = comp.uuid();
+            // Add to media pool (but not to order - it's unlisted)
+            self.media.write().expect("media lock poisoned")
+                .insert(uuid, Arc::new(NodeKind::Comp(comp)));
+            
+            log::info!("Created preview comp {} for source {}", uuid, source_uuid);
+            Some(uuid)
+        }
+    }
+
     /// Serialize project to JSON file.
     pub fn to_json<P: AsRef<Path>>(&self, path: P) -> Result<(), String> {
         let json = serde_json::to_string_pretty(self)
@@ -511,6 +594,12 @@ impl Project {
         media.get(&uuid).and_then(|arc| arc.as_comp()).map(f)
     }
 
+    /// Clone CompNode by UUID
+    pub fn clone_comp(&self, uuid: Uuid) -> Option<CompNode> {
+        let media = self.media.read().expect("media lock poisoned");
+        media.get(&uuid).and_then(|arc| arc.as_comp()).cloned()
+    }
+
     /// Access FileNode by reference via closure (no clone)
     pub fn with_file<F, R>(&self, uuid: Uuid, f: F) -> Option<R>
     where
@@ -538,7 +627,7 @@ impl Project {
         self.media.read().expect("media lock poisoned").contains_key(&uuid)
     }
 
-    /// Alias for contains_node (compat)
+    /// Check if comp exists in media pool
     pub fn contains_comp(&self, uuid: Uuid) -> bool {
         self.contains_node(uuid)
     }
@@ -919,8 +1008,12 @@ mod arc_rwlock_hashmap {
         S: Serializer,
     {
         let guard = map.read().expect("media lock poisoned");
-        let mut map_ser = serializer.serialize_map(Some(guard.len()))?;
-        for (k, v) in guard.iter() {
+        // Filter out unlisted nodes (preview comp)
+        let listed: Vec<_> = guard.iter()
+            .filter(|(_, v)| v.is_listed())
+            .collect();
+        let mut map_ser = serializer.serialize_map(Some(listed.len()))?;
+        for (k, v) in listed {
             map_ser.serialize_entry(k, v.as_ref())?;
         }
         map_ser.end()

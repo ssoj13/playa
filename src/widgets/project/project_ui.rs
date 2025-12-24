@@ -112,6 +112,10 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     Some(c) => c,
                     None => continue,
                 };
+                // Skip unlisted items (preview comp)
+                if !comp.is_listed() {
+                    continue;
+                }
                 let Some(clicked_idx) = order_index.get(comp_uuid).copied() else {
                     continue;
                 };

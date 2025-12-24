@@ -29,10 +29,11 @@ const INT_DAG: u8 = FLAG_INTERNAL | FLAG_DAG;
 // Common Attribute Groups (DRY)
 // ============================================================================
 
-/// Identity: name + uuid (used by all entities)
+/// Identity: name + uuid + listed (used by all entities)
 const IDENTITY: &[AttrDef] = &[
     AttrDef::with_order("name", AttrType::String, DISP, 0.0),
     AttrDef::with_order("uuid", AttrType::Uuid, INT, 0.1),
+    AttrDef::with_order("listed", AttrType::Bool, INT, 0.2),  // false = hidden in Project UI
 ];
 
 /// Timing attributes: in/out points, trim, speed (used by timed entities)

@@ -472,14 +472,34 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(event) {
-        player.set_active_comp(Some(e.uuid), project); // also resets selection
+        // Check if uuid is a Comp or needs preview wrapping
+        let is_comp = project.with_node(e.uuid, |n| n.as_comp().is_some()).unwrap_or(false);
+        
+        let active_uuid = if is_comp {
+            // Regular comp - use directly
+            e.uuid
+        } else {
+            // Non-comp (File, Text, Camera) - create preview comp
+            match project.preview_source(e.uuid) {
+                Some(preview_uuid) => {
+                    trace!("Created preview comp {} for source {}", preview_uuid, e.uuid);
+                    preview_uuid
+                }
+                None => {
+                    trace!("Failed to create preview for {}", e.uuid);
+                    return Some(result);
+                }
+            }
+        };
+        
+        player.set_active_comp(Some(active_uuid), project);
         project.selection_anchor = project.order().iter().position(|u| *u == e.uuid);
-        node_editor_state.set_comp(e.uuid);
+        node_editor_state.set_comp(active_uuid);
         
         // If target_frame specified (dive-into-comp), set frame in new comp
         if let Some(local_frame) = e.target_frame {
             // Add child comp's "in" offset to get absolute frame
-            project.modify_comp(e.uuid, |comp| {
+            project.modify_comp(active_uuid, |comp| {
                 let comp_in = comp.attrs().get_i32(A_IN).unwrap_or(0);
                 comp.set_frame(comp_in + local_frame);
             });
