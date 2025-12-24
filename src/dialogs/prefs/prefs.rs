@@ -212,13 +212,39 @@ fn render_webserver_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
         ui.add_space(8.0);
         ui.label("Server URL:");
         ui.monospace(format!("http://0.0.0.0:{}", port));
+
+        ui.add_space(12.0);
+        ui.label("Status endpoints:");
+        ui.monospace("GET  /api/status              - full status");
+        ui.monospace("GET  /api/player              - player state");
+        ui.monospace("GET  /api/comp                - active comp info");
+        ui.monospace("GET  /api/cache               - cache stats");
+        ui.monospace("GET  /api/health              - health check");
+
         ui.add_space(8.0);
-        ui.label("Endpoints:");
-        ui.monospace("GET  /api/status");
-        ui.monospace("GET  /api/player");
-        ui.monospace("POST /api/player/play");
-        ui.monospace("POST /api/player/pause");
-        ui.monospace("POST /api/player/frame/{n}");
+        ui.label("Player control:");
+        ui.monospace("POST /api/player/play         - start playback");
+        ui.monospace("POST /api/player/pause        - pause");
+        ui.monospace("POST /api/player/stop         - stop (pause + seek 0)");
+        ui.monospace("POST /api/player/frame/{n}    - seek to frame");
+        ui.monospace("POST /api/player/fps/{n}      - set FPS");
+        ui.monospace("POST /api/player/toggle-loop  - toggle loop");
+        ui.monospace("POST /api/player/next         - next frame");
+        ui.monospace("POST /api/player/prev         - prev frame");
+
+        ui.add_space(8.0);
+        ui.label("Project:");
+        ui.monospace("POST /api/project/load        - load sequence (JSON)");
+
+        ui.add_space(8.0);
+        ui.label("Screenshots:");
+        ui.monospace("GET  /api/screenshot          - full window (with UI)");
+        ui.monospace("GET  /api/screenshot/frame    - raw frame only");
+
+        ui.add_space(8.0);
+        ui.label("Other:");
+        ui.monospace("POST /api/event               - emit custom event");
+        ui.monospace("POST /api/app/exit            - exit application");
     } else {
         ui.add_space(8.0);
         ui.label("Enable to start the REST API server.");

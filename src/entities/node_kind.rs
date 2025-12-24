@@ -58,6 +58,11 @@ impl NodeKind {
         }
     }
 
+    /// Check if listed in Project UI (false = hidden preview comp)
+    pub fn is_listed(&self) -> bool {
+        self.attrs().get_bool("listed").unwrap_or(true)
+    }
+
     // play_range, bounds, frame_count, dim - now via Node trait (enum_dispatch)
 
     /// Add child layer (only works on CompNode)

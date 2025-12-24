@@ -9,11 +9,19 @@
 // Core engine (cache, events, player, workers)
 pub mod core;
 
+// Main application (PlayaApp struct and related)
+pub mod app;
+
+// Application runner (entry point for CLI and Python)
+pub mod runner;
+pub use runner::run_app;
+
 // App modules
 pub mod cli;
 pub mod config;
 pub mod dialogs;
 pub mod entities;
+pub mod help;
 pub mod main_events;
 pub mod server;
 pub mod shell;

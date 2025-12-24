@@ -1,5 +1,6 @@
 [workspace]
 members = ["xtask"]
+exclude = ["crates/playa-py"]
 
 [package]
 name = "playa"
