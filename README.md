@@ -11,8 +11,11 @@
 
 ## What is Playa?
 
-**The problem**: Initially project started as an EXR Image Image Sequence Player in Rust. The aim was to actually learn Rust and create something useful.
-LLMs and agentic applications like Claude Code, Codex, Qwen and the rest provide enormous help here and allow to perform 10x-100x faster.
+Initially started as a simple EXR Image Image Sequence Player in Rust. The aim was to actually learn Rust and create something useful.
+LLMs and agentic applications like Claude Code, Codex, Qwen and the rest provide enormous help here and allow to perform 10x-100x faster,
+so I started to add some more features upon my friends requests: flexible viewport, layers, timeline, attribute editor, h264/265/ProRes encoding,
+REST api, multithreaded composing with LRU cache and more.
+
 
 ## Key Features
 
