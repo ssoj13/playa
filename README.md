@@ -11,12 +11,16 @@
 
 ## What is Playa?
 
-**The problem**: Experimental Image Sequence Player written in Rust.
+**The problem**: Initially project started as an EXR Image Image Sequence Player in Rust. The aim was to actually learn Rust and create something useful.
+LLMs and agentic applications like Claude Code, Codex, Qwen and the rest provide enormous help here and allow to perform 10x-100x faster.
 
 ## Key Features
 
+### System
+- **Single binary, cross-platform** - One executable, no dependencies.
+- **Download and run on Windows, macOS, or Linux**
+
 ### Performance
-- **Single binary, cross-platform** - One executable, no dependencies. Download and run on Windows, macOS, or Linux.
 - **Instant scrubbing** - Epoch-based cache keeps UI responsive at any speed
 - **Parallel loading** - Work-stealing across CPU cores
 - **Smart memory** - LRU cache with configurable memory limit
