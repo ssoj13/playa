@@ -2147,18 +2147,15 @@ fn write_exr_frame(
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
     
-    // Build channel list based on settings
-    let mut header = openexr::Header::new(
-        [width as i32, height as i32],
-        openexr::PixelAspectRatio::default(),
-    );
+    // Build header with dimensions
+    let mut header = Header::from_dimensions(width as i32, height as i32);
     
     // Set compression
     let compression = match settings.compression {
-        ExrCompression::None => openexr::Compression::None,
-        ExrCompression::Rle => openexr::Compression::Rle,
-        ExrCompression::Zip => openexr::Compression::ZipSingle,
-        ExrCompression::Piz => openexr::Compression::Piz,
+        ExrCompression::None => Compression::None,
+        ExrCompression::Rle => Compression::Rle,
+        ExrCompression::Zip => Compression::Zip,
+        ExrCompression::Piz => Compression::Piz,
     };
     header.set_compression(compression);
     
@@ -2187,56 +2184,41 @@ fn write_exr_frame(
 #[cfg(feature = "openexr")]
 fn write_exr_f32_data(
     path: &std::path::Path,
-    header: &openexr::Header,
+    header: &Header,
     data: &[f32],
     width: usize,
     height: usize,
     channels: ChannelMode,
-    use_half: bool,
+    _use_half: bool, // RgbaOutputFile always uses half precision internally
 ) -> Result<(), EncodeError> {
     use openexr::prelude::*;
     
-    // Separate channels
-    let pixels = width * height;
-    let mut r = Vec::with_capacity(pixels);
-    let mut g = Vec::with_capacity(pixels);
-    let mut b = Vec::with_capacity(pixels);
-    let mut a = Vec::with_capacity(pixels);
-    
-    for chunk in data.chunks_exact(4) {
-        r.push(chunk[0]);
-        g.push(chunk[1]);
-        b.push(chunk[2]);
-        a.push(chunk[3]);
-    }
-    
-    // Write using openexr
-    let mut file = openexr::RgbaOutputFile::new(
-        path,
-        header,
-        if channels == ChannelMode::Rgba {
-            openexr::RgbaChannels::WriteRgba
-        } else {
-            openexr::RgbaChannels::WriteRgb
-        },
-        1, // threads
-    ).map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to create EXR file: {}", e)))?;
-    
-    // Convert to Rgba pixels
-    let rgba_pixels: Vec<openexr::Rgba> = (0..pixels)
-        .map(|i| openexr::Rgba {
-            r: if use_half { half::f16::from_f32(r[i]).to_bits() as f32 } else { r[i] },
-            g: if use_half { half::f16::from_f32(g[i]).to_bits() as f32 } else { g[i] },
-            b: if use_half { half::f16::from_f32(b[i]).to_bits() as f32 } else { b[i] },
-            a: if use_half { half::f16::from_f32(a[i]).to_bits() as f32 } else { a[i] },
-        })
+    // Convert interleaved RGBA f32 data to Vec<Rgba>
+    // Rgba::from_f32 handles the f32 -> internal f16 conversion
+    let rgba_pixels: Vec<Rgba> = data
+        .chunks_exact(4)
+        .map(|chunk| Rgba::from_f32(chunk[0], chunk[1], chunk[2], chunk[3]))
         .collect();
     
-    file.set_frame_buffer(&rgba_pixels, width, 1)
+    // Create output file
+    let rgba_channels = if channels == ChannelMode::Rgba {
+        RgbaChannels::WriteRgba
+    } else {
+        RgbaChannels::WriteRgb
+    };
+    
+    let mut file = RgbaOutputFile::new(path, header, rgba_channels, 1)
+        .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to create EXR file: {}", e)))?;
+    
+    // Set frame buffer: (data, x_stride=1, y_stride=width)
+    file.set_frame_buffer(&rgba_pixels, 1, width)
         .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to set EXR frame buffer: {}", e)))?;
     
-    file.write_pixels(height as i32)
-        .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write EXR pixels: {}", e)))?;
+    // Write pixels (requires unsafe as per openexr-rs API)
+    unsafe {
+        file.write_pixels(height as i32)
+            .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write EXR pixels: {}", e)))?;
+    }
     
     Ok(())
 }
