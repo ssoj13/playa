@@ -371,6 +371,7 @@ impl EncodeDialog {
             ExportMode::Sequence => "Image Sequence Export",
         };
         egui::Window::new(window_title)
+            .id(egui::Id::new("encode_dialog"))
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
