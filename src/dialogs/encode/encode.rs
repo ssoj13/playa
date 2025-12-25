@@ -20,6 +20,14 @@ use crate::entities::Comp;
 use crate::entities::frame::{CropAlign, FrameConversion, PixelFormat, TonemapMode};
 use playa_ffmpeg as ffmpeg;
 
+/// Export mode - video or image sequence
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ExportMode {
+    #[default]
+    Video,
+    Sequence,
+}
+
 /// Encode dialog settings (persistent via AppSettings)
 /// Contains all codec settings + dialog state
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,6 +45,14 @@ pub struct EncodeDialogSettings {
     // Per-codec settings (all preserved when switching codecs)
     #[serde(default)]
     pub codec_settings: CodecSettings,
+    
+    // Export mode (Video or Sequence)
+    #[serde(default)]
+    pub export_mode: ExportMode,
+    
+    // Image sequence settings
+    #[serde(default)]
+    pub sequence_settings: SequenceSettings,
 }
 
 impl Default for EncodeDialogSettings {
@@ -48,6 +64,8 @@ impl Default for EncodeDialogSettings {
             selected_codec: VideoCodec::H264,
             tonemap_mode: TonemapMode::default(),
             codec_settings: CodecSettings::default(),
+            export_mode: ExportMode::Video,
+            sequence_settings: SequenceSettings::default(),
         }
     }
 }
@@ -482,6 +500,99 @@ impl std::fmt::Display for ChannelMode {
     }
 }
 
+/// Unified output bit depth for all formats
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum OutputBitDepth {
+    #[default]
+    U8,    // 8-bit unsigned
+    U16,   // 16-bit unsigned
+    F16,   // 16-bit float (half)
+    F32,   // 32-bit float
+}
+
+impl OutputBitDepth {
+    pub fn all() -> &'static [OutputBitDepth] {
+        &[OutputBitDepth::U8, OutputBitDepth::U16, OutputBitDepth::F16, OutputBitDepth::F32]
+    }
+}
+
+impl std::fmt::Display for OutputBitDepth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputBitDepth::U8 => write!(f, "8-bit"),
+            OutputBitDepth::U16 => write!(f, "16-bit"),
+            OutputBitDepth::F16 => write!(f, "Half (F16)"),
+            OutputBitDepth::F32 => write!(f, "Float (F32)"),
+        }
+    }
+}
+
+/// Format capabilities - what each format supports
+#[derive(Clone, Debug)]
+pub struct FormatCapabilities {
+    pub supported_depths: &'static [OutputBitDepth],
+    pub supports_alpha: bool,
+    pub is_hdr: bool,  // Can store values > 1.0 without tonemapping
+}
+
+impl SequenceFormat {
+    /// Get capabilities for this format
+    pub fn capabilities(&self) -> FormatCapabilities {
+        match self {
+            SequenceFormat::Exr => FormatCapabilities {
+                supported_depths: &[OutputBitDepth::F16, OutputBitDepth::F32],
+                supports_alpha: true,
+                is_hdr: true,
+            },
+            SequenceFormat::Png => FormatCapabilities {
+                supported_depths: &[OutputBitDepth::U8, OutputBitDepth::U16],
+                supports_alpha: true,
+                is_hdr: false,
+            },
+            SequenceFormat::Jpeg => FormatCapabilities {
+                supported_depths: &[OutputBitDepth::U8],
+                supports_alpha: false,
+                is_hdr: false,
+            },
+            SequenceFormat::Tiff => FormatCapabilities {
+                supported_depths: &[OutputBitDepth::U8, OutputBitDepth::U16],
+                supports_alpha: true,
+                is_hdr: false,
+            },
+            SequenceFormat::Tga => FormatCapabilities {
+                supported_depths: &[OutputBitDepth::U8],
+                supports_alpha: true,
+                is_hdr: false,
+            },
+        }
+    }
+    
+    /// Check if bit depth is supported by this format
+    pub fn supports_depth(&self, depth: OutputBitDepth) -> bool {
+        self.capabilities().supported_depths.contains(&depth)
+    }
+    
+    /// Get default bit depth for this format
+    pub fn default_depth(&self) -> OutputBitDepth {
+        self.capabilities().supported_depths[0]
+    }
+    
+    /// Validate and fix settings for this format
+    pub fn validate_settings(&self, channels: &mut ChannelMode, depth: &mut OutputBitDepth) {
+        let caps = self.capabilities();
+        
+        // Fix channels if alpha not supported
+        if !caps.supports_alpha && *channels == ChannelMode::Rgba {
+            *channels = ChannelMode::Rgb;
+        }
+        
+        // Fix bit depth if not supported
+        if !caps.supported_depths.contains(depth) {
+            *depth = caps.supported_depths[0];
+        }
+    }
+}
+
 /// EXR compression mode
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ExrCompression {
@@ -677,6 +788,7 @@ pub struct SequenceFormatSettings {
 pub struct SequenceSettings {
     pub format: SequenceFormat,
     pub channels: ChannelMode,
+    pub bit_depth: OutputBitDepth,
     pub apply_tonemap: bool,
     pub tonemap_mode: TonemapMode,
     pub format_settings: SequenceFormatSettings,
@@ -687,10 +799,18 @@ impl Default for SequenceSettings {
         Self {
             format: SequenceFormat::Exr,
             channels: ChannelMode::Rgba,
+            bit_depth: OutputBitDepth::F16,  // Default for EXR
             apply_tonemap: false,
             tonemap_mode: TonemapMode::default(),
             format_settings: SequenceFormatSettings::default(),
         }
+    }
+}
+
+impl SequenceSettings {
+    /// Validate settings against format capabilities and fix if needed
+    pub fn validate(&mut self) {
+        self.format.validate_settings(&mut self.channels, &mut self.bit_depth);
     }
 }
 
@@ -1919,6 +2039,7 @@ fn write_exr_frame(
     path: &std::path::Path,
     settings: &ExrSequenceSettings,
     channels: ChannelMode,
+    _bit_depth: OutputBitDepth, // Note: image crate EXR always uses F32
 ) -> Result<(), EncodeError> {
     use crate::entities::frame::PixelBuffer;
     use image::{Rgb, Rgba, ImageBuffer};
@@ -2018,6 +2139,7 @@ fn write_exr_frame(
     path: &std::path::Path,
     settings: &ExrSequenceSettings,
     channels: ChannelMode,
+    bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
     use crate::entities::frame::PixelBuffer;
     use openexr::prelude::*;
@@ -2040,8 +2162,8 @@ fn write_exr_frame(
     };
     header.set_compression(compression);
     
-    // Prepare pixel data
-    let use_half = matches!(settings.bit_depth, ExrBitDepth::Half);
+    // Map OutputBitDepth to EXR half/float (EXR only supports F16 and F32)
+    let use_half = matches!(bit_depth, OutputBitDepth::F16 | OutputBitDepth::U8 | OutputBitDepth::U16);
     
     match buffer.as_ref() {
         PixelBuffer::F32(data) => {
@@ -2125,6 +2247,7 @@ fn write_png_frame(
     path: &std::path::Path,
     settings: &PngSequenceSettings,
     channels: ChannelMode,
+    bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
     use crate::entities::frame::PixelBuffer;
     use image::codecs::png::{CompressionType, FilterType, PngEncoder};
@@ -2132,14 +2255,6 @@ fn write_png_frame(
     
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
-    
-    // Get U8 data (tonemap should have been applied for HDR sources)
-    let rgba_data = match buffer.as_ref() {
-        PixelBuffer::U8(data) => data.clone(),
-        _ => return Err(EncodeError::EncodeFrameFailed(
-            "PNG requires U8 data. Apply tonemapping for HDR sources.".into()
-        )),
-    };
     
     let file = File::create(path)
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create PNG file: {}", e)))?;
@@ -2154,21 +2269,57 @@ fn write_png_frame(
     
     let encoder = PngEncoder::new_with_quality(writer, compression, FilterType::Adaptive);
     
-    match channels {
-        ChannelMode::Rgba => {
-            encoder.write_image(&rgba_data, width as u32, height as u32, image::ExtendedColorType::Rgba8)
-                .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
-        }
-        ChannelMode::Rgb => {
-            // Convert RGBA to RGB
-            let mut rgb_data = Vec::with_capacity(width * height * 3);
-            for chunk in rgba_data.chunks_exact(4) {
-                rgb_data.push(chunk[0]);
-                rgb_data.push(chunk[1]);
-                rgb_data.push(chunk[2]);
+    // PNG supports U8 and U16
+    match bit_depth {
+        OutputBitDepth::U8 => {
+            // Get/convert to U8 data
+            let rgba_data: Vec<u8> = match buffer.as_ref() {
+                PixelBuffer::U8(data) => data.clone(),
+                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 255.0) as u8).collect(),
+                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect(),
+            };
+            
+            match channels {
+                ChannelMode::Rgba => {
+                    encoder.write_image(&rgba_data, width as u32, height as u32, image::ExtendedColorType::Rgba8)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
+                }
+                ChannelMode::Rgb => {
+                    let mut rgb_data = Vec::with_capacity(width * height * 3);
+                    for chunk in rgba_data.chunks_exact(4) {
+                        rgb_data.push(chunk[0]);
+                        rgb_data.push(chunk[1]);
+                        rgb_data.push(chunk[2]);
+                    }
+                    encoder.write_image(&rgb_data, width as u32, height as u32, image::ExtendedColorType::Rgb8)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
+                }
             }
-            encoder.write_image(&rgb_data, width as u32, height as u32, image::ExtendedColorType::Rgb8)
-                .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
+        }
+        OutputBitDepth::U16 | OutputBitDepth::F16 | OutputBitDepth::F32 => {
+            // Convert to U16 for PNG16
+            let rgba16_data: Vec<u16> = match buffer.as_ref() {
+                PixelBuffer::U8(data) => data.iter().map(|&v| (v as u16) * 257).collect(),
+                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16).collect(),
+                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16).collect(),
+            };
+            
+            match channels {
+                ChannelMode::Rgba => {
+                    encoder.write_image(bytemuck::cast_slice(&rgba16_data), width as u32, height as u32, image::ExtendedColorType::Rgba16)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e)))?;
+                }
+                ChannelMode::Rgb => {
+                    let mut rgb_data: Vec<u16> = Vec::with_capacity(width * height * 3);
+                    for chunk in rgba16_data.chunks_exact(4) {
+                        rgb_data.push(chunk[0]);
+                        rgb_data.push(chunk[1]);
+                        rgb_data.push(chunk[2]);
+                    }
+                    encoder.write_image(bytemuck::cast_slice(&rgb_data), width as u32, height as u32, image::ExtendedColorType::Rgb16)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e)))?;
+                }
+            }
         }
     }
     
@@ -2221,6 +2372,7 @@ fn write_tiff_frame(
     path: &std::path::Path,
     settings: &TiffSequenceSettings,
     channels: ChannelMode,
+    bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
     use crate::entities::frame::PixelBuffer;
     use image::{ImageBuffer, Rgb, Rgba};
@@ -2228,13 +2380,14 @@ fn write_tiff_frame(
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
     
-    match settings.bit_depth {
-        TiffBitDepth::Eight => {
-            let rgba_data = match buffer.as_ref() {
+    // TIFF supports U8 and U16
+    match bit_depth {
+        OutputBitDepth::U8 => {
+            // Get/convert to U8 data
+            let rgba_data: Vec<u8> = match buffer.as_ref() {
                 PixelBuffer::U8(data) => data.clone(),
-                _ => return Err(EncodeError::EncodeFrameFailed(
-                    "8-bit TIFF requires U8 data. Apply tonemapping for HDR sources.".into()
-                )),
+                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 255.0) as u8).collect(),
+                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect(),
             };
             
             match channels {
@@ -2260,18 +2413,12 @@ fn write_tiff_frame(
                 }
             }
         }
-        TiffBitDepth::Sixteen => {
-            // For 16-bit, use to_rgb48 or convert
+        OutputBitDepth::U16 | OutputBitDepth::F16 | OutputBitDepth::F32 => {
+            // Convert to U16 for TIFF16
             let rgba16_data: Vec<u16> = match buffer.as_ref() {
-                PixelBuffer::U8(data) => {
-                    data.iter().map(|&v| (v as u16) * 257).collect() // 0-255 -> 0-65535
-                }
-                PixelBuffer::F16(data) => {
-                    data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16).collect()
-                }
-                PixelBuffer::F32(data) => {
-                    data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16).collect()
-                }
+                PixelBuffer::U8(data) => data.iter().map(|&v| (v as u16) * 257).collect(),
+                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16).collect(),
+                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16).collect(),
             };
             
             match channels {
@@ -2448,16 +2595,16 @@ pub fn encode_image_sequence(
         // Write frame based on format
         match settings.format {
             SequenceFormat::Exr => {
-                write_exr_frame(&frame_to_write, &frame_path, &settings.format_settings.exr, settings.channels)?;
+                write_exr_frame(&frame_to_write, &frame_path, &settings.format_settings.exr, settings.channels, settings.bit_depth)?;
             }
             SequenceFormat::Png => {
-                write_png_frame(&frame_to_write, &frame_path, &settings.format_settings.png, settings.channels)?;
+                write_png_frame(&frame_to_write, &frame_path, &settings.format_settings.png, settings.channels, settings.bit_depth)?;
             }
             SequenceFormat::Jpeg => {
                 write_jpeg_frame(&frame_to_write, &frame_path, &settings.format_settings.jpeg)?;
             }
             SequenceFormat::Tiff => {
-                write_tiff_frame(&frame_to_write, &frame_path, &settings.format_settings.tiff, settings.channels)?;
+                write_tiff_frame(&frame_to_write, &frame_path, &settings.format_settings.tiff, settings.channels, settings.bit_depth)?;
             }
             SequenceFormat::Tga => {
                 write_tga_frame(&frame_to_write, &frame_path, &settings.format_settings.tga, settings.channels)?;

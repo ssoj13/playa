@@ -14,27 +14,10 @@ use log::info;
 use crate::dialogs::encode::{
     CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
     ProResProfile, VideoCodec, SequenceSettings, SequenceFormat, ChannelMode,
-    ExrCompression, ExrBitDepth, TiffCompression, TiffBitDepth,
+    ExrCompression, TiffCompression, ExportMode, OutputBitDepth,
 };
 use crate::entities::{Comp, Project};
 use crate::widgets::status::progress_bar::ProgressBar;
-
-/// Export mode - video or image sequence
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ExportMode {
-    #[default]
-    Video,
-    Sequence,
-}
-
-impl std::fmt::Display for ExportMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExportMode::Video => write!(f, "Video"),
-            ExportMode::Sequence => write!(f, "Sequence"),
-        }
-    }
-}
 
 /// Encoding dialog state
 pub struct EncodeDialog {
@@ -196,6 +179,12 @@ impl EncodeDialog {
             settings.codec_settings.av1.preset
         );
         log::trace!("  Tonemap: {:?}", settings.tonemap_mode);
+        log::trace!("  ExportMode: {:?}", settings.export_mode);
+        log::trace!("  Sequence: format={:?}, channels={:?}, depth={:?}", 
+            settings.sequence_settings.format,
+            settings.sequence_settings.channels,
+            settings.sequence_settings.bit_depth
+        );
 
         Self {
             output_path: settings.output_path.clone(),
@@ -211,8 +200,8 @@ impl EncodeDialog {
             orphan_handles: Vec::new(),
             progress_bar: ProgressBar::new(400.0, 20.0),
             tonemap_mode: settings.tonemap_mode,
-            export_mode: ExportMode::Video,
-            sequence_settings: SequenceSettings::default(),
+            export_mode: settings.export_mode,
+            sequence_settings: settings.sequence_settings.clone(),
         }
     }
 
@@ -251,6 +240,12 @@ impl EncodeDialog {
             self.codec_settings.av1.preset
         );
         log::trace!("  Tonemap: {:?}", self.tonemap_mode);
+        log::trace!("  ExportMode: {:?}", self.export_mode);
+        log::trace!("  Sequence: format={:?}, channels={:?}, depth={:?}", 
+            self.sequence_settings.format,
+            self.sequence_settings.channels,
+            self.sequence_settings.bit_depth
+        );
 
         crate::dialogs::encode::EncodeDialogSettings {
             output_path: self.output_path.clone(),
@@ -259,6 +254,8 @@ impl EncodeDialog {
             selected_codec: self.selected_codec,
             tonemap_mode: self.tonemap_mode,
             codec_settings: self.codec_settings.clone(),
+            export_mode: self.export_mode,
+            sequence_settings: self.sequence_settings.clone(),
         }
     }
 
@@ -504,7 +501,83 @@ impl EncodeDialog {
                         });
                     }
                     ExportMode::Sequence => {
-                        // Image format tabs
+                        let caps = self.sequence_settings.format.capabilities();
+                        
+                        // === Common settings (above format buttons) ===
+                        ui.add_enabled_ui(!self.is_encoding, |ui| {
+                            // Channels (RGB/RGBA)
+                            ui.horizontal(|ui| {
+                                ui.label("Channels:");
+                                for mode in ChannelMode::all() {
+                                    let enabled = caps.supports_alpha || *mode == ChannelMode::Rgb;
+                                    ui.add_enabled_ui(enabled, |ui| {
+                                        if ui.radio_value(
+                                            &mut self.sequence_settings.channels,
+                                            *mode,
+                                            mode.to_string(),
+                                        ).changed() {
+                                            self.sequence_settings.validate();
+                                        }
+                                    });
+                                }
+                                if !caps.supports_alpha {
+                                    ui.label("(no alpha)").on_hover_text("This format doesn't support alpha channel");
+                                }
+                            });
+                            
+                            // Bit Depth
+                            ui.horizontal(|ui| {
+                                ui.label("Bit Depth:");
+                                for depth in OutputBitDepth::all() {
+                                    let supported = self.sequence_settings.format.supports_depth(*depth);
+                                    ui.add_enabled_ui(supported, |ui| {
+                                        if ui.radio_value(
+                                            &mut self.sequence_settings.bit_depth,
+                                            *depth,
+                                            depth.to_string(),
+                                        ).changed() {
+                                            self.sequence_settings.validate();
+                                        }
+                                    });
+                                }
+                            });
+                            
+                            // Tonemapping
+                            ui.horizontal(|ui| {
+                                let needs_tonemap_hint = !caps.is_hdr;
+                                ui.checkbox(&mut self.sequence_settings.apply_tonemap, "Tonemapping");
+                                if self.sequence_settings.apply_tonemap {
+                                    egui::ComboBox::from_id_salt("seq_tonemap")
+                                        .selected_text(format!("{:?}", self.sequence_settings.tonemap_mode))
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut self.sequence_settings.tonemap_mode,
+                                                crate::entities::frame::TonemapMode::ACES,
+                                                "ACES",
+                                            );
+                                            ui.selectable_value(
+                                                &mut self.sequence_settings.tonemap_mode,
+                                                crate::entities::frame::TonemapMode::Reinhard,
+                                                "Reinhard",
+                                            );
+                                            ui.selectable_value(
+                                                &mut self.sequence_settings.tonemap_mode,
+                                                crate::entities::frame::TonemapMode::Clamp,
+                                                "Clamp",
+                                            );
+                                        });
+                                }
+                                if needs_tonemap_hint && !self.sequence_settings.apply_tonemap {
+                                    ui.label("(auto for HDR input)").on_hover_text(
+                                        "HDR frames will be automatically tonemapped for this LDR format"
+                                    );
+                                }
+                            });
+                        });
+                        
+                        ui.add_space(8.0);
+                        
+                        // === Format buttons ===
                         ui.horizontal(|ui| {
                             ui.add_enabled_ui(!self.is_encoding, |ui| {
                                 for format in SequenceFormat::all() {
@@ -517,21 +590,19 @@ impl EncodeDialog {
                                         self.sequence_settings.format = *format;
                                         // Update file extension
                                         self.output_path.set_extension(format.extension());
-                                        // Force RGBA off for JPEG
-                                        if *format == SequenceFormat::Jpeg {
-                                            self.sequence_settings.channels = ChannelMode::Rgb;
-                                        }
+                                        // Validate settings for new format
+                                        self.sequence_settings.validate();
                                     }
                                 }
                             });
                         });
 
                         ui.separator();
-                        ui.add_space(8.0);
+                        ui.add_space(4.0);
 
-                        // Sequence settings
+                        // === Format-specific settings ===
                         ui.add_enabled_ui(!self.is_encoding, |ui| {
-                            self.render_sequence_settings(ui);
+                            self.render_sequence_format_settings(ui);
                         });
                     }
                 }
@@ -1157,71 +1228,11 @@ impl EncodeDialog {
         ui.label("");
     }
 
-    /// Render image sequence settings
-    fn render_sequence_settings(&mut self, ui: &mut egui::Ui) {
-        // Channels (RGB/RGBA)
-        let supports_alpha = self.sequence_settings.format.supports_alpha();
-        ui.horizontal(|ui| {
-            ui.label("Channels:");
-            ui.add_enabled_ui(supports_alpha, |ui| {
-                for mode in ChannelMode::all() {
-                    ui.radio_value(
-                        &mut self.sequence_settings.channels,
-                        *mode,
-                        mode.to_string(),
-                    );
-                }
-            });
-            if !supports_alpha {
-                ui.label("(JPEG: RGB only)");
-            }
-        });
-
-        ui.add_space(4.0);
-
-        // Tonemapping option
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.sequence_settings.apply_tonemap, "Apply Tonemapping");
-            if self.sequence_settings.apply_tonemap {
-                egui::ComboBox::from_id_salt("seq_tonemap")
-                    .selected_text(format!("{:?}", self.sequence_settings.tonemap_mode))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.sequence_settings.tonemap_mode,
-                            crate::entities::frame::TonemapMode::ACES,
-                            "ACES",
-                        );
-                        ui.selectable_value(
-                            &mut self.sequence_settings.tonemap_mode,
-                            crate::entities::frame::TonemapMode::Reinhard,
-                            "Reinhard",
-                        );
-                        ui.selectable_value(
-                            &mut self.sequence_settings.tonemap_mode,
-                            crate::entities::frame::TonemapMode::Clamp,
-                            "Clamp",
-                        );
-                    });
-            }
-        });
-
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(4.0);
-
-        // Per-format settings
+    /// Render format-specific settings for image sequence export
+    fn render_sequence_format_settings(&mut self, ui: &mut egui::Ui) {
+        // Per-format settings (compression, quality, etc.)
         match self.sequence_settings.format {
             SequenceFormat::Exr => {
-                ui.horizontal(|ui| {
-                    ui.label("Bit Depth:");
-                    for depth in ExrBitDepth::all() {
-                        ui.radio_value(
-                            &mut self.sequence_settings.format_settings.exr.bit_depth,
-                            *depth,
-                            depth.to_string(),
-                        );
-                    }
-                });
                 ui.horizontal(|ui| {
                     ui.label("Compression:");
                     egui::ComboBox::from_id_salt("exr_compression")
@@ -1237,7 +1248,7 @@ impl EncodeDialog {
                         });
                 });
                 ui.add_space(4.0);
-                ui.label("💡 EXR: HDR format, preserves full dynamic range");
+                ui.label("EXR: HDR format, preserves full dynamic range");
             }
             SequenceFormat::Png => {
                 ui.horizontal(|ui| {
@@ -1248,7 +1259,7 @@ impl EncodeDialog {
                     ).text("level"));
                 });
                 ui.add_space(4.0);
-                ui.label("💡 PNG: Lossless, good for compositing");
+                ui.label("PNG: Lossless, good for compositing");
             }
             SequenceFormat::Jpeg => {
                 ui.horizontal(|ui| {
@@ -1259,19 +1270,9 @@ impl EncodeDialog {
                     ).text("%"));
                 });
                 ui.add_space(4.0);
-                ui.label("💡 JPEG: Lossy, small files, no alpha");
+                ui.label("JPEG: Lossy, small files, no alpha");
             }
             SequenceFormat::Tiff => {
-                ui.horizontal(|ui| {
-                    ui.label("Bit Depth:");
-                    for depth in TiffBitDepth::all() {
-                        ui.radio_value(
-                            &mut self.sequence_settings.format_settings.tiff.bit_depth,
-                            *depth,
-                            depth.to_string(),
-                        );
-                    }
-                });
                 ui.horizontal(|ui| {
                     ui.label("Compression:");
                     egui::ComboBox::from_id_salt("tiff_compression")
@@ -1287,7 +1288,7 @@ impl EncodeDialog {
                         });
                 });
                 ui.add_space(4.0);
-                ui.label("💡 TIFF: Industry standard, lossless");
+                ui.label("TIFF: Industry standard, lossless");
             }
             SequenceFormat::Tga => {
                 ui.horizontal(|ui| {
@@ -1297,7 +1298,7 @@ impl EncodeDialog {
                     );
                 });
                 ui.add_space(4.0);
-                ui.label("💡 TGA: Legacy format, game industry");
+                ui.label("TGA: Legacy format, game industry");
             }
         }
 
