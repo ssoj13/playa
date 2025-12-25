@@ -1,3 +1,18 @@
+## [0.1.142] - 2025-12-25
+
+### ⚙️ Miscellaneous Tasks
+
+- WIP Wed 12/24/2025 - 22:27:00.40
+## [0.1.141] - 2025-12-25
+
+### 🐛 Bug Fixes
+
+- Use correct openexr Compression::No variant and fix Header scope
+## [0.1.140] - 2025-12-25
+
+### 🐛 Bug Fixes
+
+- Update openexr API usage to 0.11.x
 ## [0.1.139] - 2025-12-25
 
 ### ⚙️ Miscellaneous Tasks
