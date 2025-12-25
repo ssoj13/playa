@@ -2152,7 +2152,7 @@ fn write_exr_frame(
     
     // Set compression
     let compression = match settings.compression {
-        ExrCompression::None => Compression::None,
+        ExrCompression::None => Compression::No,
         ExrCompression::Rle => Compression::Rle,
         ExrCompression::Zip => Compression::Zip,
         ExrCompression::Piz => Compression::Piz,
@@ -2184,7 +2184,7 @@ fn write_exr_frame(
 #[cfg(feature = "openexr")]
 fn write_exr_f32_data(
     path: &std::path::Path,
-    header: &Header,
+    header: &openexr::prelude::Header,
     data: &[f32],
     width: usize,
     height: usize,

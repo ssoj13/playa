@@ -4,7 +4,7 @@ exclude = ["crates/playa-py"]
 
 [package]
 name = "playa"
-version = "0.1.140"
+version = "0.1.141"
 edition = "2024"
 autobins = false  # Don't auto-discover binaries in src/bin/
 authors = ["joss13@gmail.com"]
