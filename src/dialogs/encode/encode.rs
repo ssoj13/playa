@@ -394,6 +394,426 @@ impl std::fmt::Display for QualityMode {
     }
 }
 
+// ============================================================================
+// IMAGE SEQUENCE EXPORT
+// ============================================================================
+
+/// Image sequence format
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SequenceFormat {
+    #[default]
+    Exr,
+    Png,
+    Jpeg,
+    Tiff,
+    Tga,
+}
+
+impl SequenceFormat {
+    pub fn all() -> &'static [SequenceFormat] {
+        &[
+            SequenceFormat::Exr,
+            SequenceFormat::Png,
+            SequenceFormat::Jpeg,
+            SequenceFormat::Tiff,
+            SequenceFormat::Tga,
+        ]
+    }
+
+    pub fn extension(&self) -> &'static str {
+        match self {
+            SequenceFormat::Exr => "exr",
+            SequenceFormat::Png => "png",
+            SequenceFormat::Jpeg => "jpg",
+            SequenceFormat::Tiff => "tiff",
+            SequenceFormat::Tga => "tga",
+        }
+    }
+
+    /// Whether format supports alpha channel
+    pub fn supports_alpha(&self) -> bool {
+        match self {
+            SequenceFormat::Exr => true,
+            SequenceFormat::Png => true,
+            SequenceFormat::Jpeg => false,
+            SequenceFormat::Tiff => true,
+            SequenceFormat::Tga => true,
+        }
+    }
+
+    /// Whether format supports HDR (no tonemapping needed)
+    pub fn is_hdr(&self) -> bool {
+        matches!(self, SequenceFormat::Exr)
+    }
+}
+
+impl std::fmt::Display for SequenceFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SequenceFormat::Exr => write!(f, "EXR"),
+            SequenceFormat::Png => write!(f, "PNG"),
+            SequenceFormat::Jpeg => write!(f, "JPEG"),
+            SequenceFormat::Tiff => write!(f, "TIFF"),
+            SequenceFormat::Tga => write!(f, "TGA"),
+        }
+    }
+}
+
+/// Channel mode for export
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ChannelMode {
+    Rgb,
+    #[default]
+    Rgba,
+}
+
+impl ChannelMode {
+    pub fn all() -> &'static [ChannelMode] {
+        &[ChannelMode::Rgb, ChannelMode::Rgba]
+    }
+}
+
+impl std::fmt::Display for ChannelMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChannelMode::Rgb => write!(f, "RGB"),
+            ChannelMode::Rgba => write!(f, "RGBA"),
+        }
+    }
+}
+
+/// EXR compression mode
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ExrCompression {
+    None,
+    Rle,
+    #[default]
+    Zip,
+    Piz,
+}
+
+impl ExrCompression {
+    pub fn all() -> &'static [ExrCompression] {
+        &[
+            ExrCompression::None,
+            ExrCompression::Rle,
+            ExrCompression::Zip,
+            ExrCompression::Piz,
+        ]
+    }
+}
+
+impl std::fmt::Display for ExrCompression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExrCompression::None => write!(f, "None"),
+            ExrCompression::Rle => write!(f, "RLE"),
+            ExrCompression::Zip => write!(f, "ZIP"),
+            ExrCompression::Piz => write!(f, "PIZ"),
+        }
+    }
+}
+
+/// EXR bit depth
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ExrBitDepth {
+    #[default]
+    Half,  // F16
+    Float, // F32
+}
+
+impl ExrBitDepth {
+    pub fn all() -> &'static [ExrBitDepth] {
+        &[ExrBitDepth::Half, ExrBitDepth::Float]
+    }
+}
+
+impl std::fmt::Display for ExrBitDepth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExrBitDepth::Half => write!(f, "Half (16-bit)"),
+            ExrBitDepth::Float => write!(f, "Float (32-bit)"),
+        }
+    }
+}
+
+/// EXR sequence settings
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExrSequenceSettings {
+    pub bit_depth: ExrBitDepth,
+    pub compression: ExrCompression,
+}
+
+impl Default for ExrSequenceSettings {
+    fn default() -> Self {
+        Self {
+            bit_depth: ExrBitDepth::Half,
+            compression: ExrCompression::Zip,
+        }
+    }
+}
+
+/// PNG compression level (0-9)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PngSequenceSettings {
+    pub compression: u8, // 0 (none) to 9 (max)
+}
+
+impl Default for PngSequenceSettings {
+    fn default() -> Self {
+        Self { compression: 6 }
+    }
+}
+
+/// JPEG quality settings
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JpegSequenceSettings {
+    pub quality: u8, // 1-100
+}
+
+impl Default for JpegSequenceSettings {
+    fn default() -> Self {
+        Self { quality: 90 }
+    }
+}
+
+/// TIFF compression
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TiffCompression {
+    None,
+    #[default]
+    Lzw,
+    Zip,
+    PackBits,
+}
+
+impl TiffCompression {
+    pub fn all() -> &'static [TiffCompression] {
+        &[
+            TiffCompression::None,
+            TiffCompression::Lzw,
+            TiffCompression::Zip,
+            TiffCompression::PackBits,
+        ]
+    }
+}
+
+impl std::fmt::Display for TiffCompression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TiffCompression::None => write!(f, "None"),
+            TiffCompression::Lzw => write!(f, "LZW"),
+            TiffCompression::Zip => write!(f, "ZIP"),
+            TiffCompression::PackBits => write!(f, "PackBits"),
+        }
+    }
+}
+
+/// TIFF bit depth
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TiffBitDepth {
+    #[default]
+    Eight,   // 8-bit
+    Sixteen, // 16-bit
+}
+
+impl TiffBitDepth {
+    pub fn all() -> &'static [TiffBitDepth] {
+        &[TiffBitDepth::Eight, TiffBitDepth::Sixteen]
+    }
+}
+
+impl std::fmt::Display for TiffBitDepth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TiffBitDepth::Eight => write!(f, "8-bit"),
+            TiffBitDepth::Sixteen => write!(f, "16-bit"),
+        }
+    }
+}
+
+/// TIFF sequence settings
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TiffSequenceSettings {
+    pub bit_depth: TiffBitDepth,
+    pub compression: TiffCompression,
+}
+
+impl Default for TiffSequenceSettings {
+    fn default() -> Self {
+        Self {
+            bit_depth: TiffBitDepth::Eight,
+            compression: TiffCompression::Lzw,
+        }
+    }
+}
+
+/// TGA settings
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TgaSequenceSettings {
+    pub rle_compression: bool,
+}
+
+impl Default for TgaSequenceSettings {
+    fn default() -> Self {
+        Self {
+            rle_compression: true,
+        }
+    }
+}
+
+/// All sequence format settings
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SequenceFormatSettings {
+    pub exr: ExrSequenceSettings,
+    pub png: PngSequenceSettings,
+    pub jpeg: JpegSequenceSettings,
+    pub tiff: TiffSequenceSettings,
+    pub tga: TgaSequenceSettings,
+}
+
+/// Sequence export settings
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SequenceSettings {
+    pub format: SequenceFormat,
+    pub channels: ChannelMode,
+    pub apply_tonemap: bool,
+    pub tonemap_mode: TonemapMode,
+    pub format_settings: SequenceFormatSettings,
+}
+
+impl Default for SequenceSettings {
+    fn default() -> Self {
+        Self {
+            format: SequenceFormat::Exr,
+            channels: ChannelMode::Rgba,
+            apply_tonemap: false,
+            tonemap_mode: TonemapMode::default(),
+            format_settings: SequenceFormatSettings::default(),
+        }
+    }
+}
+
+/// Padding pattern for frame numbering
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaddingPattern {
+    /// Printf-style: %04d -> 4 digits
+    Printf { width: usize },
+    /// Hash-style: #### -> 4 digits
+    Hashes { count: usize },
+    /// At-sign: @ -> no padding
+    At,
+    /// No pattern found
+    None,
+}
+
+impl PaddingPattern {
+    /// Format frame number according to pattern
+    pub fn format(&self, frame: i32) -> String {
+        match self {
+            PaddingPattern::Printf { width } | PaddingPattern::Hashes { count: width } => {
+                format!("{:0width$}", frame, width = *width)
+            }
+            PaddingPattern::At | PaddingPattern::None => {
+                format!("{}", frame)
+            }
+        }
+    }
+}
+
+/// Parse filename pattern and extract padding info
+/// Returns (prefix, pattern, suffix)
+/// Example: "render.####.exr" -> ("render.", Hashes{4}, ".exr")
+pub fn parse_padding_pattern(filename: &str) -> (String, PaddingPattern, String) {
+    // Try printf-style first: %0Nd or %Nd
+    if let Some(pos) = filename.find('%') {
+        let rest = &filename[pos + 1..];
+        let mut chars = rest.chars().peekable();
+        
+        // Skip leading zero
+        let has_zero = chars.peek() == Some(&'0');
+        if has_zero {
+            chars.next();
+        }
+        
+        // Parse width
+        let mut width_str = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                width_str.push(c);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        
+        // Check for 'd'
+        if chars.next() == Some('d') {
+            let width = width_str.parse::<usize>().unwrap_or(1);
+            let prefix = filename[..pos].to_string();
+            let consumed = 1 + if has_zero { 1 } else { 0 } + width_str.len() + 1; // % + 0? + digits + d
+            let suffix = filename[pos + consumed..].to_string();
+            return (prefix, PaddingPattern::Printf { width }, suffix);
+        }
+    }
+    
+    // Try hash-style: ####
+    if let Some(start) = filename.find('#') {
+        let mut count = 0;
+        for c in filename[start..].chars() {
+            if c == '#' {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        if count > 0 {
+            let prefix = filename[..start].to_string();
+            let suffix = filename[start + count..].to_string();
+            return (prefix, PaddingPattern::Hashes { count }, suffix);
+        }
+    }
+    
+    // Try @-style
+    if let Some(pos) = filename.find('@') {
+        let prefix = filename[..pos].to_string();
+        let suffix = filename[pos + 1..].to_string();
+        return (prefix, PaddingPattern::At, suffix);
+    }
+    
+    // No pattern - insert before extension
+    if let Some(dot_pos) = filename.rfind('.') {
+        let prefix = format!("{}.", &filename[..dot_pos]);
+        let suffix = filename[dot_pos..].to_string();
+        (prefix, PaddingPattern::None, suffix)
+    } else {
+        (format!("{}.", filename), PaddingPattern::None, String::new())
+    }
+}
+
+/// Build frame path from pattern
+pub fn build_frame_path(
+    base_dir: &std::path::Path,
+    prefix: &str,
+    pattern: &PaddingPattern,
+    suffix: &str,
+    frame: i32,
+) -> PathBuf {
+    let filename = format!("{}{}{}", prefix, pattern.format(frame), suffix);
+    base_dir.join(filename)
+}
+
+/// Update filename extension based on format
+pub fn update_extension(path: &std::path::Path, format: SequenceFormat) -> PathBuf {
+    let mut new_path = path.to_path_buf();
+    new_path.set_extension(format.extension());
+    new_path
+}
+
+// ============================================================================
+// VIDEO ENCODING (existing code)
+// ============================================================================
+
 /// Progress updates during encoding
 #[derive(Clone, Debug)]
 pub struct EncodeProgress {
@@ -1483,6 +1903,593 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_file(&output_path);
     }
+}
+
+// ============================================================================
+// IMAGE SEQUENCE EXPORT FUNCTIONS
+// ============================================================================
+
+use std::fs::File;
+use std::io::BufWriter;
+
+/// Write frame to EXR file using image crate (fallback when openexr feature disabled)
+#[cfg(not(feature = "openexr"))]
+fn write_exr_frame(
+    frame: &crate::entities::Frame,
+    path: &std::path::Path,
+    settings: &ExrSequenceSettings,
+    channels: ChannelMode,
+) -> Result<(), EncodeError> {
+    use crate::entities::frame::PixelBuffer;
+    use image::{Rgb, Rgba, ImageBuffer};
+    
+    let buffer = frame.buffer();
+    let (width, height) = frame.resolution();
+    
+    // Convert to f32 for EXR
+    match buffer.as_ref() {
+        PixelBuffer::F32(data) => {
+            match channels {
+                ChannelMode::Rgba => {
+                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, data.clone())
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
+                }
+                ChannelMode::Rgb => {
+                    // Convert RGBA to RGB
+                    let mut rgb_data = Vec::with_capacity(width * height * 3);
+                    for chunk in data.chunks_exact(4) {
+                        rgb_data.push(chunk[0]);
+                        rgb_data.push(chunk[1]);
+                        rgb_data.push(chunk[2]);
+                    }
+                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
+                }
+            }
+        }
+        PixelBuffer::F16(data) => {
+            // Convert F16 to F32 for image crate (it doesn't support f16 directly)
+            let f32_data: Vec<f32> = data.iter().map(|v| v.to_f32()).collect();
+            match channels {
+                ChannelMode::Rgba => {
+                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, f32_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
+                }
+                ChannelMode::Rgb => {
+                    let mut rgb_data = Vec::with_capacity(width * height * 3);
+                    for chunk in f32_data.chunks_exact(4) {
+                        rgb_data.push(chunk[0]);
+                        rgb_data.push(chunk[1]);
+                        rgb_data.push(chunk[2]);
+                    }
+                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
+                }
+            }
+        }
+        PixelBuffer::U8(data) => {
+            // Convert U8 to F32 (0-255 -> 0.0-1.0)
+            let f32_data: Vec<f32> = data.iter().map(|&v| v as f32 / 255.0).collect();
+            match channels {
+                ChannelMode::Rgba => {
+                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, f32_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
+                }
+                ChannelMode::Rgb => {
+                    let mut rgb_data = Vec::with_capacity(width * height * 3);
+                    for chunk in f32_data.chunks_exact(4) {
+                        rgb_data.push(chunk[0]);
+                        rgb_data.push(chunk[1]);
+                        rgb_data.push(chunk[2]);
+                    }
+                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
+                }
+            }
+        }
+    }
+    
+    let _ = settings; // TODO: Apply compression settings when image crate supports it
+    Ok(())
+}
+
+/// Write frame to EXR file using openexr crate (when feature enabled)
+#[cfg(feature = "openexr")]
+fn write_exr_frame(
+    frame: &crate::entities::Frame,
+    path: &std::path::Path,
+    settings: &ExrSequenceSettings,
+    channels: ChannelMode,
+) -> Result<(), EncodeError> {
+    use crate::entities::frame::PixelBuffer;
+    use openexr::prelude::*;
+    
+    let buffer = frame.buffer();
+    let (width, height) = frame.resolution();
+    
+    // Build channel list based on settings
+    let mut header = openexr::Header::new(
+        [width as i32, height as i32],
+        openexr::PixelAspectRatio::default(),
+    );
+    
+    // Set compression
+    let compression = match settings.compression {
+        ExrCompression::None => openexr::Compression::None,
+        ExrCompression::Rle => openexr::Compression::Rle,
+        ExrCompression::Zip => openexr::Compression::ZipSingle,
+        ExrCompression::Piz => openexr::Compression::Piz,
+    };
+    header.set_compression(compression);
+    
+    // Prepare pixel data
+    let use_half = matches!(settings.bit_depth, ExrBitDepth::Half);
+    
+    match buffer.as_ref() {
+        PixelBuffer::F32(data) => {
+            write_exr_f32_data(path, &header, data, width, height, channels, use_half)?;
+        }
+        PixelBuffer::F16(data) => {
+            // Convert to f32 first
+            let f32_data: Vec<f32> = data.iter().map(|v| v.to_f32()).collect();
+            write_exr_f32_data(path, &header, &f32_data, width, height, channels, use_half)?;
+        }
+        PixelBuffer::U8(data) => {
+            // Convert U8 to F32
+            let f32_data: Vec<f32> = data.iter().map(|&v| v as f32 / 255.0).collect();
+            write_exr_f32_data(path, &header, &f32_data, width, height, channels, use_half)?;
+        }
+    }
+    
+    Ok(())
+}
+
+#[cfg(feature = "openexr")]
+fn write_exr_f32_data(
+    path: &std::path::Path,
+    header: &openexr::Header,
+    data: &[f32],
+    width: usize,
+    height: usize,
+    channels: ChannelMode,
+    use_half: bool,
+) -> Result<(), EncodeError> {
+    use openexr::prelude::*;
+    
+    // Separate channels
+    let pixels = width * height;
+    let mut r = Vec::with_capacity(pixels);
+    let mut g = Vec::with_capacity(pixels);
+    let mut b = Vec::with_capacity(pixels);
+    let mut a = Vec::with_capacity(pixels);
+    
+    for chunk in data.chunks_exact(4) {
+        r.push(chunk[0]);
+        g.push(chunk[1]);
+        b.push(chunk[2]);
+        a.push(chunk[3]);
+    }
+    
+    // Write using openexr
+    let mut file = openexr::RgbaOutputFile::new(
+        path,
+        header,
+        if channels == ChannelMode::Rgba {
+            openexr::RgbaChannels::WriteRgba
+        } else {
+            openexr::RgbaChannels::WriteRgb
+        },
+        1, // threads
+    ).map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to create EXR file: {}", e)))?;
+    
+    // Convert to Rgba pixels
+    let rgba_pixels: Vec<openexr::Rgba> = (0..pixels)
+        .map(|i| openexr::Rgba {
+            r: if use_half { half::f16::from_f32(r[i]).to_bits() as f32 } else { r[i] },
+            g: if use_half { half::f16::from_f32(g[i]).to_bits() as f32 } else { g[i] },
+            b: if use_half { half::f16::from_f32(b[i]).to_bits() as f32 } else { b[i] },
+            a: if use_half { half::f16::from_f32(a[i]).to_bits() as f32 } else { a[i] },
+        })
+        .collect();
+    
+    file.set_frame_buffer(&rgba_pixels, width, 1)
+        .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to set EXR frame buffer: {}", e)))?;
+    
+    file.write_pixels(height as i32)
+        .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write EXR pixels: {}", e)))?;
+    
+    Ok(())
+}
+
+/// Write frame to PNG file
+fn write_png_frame(
+    frame: &crate::entities::Frame,
+    path: &std::path::Path,
+    settings: &PngSequenceSettings,
+    channels: ChannelMode,
+) -> Result<(), EncodeError> {
+    use crate::entities::frame::PixelBuffer;
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::ImageEncoder;
+    
+    let buffer = frame.buffer();
+    let (width, height) = frame.resolution();
+    
+    // Get U8 data (tonemap should have been applied for HDR sources)
+    let rgba_data = match buffer.as_ref() {
+        PixelBuffer::U8(data) => data.clone(),
+        _ => return Err(EncodeError::EncodeFrameFailed(
+            "PNG requires U8 data. Apply tonemapping for HDR sources.".into()
+        )),
+    };
+    
+    let file = File::create(path)
+        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create PNG file: {}", e)))?;
+    let writer = BufWriter::new(file);
+    
+    let compression = match settings.compression {
+        0 => CompressionType::Fast,
+        1..=3 => CompressionType::Fast,
+        4..=6 => CompressionType::Default,
+        _ => CompressionType::Best,
+    };
+    
+    let encoder = PngEncoder::new_with_quality(writer, compression, FilterType::Adaptive);
+    
+    match channels {
+        ChannelMode::Rgba => {
+            encoder.write_image(&rgba_data, width as u32, height as u32, image::ExtendedColorType::Rgba8)
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
+        }
+        ChannelMode::Rgb => {
+            // Convert RGBA to RGB
+            let mut rgb_data = Vec::with_capacity(width * height * 3);
+            for chunk in rgba_data.chunks_exact(4) {
+                rgb_data.push(chunk[0]);
+                rgb_data.push(chunk[1]);
+                rgb_data.push(chunk[2]);
+            }
+            encoder.write_image(&rgb_data, width as u32, height as u32, image::ExtendedColorType::Rgb8)
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
+        }
+    }
+    
+    Ok(())
+}
+
+/// Write frame to JPEG file
+fn write_jpeg_frame(
+    frame: &crate::entities::Frame,
+    path: &std::path::Path,
+    settings: &JpegSequenceSettings,
+) -> Result<(), EncodeError> {
+    use crate::entities::frame::PixelBuffer;
+    use image::codecs::jpeg::JpegEncoder;
+    use image::ImageEncoder;
+    
+    let buffer = frame.buffer();
+    let (width, height) = frame.resolution();
+    
+    // Get U8 data
+    let rgba_data = match buffer.as_ref() {
+        PixelBuffer::U8(data) => data.clone(),
+        _ => return Err(EncodeError::EncodeFrameFailed(
+            "JPEG requires U8 data. Apply tonemapping for HDR sources.".into()
+        )),
+    };
+    
+    // Convert RGBA to RGB (JPEG doesn't support alpha)
+    let mut rgb_data = Vec::with_capacity(width * height * 3);
+    for chunk in rgba_data.chunks_exact(4) {
+        rgb_data.push(chunk[0]);
+        rgb_data.push(chunk[1]);
+        rgb_data.push(chunk[2]);
+    }
+    
+    let file = File::create(path)
+        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create JPEG file: {}", e)))?;
+    let writer = BufWriter::new(file);
+    
+    let encoder = JpegEncoder::new_with_quality(writer, settings.quality);
+    encoder.write_image(&rgb_data, width as u32, height as u32, image::ExtendedColorType::Rgb8)
+        .map_err(|e| EncodeError::EncodeFrameFailed(format!("JPEG encode failed: {}", e)))?;
+    
+    Ok(())
+}
+
+/// Write frame to TIFF file
+fn write_tiff_frame(
+    frame: &crate::entities::Frame,
+    path: &std::path::Path,
+    settings: &TiffSequenceSettings,
+    channels: ChannelMode,
+) -> Result<(), EncodeError> {
+    use crate::entities::frame::PixelBuffer;
+    use image::{ImageBuffer, Rgb, Rgba};
+    
+    let buffer = frame.buffer();
+    let (width, height) = frame.resolution();
+    
+    match settings.bit_depth {
+        TiffBitDepth::Eight => {
+            let rgba_data = match buffer.as_ref() {
+                PixelBuffer::U8(data) => data.clone(),
+                _ => return Err(EncodeError::EncodeFrameFailed(
+                    "8-bit TIFF requires U8 data. Apply tonemapping for HDR sources.".into()
+                )),
+            };
+            
+            match channels {
+                ChannelMode::Rgba => {
+                    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e)))?;
+                }
+                ChannelMode::Rgb => {
+                    let mut rgb_data = Vec::with_capacity(width * height * 3);
+                    for chunk in rgba_data.chunks_exact(4) {
+                        rgb_data.push(chunk[0]);
+                        rgb_data.push(chunk[1]);
+                        rgb_data.push(chunk[2]);
+                    }
+                    let img: ImageBuffer<Rgb<u8>, Vec<u8>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e)))?;
+                }
+            }
+        }
+        TiffBitDepth::Sixteen => {
+            // For 16-bit, use to_rgb48 or convert
+            let rgba16_data: Vec<u16> = match buffer.as_ref() {
+                PixelBuffer::U8(data) => {
+                    data.iter().map(|&v| (v as u16) * 257).collect() // 0-255 -> 0-65535
+                }
+                PixelBuffer::F16(data) => {
+                    data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16).collect()
+                }
+                PixelBuffer::F32(data) => {
+                    data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16).collect()
+                }
+            };
+            
+            match channels {
+                ChannelMode::Rgba => {
+                    let img: ImageBuffer<Rgba<u16>, Vec<u16>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, rgba16_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF16 buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e)))?;
+                }
+                ChannelMode::Rgb => {
+                    let mut rgb_data = Vec::with_capacity(width * height * 3);
+                    for chunk in rgba16_data.chunks_exact(4) {
+                        rgb_data.push(chunk[0]);
+                        rgb_data.push(chunk[1]);
+                        rgb_data.push(chunk[2]);
+                    }
+                    let img: ImageBuffer<Rgb<u16>, Vec<u16>> = 
+                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF16 buffer".into()))?;
+                    img.save(path)
+                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e)))?;
+                }
+            }
+        }
+    }
+    
+    let _ = settings.compression; // TODO: image crate doesn't expose TIFF compression settings easily
+    Ok(())
+}
+
+/// Write frame to TGA file
+fn write_tga_frame(
+    frame: &crate::entities::Frame,
+    path: &std::path::Path,
+    _settings: &TgaSequenceSettings,
+    channels: ChannelMode,
+) -> Result<(), EncodeError> {
+    use crate::entities::frame::PixelBuffer;
+    use image::{ImageBuffer, Rgb, Rgba};
+    
+    let buffer = frame.buffer();
+    let (width, height) = frame.resolution();
+    
+    let rgba_data = match buffer.as_ref() {
+        PixelBuffer::U8(data) => data.clone(),
+        _ => return Err(EncodeError::EncodeFrameFailed(
+            "TGA requires U8 data. Apply tonemapping for HDR sources.".into()
+        )),
+    };
+    
+    match channels {
+        ChannelMode::Rgba => {
+            let img: ImageBuffer<Rgba<u8>, Vec<u8>> = 
+                ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
+                    .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into()))?;
+            img.save(path)
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("TGA save failed: {}", e)))?;
+        }
+        ChannelMode::Rgb => {
+            let mut rgb_data = Vec::with_capacity(width * height * 3);
+            for chunk in rgba_data.chunks_exact(4) {
+                rgb_data.push(chunk[0]);
+                rgb_data.push(chunk[1]);
+                rgb_data.push(chunk[2]);
+            }
+            let img: ImageBuffer<Rgb<u8>, Vec<u8>> = 
+                ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                    .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into()))?;
+            img.save(path)
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("TGA save failed: {}", e)))?;
+        }
+    }
+    
+    // TODO: RLE compression when image crate supports it
+    Ok(())
+}
+
+/// Main function to export image sequence
+///
+/// Exports frames from comp to individual image files.
+/// Supports EXR, PNG, JPEG, TIFF, TGA formats.
+pub fn encode_image_sequence(
+    comp: &Comp,
+    project: &crate::entities::Project,
+    output_path: &std::path::Path,
+    settings: &SequenceSettings,
+    progress_tx: Sender<EncodeProgress>,
+    cancel_flag: Arc<AtomicBool>,
+) -> Result<(), EncodeError> {
+    let start_time = std::time::Instant::now();
+    info!(
+        "========== encode_image_sequence() ENTERED at {:?} ==========",
+        start_time
+    );
+    
+    // Get play range from Comp
+    let play_range = comp.play_range(true);
+    let total_frames = (play_range.1.saturating_sub(play_range.0) + 1) as i32;
+    
+    info!(
+        "Image sequence export: format={:?}, channels={:?}, frames={}",
+        settings.format, settings.channels, total_frames
+    );
+    
+    // Parse output pattern
+    let filename = output_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("frame.####.exr");
+    let base_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
+    
+    // Ensure output directory exists
+    if !base_dir.exists() {
+        std::fs::create_dir_all(base_dir)
+            .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create output directory: {}", e)))?;
+    }
+    
+    let (prefix, pattern, suffix) = parse_padding_pattern(filename);
+    info!("Pattern parsed: prefix='{}', pattern={:?}, suffix='{}'", prefix, pattern, suffix);
+    
+    // Stage 1: Validating
+    if progress_tx.send(EncodeProgress {
+        current_frame: 0,
+        total_frames,
+        stage: EncodeStage::Validating,
+    }).is_err() {
+        return Err(EncodeError::Cancelled);
+    }
+    
+    // Check for cancellation
+    if cancel_flag.load(Ordering::Relaxed) {
+        return Err(EncodeError::Cancelled);
+    }
+    
+    // Stage 2: Encoding loop
+    if progress_tx.send(EncodeProgress {
+        current_frame: 0,
+        total_frames,
+        stage: EncodeStage::Encoding,
+    }).is_err() {
+        return Err(EncodeError::Cancelled);
+    }
+    
+    for frame_idx in play_range.0..=play_range.1 {
+        // Check for cancellation
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(EncodeError::Cancelled);
+        }
+        
+        let current_frame = (frame_idx - play_range.0 + 1) as i32;
+        
+        // Get frame from comp
+        let frame = comp.get_frame(frame_idx, project, true).ok_or_else(|| {
+            EncodeError::EncodeFrameFailed(format!("Frame {} not available", frame_idx))
+        })?;
+        
+        // Apply tonemapping if needed (HDR -> LDR for non-EXR formats)
+        let frame_to_write = if settings.apply_tonemap || (!settings.format.is_hdr() && frame.pixel_format() != PixelFormat::Rgba8) {
+            frame.tonemap(settings.tonemap_mode).map_err(|e| {
+                EncodeError::EncodeFrameFailed(format!("Tonemapping failed: {}", e))
+            })?
+        } else {
+            frame.clone()
+        };
+        
+        // Build output path for this frame
+        let frame_path = build_frame_path(base_dir, &prefix, &pattern, &suffix, frame_idx);
+        
+        if frame_idx % 10 == 0 {
+            info!("Writing frame {} -> {}", frame_idx, frame_path.display());
+        }
+        
+        // Write frame based on format
+        match settings.format {
+            SequenceFormat::Exr => {
+                write_exr_frame(&frame_to_write, &frame_path, &settings.format_settings.exr, settings.channels)?;
+            }
+            SequenceFormat::Png => {
+                write_png_frame(&frame_to_write, &frame_path, &settings.format_settings.png, settings.channels)?;
+            }
+            SequenceFormat::Jpeg => {
+                write_jpeg_frame(&frame_to_write, &frame_path, &settings.format_settings.jpeg)?;
+            }
+            SequenceFormat::Tiff => {
+                write_tiff_frame(&frame_to_write, &frame_path, &settings.format_settings.tiff, settings.channels)?;
+            }
+            SequenceFormat::Tga => {
+                write_tga_frame(&frame_to_write, &frame_path, &settings.format_settings.tga, settings.channels)?;
+            }
+        }
+        
+        // Update progress
+        if progress_tx.send(EncodeProgress {
+            current_frame,
+            total_frames,
+            stage: EncodeStage::Encoding,
+        }).is_err() {
+            return Err(EncodeError::Cancelled);
+        }
+    }
+    
+    // Stage 3: Complete
+    let _ = progress_tx.send(EncodeProgress {
+        current_frame: total_frames,
+        total_frames,
+        stage: EncodeStage::Complete,
+    });
+    
+    let elapsed = start_time.elapsed();
+    info!(
+        "Image sequence export complete: {} frames in {:.2}s ({:.1} fps)",
+        total_frames,
+        elapsed.as_secs_f64(),
+        total_frames as f64 / elapsed.as_secs_f64()
+    );
+    
+    Ok(())
 }
 
 // ============================================================================

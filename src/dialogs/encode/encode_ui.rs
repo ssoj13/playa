@@ -13,10 +13,28 @@ use log::info;
 
 use crate::dialogs::encode::{
     CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
-    ProResProfile, VideoCodec,
+    ProResProfile, VideoCodec, SequenceSettings, SequenceFormat, ChannelMode,
+    ExrCompression, ExrBitDepth, TiffCompression, TiffBitDepth,
 };
 use crate::entities::{Comp, Project};
 use crate::widgets::status::progress_bar::ProgressBar;
+
+/// Export mode - video or image sequence
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ExportMode {
+    #[default]
+    Video,
+    Sequence,
+}
+
+impl std::fmt::Display for ExportMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExportMode::Video => write!(f, "Video"),
+            ExportMode::Sequence => write!(f, "Sequence"),
+        }
+    }
+}
 
 /// Encoding dialog state
 pub struct EncodeDialog {
@@ -54,6 +72,12 @@ pub struct EncodeDialog {
 
     /// Tonemapping mode for HDR→LDR conversion
     pub tonemap_mode: crate::entities::frame::TonemapMode,
+
+    /// Export mode (Video or Sequence)
+    pub export_mode: ExportMode,
+
+    /// Image sequence settings
+    pub sequence_settings: SequenceSettings,
 }
 
 impl EncodeDialog {
@@ -187,6 +211,8 @@ impl EncodeDialog {
             orphan_handles: Vec::new(),
             progress_bar: ProgressBar::new(400.0, 20.0),
             tonemap_mode: settings.tonemap_mode,
+            export_mode: ExportMode::Video,
+            sequence_settings: SequenceSettings::default(),
         }
     }
 
@@ -340,7 +366,11 @@ impl EncodeDialog {
             }
         }
 
-        egui::Window::new("Video Encoder")
+        let window_title = match self.export_mode {
+            ExportMode::Video => "Video Encoder",
+            ExportMode::Sequence => "Image Sequence Export",
+        };
+        egui::Window::new(window_title)
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
@@ -391,48 +421,119 @@ impl EncodeDialog {
                 ui.separator();
                 ui.add_space(4.0);
 
-                // === Codec Tabs ===
+                // === Export Mode Tabs (Video / Sequence) ===
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        for codec in VideoCodec::all() {
-                            let is_available = codec.is_available();
-                            let is_selected = self.selected_codec == *codec;
-
-                            // Disable tab if codec not available
-                            ui.add_enabled_ui(is_available, |ui| {
-                                let button = egui::Button::new(codec.to_string())
-                                    .selected(is_selected)
-                                    .min_size(egui::vec2(100.0, 0.0));
-
-                                if ui.add(button).clicked() {
-                                    self.selected_codec = *codec;
-
-                                    // Auto-update container and file extension based on codec
-                                    let preferred_container = codec.preferred_container();
-                                    self.container = preferred_container;
-                                    self.output_path
-                                        .set_extension(preferred_container.extension());
-                                }
-                            });
-
-                            if !is_available {
-                                ui.label("✗")
-                                    .on_hover_text(format!("{} encoder not available", codec));
+                        // Video mode button
+                        let video_btn = egui::Button::new("Video")
+                            .selected(self.export_mode == ExportMode::Video)
+                            .min_size(egui::vec2(80.0, 0.0));
+                        if ui.add(video_btn).clicked() {
+                            self.export_mode = ExportMode::Video;
+                            // Restore video extension
+                            self.output_path.set_extension(self.container.extension());
+                        }
+                        
+                        // Sequence mode button
+                        let seq_btn = egui::Button::new("Sequence")
+                            .selected(self.export_mode == ExportMode::Sequence)
+                            .min_size(egui::vec2(80.0, 0.0));
+                        if ui.add(seq_btn).clicked() {
+                            self.export_mode = ExportMode::Sequence;
+                            // Update extension and add padding pattern if needed
+                            let stem = self.output_path.file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("frame");
+                            // Add #### padding if not present
+                            let new_stem = if !stem.contains('#') && !stem.contains('%') && !stem.contains('@') {
+                                format!("{}.####", stem)
+                            } else {
+                                stem.to_string()
+                            };
+                            if let Some(parent) = self.output_path.parent() {
+                                self.output_path = parent.join(format!("{}.{}", new_stem, self.sequence_settings.format.extension()));
+                            } else {
+                                self.output_path = PathBuf::from(format!("{}.{}", new_stem, self.sequence_settings.format.extension()));
                             }
                         }
                     });
                 });
 
-                ui.separator();
-                ui.add_space(8.0);
+                ui.add_space(4.0);
 
-                // === Per-Codec Settings ===
-                ui.add_enabled_ui(!self.is_encoding, |ui| match self.selected_codec {
-                    VideoCodec::H264 => self.render_h264_settings(ui),
-                    VideoCodec::H265 => self.render_h265_settings(ui),
-                    VideoCodec::AV1 => self.render_av1_settings(ui),
-                    VideoCodec::ProRes => self.render_prores_settings(ui),
-                });
+                // === Codec/Format Tabs based on mode ===
+                match self.export_mode {
+                    ExportMode::Video => {
+                        // Video codec tabs
+                        ui.horizontal(|ui| {
+                            ui.add_enabled_ui(!self.is_encoding, |ui| {
+                                for codec in VideoCodec::all() {
+                                    let is_available = codec.is_available();
+                                    let is_selected = self.selected_codec == *codec;
+
+                                    ui.add_enabled_ui(is_available, |ui| {
+                                        let button = egui::Button::new(codec.to_string())
+                                            .selected(is_selected)
+                                            .min_size(egui::vec2(90.0, 0.0));
+
+                                        if ui.add(button).clicked() {
+                                            self.selected_codec = *codec;
+                                            let preferred_container = codec.preferred_container();
+                                            self.container = preferred_container;
+                                            self.output_path.set_extension(preferred_container.extension());
+                                        }
+                                    });
+
+                                    if !is_available {
+                                        ui.label("✗").on_hover_text(format!("{} encoder not available", codec));
+                                    }
+                                }
+                            });
+                        });
+
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // Per-Codec Settings
+                        ui.add_enabled_ui(!self.is_encoding, |ui| match self.selected_codec {
+                            VideoCodec::H264 => self.render_h264_settings(ui),
+                            VideoCodec::H265 => self.render_h265_settings(ui),
+                            VideoCodec::AV1 => self.render_av1_settings(ui),
+                            VideoCodec::ProRes => self.render_prores_settings(ui),
+                        });
+                    }
+                    ExportMode::Sequence => {
+                        // Image format tabs
+                        ui.horizontal(|ui| {
+                            ui.add_enabled_ui(!self.is_encoding, |ui| {
+                                for format in SequenceFormat::all() {
+                                    let is_selected = self.sequence_settings.format == *format;
+                                    let button = egui::Button::new(format.to_string())
+                                        .selected(is_selected)
+                                        .min_size(egui::vec2(70.0, 0.0));
+
+                                    if ui.add(button).clicked() {
+                                        self.sequence_settings.format = *format;
+                                        // Update file extension
+                                        self.output_path.set_extension(format.extension());
+                                        // Force RGBA off for JPEG
+                                        if *format == SequenceFormat::Jpeg {
+                                            self.sequence_settings.channels = ChannelMode::Rgb;
+                                        }
+                                    }
+                                }
+                            });
+                        });
+
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        // Sequence settings
+                        ui.add_enabled_ui(!self.is_encoding, |ui| {
+                            self.render_sequence_settings(ui);
+                        });
+                    }
+                }
 
                 ui.add_space(12.0);
 
@@ -531,13 +632,8 @@ impl EncodeDialog {
 
     /// Start encoding process
     fn start_encoding(&mut self, comp: &Comp, project: &Project) {
-        let settings = self.build_encoder_settings();
         info!("========== STARTING ENCODING ==========");
-        info!(
-            "Codec: {:?}, Container: {:?}",
-            settings.codec, settings.container
-        );
-        info!("Settings: {:?}", settings);
+        info!("Export mode: {:?}", self.export_mode);
 
         // Reset state for new encoding
         self.cancel_flag.store(false, Ordering::Relaxed);
@@ -547,28 +643,55 @@ impl EncodeDialog {
         let (tx, rx) = channel();
         self.progress_rx = Some(rx);
 
-        // Clone data for thread
-        let settings_clone = self.build_encoder_settings();
         let cancel_flag_clone = Arc::clone(&self.cancel_flag);
         let comp_clone = comp.clone();
         let project_clone = project.clone();
 
-        // Spawn encoder thread (Comp-based)
-        use crate::dialogs::encode::encode_comp;
         use std::thread;
 
-        let handle = thread::spawn(move || {
-            info!("Encoder thread started");
+        let handle = match self.export_mode {
+            ExportMode::Video => {
+                // Video encoding
+                let settings = self.build_encoder_settings();
+                info!("Codec: {:?}, Container: {:?}", settings.codec, settings.container);
+                info!("Settings: {:?}", settings);
 
-            info!("Calling encode_comp()...");
-            encode_comp(
-                &comp_clone,
-                &project_clone,
-                &settings_clone,
-                tx,
-                cancel_flag_clone,
-            )
-        });
+                use crate::dialogs::encode::encode_comp;
+                let settings_clone = settings;
+
+                thread::spawn(move || {
+                    info!("Video encoder thread started");
+                    encode_comp(
+                        &comp_clone,
+                        &project_clone,
+                        &settings_clone,
+                        tx,
+                        cancel_flag_clone,
+                    )
+                })
+            }
+            ExportMode::Sequence => {
+                // Image sequence export
+                let settings = self.sequence_settings.clone();
+                let output_path = self.output_path.clone();
+                info!("Format: {:?}, Channels: {:?}", settings.format, settings.channels);
+                info!("Output: {}", output_path.display());
+
+                use crate::dialogs::encode::encode_image_sequence;
+
+                thread::spawn(move || {
+                    info!("Image sequence export thread started");
+                    encode_image_sequence(
+                        &comp_clone,
+                        &project_clone,
+                        &output_path,
+                        &settings,
+                        tx,
+                        cancel_flag_clone,
+                    )
+                })
+            }
+        };
 
         self.encode_thread = Some(handle);
         self.is_encoding = true;
@@ -1031,6 +1154,157 @@ impl EncodeDialog {
         // Empty line for vertical alignment with H264 tab
         ui.add_space(4.0);
         ui.label("");
+    }
+
+    /// Render image sequence settings
+    fn render_sequence_settings(&mut self, ui: &mut egui::Ui) {
+        // Channels (RGB/RGBA)
+        let supports_alpha = self.sequence_settings.format.supports_alpha();
+        ui.horizontal(|ui| {
+            ui.label("Channels:");
+            ui.add_enabled_ui(supports_alpha, |ui| {
+                for mode in ChannelMode::all() {
+                    ui.radio_value(
+                        &mut self.sequence_settings.channels,
+                        *mode,
+                        mode.to_string(),
+                    );
+                }
+            });
+            if !supports_alpha {
+                ui.label("(JPEG: RGB only)");
+            }
+        });
+
+        ui.add_space(4.0);
+
+        // Tonemapping option
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.sequence_settings.apply_tonemap, "Apply Tonemapping");
+            if self.sequence_settings.apply_tonemap {
+                egui::ComboBox::from_id_salt("seq_tonemap")
+                    .selected_text(format!("{:?}", self.sequence_settings.tonemap_mode))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.sequence_settings.tonemap_mode,
+                            crate::entities::frame::TonemapMode::ACES,
+                            "ACES",
+                        );
+                        ui.selectable_value(
+                            &mut self.sequence_settings.tonemap_mode,
+                            crate::entities::frame::TonemapMode::Reinhard,
+                            "Reinhard",
+                        );
+                        ui.selectable_value(
+                            &mut self.sequence_settings.tonemap_mode,
+                            crate::entities::frame::TonemapMode::Clamp,
+                            "Clamp",
+                        );
+                    });
+            }
+        });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+
+        // Per-format settings
+        match self.sequence_settings.format {
+            SequenceFormat::Exr => {
+                ui.horizontal(|ui| {
+                    ui.label("Bit Depth:");
+                    for depth in ExrBitDepth::all() {
+                        ui.radio_value(
+                            &mut self.sequence_settings.format_settings.exr.bit_depth,
+                            *depth,
+                            depth.to_string(),
+                        );
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Compression:");
+                    egui::ComboBox::from_id_salt("exr_compression")
+                        .selected_text(self.sequence_settings.format_settings.exr.compression.to_string())
+                        .show_ui(ui, |ui| {
+                            for comp in ExrCompression::all() {
+                                ui.selectable_value(
+                                    &mut self.sequence_settings.format_settings.exr.compression,
+                                    *comp,
+                                    comp.to_string(),
+                                );
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                ui.label("💡 EXR: HDR format, preserves full dynamic range");
+            }
+            SequenceFormat::Png => {
+                ui.horizontal(|ui| {
+                    ui.label("Compression:");
+                    ui.add(egui::Slider::new(
+                        &mut self.sequence_settings.format_settings.png.compression,
+                        0..=9,
+                    ).text("level"));
+                });
+                ui.add_space(4.0);
+                ui.label("💡 PNG: Lossless, good for compositing");
+            }
+            SequenceFormat::Jpeg => {
+                ui.horizontal(|ui| {
+                    ui.label("Quality:");
+                    ui.add(egui::Slider::new(
+                        &mut self.sequence_settings.format_settings.jpeg.quality,
+                        1..=100,
+                    ).text("%"));
+                });
+                ui.add_space(4.0);
+                ui.label("💡 JPEG: Lossy, small files, no alpha");
+            }
+            SequenceFormat::Tiff => {
+                ui.horizontal(|ui| {
+                    ui.label("Bit Depth:");
+                    for depth in TiffBitDepth::all() {
+                        ui.radio_value(
+                            &mut self.sequence_settings.format_settings.tiff.bit_depth,
+                            *depth,
+                            depth.to_string(),
+                        );
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Compression:");
+                    egui::ComboBox::from_id_salt("tiff_compression")
+                        .selected_text(self.sequence_settings.format_settings.tiff.compression.to_string())
+                        .show_ui(ui, |ui| {
+                            for comp in TiffCompression::all() {
+                                ui.selectable_value(
+                                    &mut self.sequence_settings.format_settings.tiff.compression,
+                                    *comp,
+                                    comp.to_string(),
+                                );
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                ui.label("💡 TIFF: Industry standard, lossless");
+            }
+            SequenceFormat::Tga => {
+                ui.horizontal(|ui| {
+                    ui.checkbox(
+                        &mut self.sequence_settings.format_settings.tga.rle_compression,
+                        "RLE Compression",
+                    );
+                });
+                ui.add_space(4.0);
+                ui.label("💡 TGA: Legacy format, game industry");
+            }
+        }
+
+        // Padding pattern hint
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(4.0);
+        ui.label("Padding patterns: #### (4 digits), %04d (printf), @ (no padding)");
     }
 }
 
