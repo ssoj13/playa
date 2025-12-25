@@ -9,25 +9,14 @@
 
 ---
 
-## Why Playa?
+## What is Playa?
 
-**The problem**: Reviewing VFX renders and animations means scrubbing through thousands of high-resolution frames. Most players freeze during fast scrubbing, load frames sequentially, or run out of memory on long sequences.
-
-**Playa solves this** with three key architectural decisions:
-
-1. **Epoch-based cancellation** - When you scrub fast, outdated frame requests are immediately cancelled. The UI never waits for frames you've already scrolled past. Result: instant response, always.
-
-2. **Work-stealing thread pool** - Frame loading runs in parallel across 75% of CPU cores. Workers steal tasks from each other to balance load automatically. No idle cores, no bottlenecks.
-
-3. **LRU cache with memory limits** - Frames are cached in RAM with automatic eviction when memory runs low. You set a limit (e.g., 75% of RAM), and Playa handles the rest. No more out-of-memory crashes.
-
-**Single binary, cross-platform** - One executable, no dependencies. Download and run on Windows, macOS, or Linux.
-
----
+**The problem**: Experimental Image Sequence Player written in Rust.
 
 ## Key Features
 
 ### Performance
+- **Single binary, cross-platform** - One executable, no dependencies. Download and run on Windows, macOS, or Linux.
 - **Instant scrubbing** - Epoch-based cache keeps UI responsive at any speed
 - **Parallel loading** - Work-stealing across CPU cores
 - **Smart memory** - LRU cache with configurable memory limit
@@ -101,7 +90,7 @@ playa -f sequence.exr --frame 50 -a -F    # Frame 50, autoplay, fullscreen
 
 **Version info** (`-V`):
 ```
-playa 0.1.135
+playa 0.1.138
 EXR:    openexr-rs 0.11 (C++, DWAA/DWAB)
 Video:  playa-ffmpeg 8.0 (static)
 Target: x86_64-windows
