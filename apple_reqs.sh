@@ -25,12 +25,12 @@ fi
 echo ""
 
 # 2. Homebrew packages
-echo "Step 2/4: Homebrew packages (pkg-config, nasm, yasm)"
+echo "Step 2/4: Homebrew packages (pkg-config, nasm, yasm, git-lfs)"
 if ! command -v brew &>/dev/null; then
     echo "  Homebrew not found. Please install from https://brew.sh"
 else
     missing=""
-    for pkg in pkg-config nasm yasm; do
+    for pkg in pkg-config nasm yasm git-lfs; do
         if ! brew list "$pkg" &>/dev/null; then
             missing="$missing $pkg"
         fi
