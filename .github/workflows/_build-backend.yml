@@ -49,7 +49,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux dependencies
         if: inputs.platform == 'linux'
@@ -148,7 +148,7 @@ jobs:
 
       - name: Cache vcpkg FFmpeg (Windows)
         if: inputs.platform == 'windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-vcpkg-ffmpeg-windows
         with:
           path: |
@@ -161,7 +161,7 @@ jobs:
 
       - name: Cache vcpkg FFmpeg (Unix)
         if: inputs.platform != 'windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache-vcpkg-ffmpeg-unix
         with:
           path: |
@@ -226,7 +226,7 @@ jobs:
 
       - name: Cache cargo and build artifacts
         id: cache-restore
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/
@@ -237,7 +237,7 @@ jobs:
       - name: Cache cargo-packager (Unix)
         if: inputs.platform != 'windows'
         id: tools-cache-restore-unix
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/bin/cargo-packager
@@ -246,7 +246,7 @@ jobs:
       - name: Cache cargo-packager (Windows)
         if: inputs.platform == 'windows'
         id: tools-cache-restore-win
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/bin/cargo-packager.exe
@@ -579,7 +579,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: inputs.platform == 'windows' && inputs.cache_only != true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-${{ inputs.backend }}
           path: |
@@ -591,7 +591,7 @@ jobs:
 
       - name: Upload Linux artifacts
         if: inputs.platform == 'linux' && inputs.cache_only != true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-${{ inputs.backend }}-combined
           path: |
@@ -603,7 +603,7 @@ jobs:
 
       - name: Upload macOS artifacts
         if: inputs.platform == 'macos' && inputs.cache_only != true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-${{ inputs.backend }}-combined
           path: |
