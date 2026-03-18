@@ -88,7 +88,6 @@ impl PlayaApp {
             log::trace!("API command: {:?}", cmd);
             match cmd {
                 ApiCommand::Play => {
-                    self.event_bus.emit(TogglePlayPauseEvent);
                     if !self.player.is_playing() {
                         self.event_bus.emit(TogglePlayPauseEvent);
                     }
@@ -106,6 +105,9 @@ impl PlayaApp {
                 }
                 ApiCommand::SetFps(fps) => {
                     self.player.set_fps_base(fps);
+                    if let Some(comp_uuid) = self.player.active_comp() {
+                        self.project.modify_comp(comp_uuid, |comp| comp.set_fps(fps));
+                    }
                 }
                 ApiCommand::ToggleLoop => {
                     self.event_bus.emit(ToggleLoopEvent);

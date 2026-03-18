@@ -151,6 +151,17 @@ impl std::fmt::Display for FrameError {
 
 impl std::error::Error for FrameError {}
 
+/// Build a U8 RGBA green placeholder buffer (R=0, G=100, B=0, A=255) for the given dimensions.
+/// Used when downgrading a frame back to Header state to free pixel memory.
+fn make_placeholder_u8(width: usize, height: usize) -> Vec<u8> {
+    let mut buf = vec![0u8; width * height * 4];
+    for px in buf.chunks_exact_mut(4) {
+        px[1] = 100; // G channel
+        px[3] = 255; // A channel
+    }
+    buf
+}
+
 impl Frame {
     /// Create new frame with green placeholder
     pub fn new(width: usize, height: usize, depth: PixelDepth) -> Self {
@@ -727,15 +738,7 @@ impl Frame {
                     PixelBuffer::F32(vec) => vec.len() * 4,
                 };
 
-                // Create green placeholder buffer with current dimensions
-                let size = data.width * data.height * 4;
-                let mut buffer_u8 = vec![0; size];
-                for px in buffer_u8.chunks_exact_mut(4) {
-                    px[1] = 100; // G channel
-                    px[3] = 255; // A channel
-                }
-
-                data.buffer = Arc::new(PixelBuffer::U8(buffer_u8));
+                data.buffer = Arc::new(PixelBuffer::U8(make_placeholder_u8(data.width, data.height)));
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
@@ -763,15 +766,7 @@ impl Frame {
             (FrameStatus::Error, FrameStatus::Header) => {
                 let mut data = self.data.lock().unwrap();
 
-                // Create green placeholder buffer with current dimensions
-                let size = data.width * data.height * 4;
-                let mut buffer_u8 = vec![0; size];
-                for px in buffer_u8.chunks_exact_mut(4) {
-                    px[1] = 100; // G channel
-                    px[3] = 255; // A channel
-                }
-
-                data.buffer = Arc::new(PixelBuffer::U8(buffer_u8));
+                data.buffer = Arc::new(PixelBuffer::U8(make_placeholder_u8(data.width, data.height)));
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
@@ -799,6 +794,26 @@ impl Frame {
     /// Get pixel buffer (returns Arc for efficient sharing)
     pub fn buffer(&self) -> Arc<PixelBuffer> {
         Arc::clone(&self.data.lock().unwrap().buffer)
+    }
+
+    /// Consume the frame and return its PixelBuffer.
+    ///
+    /// Extract pixel buffer, avoiding allocation when this Frame is the sole owner.
+    /// Falls back to clone if Arcs are shared (never panics).
+    pub(crate) fn into_pixel_buffer(self) -> PixelBuffer {
+        match Arc::try_unwrap(self.data) {
+            Ok(mutex) => {
+                let data = mutex.into_inner().unwrap_or_else(|e| e.into_inner());
+                match Arc::try_unwrap(data.buffer) {
+                    Ok(buf) => buf,
+                    Err(arc) => (*arc).clone(),
+                }
+            }
+            Err(arc) => {
+                let data = arc.lock().unwrap_or_else(|e| e.into_inner());
+                (*data.buffer).clone()
+            }
+        }
     }
 
     /// Get pixel format

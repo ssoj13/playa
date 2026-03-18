@@ -3,19 +3,11 @@
 //! Avoid string typos, enable IDE autocomplete.
 //! Usage: `comp.attrs.get_i32(A_FRAME)`
 
-// === Mode constants (i8) ===
-/// Normal comp mode - compose children
-pub const COMP_NORMAL: i8 = 0;
-/// File mode - load frames from disk
-pub const COMP_FILE: i8 = 1;
-
 // === Identity ===
 /// Entity UUID
 pub const A_UUID: &str = "uuid";
 /// Human-readable name
 pub const A_NAME: &str = "name";
-/// Comp mode (COMP_NORMAL or COMP_FILE)
-pub const A_MODE: &str = "mode";
 
 // === Timeline ===
 /// In-point (start frame)

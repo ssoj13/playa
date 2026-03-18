@@ -287,15 +287,36 @@ impl CpuCompositor {
         // Start with first frame cropped to canvas
         let mut iter = frames.iter();
         let (base_frame, _, _, _) = iter.next().unwrap(); // safe: frames non-empty
-        let mut result = base_frame.clone();
-        result.crop(width, height, crate::entities::frame::CropAlign::LeftTop);
+        let base_cropped = base_frame.crop_copy(width, height, crate::entities::frame::CropAlign::LeftTop);
+
+        let canvas_pixels = width * height * 4;
+
+        // Two-buffer ping-pong: curr holds the accumulator, out is the write target.
+        // After each blend we swap them; no allocation inside the loop.
+        enum Buf {
+            F32(Vec<f32>),
+            F16(Vec<half::f16>),
+            U8(Vec<u8>),
+        }
+
+        // Extract pixel data from cropped base — zero-copy when sole owner,
+        // falls back to clone only if Arc is shared (e.g. same-size no-op crop)
+        let mut curr = match base_cropped.into_pixel_buffer() {
+            PixelBuffer::F32(v) => Buf::F32(v),
+            PixelBuffer::F16(v) => Buf::F16(v),
+            PixelBuffer::U8(v)  => Buf::U8(v),
+        };
+        let mut out = match &curr {
+            Buf::F32(_) => Buf::F32(vec![0.0f32; canvas_pixels]),
+            Buf::F16(_) => Buf::F16(vec![half::f16::ZERO; canvas_pixels]),
+            Buf::U8(_)  => Buf::U8(vec![0u8; canvas_pixels]),
+        };
 
         // Blend each subsequent layer on top
         // Note: _transform is ignored - CPU path applies transform beforehand
         // in compose_internal via transform::transform_frame()
         // GPU path would use this matrix in shader instead
         for (layer_frame, opacity, mode, _transform) in iter {
-            let result_buffer = result.buffer();
             let layer_buffer = layer_frame.buffer();
 
             let lw = layer_frame.width();
@@ -321,29 +342,36 @@ impl CpuCompositor {
                 }};
             }
 
-            // Blend based on pixel format - use min_status for composed result
-            match (&*result_buffer, &*layer_buffer) {
-                (PixelBuffer::F32(curr), PixelBuffer::F32(layer)) => {
-                    let mut blended = curr.clone();
-                    blend_rows!(blend_f32, curr, layer, blended);
-                    result = Frame::from_f32_buffer_with_status(blended, width, height, min_status);
+            // Copy curr into out (no allocation), blend the overlap region into out,
+            // then swap: curr holds the accumulated result for the next iteration.
+            match (&mut curr, &*layer_buffer, &mut out) {
+                (Buf::F32(c), PixelBuffer::F32(layer), Buf::F32(o)) => {
+                    o.copy_from_slice(c);
+                    blend_rows!(blend_f32, c, layer, o);
+                    std::mem::swap(c, o);
                 }
-                (PixelBuffer::F16(curr), PixelBuffer::F16(layer)) => {
-                    let mut blended = curr.clone();
-                    blend_rows!(blend_f16, curr, layer, blended);
-                    result = Frame::from_f16_buffer_with_status(blended, width, height, min_status);
+                (Buf::F16(c), PixelBuffer::F16(layer), Buf::F16(o)) => {
+                    o.copy_from_slice(c);
+                    blend_rows!(blend_f16, c, layer, o);
+                    std::mem::swap(c, o);
                 }
-                (PixelBuffer::U8(curr), PixelBuffer::U8(layer)) => {
-                    let mut blended = curr.clone();
-                    blend_rows!(blend_u8, curr, layer, blended);
-                    result = Frame::from_u8_buffer_with_status(blended, width, height, min_status);
+                (Buf::U8(c), PixelBuffer::U8(layer), Buf::U8(o)) => {
+                    o.copy_from_slice(c);
+                    blend_rows!(blend_u8, c, layer, o);
+                    std::mem::swap(c, o);
                 }
                 _ => {
                     log::warn!("Pixel format mismatch during compositing, skipping layer");
-                    continue;
                 }
             }
         }
+
+        // Wrap the final accumulated buffer in a Frame exactly once
+        let result = match curr {
+            Buf::F32(v) => Frame::from_f32_buffer_with_status(v, width, height, min_status),
+            Buf::F16(v) => Frame::from_f16_buffer_with_status(v, width, height, min_status),
+            Buf::U8(v)  => Frame::from_u8_buffer_with_status(v, width, height, min_status),
+        };
 
         Some(result)
     }

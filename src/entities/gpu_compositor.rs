@@ -260,12 +260,34 @@ impl GpuCompositor {
         }
     }
 
+    /// Delete any partially or fully created GL resources, resetting all fields to None.
+    /// Called before a fresh init attempt to prevent resource leaks on failed init.
+    fn cleanup_gl_resources(&mut self) {
+        unsafe {
+            if let Some(program) = self.blend_program.take() {
+                self.gl.delete_program(program);
+            }
+            if let Some(vao) = self.vao.take() {
+                self.gl.delete_vertex_array(vao);
+            }
+            if let Some(vbo) = self.vbo.take() {
+                self.gl.delete_buffer(vbo);
+            }
+            if let Some(fbo) = self.fbo.take() {
+                self.gl.delete_framebuffer(fbo);
+            }
+        }
+    }
+
     /// Initialize OpenGL resources (shaders, FBO, VAO)
     fn ensure_initialized(&mut self) -> Result<(), String> {
-        // Check if already initialized
-        if self.blend_program.is_some() && self.vao.is_some() && self.fbo.is_some() {
+        // All four must be Some; if any is missing we have partial state from a prior failed init
+        if self.blend_program.is_some() && self.vao.is_some() && self.vbo.is_some() && self.fbo.is_some() {
             return Ok(());
         }
+
+        // Clean up partial state before retrying to avoid leaking GL objects
+        self.cleanup_gl_resources();
 
         trace!("GpuCompositor::ensure_initialized() - creating OpenGL resources");
 

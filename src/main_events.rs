@@ -74,6 +74,50 @@ use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 use crate::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
+/// After removing one or more comps, fix the active comp and node editor if the active was removed.
+///
+/// Picks the first remaining comp in order as the new active (or clears if none left).
+fn handle_media_removal(
+    removed_uuids: &[Uuid],
+    project: &mut Project,
+    player: &mut Player,
+    node_editor_state: &mut crate::widgets::node_editor::NodeEditorState,
+) {
+    for &uuid in removed_uuids {
+        project.del_comp(uuid);
+    }
+    // If active comp was among the removed ones, pick a new active
+    let active_still_exists = player
+        .active_comp()
+        .map(|a| project.media.read().expect("media lock poisoned").contains_key(&a))
+        .unwrap_or(false);
+    if !active_still_exists {
+        let first = project.order().first().cloned();
+        player.set_active_comp(first, project);
+        if let Some(f) = first {
+            node_editor_state.set_comp(f);
+        }
+    }
+}
+
+/// Align all selected layers in a comp so their start or end bound lands on current_frame.
+///
+/// `use_start=true` aligns the play_start bound; `use_start=false` aligns play_end.
+fn align_layers_to_frame(comp: &mut crate::entities::Comp, use_start: bool) {
+    let current_frame = comp.frame();
+    let selected = comp.layer_selection.clone();
+    for layer_uuid in selected {
+        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
+        let (play_start, play_end) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
+            (comp.child_start(layer_uuid).unwrap_or(0), comp.child_end(layer_uuid).unwrap_or(0))
+        });
+        let bound = if use_start { play_start } else { play_end };
+        let layer_in = comp.child_in(layer_uuid).unwrap_or(0);
+        let delta = current_frame - bound;
+        let _ = comp.move_child(layer_idx, layer_in + delta);
+    }
+}
+
 /// Jump to next/prev layer edge in composition
 /// direction > 0: next edge, direction < 0: prev edge
 fn jump_to_edge(comp: &mut crate::entities::Comp, forward: bool) {
@@ -151,6 +195,28 @@ fn adjust_fps_base(player: &mut Player, project: &mut Project, increase: bool) {
     }
 }
 
+/// All mutable app state needed by `handle_app_event`.
+///
+/// Bundles the 15 individual parameters into a single context to avoid
+/// explosion at call sites.
+pub struct AppEventContext<'a> {
+    pub player: &'a mut Player,
+    pub project: &'a mut Project,
+    pub timeline_state: &'a mut crate::widgets::timeline::TimelineState,
+    pub node_editor_state: &'a mut crate::widgets::node_editor::NodeEditorState,
+    pub viewport_state: &'a mut crate::widgets::viewport::ViewportState,
+    pub settings: &'a mut crate::dialogs::prefs::AppSettings,
+    pub show_help: &'a mut bool,
+    pub show_playlist: &'a mut bool,
+    pub show_settings: &'a mut bool,
+    pub show_encode_dialog: &'a mut bool,
+    pub show_attributes_editor: &'a mut bool,
+    pub encode_dialog: &'a mut Option<EncodeDialog>,
+    pub is_fullscreen: &'a mut bool,
+    pub fullscreen_dirty: &'a mut bool,
+    pub reset_settings_pending: &'a mut bool,
+}
+
 /// Result of handling an app event - may contain deferred actions
 #[derive(Default)]
 pub struct EventResult {
@@ -201,26 +267,45 @@ impl EventResult {
     }
 }
 
+/// Compute zoom and pan to fit a frame range into the timeline canvas.
+///
+/// `default_ppf` (2.0) is the baseline pixels-per-frame at zoom 1.0.
+fn fit_timeline_to_range(
+    timeline_state: &mut crate::widgets::timeline::TimelineState,
+    canvas_width: f32,
+    min_frame: i32,
+    max_frame: i32,
+) {
+    let duration = (max_frame - min_frame + 1).max(1);
+    let pixels_per_frame = canvas_width / duration as f32;
+    const DEFAULT_PPF: f32 = 2.0;
+    timeline_state.zoom = (pixels_per_frame / DEFAULT_PPF).clamp(0.1, 20.0);
+    timeline_state.pan_offset = min_frame as f32;
+}
+
 /// Handle a single app event (called from main event loop).
 /// Returns Some(result) if event was handled, None otherwise.
 pub fn handle_app_event(
     event: &BoxedEvent,
-    player: &mut Player,
-    project: &mut Project,
-    timeline_state: &mut crate::widgets::timeline::TimelineState,
-    node_editor_state: &mut crate::widgets::node_editor::NodeEditorState,
-    viewport_state: &mut crate::widgets::viewport::ViewportState,
-    settings: &mut crate::dialogs::prefs::AppSettings,
-    show_help: &mut bool,
-    show_playlist: &mut bool,
-    show_settings: &mut bool,
-    show_encode_dialog: &mut bool,
-    show_attributes_editor: &mut bool,
-    encode_dialog: &mut Option<EncodeDialog>,
-    is_fullscreen: &mut bool,
-    fullscreen_dirty: &mut bool,
-    reset_settings_pending: &mut bool,
+    ctx: &mut AppEventContext<'_>,
 ) -> Option<EventResult> {
+    let AppEventContext {
+        player,
+        project,
+        timeline_state,
+        node_editor_state,
+        viewport_state,
+        settings,
+        show_help,
+        show_playlist,
+        show_settings,
+        show_encode_dialog,
+        show_attributes_editor,
+        encode_dialog,
+        is_fullscreen,
+        fullscreen_dirty,
+        reset_settings_pending,
+    } = ctx;
     let mut result = EventResult::default();
     // === Playback Control ===
     if downcast_event::<TogglePlayPauseEvent>(event).is_some() {
@@ -260,7 +345,8 @@ pub fn handle_app_event(
             project.modify_comp(comp_uuid, |comp| {
                 comp.set_frame(e.0);
             });
-            result.enqueue_frames = true;
+            // enqueue_frames is intentionally omitted: CurrentFrameChangedEvent
+            // emitted by modify_comp handles preloading to avoid double-preload.
         }
         return Some(result);
     }
@@ -352,12 +438,12 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<ToggleLoopEvent>(event).is_some() {
-        settings.loop_enabled = !settings.loop_enabled;
-        player.set_loop_enabled(settings.loop_enabled);
+        // player is the runtime source of truth; settings.loop_enabled is synced
+        // from player in save() before serialization, so no write needed here.
+        player.set_loop_enabled(!player.loop_enabled());
         return Some(result);
     }
     if let Some(e) = downcast_event::<SetLoopEvent>(event) {
-        settings.loop_enabled = e.0;
         player.set_loop_enabled(e.0);
         return Some(result);
     }
@@ -412,33 +498,12 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<RemoveMediaEvent>(event) {
-        let uuid = e.0;
-        let was_active = player.active_comp() == Some(uuid);
-        project.del_comp(uuid);
-        if was_active {
-            let first = project.order().first().cloned();
-            player.set_active_comp(first, project);
-            if let Some(f) = first {
-                node_editor_state.set_comp(f);
-            }
-        }
+        handle_media_removal(&[e.0], project, player, node_editor_state);
         return Some(result);
     }
     if downcast_event::<RemoveSelectedMediaEvent>(event).is_some() {
         let selection: Vec<Uuid> = project.selection();
-        let active = player.active_comp();
-        for uuid in selection {
-            project.del_comp(uuid);
-        }
-        // Fix active if deleted
-        if let Some(a) = active
-            && !project.media.read().expect("media lock poisoned").contains_key(&a) {
-                let first = project.order().first().cloned();
-                player.set_active_comp(first, project);
-                if let Some(f) = first {
-                    node_editor_state.set_comp(f);
-                }
-            }
+        handle_media_removal(&selection, project, player, node_editor_state);
         return Some(result);
     }
     if downcast_event::<ClearAllMediaEvent>(event).is_some() {
@@ -596,12 +661,7 @@ pub fn handle_app_event(
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
                 let (min_frame, max_frame) = comp.bounds(true, false, &media);
-                let duration = (max_frame - min_frame + 1).max(1);
-                let pixels_per_frame = e.0 / duration as f32;
-                let default_ppf = 2.0;
-                let zoom = (pixels_per_frame / default_ppf).clamp(0.1, 20.0);
-                timeline_state.zoom = zoom;
-                timeline_state.pan_offset = min_frame as f32;
+                fit_timeline_to_range(timeline_state, e.0, min_frame, max_frame);
             }
         }
         return Some(result);
@@ -613,12 +673,7 @@ pub fn handle_app_event(
             if let Some(comp) = media.get(&comp_uuid) {
                 // If selected_only, use selection bounds (falls back to all if none selected)
                 let (min_frame, max_frame) = comp.bounds(true, e.selected_only, &media);
-                let duration = (max_frame - min_frame + 1).max(1);
-                let pixels_per_frame = canvas_width / duration as f32;
-                let default_ppf = 2.0;
-                let zoom = (pixels_per_frame / default_ppf).clamp(0.1, 20.0);
-                timeline_state.zoom = zoom;
-                timeline_state.pan_offset = min_frame as f32;
+                fit_timeline_to_range(timeline_state, canvas_width, min_frame, max_frame);
             }
         }
         return Some(result);
@@ -630,12 +685,7 @@ pub fn handle_app_event(
             let media = project.media.read().expect("media lock poisoned");
             if let Some(comp) = media.get(&comp_uuid) {
                 let (min_frame, max_frame) = comp.play_range(true); // use_work_area=true
-                let duration = (max_frame - min_frame + 1).max(1);
-                let pixels_per_frame = canvas_width / duration as f32;
-                let default_ppf = 2.0;
-                let zoom = (pixels_per_frame / default_ppf).clamp(0.1, 20.0);
-                timeline_state.zoom = zoom;
-                timeline_state.pan_offset = min_frame as f32;
+                fit_timeline_to_range(timeline_state, canvas_width, min_frame, max_frame);
             }
         }
         return Some(result);
@@ -786,24 +836,25 @@ pub fn handle_app_event(
             e.layer_idx, e.new_start, e.new_idx
         );
         project.modify_comp(e.comp_uuid, |comp| {
-            let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
-            let dragged_in = comp.child_in(dragged_uuid).unwrap_or(0);
-            let delta = e.new_start - dragged_in;
-            if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
-                let selection = comp.layer_selection.clone();
-                // move_layers() calls mark_dirty() internally
-                comp.move_layers(&selection, delta);
-            } else {
-                comp.move_layers(&[dragged_uuid], delta);
-            }
-            // Vertical reorder: move layer to new index
-            if e.layer_idx != e.new_idx && e.new_idx < comp.layers.len() {
-                let layer = comp.layers.remove(e.layer_idx);
-                let insert_idx = e.new_idx.min(comp.layers.len());
-                comp.layers.insert(insert_idx, layer);
-                // Direct field change (layers.remove/insert) requires explicit mark_dirty().
-                // Note: move_layers() above already marked dirty, but this is for the reorder part.
-                comp.attrs.mark_dirty();
+            if let Some(dragged_uuid) = comp.idx_to_uuid(e.layer_idx) {
+                let dragged_in = comp.child_in(dragged_uuid).unwrap_or(0);
+                let delta = e.new_start - dragged_in;
+                if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
+                    let selection = comp.layer_selection.clone();
+                    // move_layers() calls mark_dirty() internally
+                    comp.move_layers(&selection, delta);
+                } else {
+                    comp.move_layers(&[dragged_uuid], delta);
+                }
+                // Vertical reorder: move layer to new index
+                if e.layer_idx != e.new_idx && e.new_idx < comp.layers.len() {
+                    let layer = comp.layers.remove(e.layer_idx);
+                    let insert_idx = e.new_idx.min(comp.layers.len());
+                    comp.layers.insert(insert_idx, layer);
+                    // Direct field change (layers.remove/insert) requires explicit mark_dirty().
+                    // Note: move_layers() above already marked dirty, but this is for the reorder part.
+                    comp.attrs.mark_dirty();
+                }
             }
         });
         // No node_editor_state.mark_dirty() - doesn't change graph structure
@@ -811,14 +862,15 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<SetLayerPlayStartEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
-            let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
-            let dragged_ps = comp.child_start(dragged_uuid).unwrap_or(0);
-            let delta = e.new_play_start - dragged_ps;
-            if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
-                let selection = comp.layer_selection.clone();
-                comp.trim_layers(&selection, A_IN, delta);
-            } else {
-                comp.trim_layers(&[dragged_uuid], A_IN, delta);
+            if let Some(dragged_uuid) = comp.idx_to_uuid(e.layer_idx) {
+                let dragged_ps = comp.child_start(dragged_uuid).unwrap_or(0);
+                let delta = e.new_play_start - dragged_ps;
+                if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
+                    let selection = comp.layer_selection.clone();
+                    comp.trim_layers(&selection, A_IN, delta);
+                } else {
+                    comp.trim_layers(&[dragged_uuid], A_IN, delta);
+                }
             }
         });
 
@@ -826,14 +878,15 @@ pub fn handle_app_event(
     }
     if let Some(e) = downcast_event::<SetLayerPlayEndEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
-            let dragged_uuid = comp.idx_to_uuid(e.layer_idx).unwrap_or_default();
-            let dragged_pe = comp.child_end(dragged_uuid).unwrap_or(0);
-            let delta = e.new_play_end - dragged_pe;
-            if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
-                let selection = comp.layer_selection.clone();
-                comp.trim_layers(&selection, A_OUT, delta);
-            } else {
-                comp.trim_layers(&[dragged_uuid], A_OUT, delta);
+            if let Some(dragged_uuid) = comp.idx_to_uuid(e.layer_idx) {
+                let dragged_pe = comp.child_end(dragged_uuid).unwrap_or(0);
+                let delta = e.new_play_end - dragged_pe;
+                if comp.layer_selection.contains(&dragged_uuid) && comp.is_multi_selected() {
+                    let selection = comp.layer_selection.clone();
+                    comp.trim_layers(&selection, A_OUT, delta);
+                } else {
+                    comp.trim_layers(&[dragged_uuid], A_OUT, delta);
+                }
             }
         });
 
@@ -936,37 +989,11 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<AlignLayersStartEvent>(event) {
-        project.modify_comp(e.0, |comp| {
-            let current_frame = comp.frame();
-            let selected = comp.layer_selection.clone();
-            for layer_uuid in selected {
-                let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                let (play_start, _) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
-                    (comp.child_start(layer_uuid).unwrap_or(0), comp.child_end(layer_uuid).unwrap_or(0))
-                });
-                let layer_in = comp.child_in(layer_uuid).unwrap_or(0);
-                let delta = current_frame - play_start;
-                let _ = comp.move_child(layer_idx, layer_in + delta);
-            }
-        });
-
+        project.modify_comp(e.0, |comp| align_layers_to_frame(comp, true));
         return Some(result);
     }
     if let Some(e) = downcast_event::<AlignLayersEndEvent>(event) {
-        project.modify_comp(e.0, |comp| {
-            let current_frame = comp.frame();
-            let selected = comp.layer_selection.clone();
-            for layer_uuid in selected {
-                let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
-                let (_, play_end) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
-                    (comp.child_start(layer_uuid).unwrap_or(0), comp.child_end(layer_uuid).unwrap_or(0))
-                });
-                let layer_in = comp.child_in(layer_uuid).unwrap_or(0);
-                let delta = current_frame - play_end;
-                let _ = comp.move_child(layer_idx, layer_in + delta);
-            }
-        });
-
+        project.modify_comp(e.0, |comp| align_layers_to_frame(comp, false));
         return Some(result);
     }
     if let Some(e) = downcast_event::<TrimLayersStartEvent>(event) {

@@ -10,7 +10,7 @@ use crate::dialogs::prefs::AppSettings;
 use crate::entities::Project;
 use crate::core::event_bus::{CompEventEmitter, EventBus};
 use crate::entities::CacheStrategy;
-use crate::main_events::{handle_app_event, EventResult};
+use crate::main_events::{handle_app_event, AppEventContext, EventResult};
 use crate::core::player::Player;
 use crate::widgets::timeline::TimelineState;
 use crate::widgets::viewport::ViewportState;
@@ -116,25 +116,29 @@ impl Shell {
         let mut fullscreen_dirty = false;
         let mut reset_settings_pending = false;
 
-        for event in self.event_bus.poll() {
-            if let Some(r) = handle_app_event(
-                &event,
-                &mut self.player,
-                &mut self.project,
-                &mut timeline_state,
-                &mut node_editor_state,
-                &mut viewport_state,
-                &mut settings,
-                &mut show_help,
-                &mut show_playlist,
-                &mut show_settings,
-                &mut show_encode_dialog,
-                &mut show_attributes_editor,
-                &mut encode_dialog,
-                &mut is_fullscreen,
-                &mut fullscreen_dirty,
-                &mut reset_settings_pending,
-            ) {
+        // Collect events first to release the event_bus borrow before constructing ctx
+        // (ctx borrows self.player and self.project which are disjoint from self.event_bus,
+        // but the borrow checker cannot verify this through the ctx struct indirection).
+        let events: Vec<_> = self.event_bus.poll();
+        let mut ctx = AppEventContext {
+            player: &mut self.player,
+            project: &mut self.project,
+            timeline_state: &mut timeline_state,
+            node_editor_state: &mut node_editor_state,
+            viewport_state: &mut viewport_state,
+            settings: &mut settings,
+            show_help: &mut show_help,
+            show_playlist: &mut show_playlist,
+            show_settings: &mut show_settings,
+            show_encode_dialog: &mut show_encode_dialog,
+            show_attributes_editor: &mut show_attributes_editor,
+            encode_dialog: &mut encode_dialog,
+            is_fullscreen: &mut is_fullscreen,
+            fullscreen_dirty: &mut fullscreen_dirty,
+            reset_settings_pending: &mut reset_settings_pending,
+        };
+        for event in events {
+            if let Some(r) = handle_app_event(&event, &mut ctx) {
                 merged.merge(r);
                 any_handled = true;
             }
@@ -164,25 +168,26 @@ impl Shell {
         let mut fullscreen_dirty = false;
         let mut reset_settings_pending = false;
 
-        for event in self.event_bus.poll() {
-            if let Some(r) = handle_app_event(
-                &event,
-                &mut self.player,
-                &mut self.project,
-                timeline_state,
-                &mut node_editor_state,
-                viewport_state,
-                settings,
-                &mut show_help,
-                &mut show_playlist,
-                &mut show_settings,
-                &mut show_encode_dialog,
-                &mut show_attributes_editor,
-                &mut encode_dialog,
-                &mut is_fullscreen,
-                &mut fullscreen_dirty,
-                &mut reset_settings_pending,
-            ) {
+        let events: Vec<_> = self.event_bus.poll();
+        let mut ctx = AppEventContext {
+            player: &mut self.player,
+            project: &mut self.project,
+            timeline_state,
+            node_editor_state: &mut node_editor_state,
+            viewport_state,
+            settings,
+            show_help: &mut show_help,
+            show_playlist: &mut show_playlist,
+            show_settings: &mut show_settings,
+            show_encode_dialog: &mut show_encode_dialog,
+            show_attributes_editor: &mut show_attributes_editor,
+            encode_dialog: &mut encode_dialog,
+            is_fullscreen: &mut is_fullscreen,
+            fullscreen_dirty: &mut fullscreen_dirty,
+            reset_settings_pending: &mut reset_settings_pending,
+        };
+        for event in events {
+            if let Some(r) = handle_app_event(&event, &mut ctx) {
                 merged.merge(r);
                 any_handled = true;
             }

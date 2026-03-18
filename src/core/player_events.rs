@@ -70,8 +70,9 @@ pub struct SetLoopEvent(pub bool);
 
 // === Preload ===
 
-/// Request to preload a specific frame for a comp
-/// Sent when a frame is needed but not yet loaded (e.g., during composition)
+/// Request to preload a specific frame for a comp.
+// Defined for future use - not yet emitted anywhere in the codebase
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct PreloadFrameEvent {
     pub comp_uuid: uuid::Uuid,

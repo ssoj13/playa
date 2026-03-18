@@ -95,50 +95,39 @@ fn has_local_config_files(dir: &std::path::Path) -> bool {
     files.iter().any(|f| dir.join(f).exists())
 }
 
-/// Get the configuration directory
-fn get_config_dir(config: &PathConfig) -> PathBuf {
-    // Priority 1: Custom directory from CLI or ENV
+/// Resolve an app-specific directory using platform-provided base dir as fallback.
+///
+/// Priority:
+/// 1. CLI/ENV override from `config.config_dir`
+/// 2. Current working directory, if local config files are present
+/// 3. `platform_dir()` → append "playa" (e.g. `dirs_next::config_dir` or `data_dir`)
+/// 4. "." as last resort
+fn get_app_dir(config: &PathConfig, platform_dir: fn() -> Option<PathBuf>) -> PathBuf {
     if let Some(dir) = &config.config_dir {
         return dir.clone();
     }
 
-    // Priority 2: Local folder IF config files exist there
     if let Ok(current_dir) = std::env::current_dir()
         && has_local_config_files(&current_dir)
     {
         return current_dir;
     }
 
-    // Priority 3: Platform-specific config directory
-    if let Some(dir) = dirs_next::config_dir() {
+    if let Some(dir) = platform_dir() {
         return dir.join("playa");
     }
 
-    // Fallback: "." if everything else fails
     PathBuf::from(".")
+}
+
+/// Get the configuration directory
+fn get_config_dir(config: &PathConfig) -> PathBuf {
+    get_app_dir(config, dirs_next::config_dir)
 }
 
 /// Get the data directory
 fn get_data_dir(config: &PathConfig) -> PathBuf {
-    // Priority 1: Custom directory from CLI or ENV (same as config)
-    if let Some(dir) = &config.config_dir {
-        return dir.clone();
-    }
-
-    // Priority 2: Local folder IF config files exist there
-    if let Ok(current_dir) = std::env::current_dir()
-        && has_local_config_files(&current_dir)
-    {
-        return current_dir;
-    }
-
-    // Priority 3: Platform-specific data directory
-    if let Some(dir) = dirs_next::data_dir() {
-        return dir.join("playa");
-    }
-
-    // Fallback: "." if everything else fails
-    PathBuf::from(".")
+    get_app_dir(config, dirs_next::data_dir)
 }
 
 // ============================================================================

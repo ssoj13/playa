@@ -781,42 +781,18 @@ impl EncodeDialog {
         self.stop_encoding_internal();
     }
 
-    /// Internal: Stop encoding thread with timeout
+    /// Internal: Stop encoding — non-blocking, no UI freeze.
     fn stop_encoding_internal(&mut self) {
         self.cancel_flag.store(true, Ordering::Relaxed);
 
         // Clean up any previously orphaned threads that have finished
         self.cleanup_orphan_handles();
 
-        // Wait for thread with timeout
+        // Don't block the UI thread waiting for the encode thread to stop.
+        // The cancel_flag is already set; push the handle to orphans so
+        // cleanup_orphan_handles() will reap it on the next UI tick.
         if let Some(handle) = self.encode_thread.take() {
-            use std::time::{Duration, Instant};
-
-            // Try to join with 2 second timeout
-            let timeout = Duration::from_secs(2);
-            let start = Instant::now();
-
-            loop {
-                if handle.is_finished() {
-                    match handle.join() {
-                        Ok(Ok(())) => info!("Encode thread stopped cleanly"),
-                        Ok(Err(e)) => {
-                            info!("Encode thread stopped with error: {}", e);
-                        }
-                        Err(_) => info!("Encode thread panicked"),
-                    }
-                    break;
-                }
-
-                if start.elapsed() > timeout {
-                    info!("Encode thread didn't stop within timeout - storing for later cleanup");
-                    // Store handle for later cleanup instead of leaking
-                    self.orphan_handles.push(handle);
-                    break;
-                }
-
-                std::thread::sleep(Duration::from_millis(100));
-            }
+            self.orphan_handles.push(handle);
         }
 
         // Force reset to clean state

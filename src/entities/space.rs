@@ -68,14 +68,6 @@ pub fn object_to_src(p: Vec2, src_size: (usize, usize)) -> Vec2 {
     Vec2::new(p.x + w * 0.5, h * 0.5 - p.y)
 }
 
-#[allow(dead_code)]
-#[inline]
-pub fn src_to_object(p: Vec2, src_size: (usize, usize)) -> Vec2 {
-    let w = src_size.0 as f32;
-    let h = src_size.1 as f32;
-    Vec2::new(p.x - w * 0.5, h * 0.5 - p.y)
-}
-
 // =============================================================================
 // Rotation Convention Helpers
 // =============================================================================

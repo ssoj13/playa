@@ -67,19 +67,25 @@ impl eframe::App for PlayaApp {
             self.last_stats_log_time = current_time;
         }
 
-        // Apply theme based on settings
-        if self.settings.dark_mode {
-            ctx.set_visuals(egui::Visuals::dark());
-        } else {
-            ctx.set_visuals(egui::Visuals::light());
+        // Apply theme based on settings - skip if unchanged
+        if self.last_applied_dark_mode != Some(self.settings.dark_mode) {
+            if self.settings.dark_mode {
+                ctx.set_visuals(egui::Visuals::dark());
+            } else {
+                ctx.set_visuals(egui::Visuals::light());
+            }
+            self.last_applied_dark_mode = Some(self.settings.dark_mode);
         }
 
-        // Apply font size from settings
-        let mut style = (*ctx.style()).clone();
-        for (_, font_id) in style.text_styles.iter_mut() {
-            font_id.size = self.settings.font_size;
+        // Apply font size from settings - skip if unchanged (cloning style is expensive)
+        if (self.settings.font_size - self.last_applied_font_size).abs() > f32::EPSILON {
+            let mut style = (*ctx.style()).clone();
+            for (_, font_id) in style.text_styles.iter_mut() {
+                font_id.size = self.settings.font_size;
+            }
+            ctx.set_style(style);
+            self.last_applied_font_size = self.settings.font_size;
         }
-        ctx.set_style(style);
 
         // Apply pending fullscreen changes requested via events
         if self.fullscreen_dirty {
@@ -96,10 +102,13 @@ impl eframe::App for PlayaApp {
             self.reset_settings_pending = false;
         }
 
-        // Enable multipass for better taffy layout recalculation responsiveness
-        ctx.options_mut(|opts| {
-            opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
-        });
+        // Enable multipass for better taffy layout recalculation responsiveness (one-time init)
+        if !self.options_initialized {
+            ctx.options_mut(|opts| {
+                opts.max_passes = std::num::NonZeroUsize::new(2).unwrap();
+            });
+            self.options_initialized = true;
+        }
 
         // Apply memory settings from UI if changed
         let mem_fraction = (self.settings.cache_memory_percent as f64 / 100.0).clamp(0.25, 0.95);
@@ -185,9 +194,6 @@ impl eframe::App for PlayaApp {
                 let mut dock_state =
                     std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
 
-                // Snapshot dock state before rendering (for change detection)
-                let dock_before = serde_json::to_string(&dock_state).ok();
-
                 {
                     let mut tabs = DockTabs { app: self };
                     DockArea::new(&mut dock_state)
@@ -199,9 +205,11 @@ impl eframe::App for PlayaApp {
                 // Save split positions after DockArea rendering (only if changed by user)
                 self.save_dock_split_positions();
 
-                // Detect dock state changes and update current layout
-                let dock_after = serde_json::to_string(&self.dock_state).ok();
-                if dock_before != dock_after {
+                // Emit LayoutUpdatedEvent only when the pointer is released - dock layout
+                // changes (tab drags, resizes) commit on pointer release, so this is the
+                // correct and cheap signal instead of serializing dock state twice per frame.
+                let pointer_released = ui.input(|i| i.pointer.any_released());
+                if pointer_released {
                     self.event_bus
                         .emit(crate::core::layout_events::LayoutUpdatedEvent);
                 }

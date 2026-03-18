@@ -198,7 +198,7 @@ impl ApiServer {
     }
 
     fn run(self) {
-        let addr = format!("0.0.0.0:{}", self.port);
+        let addr = format!("127.0.0.1:{}", self.port);
         log::info!("API server starting on http://{}", addr);
 
         let state = self.state;
@@ -251,7 +251,12 @@ impl ApiServer {
             // /api/player/fps/{n}
             if let Some(fps_str) = path.strip_prefix("/api/player/fps/") {
                 if let Ok(fps) = fps_str.parse::<f32>() {
-                    return Self::send_command(tx, ApiCommand::SetFps(fps))
+                    if fps.is_finite() && fps > 0.0 && fps <= 960.0 {
+                        return Self::send_command(tx, ApiCommand::SetFps(fps))
+                            .with_additional_header("Access-Control-Allow-Origin", "*");
+                    }
+                    return Response::json(&ApiResponse::err("FPS must be between 0.001 and 960"))
+                        .with_status_code(400)
                         .with_additional_header("Access-Control-Allow-Origin", "*");
                 } else {
                     return Response::json(&ApiResponse::err("Invalid FPS value"))

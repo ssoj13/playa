@@ -76,7 +76,7 @@ impl Workers {
 
                     // Work-stealing loop
                     loop {
-                        // 1. Try own queue first (LIFO for cache locality)
+                        // 1. Try own queue first (FIFO: older tasks execute first)
                         if let Some(job) = worker.pop() {
                             job();
                             continue;

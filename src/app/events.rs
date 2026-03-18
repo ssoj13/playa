@@ -11,7 +11,7 @@ use crate::core::event_bus::downcast_event;
 use crate::dialogs::prefs::prefs_events::HotkeyWindow;
 use crate::entities::comp_events::*;
 use crate::entities::node::Node;
-use crate::main_events;
+use crate::main_events::{self, AppEventContext};
 use crate::widgets::ae::EffectAction;
 use crate::widgets::project::project_events::ClearCacheEvent;
 use crate::widgets::viewport::ViewportRefreshEvent;
@@ -65,21 +65,7 @@ impl PlayaApp {
             // Handles attribute changes from: timeline outline, Attribute Editor, programmatic
             // See comp_events.rs and comp.rs for event architecture documentation
             if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
-                trace!("Comp {} attrs changed - triggering cascade invalidation", e.0);
-                // 1. Increment epoch to cancel pending worker tasks (stale data prevention)
-                if let Some(manager) = self.project.cache_manager() {
-                    manager.increment_epoch();
-                }
-                // 2. Clear all cached frames - any attribute could affect rendering
-                if let Some(ref cache) = self.project.global_cache {
-                    cache.clear_comp(e.0, true, None);
-                }
-                // 3. Debounced preload: current frame immediately, full preload after delay
-                //    This prevents flooding cache with requests during rapid slider scrubbing
-                self.enqueue_current_frame_only();
-                self.debounced_preloader.schedule(e.0);
-                // 5. Request viewport refresh
-                self.event_bus.emit(ViewportRefreshEvent);
+                self.handle_attrs_changed(e.0);
                 continue;
             }
             // ViewportRefreshEvent - force viewport to re-fetch current frame
@@ -138,21 +124,23 @@ impl PlayaApp {
             // log::trace!("[HANDLE] checking event type_id={:?}", (*event).type_id());
             if let Some(result) = main_events::handle_app_event(
                 &event,
-                &mut self.player,
-                &mut self.project,
-                &mut self.timeline_state,
-                &mut self.node_editor_state,
-                &mut self.viewport_state,
-                &mut self.settings,
-                &mut self.show_help,
-                &mut self.show_playlist,
-                &mut self.show_settings,
-                &mut self.show_encode_dialog,
-                &mut self.show_attributes_editor,
-                &mut self.encode_dialog,
-                &mut self.is_fullscreen,
-                &mut self.fullscreen_dirty,
-                &mut self.reset_settings_pending,
+                &mut AppEventContext {
+                    player: &mut self.player,
+                    project: &mut self.project,
+                    timeline_state: &mut self.timeline_state,
+                    node_editor_state: &mut self.node_editor_state,
+                    viewport_state: &mut self.viewport_state,
+                    settings: &mut self.settings,
+                    show_help: &mut self.show_help,
+                    show_playlist: &mut self.show_playlist,
+                    show_settings: &mut self.show_settings,
+                    show_encode_dialog: &mut self.show_encode_dialog,
+                    show_attributes_editor: &mut self.show_attributes_editor,
+                    encode_dialog: &mut self.encode_dialog,
+                    is_fullscreen: &mut self.is_fullscreen,
+                    fullscreen_dirty: &mut self.fullscreen_dirty,
+                    reset_settings_pending: &mut self.reset_settings_pending,
+                },
             ) {
                 // log::trace!("[HANDLE] got result, ae_focus_update={:?}", result.ae_focus_update);
                 // Process deferred actions from EventResult
@@ -163,7 +151,7 @@ impl PlayaApp {
                     deferred_save_project = Some(path);
                 }
                 if let Some(paths) = result.load_sequences {
-                    deferred_load_sequences = Some(paths);
+                    deferred_load_sequences.get_or_insert_with(Vec::new).extend(paths);
                 }
                 if let Some(comp_data) = result.new_comp {
                     deferred_new_comp = Some(comp_data);
@@ -213,16 +201,7 @@ impl PlayaApp {
             for event in derived {
                 if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
                     trace!("[DERIVED] AttrsChangedEvent comp={}", e.0);
-                    if let Some(manager) = self.project.cache_manager() {
-                        manager.increment_epoch();
-                    }
-                    if let Some(ref cache) = self.project.global_cache {
-                        cache.clear_comp(e.0, true, None);
-                    }
-                    // Debounced preload: current frame immediately, full preload after delay
-                    self.enqueue_current_frame_only();
-                    self.debounced_preloader.schedule(e.0);
-                    self.event_bus.emit(ViewportRefreshEvent);
+                    self.handle_attrs_changed(e.0);
                     continue;
                 }
                 if downcast_event::<ViewportRefreshEvent>(&event).is_some() {
@@ -272,6 +251,27 @@ impl PlayaApp {
         if deferred_show_open {
             self.show_open_project_dialog();
         }
+    }
+
+    /// Handle AttrsChangedEvent: invalidate cache, schedule preload, request refresh.
+    ///
+    /// Shared by the main event loop and the derived-events loop.
+    fn handle_attrs_changed(&mut self, comp_uuid: uuid::Uuid) {
+        trace!("Comp {} attrs changed - triggering cascade invalidation", comp_uuid);
+        // 1. Increment epoch to cancel pending worker tasks (stale data prevention)
+        if let Some(manager) = self.project.cache_manager() {
+            manager.increment_epoch();
+        }
+        // 2. Clear all cached frames - any attribute could affect rendering
+        if let Some(ref cache) = self.project.global_cache {
+            cache.clear_comp(comp_uuid, true, None);
+        }
+        // 3. Debounced preload: current frame immediately, full preload after delay
+        //    This prevents flooding cache with requests during rapid slider scrubbing
+        self.enqueue_current_frame_only();
+        self.debounced_preloader.schedule(comp_uuid);
+        // 4. Request viewport refresh
+        self.event_bus.emit(ViewportRefreshEvent);
     }
 
     /// Determine which window/panel currently has focus for hotkey routing.

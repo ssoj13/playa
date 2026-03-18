@@ -14,9 +14,13 @@
 //!                   → epoch mismatch detected → frame refreshed
 //! ```
 
+// Defined for future use - not yet emitted anywhere in the codebase
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct ZoomViewportEvent(pub f32);
 
+// Defined for future use - not yet emitted anywhere in the codebase
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct ResetViewportEvent;
 

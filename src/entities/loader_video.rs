@@ -43,10 +43,16 @@ impl VideoMetadata {
         let fps_rational = stream.avg_frame_rate();
         let time_base = stream.time_base();
 
+        if fps_rational.denominator() == 0 || time_base.denominator() == 0 {
+            return Err(FrameError::LoadError(
+                "Invalid video metadata: zero denominator in fps or time_base".to_string(),
+            ));
+        }
+
         let duration_secs =
             duration as f64 * time_base.numerator() as f64 / time_base.denominator() as f64;
         let fps = fps_rational.numerator() as f64 / fps_rational.denominator() as f64;
-        let frame_count = (duration_secs * fps) as usize;
+        let frame_count = (duration_secs * fps).round() as usize;
 
         let codec_params = stream.parameters();
         let decoder_ctx =

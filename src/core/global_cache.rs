@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::hash::{Hash, Hasher};
-use indexmap::IndexSet;
+use lru::LruCache;
 use log::trace;
 use uuid::Uuid;
 
@@ -85,14 +85,14 @@ impl Hash for CacheKey {
 /// Structure: HashMap<Uuid, HashMap<i32, Frame>>
 /// - O(1) clear_comp() by removing outer key
 /// - O(1) lookup via nested HashMap
-/// - O(1) LRU eviction via IndexSet (insertion-order + O(1) remove by key)
+/// - O(1) LRU eviction via lru::LruCache (doubly-linked-list + hash map internally)
 #[derive(Debug)]
 pub struct GlobalFrameCache {
     /// Nested cache: comp_uuid -> (frame_idx -> Frame)
     /// RwLock for concurrent reads, serialized writes
     cache: Arc<RwLock<HashMap<Uuid, HashMap<i32, Frame>>>>,
-    /// LRU eviction queue: IndexSet preserves insertion order, O(1) remove by key
-    lru_order: Arc<Mutex<IndexSet<CacheKey>>>,
+    /// LRU eviction queue: O(1) get/put/pop_lru via doubly-linked list + hash map
+    lru_order: Arc<Mutex<LruCache<CacheKey, ()>>>,
     /// Cache manager for memory tracking
     cache_manager: Arc<CacheManager>,
     /// Caching strategy
@@ -120,7 +120,8 @@ impl GlobalFrameCache {
 
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
-            lru_order: Arc::new(Mutex::new(IndexSet::with_capacity(capacity))),
+            // unbounded because capacity is managed by CacheManager memory tracking
+            lru_order: Arc::new(Mutex::new(LruCache::unbounded())),
             cache_manager: manager,
             strategy: Arc::new(Mutex::new(strategy)),
             stats: Arc::new(CacheStats::new()),
@@ -144,13 +145,10 @@ impl GlobalFrameCache {
 
         if result.is_some() {
             self.stats.record_hit();
-            // Update LRU order: move to back (most recently used) - O(1) with IndexSet
+            // Promote to most-recently-used in O(1)
             let key = CacheKey { comp_uuid, frame_idx };
             let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
-            // shift_remove is O(n) but we need it for LRU ordering; swap_remove would be O(1) but breaks order
-            // Alternative: use move_index but IndexSet doesn't have it - just re-insert
-            lru.shift_remove(&key);
-            lru.insert(key);
+            lru.get(&key);
         } else {
             self.stats.record_miss();
         }
@@ -196,7 +194,7 @@ impl GlobalFrameCache {
         {
             let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
             cache.entry(comp_uuid).or_default().insert(frame_idx, frame);
-            lru.insert(CacheKey { comp_uuid, frame_idx });
+            lru.put(CacheKey { comp_uuid, frame_idx }, ());
             // Track memory while holding locks to prevent race
             self.cache_manager.add_memory(frame_size);
         }
@@ -233,9 +231,9 @@ impl GlobalFrameCache {
             if let Some(old_frame) = cache.get_mut(&comp_uuid).and_then(|f| f.remove(&frame_idx)) {
                 let old_size = old_frame.mem();
                 self.cache_manager.free_memory(old_size);
-                // Remove from LRU queue - O(1) hash lookup + O(n) shift
+                // Remove from LRU queue in O(1)
                 let key = CacheKey { comp_uuid, frame_idx };
-                lru.shift_remove(&key);
+                lru.pop(&key);
                 // Spammy per-frame log
                 trace!("Replaced frame: {}:{} (freed {} bytes)", comp_uuid, frame_idx, old_size);
             }
@@ -243,8 +241,8 @@ impl GlobalFrameCache {
             // Insert new frame
             cache.entry(comp_uuid).or_default().insert(frame_idx, frame);
 
-            // Add to LRU queue (back = most recent)
-            lru.insert(CacheKey { comp_uuid, frame_idx });
+            // Add to LRU queue as most-recently-used in O(1)
+            lru.put(CacheKey { comp_uuid, frame_idx }, ());
 
             // Track memory
             self.cache_manager.add_memory(frame_size);
@@ -279,9 +277,9 @@ impl GlobalFrameCache {
         let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
         let mut lru = self.lru_order.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Get oldest key from front of queue (first inserted = oldest)
-        let key = match lru.shift_remove_index(0) {
-            Some(k) => k,
+        // Pop least-recently-used key in O(1)
+        let key = match lru.pop_lru() {
+            Some((k, ())) => k,
             None => return false,
         };
 
@@ -322,9 +320,9 @@ impl GlobalFrameCache {
             let size = frame.mem();
             self.cache_manager.free_memory(size);
 
-            // Remove from LRU queue - O(1) lookup via hash
+            // Remove from LRU queue in O(1)
             let key = CacheKey { comp_uuid, frame_idx };
-            lru.shift_remove(&key);
+            lru.pop(&key);
 
             log::trace!(
                 "Cleared single frame {}:{} ({} bytes freed)",
@@ -406,11 +404,15 @@ impl GlobalFrameCache {
                     removed_count += 1;
                 }
 
-                // Update LRU - remove all except the excepted frame
-                if let Some(except_idx) = except {
-                    lru.retain(|k| k.comp_uuid != comp_uuid || k.frame_idx == except_idx);
-                } else {
-                    lru.retain(|k| k.comp_uuid != comp_uuid);
+                // Update LRU - remove all keys for this comp except the excepted frame.
+                // LruCache has no retain; collect keys to remove then pop them.
+                let keys_to_remove: Vec<CacheKey> = lru
+                    .iter()
+                    .map(|(k, _)| *k)
+                    .filter(|k| k.comp_uuid == comp_uuid && except != Some(k.frame_idx))
+                    .collect();
+                for k in keys_to_remove {
+                    lru.pop(&k);
                 }
 
                 // Re-insert excepted frame if it existed
@@ -458,8 +460,15 @@ impl GlobalFrameCache {
             }
         }
 
-        // Remove from LRU queue
-        lru.retain(|k| !(k.comp_uuid == comp_uuid && k.frame_idx >= start && k.frame_idx <= end));
+        // Remove from LRU queue. LruCache has no retain; collect then pop.
+        let keys_to_remove: Vec<CacheKey> = lru
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|k| k.comp_uuid == comp_uuid && k.frame_idx >= start && k.frame_idx <= end)
+            .collect();
+        for k in keys_to_remove {
+            lru.pop(&k);
+        }
 
         // Remove empty inner HashMap
         if frames.is_empty() {

@@ -63,8 +63,6 @@ impl NodeKind {
         self.attrs().get_bool("listed").unwrap_or(true)
     }
 
-    // play_range, bounds, frame_count, dim - now via Node trait (enum_dispatch)
-
     /// Add child layer (only works on CompNode)
     ///
     /// # initial_position parameter
@@ -153,56 +151,11 @@ impl NodeKind {
         }
     }
     
-    /// Check if this is a file-mode node (FileNode = true, CompNode = false)
-    pub fn is_file_mode(&self) -> bool {
-        matches!(self, NodeKind::File(_))
-    }
-    
-    /// Get FPS
-    pub fn fps(&self) -> f32 {
-        match self {
-            NodeKind::File(n) => n.fps(),
-            NodeKind::Comp(n) => n.fps(),
-            NodeKind::Camera(_) => 24.0, // Default
-            NodeKind::Text(_) => 24.0,   // Default
-        }
-    }
-    
     /// Get file mask (only for FileNode)
     pub fn file_mask(&self) -> Option<String> {
         match self {
             NodeKind::File(n) => n.file_mask().map(|s| s.to_string()),
             _ => None,
-        }
-    }
-    
-    /// Get start frame (_in)
-    pub fn _in(&self) -> i32 {
-        match self {
-            NodeKind::File(n) => n._in(),
-            NodeKind::Comp(n) => n._in(),
-            NodeKind::Camera(n) => n._in(),
-            NodeKind::Text(n) => n._in(),
-        }
-    }
-    
-    /// Get end frame (_out)
-    pub fn _out(&self) -> i32 {
-        match self {
-            NodeKind::File(n) => n._out(),
-            NodeKind::Comp(n) => n._out(),
-            NodeKind::Camera(n) => n._out(),
-            NodeKind::Text(n) => n._out(),
-        }
-    }
-    
-    /// Get current frame (playhead)
-    pub fn frame(&self) -> i32 {
-        match self {
-            NodeKind::File(n) => n.frame(),
-            NodeKind::Comp(n) => n.frame(),
-            NodeKind::Camera(n) => n.frame(),
-            NodeKind::Text(n) => n.frame(),
         }
     }
     

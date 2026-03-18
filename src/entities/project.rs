@@ -648,7 +648,7 @@ impl Project {
 
     /// Check if comp exists in media pool
     pub fn contains_comp(&self, uuid: Uuid) -> bool {
-        self.contains_node(uuid)
+        self.with_comp(uuid, |_| ()).is_some()
     }
 
     /// Modify node in-place via closure.

@@ -16,6 +16,32 @@ use crate::entities::{AttrValue, Attrs};
 use crate::utils::media;
 use super::keys::{A_FPS, A_HEIGHT, A_WIDTH};
 
+/// Classified file type used to dispatch to the correct loader/header backend
+enum FileKind {
+    Video,
+    Exr,
+    Generic,
+}
+
+/// Classify a lowercased extension string into a FileKind
+fn classify_ext(ext: &str) -> FileKind {
+    if media::VIDEO_EXTS.contains(&ext) {
+        FileKind::Video
+    } else if ext == "exr" {
+        FileKind::Exr
+    } else {
+        FileKind::Generic
+    }
+}
+
+/// Extract the lowercased extension from a path
+fn path_ext(path: &Path) -> String {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+}
+
 /// Image loader with metadata support
 pub struct Loader;
 
@@ -28,31 +54,19 @@ impl Loader {
     /// - "format" (Str) - pixel format description
     /// - Additional format-specific metadata
     pub fn header(path: &Path) -> Result<Attrs, FrameError> {
-        let ext = path
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        match ext.as_str() {
-            ext if media::VIDEO_EXTS.contains(&ext) => Self::header_video(path),
-            "exr" => Self::header_exr(path),
-            _ => Self::header_generic(path),
+        match classify_ext(&path_ext(path)) {
+            FileKind::Video => Self::header_video(path),
+            FileKind::Exr => Self::header_exr(path),
+            FileKind::Generic => Self::header_generic(path),
         }
     }
 
     /// Load complete image file into Frame
     pub fn load(path: &Path) -> Result<Frame, FrameError> {
-        let ext = path
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        match ext.as_str() {
-            ext if media::VIDEO_EXTS.contains(&ext) => Self::load_video(path),
-            "exr" => Self::load_exr(path),
-            _ => Self::load_generic(path),
+        match classify_ext(&path_ext(path)) {
+            FileKind::Video => Self::load_video(path),
+            FileKind::Exr => Self::load_exr(path),
+            FileKind::Generic => Self::load_generic(path),
         }
     }
 

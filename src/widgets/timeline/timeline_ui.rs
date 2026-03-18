@@ -415,7 +415,7 @@ pub fn render_outline(
                             egui::Vec2::new(90.0, config.layer_height),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
-                                egui::ComboBox::from_id_salt(format!("blend_outline_{}", child_uuid))
+                                egui::ComboBox::from_id_salt(egui::Id::new("blend_outline").with(child_uuid))
                                     .width(80.0)
                                     .selected_text(blend.clone())
                                     .show_ui(ui, |ui| {
@@ -620,7 +620,6 @@ pub fn render_canvas(
 
     // Draw ruler with proper layout sync
     // Zero item_spacing to match outline panel alignment (kept zero for entire timeline)
-    let _saved_spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
 
     ui.horizontal(|ui| {

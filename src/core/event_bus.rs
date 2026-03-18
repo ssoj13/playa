@@ -180,10 +180,7 @@ impl EventBus {
 
     /// Get an emitter handle for passing to UI components.
     pub fn emitter(&self) -> EventEmitter {
-        EventEmitter {
-            subscribers: Arc::clone(&self.subscribers),
-            queue: Arc::clone(&self.queue),
-        }
+        EventEmitter(Arc::new(self.clone()))
     }
 
     /// Clear subscribers for type E
@@ -215,76 +212,33 @@ impl EventBus {
 
 /// Lightweight emitter handle for UI components.
 ///
-/// Can be cloned and passed to widgets for emitting events.
+/// Thin newtype over Arc<EventBus> - clone-share the same bus via Deref.
 #[derive(Clone)]
-pub struct EventEmitter {
-    subscribers: Arc<RwLock<HashMap<TypeId, Vec<Callback>>>>,
-    queue: Arc<Mutex<VecDeque<BoxedEvent>>>,
+pub struct EventEmitter(Arc<EventBus>);
+
+impl EventEmitter {
+    pub fn new(bus: Arc<EventBus>) -> Self {
+        Self(bus)
+    }
+
+    pub fn inner(&self) -> &Arc<EventBus> {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for EventEmitter {
+    type Target = EventBus;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl std::fmt::Debug for EventEmitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventEmitter")
-            .field("subscriber_types", &self.subscribers.read().map(|s| s.len()).unwrap_or(0))
-            .field("queue_len", &self.queue.lock().map(|q| q.len()).unwrap_or(0))
+            .field("subscriber_types", &self.0.subscribers.read().map(|s| s.len()).unwrap_or(0))
+            .field("queue_len", &self.0.queue.lock().map(|q| q.len()).unwrap_or(0))
             .finish()
-    }
-}
-
-impl EventEmitter {
-    /// Emit event: invoke callbacks and queue for deferred processing
-    pub fn emit<E: Event + Clone>(&self, event: E) {
-        let type_id = TypeId::of::<E>();
-
-        // Invoke immediate callbacks
-        let callbacks = {
-            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
-            subs.get(&type_id).cloned()
-        };
-        if let Some(cbs) = callbacks {
-            for cb in cbs {
-                cb(&event);
-            }
-        }
-
-        // Queue for deferred processing with eviction
-        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-        if queue.len() >= MAX_QUEUE_SIZE {
-            let evict_count = queue.len() / 2;
-            warn!("EventEmitter queue full ({} events), evicting oldest {}", queue.len(), evict_count);
-            for _ in 0..evict_count {
-                queue.pop_front();
-            }
-        }
-        queue.push_back(Box::new(event));
-    }
-
-    /// Emit boxed event
-    pub fn emit_boxed(&self, event: BoxedEvent) {
-        let type_id = (*event).type_id();
-
-        // Invoke immediate callbacks
-        // IMPORTANT: Use (*event).as_any() to call through dyn Event vtable
-        let callbacks = {
-            let subs = self.subscribers.read().unwrap_or_else(|e| e.into_inner());
-            subs.get(&type_id).cloned()
-        };
-        if let Some(cbs) = callbacks {
-            for cb in cbs {
-                cb((*event).as_any());
-            }
-        }
-
-        // Queue for deferred processing with eviction
-        let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-        if queue.len() >= MAX_QUEUE_SIZE {
-            let evict_count = queue.len() / 2;
-            warn!("EventEmitter queue full ({} events), evicting oldest {}", queue.len(), evict_count);
-            for _ in 0..evict_count {
-                queue.pop_front();
-            }
-        }
-        queue.push_back(event);
     }
 }
 

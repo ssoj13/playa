@@ -65,7 +65,7 @@ impl Default for AttributesState {
 /// The caller should emit change events when this returns true.
 pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) -> bool {
     let mut changed = Vec::new();
-    render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut changed, true);
+    render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut changed);
     !changed.is_empty()
 }
 
@@ -86,7 +86,7 @@ pub fn render_with_mixed(
     mixed_keys: &HashSet<String>,
     changed_out: &mut Vec<(String, AttrValue)>,
 ) {
-    render_impl(ui, attrs, state, display_name, mixed_keys, changed_out, true);
+    render_impl(ui, attrs, state, display_name, mixed_keys, changed_out);
 }
 
 fn render_impl(
@@ -96,7 +96,6 @@ fn render_impl(
     display_name: &str,
     mixed_keys: &HashSet<String>,
     changed_out: &mut Vec<(String, AttrValue)>,
-    collect_changes: bool,
 ) {
     if attrs.is_empty() {
         ui.label("(no attributes)");
@@ -171,14 +170,10 @@ fn render_impl(
                     });
                     row.col(|ui| {
                         let is_mixed = mixed_keys.contains(&key);
-                        if collect_changes {
-                            let before = value.clone();
-                            let changed = render_value_editor(ui, &key, value, is_mixed, ui_options);
-                            if changed && &before != value {
-                                changed_out.push((key.clone(), value.clone()));
-                            }
-                        } else {
-                            let _ = render_value_editor(ui, &key, value, is_mixed, ui_options);
+                        let before = value.clone();
+                        let changed = render_value_editor(ui, &key, value, is_mixed, ui_options);
+                        if changed && &before != value {
+                            changed_out.push((key.clone(), value.clone()));
                         }
                     });
                 });

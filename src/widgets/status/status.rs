@@ -19,10 +19,7 @@ impl StatusBar {
         Self::default()
     }
 
-    /// Read messages from channel and update status (no-op for now)
-    pub fn update(&mut self, ctx: &egui::Context) {
-        let _ = ctx;
-    }
+    pub fn update(&mut self, _ctx: &egui::Context) {}
 
     /// Render status bar at bottom of screen
     pub fn render(

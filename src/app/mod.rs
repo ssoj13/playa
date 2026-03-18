@@ -162,6 +162,15 @@ pub struct PlayaApp {
     /// Exit requested via REST API
     #[serde(skip)]
     pub exit_requested: bool,
+    /// Last dark_mode value applied to egui visuals (avoids rebuilding Visuals every frame)
+    #[serde(skip)]
+    pub last_applied_dark_mode: Option<bool>,
+    /// Last font_size value applied to egui style (avoids cloning style every frame)
+    #[serde(skip)]
+    pub last_applied_font_size: f32,
+    /// Whether ctx.options_mut(max_passes) has been applied (one-time init)
+    #[serde(skip)]
+    pub options_initialized: bool,
 }
 
 impl Default for PlayaApp {
@@ -239,6 +248,9 @@ impl Default for PlayaApp {
             api_command_rx: None, // Started later when settings are loaded
             pending_screenshots: Vec::new(),
             exit_requested: false,
+            last_applied_dark_mode: None,
+            last_applied_font_size: 0.0,
+            options_initialized: false,
         }
     }
 }

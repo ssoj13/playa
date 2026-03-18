@@ -194,7 +194,9 @@ impl PlayaApp {
                 self.selected_media_uuid = self.project.selection().last().cloned();
                 self.error_msg = None;
 
-                // Mark active comp as dirty to trigger preload via centralized dirty check
+                // Mark active comp dirty -> modify_comp emits AttrsChangedEvent
+                // -> handle_attrs_changed clears cache, schedules preload, emits ViewportRefreshEvent.
+                // No explicit ViewportRefreshEvent needed here.
                 if let Some(active) = self.player.active_comp() {
                     self.project.modify_comp(active, |comp| {
                         comp.attrs.mark_dirty();

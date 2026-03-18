@@ -1094,6 +1094,29 @@ fn get_encoder_name(
     }
 }
 
+/// Convert f32 fps to rational (numerator, denominator).
+/// Detects common NTSC rates (23.976, 29.97, 59.94) and uses exact rationals.
+fn fps_to_rational(fps: f32) -> (i32, i32) {
+    const NTSC_RATES: &[(f32, i32, i32)] = &[
+        (23.976, 24000, 1001),
+        (29.97,  30000, 1001),
+        (47.952, 48000, 1001),
+        (59.94,  60000, 1001),
+        (119.88, 120000, 1001),
+    ];
+    for &(target, num, den) in NTSC_RATES {
+        if (fps - target).abs() < 0.01 {
+            return (num, den);
+        }
+    }
+    let rounded = fps.round() as i32;
+    if (fps - rounded as f32).abs() < 0.001 {
+        return (rounded, 1);
+    }
+    // Approximate with 1000x scale for non-standard rates
+    ((fps * 1000.0).round() as i32, 1000)
+}
+
 /// Main encoding function (legacy cache-based)
 ///
 /// Encodes sequence from cache play_range to output file.
@@ -1249,13 +1272,13 @@ pub fn encode_sequence_from_comp(
     };
 
     encoder.set_format(pixel_format);
-    let fps_num = settings.fps as i32;
-    encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(fps_num, 1)));
-    encoder.set_time_base(ffmpeg::util::rational::Rational::new(1, fps_num));
+    let (fps_num, fps_den) = fps_to_rational(settings.fps);
+    encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(fps_num, fps_den)));
+    encoder.set_time_base(ffmpeg::util::rational::Rational::new(fps_den, fps_num));
 
     // Set GOP size (keyframe interval) for seekability
     // GOP = 10 seconds (fps * 10) ensures keyframes for timeline scrubbing
-    let gop_size = (fps_num * 10).max(1);
+    let gop_size = (settings.fps.round() as i32 * 10).max(1);
     encoder.set_gop(gop_size as u32);
 
     // Set quality parameters
@@ -2032,6 +2055,37 @@ mod tests {
 use std::fs::File;
 use std::io::BufWriter;
 
+// ============================================================================
+// Pixel conversion helpers
+// ============================================================================
+
+/// Strip alpha channel: RGBA interleaved → RGB (drops every 4th element).
+/// Works for both u8 and f32 pixel data.
+fn strip_alpha<T: Copy>(rgba: &[T]) -> Vec<T> {
+    let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
+    for chunk in rgba.chunks_exact(4) {
+        rgb.push(chunk[0]);
+        rgb.push(chunk[1]);
+        rgb.push(chunk[2]);
+    }
+    rgb
+}
+
+/// Convert F16 buffer to F32.
+fn f16_to_f32_buf(data: &[half::f16]) -> Vec<f32> {
+    data.iter().map(|v| v.to_f32()).collect()
+}
+
+/// Convert any PixelBuffer variant to packed RGBA u8 (clamped, LDR).
+fn pixel_buf_to_rgba8(buffer: &crate::entities::frame::PixelBuffer) -> Vec<u8> {
+    use crate::entities::frame::PixelBuffer;
+    match buffer {
+        PixelBuffer::U8(data) => data.clone(),
+        PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 255.0) as u8).collect(),
+        PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect(),
+    }
+}
+
 /// Write frame to EXR file using image crate (fallback when openexr feature disabled)
 #[cfg(not(feature = "openexr"))]
 fn write_exr_frame(
@@ -2059,15 +2113,8 @@ fn write_exr_frame(
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
                 }
                 ChannelMode::Rgb => {
-                    // Convert RGBA to RGB
-                    let mut rgb_data = Vec::with_capacity(width * height * 3);
-                    for chunk in data.chunks_exact(4) {
-                        rgb_data.push(chunk[0]);
-                        rgb_data.push(chunk[1]);
-                        rgb_data.push(chunk[2]);
-                    }
-                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> = 
-                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> =
+                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(data))
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
@@ -2075,25 +2122,18 @@ fn write_exr_frame(
             }
         }
         PixelBuffer::F16(data) => {
-            // Convert F16 to F32 for image crate (it doesn't support f16 directly)
-            let f32_data: Vec<f32> = data.iter().map(|v| v.to_f32()).collect();
+            let f32_data = f16_to_f32_buf(data);
             match channels {
                 ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> = 
+                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> =
                         ImageBuffer::from_raw(width as u32, height as u32, f32_data)
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
                 }
                 ChannelMode::Rgb => {
-                    let mut rgb_data = Vec::with_capacity(width * height * 3);
-                    for chunk in f32_data.chunks_exact(4) {
-                        rgb_data.push(chunk[0]);
-                        rgb_data.push(chunk[1]);
-                        rgb_data.push(chunk[2]);
-                    }
-                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> = 
-                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> =
+                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&f32_data))
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
@@ -2105,21 +2145,15 @@ fn write_exr_frame(
             let f32_data: Vec<f32> = data.iter().map(|&v| v as f32 / 255.0).collect();
             match channels {
                 ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> = 
+                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> =
                         ImageBuffer::from_raw(width as u32, height as u32, f32_data)
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
                 }
                 ChannelMode::Rgb => {
-                    let mut rgb_data = Vec::with_capacity(width * height * 3);
-                    for chunk in f32_data.chunks_exact(4) {
-                        rgb_data.push(chunk[0]);
-                        rgb_data.push(chunk[1]);
-                        rgb_data.push(chunk[2]);
-                    }
-                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> = 
-                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> =
+                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&f32_data))
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
@@ -2167,8 +2201,7 @@ fn write_exr_frame(
             write_exr_f32_data(path, &header, data, width, height, channels, use_half)?;
         }
         PixelBuffer::F16(data) => {
-            // Convert to f32 first
-            let f32_data: Vec<f32> = data.iter().map(|v| v.to_f32()).collect();
+            let f32_data = f16_to_f32_buf(data);
             write_exr_f32_data(path, &header, &f32_data, width, height, channels, use_half)?;
         }
         PixelBuffer::U8(data) => {
@@ -2254,26 +2287,14 @@ fn write_png_frame(
     // PNG supports U8 and U16
     match bit_depth {
         OutputBitDepth::U8 => {
-            // Get/convert to U8 data
-            let rgba_data: Vec<u8> = match buffer.as_ref() {
-                PixelBuffer::U8(data) => data.clone(),
-                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 255.0) as u8).collect(),
-                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect(),
-            };
-            
+            let rgba_data = pixel_buf_to_rgba8(buffer.as_ref());
             match channels {
                 ChannelMode::Rgba => {
                     encoder.write_image(&rgba_data, width as u32, height as u32, image::ExtendedColorType::Rgba8)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
                 }
                 ChannelMode::Rgb => {
-                    let mut rgb_data = Vec::with_capacity(width * height * 3);
-                    for chunk in rgba_data.chunks_exact(4) {
-                        rgb_data.push(chunk[0]);
-                        rgb_data.push(chunk[1]);
-                        rgb_data.push(chunk[2]);
-                    }
-                    encoder.write_image(&rgb_data, width as u32, height as u32, image::ExtendedColorType::Rgb8)
+                    encoder.write_image(&strip_alpha(&rgba_data), width as u32, height as u32, image::ExtendedColorType::Rgb8)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
                 }
             }
@@ -2292,13 +2313,7 @@ fn write_png_frame(
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e)))?;
                 }
                 ChannelMode::Rgb => {
-                    let mut rgb_data: Vec<u16> = Vec::with_capacity(width * height * 3);
-                    for chunk in rgba16_data.chunks_exact(4) {
-                        rgb_data.push(chunk[0]);
-                        rgb_data.push(chunk[1]);
-                        rgb_data.push(chunk[2]);
-                    }
-                    encoder.write_image(bytemuck::cast_slice(&rgb_data), width as u32, height as u32, image::ExtendedColorType::Rgb16)
+                    encoder.write_image(bytemuck::cast_slice(&strip_alpha(&rgba16_data)), width as u32, height as u32, image::ExtendedColorType::Rgb16)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e)))?;
                 }
             }
@@ -2330,12 +2345,7 @@ fn write_jpeg_frame(
     };
     
     // Convert RGBA to RGB (JPEG doesn't support alpha)
-    let mut rgb_data = Vec::with_capacity(width * height * 3);
-    for chunk in rgba_data.chunks_exact(4) {
-        rgb_data.push(chunk[0]);
-        rgb_data.push(chunk[1]);
-        rgb_data.push(chunk[2]);
-    }
+    let rgb_data = strip_alpha(&rgba_data);
     
     let file = File::create(path)
         .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create JPEG file: {}", e)))?;
@@ -2365,30 +2375,18 @@ fn write_tiff_frame(
     // TIFF supports U8 and U16
     match bit_depth {
         OutputBitDepth::U8 => {
-            // Get/convert to U8 data
-            let rgba_data: Vec<u8> = match buffer.as_ref() {
-                PixelBuffer::U8(data) => data.clone(),
-                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 255.0) as u8).collect(),
-                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect(),
-            };
-            
+            let rgba_data = pixel_buf_to_rgba8(buffer.as_ref());
             match channels {
                 ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = 
+                    let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
                         ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e)))?;
                 }
                 ChannelMode::Rgb => {
-                    let mut rgb_data = Vec::with_capacity(width * height * 3);
-                    for chunk in rgba_data.chunks_exact(4) {
-                        rgb_data.push(chunk[0]);
-                        rgb_data.push(chunk[1]);
-                        rgb_data.push(chunk[2]);
-                    }
-                    let img: ImageBuffer<Rgb<u8>, Vec<u8>> = 
-                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                    let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&rgba_data))
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e)))?;
@@ -2405,21 +2403,15 @@ fn write_tiff_frame(
             
             match channels {
                 ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<u16>, Vec<u16>> = 
+                    let img: ImageBuffer<Rgba<u16>, Vec<u16>> =
                         ImageBuffer::from_raw(width as u32, height as u32, rgba16_data)
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF16 buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e)))?;
                 }
                 ChannelMode::Rgb => {
-                    let mut rgb_data = Vec::with_capacity(width * height * 3);
-                    for chunk in rgba16_data.chunks_exact(4) {
-                        rgb_data.push(chunk[0]);
-                        rgb_data.push(chunk[1]);
-                        rgb_data.push(chunk[2]);
-                    }
-                    let img: ImageBuffer<Rgb<u16>, Vec<u16>> = 
-                        ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                    let img: ImageBuffer<Rgb<u16>, Vec<u16>> =
+                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&rgba16_data))
                             .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF16 buffer".into()))?;
                     img.save(path)
                         .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e)))?;
@@ -2454,21 +2446,15 @@ fn write_tga_frame(
     
     match channels {
         ChannelMode::Rgba => {
-            let img: ImageBuffer<Rgba<u8>, Vec<u8>> = 
+            let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
                 ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
                     .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into()))?;
             img.save(path)
                 .map_err(|e| EncodeError::EncodeFrameFailed(format!("TGA save failed: {}", e)))?;
         }
         ChannelMode::Rgb => {
-            let mut rgb_data = Vec::with_capacity(width * height * 3);
-            for chunk in rgba_data.chunks_exact(4) {
-                rgb_data.push(chunk[0]);
-                rgb_data.push(chunk[1]);
-                rgb_data.push(chunk[2]);
-            }
-            let img: ImageBuffer<Rgb<u8>, Vec<u8>> = 
-                ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+            let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+                ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&rgba_data))
                     .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into()))?;
             img.save(path)
                 .map_err(|e| EncodeError::EncodeFrameFailed(format!("TGA save failed: {}", e)))?;

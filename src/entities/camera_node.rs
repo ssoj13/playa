@@ -106,7 +106,7 @@ impl CameraNode {
     }
     
     pub fn use_poi(&self) -> bool {
-        self.attrs.get_bool("use_poi").unwrap_or(true)
+        self.attrs.get_bool("use_poi").unwrap_or(false)
     }
     
     pub fn fov(&self) -> f32 {
