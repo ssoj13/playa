@@ -1,6 +1,3 @@
-mod lib_discovery;
-mod post_build;
-mod pre_build;
 mod release;
 
 use anyhow::{Context, Result};
@@ -20,11 +17,8 @@ use std::process::Command;
 COMMON WORKFLOWS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  🔧 Local build with exrs (default, fast):
+  🔧 Local build:
      cargo xtask build
-
-  ⚡ Local build with OpenEXR (full DWAA/DWAB support):
-     cargo xtask build --openexr
 
   🧪 Dev release (testing on CI):
      cargo xtask tag-dev patch
@@ -44,20 +38,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// 🔧 Patch OpenEXR headers for Linux GCC 11+ compatibility (OpenEXR backend only)
-    Pre,
-
-    /// 🏗️  Build the project and copy dependencies automatically
+    /// 🏗️  Build the project
     ///
     /// Examples:
-    ///   cargo xtask build                      # Release build with exrs (default)
-    ///   cargo xtask build --debug              # Debug build with exrs
-    ///   cargo xtask build --openexr            # Release build with OpenEXR C++ backend
-    ///   cargo xtask build --debug --openexr   # Debug build with OpenEXR C++ backend
-    ///
-    /// Backends:
-    ///   exrs (default):    Pure Rust, no external dependencies, fast builds
-    ///   openexr (--openexr): C++ backend, full DWAA/DWAB support, requires C++ compiler/CMake
+    ///   cargo xtask build              # Release build (default)
+    ///   cargo xtask build --debug      # Debug build
     Build {
         /// Build in release mode (default if no flag specified)
         #[arg(long)]
@@ -65,32 +50,6 @@ enum Commands {
 
         /// Build in debug mode
         #[arg(long)]
-        debug: bool,
-
-        /// Build with OpenEXR C++ backend (enables DWAA/DWAB compression, requires C++ compiler/CMake)
-        #[arg(long)]
-        openexr: bool,
-    },
-
-    /// 📦 Copy native dependencies and shaders after build (OpenEXR backend only)
-    Post {
-        /// Use release profile (default: true)
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-        release: bool,
-
-        /// Use debug profile
-        #[arg(long, conflicts_with = "release", overrides_with = "release")]
-        debug: bool,
-    },
-
-    /// ✅ Verify all dependencies are present
-    Verify {
-        /// Use release profile (default: true)
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-        release: bool,
-
-        /// Use debug profile
-        #[arg(long, conflicts_with = "release", overrides_with = "release")]
         debug: bool,
     },
 
@@ -104,7 +63,7 @@ enum Commands {
     ///
     /// Workflow:
     ///   1. cargo xtask tag-dev patch              # Creates v0.1.60-dev tag
-    ///   2. GitHub Actions builds both backends (exrs + OpenEXR)
+    ///   2. GitHub Actions builds artifacts for testing
     ///   3. Download artifacts from Actions to test
     ///   4. If good, create PR to main for official release
     ///
@@ -126,7 +85,7 @@ enum Commands {
     ///
     /// Creates official release tag on main that triggers CI Release workflow.
     /// MUST be run from main branch after merging dev PR.
-    /// Creates GitHub Release with installers (OpenEXR backend with DWAA/DWAB support).
+    /// Creates GitHub Release with installers.
     ///
     /// Full workflow:
     ///   1. cargo xtask pr v0.1.60                 # Create PR: dev → main
@@ -217,24 +176,12 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Pre => cmd_pre(),
         Commands::Build {
             release: _,
             debug,
-            openexr,
         } => {
-            // Default to release if neither flag specified
-            // --debug overrides --release if both specified
-            let is_release = if debug { false } else { true };
-            cmd_build(is_release, openexr)
-        }
-        Commands::Post { release, debug } => {
-            let is_release = if debug { false } else { release };
-            cmd_post(is_release)
-        }
-        Commands::Verify { release, debug } => {
-            let is_release = if debug { false } else { release };
-            cmd_verify(is_release)
+            let is_release = !debug;
+            cmd_build(is_release)
         }
         Commands::Changelog => cmd_changelog(),
         Commands::TagDev { level, dry_run } => cmd_tag_dev(&level, dry_run),
@@ -250,74 +197,22 @@ fn run() -> Result<()> {
     }
 }
 
-/// Command: cargo xtask pre
-fn cmd_pre() -> Result<()> {
-    #[cfg(target_os = "linux")]
-    {
-        pre_build::patch_headers()
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        pre_build::patch_zlib_for_macos()
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        println!("Pre-build patching not needed on this platform");
-        Ok(())
-    }
-}
-
-/// Command: cargo xtask build [--release] [--openexr]
-fn cmd_build(release: bool, openexr: bool) -> Result<()> {
+/// Command: cargo xtask build [--release]
+fn cmd_build(release: bool) -> Result<()> {
     println!("========================================");
     println!("Building playa");
     println!("Profile: {}", if release { "release" } else { "debug" });
-    println!(
-        "Backend: {}",
-        if openexr {
-            "OpenEXR (C++, full DWAA/DWAB support)"
-        } else {
-            "exrs (pure Rust)"
-        }
-    );
+    println!("Backend: vfx-exr (pure Rust, all compressions)");
     println!("========================================");
     println!();
 
-    // Step 1: Pre-build (platform-specific patching, only for OpenEXR)
-    #[cfg(target_os = "linux")]
-    if openexr {
-        println!("Step 1/3: Patching OpenEXR headers...");
-        pre_build::patch_headers()?;
-        println!();
-    }
-
-    #[cfg(target_os = "macos")]
-    if openexr {
-        println!("Step 1/3: Patching zlib for macOS...");
-        pre_build::patch_zlib_for_macos()?;
-        println!();
-    }
-
-    // Step 2: Run cargo build
-    let step_num = if (cfg!(target_os = "linux") || cfg!(target_os = "macos")) && openexr {
-        "2/3"
-    } else {
-        "1/2"
-    };
-
-    println!("Step {}: Building...", step_num);
+    println!("Step 1/1: Building...");
 
     let mut cmd = Command::new("cargo");
     cmd.arg("build");
 
     if release {
         cmd.arg("--release");
-    }
-
-    if openexr {
-        cmd.arg("--features").arg("openexr");
     }
 
     let status = cmd.status()?;
@@ -327,68 +222,7 @@ fn cmd_build(release: bool, openexr: bool) -> Result<()> {
     }
 
     println!();
-
-    // Step 3: Post-build (copy dependencies, only for OpenEXR)
-    if openexr {
-        let step_num = if cfg!(target_os = "linux") || cfg!(target_os = "macos") {
-            "3/3"
-        } else {
-            "2/2"
-        };
-
-        println!("Step {}: Copying dependencies...", step_num);
-        println!();
-
-        let profile = if release { "release" } else { "debug" };
-        post_build::copy_dependencies(profile)?;
-    } else {
-        println!("✓ Build complete (exrs backend, no external dependencies)");
-    }
-
-    Ok(())
-}
-
-/// Command: cargo xtask post [--release]
-fn cmd_post(release: bool) -> Result<()> {
-    let profile = if release { "release" } else { "debug" };
-    post_build::copy_dependencies(profile)
-}
-
-/// Command: cargo xtask verify [--release]
-fn cmd_verify(release: bool) -> Result<()> {
-    let profile = if release { "release" } else { "debug" };
-
-    println!("========================================");
-    println!("Verifying dependencies for profile: {}", profile);
-    println!("========================================");
-    println!();
-
-    // Check libraries
-    let libraries = lib_discovery::find_libraries(profile)?;
-
-    if libraries.is_empty() {
-        anyhow::bail!("No libraries found!");
-    }
-
-    println!();
-    lib_discovery::verify_library_count(&libraries)?;
-
-    // Check shaders (optional - using embedded shaders if not present)
-    let shaders_dir = std::path::PathBuf::from(format!("target/{}/shaders", profile));
-
-    println!();
-    println!("Checking shaders directory...");
-
-    if !shaders_dir.exists() {
-        println!("  ⚠ shaders/ directory not found (using embedded shaders only)");
-    } else {
-        println!("  ✓ shaders/ directory present");
-    }
-
-    println!();
-    println!("========================================");
-    println!("All dependencies verified successfully!");
-    println!("========================================");
+    println!("✓ Build complete (vfx-exr backend, no external dependencies)");
 
     Ok(())
 }
@@ -817,7 +651,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
 
     // Build in release mode first
     println!("Building release version...");
-    cmd_build(true, false)?; // release=true, openexr=false (exrs backend)
+    cmd_build(true)?;
     println!();
 
     // Copy files

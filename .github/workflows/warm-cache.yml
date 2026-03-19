@@ -5,11 +5,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      backends:
-        description: 'Which backends to warm (openexr|exrs|both)'
-        required: false
-        default: 'openexr'
 
 permissions:
   contents: read
@@ -64,7 +59,7 @@ jobs:
       branch_condition: 'true'
       should_release: false
       cache_only: true
-      backends: ${{ github.event_name == 'workflow_dispatch' && inputs.backends || 'openexr' }}
+
     secrets: inherit
 
   decide:

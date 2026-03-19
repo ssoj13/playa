@@ -11,15 +11,6 @@ on:
         type: string
         required: true
         description: 'Platform name (windows/linux/macos)'
-      backend:
-        type: string
-        required: true
-        description: 'Backend type (exrs/openexr)'
-      build_args:
-        type: string
-        required: false
-        default: ''
-        description: 'Extra args for cargo xtask build (e.g., --openexr)'
       branch_condition:
         type: string
         required: true
@@ -50,6 +41,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Linux dependencies
         if: inputs.platform == 'linux'
@@ -72,7 +65,6 @@ jobs:
       - name: Setup vcpkg (Unix)
         if: inputs.platform != 'windows'
         run: |
-          # Use system vcpkg location to match playa-ffmpeg
           if [ ! -d "/usr/local/share/vcpkg" ]; then
             sudo git clone https://github.com/microsoft/vcpkg.git /usr/local/share/vcpkg
             sudo /usr/local/share/vcpkg/bootstrap-vcpkg.sh
@@ -101,7 +93,6 @@ jobs:
       - name: Create custom macOS release triplets
         if: inputs.platform == 'macos'
         run: |
-          # Create arm64-osx-release triplet
           sudo tee /usr/local/share/vcpkg/triplets/community/arm64-osx-release.cmake > /dev/null <<'EOF'
           set(VCPKG_TARGET_ARCHITECTURE arm64)
           set(VCPKG_CRT_LINKAGE dynamic)
@@ -110,7 +101,6 @@ jobs:
           set(VCPKG_BUILD_TYPE release)
           EOF
 
-          # Create x64-osx-release triplet
           sudo tee /usr/local/share/vcpkg/triplets/community/x64-osx-release.cmake > /dev/null <<'EOF'
           set(VCPKG_TARGET_ARCHITECTURE x64)
           set(VCPKG_CRT_LINKAGE dynamic)
@@ -276,83 +266,48 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
-          # Skip if certificate is not provided
           if [ -z "$APPLE_CERTIFICATE" ]; then
-            echo "⚠️  No APPLE_CERTIFICATE provided, skipping code signing setup"
-            echo "   App will be signed with adhoc signature"
+            echo "No APPLE_CERTIFICATE provided, skipping code signing setup"
             exit 0
           fi
-
-          echo "========================================="
-          echo "Setting up macOS Code Signing"
-          echo "========================================="
 
           CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-          echo "📦 Decoding certificate..."
           echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
-
-          echo "🔐 Creating temporary keychain..."
           security create-keychain -p "" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "" $KEYCHAIN_PATH
-
-          echo "📥 Importing certificate into keychain..."
           security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-
-          echo "🔗 Adding temporary keychain to search list..."
           security list-keychain -d user -s $KEYCHAIN_PATH $(security list-keychains -d user | sed s/\"//g)
-
-          echo "🔓 Setting keychain partition list..."
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "" $KEYCHAIN_PATH
 
-          echo ""
-          echo "🔍 Looking for Developer ID signing identity..."
-          # Find and export the signing identity for cargo-packager
           IDENTITY=$(security find-identity -v -p codesigning $KEYCHAIN_PATH | grep "Developer ID Application" | head -n 1 | sed 's/.*"\(.*\)"/\1/')
           if [ -n "$IDENTITY" ]; then
             echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> $GITHUB_ENV
-            echo "✅ Found and exported signing identity:"
-            echo "   $IDENTITY"
-            echo ""
-            echo "This identity will be used by cargo-packager for code signing."
           else
-            echo "❌ ERROR: No Developer ID Application found in keychain"
-            echo "   Available identities:"
-            security find-identity -v -p codesigning $KEYCHAIN_PATH || true
+            echo "No Developer ID Application found in keychain"
             exit 1
           fi
 
       - name: Fetch dependencies
         run: cargo fetch
 
-
       - name: Build application
-        run: cargo xtask build --release ${{ inputs.build_args }}
+        run: cargo xtask build --release
 
       - name: Cleanup stale DMG mounts (macOS)
         if: inputs.platform == 'macos' && inputs.cache_only != true
         shell: bash
         run: |
           set -euo pipefail
-          # Detach leftover volume from previous runs to avoid create-dmg 'Resource busy'
           if [ -d "/Volumes/Playa" ]; then
-            echo "Detaching existing /Volumes/Playa mount"
             hdiutil detach "/Volumes/Playa" -force || diskutil unmount force "/Volumes/Playa" || true
           fi
-          # Also remove any stale DMG file in target/release
           rm -f target/release/*.dmg 2>/dev/null || true
 
-      - name: Package application (Linux, openexr)
-        if: inputs.platform == 'linux' && inputs.cache_only != true && inputs.backend == 'openexr'
-        run: |
-          # Set LD_LIBRARY_PATH so cargo-packager can find shared libraries (OpenEXR backend)
-          export LD_LIBRARY_PATH="$(pwd)/target/release:$LD_LIBRARY_PATH"
-          cargo packager --release
-
-      - name: Package application (Linux, exrs)
-        if: inputs.platform == 'linux' && inputs.cache_only != true && inputs.backend == 'exrs'
+      - name: Package application (Linux)
+        if: inputs.platform == 'linux' && inputs.cache_only != true
         run: cargo packager --release
 
       - name: Package application (Windows)
@@ -368,27 +323,11 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-
-          echo "========================================="
-          echo "Debug: Code Signing Environment"
-          echo "========================================="
-          echo "APPLE_SIGNING_IDENTITY='$APPLE_SIGNING_IDENTITY'"
-          echo "APPLE_ID='${APPLE_ID:0:3}***@***'"
-          echo "APPLE_TEAM_ID='$APPLE_TEAM_ID'"
-          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
-            echo "✅ Notarization credentials found - app will be notarized"
-          else
-            echo "⚠️  Notarization credentials missing - app will NOT be notarized"
-          fi
-          echo "========================================="
-          echo ""
-
           for attempt in 1 2 3; do
             echo "[macOS] Packaging attempt $attempt"
             if cargo packager --release; then
               exit 0
             fi
-            echo "[macOS] cargo packager failed. Cleaning up and retrying..."
             if [ -d "/Volumes/Playa" ]; then
               hdiutil detach "/Volumes/Playa" -force || diskutil unmount force "/Volumes/Playa" || true
             fi
@@ -402,186 +341,84 @@ jobs:
         id: windows-artifacts
         shell: pwsh
         run: |
-          # Find installers produced by cargo-packager
           $exe = Get-ChildItem -Path "target/release" -Filter "playa_*_x64-setup.exe" -File | Select-Object -First 1
           $msi = Get-ChildItem -Path "target/release" -Filter "playa_*_x64*.msi" -File | Select-Object -First 1
 
-          # Unified naming to match ZIP (use forward slashes for release uploader):
-          # playa-<backend>-x86_64-pc-windows-msvc.{exe,msi}
-          $unifiedExe = "target/release/playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.exe"
-          $unifiedMsi = "target/release/playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.msi"
+          $unifiedExe = "target/release/playa-x86_64-pc-windows-msvc.exe"
+          $unifiedMsi = "target/release/playa-x86_64-pc-windows-msvc.msi"
 
           if ($exe) {
             if (Test-Path $unifiedExe) { Remove-Item $unifiedExe -Force }
             Rename-Item -Path $exe.FullName -NewName (Split-Path $unifiedExe -Leaf)
             echo "installer_path=$unifiedExe" >> $env:GITHUB_OUTPUT
-            Write-Host "[diagnostic] Windows EXE installer found and unified:" (Split-Path $unifiedExe -Leaf)
-          } else {
-            Write-Host "[diagnostic] No Windows EXE installer found in target/release"
           }
 
           if ($msi) {
             if (Test-Path $unifiedMsi) { Remove-Item $unifiedMsi -Force }
             Rename-Item -Path $msi.FullName -NewName (Split-Path $unifiedMsi -Leaf)
             echo "msi_path=$unifiedMsi" >> $env:GITHUB_OUTPUT
-            Write-Host "[diagnostic] Windows MSI installer found and unified:" (Split-Path $unifiedMsi -Leaf)
-          } else {
-            Write-Host "[diagnostic] No Windows MSI installer found in target/release"
           }
 
-          # Create binstall ZIP
           New-Item -ItemType Directory -Force -Path "binstall" | Out-Null
           Copy-Item "target/release/playa.exe" -Destination "binstall/"
           Get-ChildItem -Path "target/release" -Filter "*.dll" | Copy-Item -Destination "binstall/"
-          $zipName = "playa-${{ inputs.backend }}-x86_64-pc-windows-msvc.zip"
+          $zipName = "playa-x86_64-pc-windows-msvc.zip"
           Compress-Archive -Path "binstall/*" -DestinationPath "target/release/$zipName" -Force
           echo "binstall_path=target/release/$zipName" >> $env:GITHUB_OUTPUT
-          Write-Host "[diagnostic] Windows binstall ZIP created:" $zipName
 
       - name: Process Linux artifacts
         if: inputs.platform == 'linux' && inputs.cache_only != true
         id: linux-artifacts
         run: |
-          # Find AppImage and rename to unified name: playa-<backend>-x86_64-unknown-linux-gnu.AppImage
           appimage=$(find target/release -maxdepth 1 \( -name "*.AppImage" -o -name "*.appimage" \) 2>/dev/null | head -n 1)
           if [ -n "$appimage" ]; then
-            unified="target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.AppImage"
+            unified="target/release/playa-x86_64-unknown-linux-gnu.AppImage"
             rm -f "$unified"
             mv "$appimage" "$unified"
             echo "appimage_path=$unified" >> $GITHUB_OUTPUT
-            echo "[diagnostic] Linux AppImage found and unified: $(basename "$unified")"
-          else
-            echo "[diagnostic] No Linux AppImage found in target/release"
           fi
 
-          # Find DEB and rename to unified name: playa-<backend>-x86_64-unknown-linux-gnu.deb
           deb=$(find target/release -maxdepth 1 -name "*.deb" 2>/dev/null | head -n 1)
           if [ -n "$deb" ]; then
-            unified="target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.deb"
+            unified="target/release/playa-x86_64-unknown-linux-gnu.deb"
             rm -f "$unified"
             mv "$deb" "$unified"
             echo "deb_path=$unified" >> $GITHUB_OUTPUT
-            echo "[diagnostic] Linux DEB found and unified: $(basename "$unified")"
-          else
-            echo "[diagnostic] No Linux DEB found in target/release"
           fi
 
-          # Create binstall ZIP
           mkdir -p binstall
           cp target/release/playa binstall/
           cp -P target/release/*.so* binstall/ 2>/dev/null || true
           cd binstall
-          zip -ry ../target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip *
+          zip -ry ../target/release/playa-x86_64-unknown-linux-gnu.zip *
           cd ..
-          echo "binstall_path=target/release/playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip" >> $GITHUB_OUTPUT
-          echo "[diagnostic] Linux binstall ZIP created: playa-${{ inputs.backend }}-x86_64-unknown-linux-gnu.zip"
+          echo "binstall_path=target/release/playa-x86_64-unknown-linux-gnu.zip" >> $GITHUB_OUTPUT
 
       - name: Process macOS artifacts
         if: inputs.platform == 'macos' && inputs.cache_only != true
         id: macos-artifacts
         run: |
-          # Find DMG and rename to unified name: playa-<backend>-aarch64-apple-darwin.dmg
           dmg=$(find target/release -maxdepth 1 -name "*.dmg" 2>/dev/null | head -n 1)
           if [ -n "$dmg" ]; then
-            unified="target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.dmg"
+            unified="target/release/playa-aarch64-apple-darwin.dmg"
             rm -f "$unified"
             mv "$dmg" "$unified"
             echo "dmg_path=$unified" >> $GITHUB_OUTPUT
-            echo "[diagnostic] macOS DMG found and unified: $(basename "$unified")"
-          else
-            echo "[diagnostic] No macOS DMG found in target/release"
           fi
 
-          # Create binstall ZIP
           mkdir -p binstall
           cp target/release/playa binstall/
           cp -P target/release/lib*.dylib binstall/ 2>/dev/null || true
           cd binstall
-          zip -ry ../target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.zip *
+          zip -ry ../target/release/playa-aarch64-apple-darwin.zip *
           cd ..
-          echo "binstall_path=target/release/playa-${{ inputs.backend }}-aarch64-apple-darwin.zip" >> $GITHUB_OUTPUT
-          echo "[diagnostic] macOS binstall ZIP created: playa-${{ inputs.backend }}-aarch64-apple-darwin.zip"
-
-      - name: Verify macOS Code Signature and Notarization
-        if: inputs.platform == 'macos' && inputs.cache_only != true
-        run: |
-          dmg=$(find target/release -maxdepth 1 -name "*.dmg" 2>/dev/null | head -n 1)
-          if [ -z "$dmg" ]; then
-            echo "⚠️  No DMG found to verify"
-            exit 0
-          fi
-
-          echo "========================================="
-          echo "Verifying: $(basename "$dmg")"
-          echo "========================================="
-
-          # Mount DMG
-          hdiutil attach "$dmg" -readonly -nobrowse -mountpoint /tmp/playa-verify
-
-          # Check app signature
-          echo ""
-          echo "📝 Code signature details:"
-          codesign -dvvv /tmp/playa-verify/Playa.app 2>&1 | grep -E "(Identifier|Format|Authority|TeamIdentifier|Timestamp)" || true
-
-          # Verify signature
-          echo ""
-          echo "🔐 Verifying code signature..."
-          if codesign --verify --deep --strict /tmp/playa-verify/Playa.app 2>&1; then
-            echo "✅ Code signature verification: PASSED"
-          else
-            echo "❌ Code signature verification: FAILED"
-          fi
-
-          # Check if Developer ID signed
-          AUTHORITY=$(codesign -dvv /tmp/playa-verify/Playa.app 2>&1 | grep "Authority=Developer ID Application" || echo "")
-          echo ""
-          if [ -n "$AUTHORITY" ]; then
-            echo "✅ Signed with Developer ID"
-            echo "   $AUTHORITY"
-          else
-            echo "⚠️  WARNING: Not signed with Developer ID (adhoc or missing)"
-            echo "   macOS Gatekeeper will block this app"
-          fi
-
-          # Check notarization using spctl (Gatekeeper check)
-          echo ""
-          echo "🍎 Checking Gatekeeper assessment..."
-          if spctl --assess --type execute --verbose /tmp/playa-verify/Playa.app 2>&1 | tee /tmp/spctl-output.txt; then
-            echo "✅ Gatekeeper assessment: PASSED (notarized)"
-            echo "   App will run without warnings on macOS"
-          else
-            SPCTL_OUTPUT=$(cat /tmp/spctl-output.txt)
-            if echo "$SPCTL_OUTPUT" | grep -q "Unnotarized"; then
-              echo "⚠️  Gatekeeper assessment: REJECTED (signed but not notarized)"
-              echo "   Users will need to Right-click → Open to run the app"
-              echo "   Or use: xattr -d com.apple.quarantine /path/to/Playa.app"
-            else
-              echo "❌ Gatekeeper assessment: FAILED"
-              echo "   Output: $SPCTL_OUTPUT"
-            fi
-          fi
-
-          # Check notarization ticket
-          echo ""
-          echo "🎫 Checking notarization ticket..."
-          if stapler validate /tmp/playa-verify/Playa.app 2>&1 | grep -q "is already signed"; then
-            echo "ℹ️  Notarization ticket check skipped (app is signed)"
-          elif stapler validate /tmp/playa-verify/Playa.app 2>&1 | grep -q "validated"; then
-            echo "✅ Notarization ticket found and valid"
-          else
-            echo "ℹ️  No notarization ticket found (app is not notarized)"
-          fi
-
-          # Unmount
-          echo ""
-          hdiutil detach /tmp/playa-verify -force
-          echo "========================================="
+          echo "binstall_path=target/release/playa-aarch64-apple-darwin.zip" >> $GITHUB_OUTPUT
 
       - name: Upload Windows artifacts
         if: inputs.platform == 'windows' && inputs.cache_only != true
         uses: actions/upload-artifact@v4
         with:
-          name: windows-${{ inputs.backend }}
+          name: windows
           path: |
             ${{ steps.windows-artifacts.outputs.installer_path }}
             ${{ steps.windows-artifacts.outputs.msi_path }}
@@ -593,7 +430,7 @@ jobs:
         if: inputs.platform == 'linux' && inputs.cache_only != true
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ inputs.backend }}-combined
+          name: linux
           path: |
             ${{ steps.linux-artifacts.outputs.appimage_path }}
             ${{ steps.linux-artifacts.outputs.deb_path }}
@@ -605,7 +442,7 @@ jobs:
         if: inputs.platform == 'macos' && inputs.cache_only != true
         uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ inputs.backend }}-combined
+          name: macos
           path: |
             ${{ steps.macos-artifacts.outputs.dmg_path }}
             ${{ steps.macos-artifacts.outputs.binstall_path }}
@@ -618,9 +455,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          # Extract changelog section for this version
           awk "/^## \[$VERSION\]/,/^## \[/{if(/^## \[/ && !/^## \[$VERSION\]/)exit;print}" CHANGELOG.md > release_notes.md
-          # Remove the version header line
           tail -n +2 release_notes.md > release_notes_clean.md
           echo "path=release_notes_clean.md" >> "$GITHUB_OUTPUT"
 
@@ -635,18 +470,6 @@ jobs:
             ${{ steps.windows-artifacts.outputs.binstall_path }}
           fail_on_unmatched_files: false
 
-      - name: Release Summary (Windows)
-        if: startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows' && inputs.cache_only != true
-        shell: pwsh
-        run: |
-          $exe = "${{ steps.windows-artifacts.outputs.installer_path }}"
-          $msi = "${{ steps.windows-artifacts.outputs.msi_path }}"
-          $zip = "${{ steps.windows-artifacts.outputs.binstall_path }}"
-          Add-Content $env:GITHUB_STEP_SUMMARY "### Windows release assets (`${{ inputs.backend }}`)"
-          Add-Content $env:GITHUB_STEP_SUMMARY ("- EXE: " + ($exe -ne "" ? $exe : "<not found>"))
-          Add-Content $env:GITHUB_STEP_SUMMARY ("- MSI: " + ($msi -ne "" ? $msi : "<not found>"))
-          Add-Content $env:GITHUB_STEP_SUMMARY ("- ZIP: " + ($zip -ne "" ? $zip : "<not found>"))
-
       - name: Upload Release Assets (Linux)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
@@ -658,14 +481,6 @@ jobs:
             ${{ steps.linux-artifacts.outputs.binstall_path }}
           fail_on_unmatched_files: false
 
-      - name: Release Summary (Linux)
-        if: startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux' && inputs.cache_only != true
-        run: |
-          echo "### Linux release assets (\`${{ inputs.backend }}\`)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- AppImage: ${{ steps.linux-artifacts.outputs.appimage_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- DEB: ${{ steps.linux-artifacts.outputs.deb_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- ZIP: ${{ steps.linux-artifacts.outputs.binstall_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload Release Assets (macOS)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos' && inputs.cache_only != true
         uses: softprops/action-gh-release@v2
@@ -675,10 +490,3 @@ jobs:
             ${{ steps.macos-artifacts.outputs.dmg_path }}
             ${{ steps.macos-artifacts.outputs.binstall_path }}
           fail_on_unmatched_files: false
-
-      - name: Release Summary (macOS)
-        if: startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos' && inputs.cache_only != true
-        run: |
-          echo "### macOS release assets (\`${{ inputs.backend }}\`)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- DMG: ${{ steps.macos-artifacts.outputs.dmg_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- ZIP: ${{ steps.macos-artifacts.outputs.binstall_path || '<not found>' }}" >> "$GITHUB_STEP_SUMMARY"

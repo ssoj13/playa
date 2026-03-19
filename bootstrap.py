@@ -19,7 +19,7 @@ Commands:
 Usage:
     python bootstrap.py build
     python bootstrap.py build --release
-    python bootstrap.py build --openexr
+    python bootstrap.py build
     python bootstrap.py test
     python bootstrap.py python --install
 """
@@ -319,10 +319,6 @@ def run_build(args: argparse.Namespace) -> int:
     else:
         cmd.append("--release")
         step("Mode: release")
-
-    if args.openexr:
-        cmd.append("--openexr")
-        step("Feature: openexr (C++ EXR with DWAA/DWAB)")
 
     if args.features:
         cmd.extend(["--features", args.features])
@@ -671,7 +667,6 @@ HELP_TEXT = f"""
 
  BUILD OPTIONS
    -d, --debug     Debug mode (default: release)
-   -e, --openexr   Enable OpenEXR C++ backend (DWAA/DWAB support)
    -f, --features  Cargo features to enable
 
  TEST OPTIONS
@@ -747,7 +742,6 @@ def main() -> int:
 
     # Build options
     parser.add_argument("-d", "--debug", action="store_true", help="Debug mode (default: release)")
-    parser.add_argument("-e", "--openexr", action="store_true", help="Enable OpenEXR C++")
     parser.add_argument("-f", "--features", help="Cargo features to enable")
 
     # Test options
