@@ -1,11 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-// EXR backend info (compile-time)
-#[cfg(feature = "openexr")]
-const EXR_BACKEND: &str = "openexr-rs 0.11 (C++, DWAA/DWAB)";
-#[cfg(not(feature = "openexr"))]
-const EXR_BACKEND: &str = "exrs (pure Rust)";
+const EXR_BACKEND: &str = "vfx-exr (pure Rust, all compressions)";
 
 // Build version with backend info
 const VERSION_INFO: &str = const_format::concatcp!(

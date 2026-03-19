@@ -1,12 +1,10 @@
 //! Image loader with pluggable backends
 //!
 //! Unified interface for loading image files with metadata extraction.
-//! Supports different backends based on feature flags:
-//! - Default: `image` crate (uses exrs for EXR)
-//! - Feature "openexr": openexr-rs (C++ bindings, full DWAA/DWAB support)
+//! - EXR: `vfx-exr` (pure Rust, all compressions including DWAA/DWAB/HTJ2K)
+//! - Video: `playa-ffmpeg`
+//! - Other (PNG, JPEG, TIFF, TGA, HDR): `image` crate
 
-#[cfg_attr(feature = "openexr", allow(unused_imports))]
-use half::f16 as F16;
 use log::trace;
 use std::path::Path;
 
@@ -103,227 +101,99 @@ impl Loader {
 
     // ===== EXR Loading =====
 
-    /// EXR header reading with openexr-rs (C++ bindings)
-    #[cfg(feature = "openexr")]
+    /// Read EXR header metadata via vfx-exr
     fn header_exr(path: &Path) -> Result<Attrs, FrameError> {
-        trace!("Reading EXR header with openexr-rs: {}", path.display());
-        use openexr::prelude::*;
+        trace!("Reading EXR header with vfx-exr: {}", path.display());
+        use vfx_exr::prelude::*;
 
-        let file = RgbaInputFile::new(path, 1)
-            .map_err(|e| FrameError::Image(format!("OpenEXR header error: {}", e)))?;
+        let file = InputFile::open(path)
+            .map_err(|e| FrameError::Image(format!("EXR header error: {}", e)))?;
 
         let header = file.header();
-        let data_window = header.data_window::<[i32; 4]>();
-        let width = (data_window[2] - data_window[0] + 1) as usize;
-        let height = (data_window[3] - data_window[1] + 1) as usize;
-
-        // Count channels via iterator
-        let channels = header.channels();
-        let channel_count = channels.iter().count();
+        let width = header.layer_size.x() as u32;
+        let height = header.layer_size.y() as u32;
+        let channel_count = header.channels.list.len() as u32;
 
         let mut meta = Attrs::new();
-        meta.set(A_WIDTH, AttrValue::UInt(width as u32));
-        meta.set(A_HEIGHT, AttrValue::UInt(height as u32));
-        meta.set("format", AttrValue::Str("EXR (OpenEXR)".to_string()));
-        meta.set("channels", AttrValue::UInt(channel_count as u32));
+        meta.set(A_WIDTH, AttrValue::UInt(width));
+        meta.set(A_HEIGHT, AttrValue::UInt(height));
+        meta.set("format", AttrValue::Str(format!("EXR ({:?})", header.compression)));
+        meta.set("channels", AttrValue::UInt(channel_count));
 
         Ok(meta)
     }
 
-    #[cfg(not(feature = "openexr"))]
-    fn header_exr(path: &Path) -> Result<Attrs, FrameError> {
-        trace!("Reading EXR header with image crate: {}", path.display());
-
-        // Use image crate for header reading (it uses exrs internally)
-        let reader = image::ImageReader::open(path)
-            .map_err(|e| FrameError::Image(format!("Failed to open EXR: {}", e)))?;
-
-        let format = reader
-            .format()
-            .ok_or_else(|| FrameError::Image("Failed to detect image format".to_string()))?;
-
-        let img = reader.decode().map_err(|e| {
-            let err_str = e.to_string();
-            if err_str.contains("DWAA") || err_str.contains("DWAB") {
-                FrameError::UnsupportedFormat(
-                    "DWAA/DWAB compression not supported. Build with: cargo xtask build --openexr"
-                        .to_string(),
-                )
-            } else {
-                FrameError::Image(format!("EXR decode error: {}", e))
-            }
-        })?;
-
-        let mut meta = Attrs::new();
-        meta.set(A_WIDTH, AttrValue::UInt(img.width()));
-        meta.set(A_HEIGHT, AttrValue::UInt(img.height()));
-        meta.set("format", AttrValue::Str(format!("EXR ({:?})", format)));
-
-        // Determine channel count from color type
-        let channels = match img.color() {
-            image::ColorType::L8 | image::ColorType::L16 => 1,
-            image::ColorType::La8 | image::ColorType::La16 => 2,
-            image::ColorType::Rgb8 | image::ColorType::Rgb16 | image::ColorType::Rgb32F => 3,
-            image::ColorType::Rgba8 | image::ColorType::Rgba16 | image::ColorType::Rgba32F => 4,
-            _ => 4,
-        };
-        meta.set("channels", AttrValue::UInt(channels));
-
-        Ok(meta)
-    }
-
-    /// EXR loading with openexr-rs - detects pixel type and uses optimal path
-    #[cfg(feature = "openexr")]
+    /// Load EXR via vfx-exr — reads RGBA as f16 (native for HALF, converted for FLOAT)
     fn load_exr(path: &Path) -> Result<Frame, FrameError> {
-        trace!("Loading EXR with openexr-rs: {}", path.display());
-        use openexr::prelude::*;
+        trace!("Loading EXR with vfx-exr: {}", path.display());
+        use half::f16;
+        use vfx_exr::prelude::*;
 
-        // Open file to detect pixel type from R channel
-        let file = RgbaInputFile::new(path, 1)
-            .map_err(|e| FrameError::Image(format!("OpenEXR error: {}", e)))?;
-
+        // Detect sample type from header to pick optimal pixel format
+        let file = InputFile::open(path)
+            .map_err(|e| FrameError::Image(format!("EXR open error: {}", e)))?;
         let header = file.header();
-        let data_window = header.data_window::<[i32; 4]>();
-        let width = (data_window[2] - data_window[0] + 1) as usize;
-        let height = (data_window[3] - data_window[1] + 1) as usize;
-
-        // Detect pixel type from R channel (HALF, FLOAT, or UINT)
-        let channels = header.channels();
-        let pixel_type = channels
-            .iter()
-            .find(|(name, _)| *name == "R")
-            .map(|(_, ch)| ch.type_)
-            .unwrap_or(PixelType::Half.into());
-
-        drop(header);
+        let is_float = header.channels.list.iter()
+            .any(|ch| ch.name == *"R" && ch.sample_type == SampleType::F32);
         drop(file);
 
-        // Dispatch to optimal loader based on pixel type
-        if pixel_type == PixelType::Float.into() {
-            Self::load_exr_float(path, width, height)
+        if is_float {
+            // FLOAT channels: read as f32 to preserve full precision
+            let image = read_first_rgba_layer_from_file(
+                path,
+                |resolution, _channels| {
+                    Vec::<f32>::with_capacity(resolution.x() * resolution.y() * 4)
+                },
+                |buffer, _pos, (r, g, b, a): (f32, f32, f32, f32)| {
+                    buffer.push(r);
+                    buffer.push(g);
+                    buffer.push(b);
+                    buffer.push(a);
+                },
+            )
+            .map_err(|e| FrameError::Image(format!("EXR decode error: {}", e)))?;
+
+            let layer = &image.layer_data;
+            let width = layer.size.x();
+            let height = layer.size.y();
+            let buffer = &layer.channel_data.pixels;
+
+            trace!("Loaded EXR FLOAT: {}x{} (f32)", width, height);
+            Ok(Frame::from_buffer(
+                PixelBuffer::F32(buffer.clone()),
+                PixelFormat::RgbaF32,
+                width,
+                height,
+            ))
         } else {
-            // HALF or UINT - load as f16 (native for HALF, memory-efficient for UINT)
-            Self::load_exr_half(path, width, height)
+            // HALF / UINT: read as f16 (memory-efficient)
+            let image = read_first_rgba_layer_from_file(
+                path,
+                |resolution, _channels| {
+                    Vec::<f16>::with_capacity(resolution.x() * resolution.y() * 4)
+                },
+                |buffer, _pos, (r, g, b, a): (f16, f16, f16, f16)| {
+                    buffer.push(r);
+                    buffer.push(g);
+                    buffer.push(b);
+                    buffer.push(a);
+                },
+            )
+            .map_err(|e| FrameError::Image(format!("EXR decode error: {}", e)))?;
+
+            let layer = &image.layer_data;
+            let width = layer.size.x();
+            let height = layer.size.y();
+            let buffer = &layer.channel_data.pixels;
+
+            trace!("Loaded EXR HALF: {}x{} (f16)", width, height);
+            Ok(Frame::from_buffer(
+                PixelBuffer::F16(buffer.clone()),
+                PixelFormat::RgbaF16,
+                width,
+                height,
+            ))
         }
-    }
-
-    /// Load EXR with HALF pixels using RgbaInputFile (native f16)
-    /// Converts openexr's half 1.x to our half 2.x via raw bits
-    #[cfg(feature = "openexr")]
-    fn load_exr_half(path: &Path, width: usize, height: usize) -> Result<Frame, FrameError> {
-        use openexr::prelude::*;
-
-        let mut file = RgbaInputFile::new(path, 1)
-            .map_err(|e| FrameError::Image(format!("OpenEXR error: {}", e)))?;
-
-        let header = file.header();
-        let data_window = header.data_window::<[i32; 4]>();
-        let y_min = data_window[1];
-        let y_max = data_window[3];
-        drop(header);
-
-        // Read as Rgba (uses half 1.x f16 internally)
-        let mut pixels_rgba = vec![Rgba::from_f32(0.0, 0.0, 0.0, 0.0); width * height];
-        file.set_frame_buffer(&mut pixels_rgba, 1, width)
-            .map_err(|e| FrameError::Image(format!("OpenEXR framebuffer error: {}", e)))?;
-
-        unsafe {
-            file.read_pixels(y_min, y_max)
-                .map_err(|e| FrameError::Image(format!("OpenEXR read error: {}", e)))?;
-        }
-
-        // Convert half 1.x -> half 2.x via raw bits (same binary format)
-        let pixel_count = width * height;
-        let mut buffer: Vec<half::f16> = Vec::with_capacity(pixel_count * 4);
-
-        for pixel in pixels_rgba.iter() {
-            // Extract raw u16 bits from half 1.x, create half 2.x
-            buffer.push(half::f16::from_bits(pixel.r.to_bits()));
-            buffer.push(half::f16::from_bits(pixel.g.to_bits()));
-            buffer.push(half::f16::from_bits(pixel.b.to_bits()));
-            buffer.push(half::f16::from_bits(pixel.a.to_bits()));
-        }
-
-        trace!("Loaded EXR HALF: {}x{} (f16)", width, height);
-        Ok(super::frame::Frame::from_buffer(
-            PixelBuffer::F16(buffer),
-            PixelFormat::RgbaF16,
-            width,
-            height,
-        ))
-    }
-
-    /// Load EXR with FLOAT pixels using Frame API (native f32, full precision)
-    #[cfg(feature = "openexr")]
-    fn load_exr_float(path: &Path, width: usize, height: usize) -> Result<Frame, FrameError> {
-        use openexr::prelude::*;
-
-        let file = InputFile::new(path, 1)
-            .map_err(|e| FrameError::Image(format!("OpenEXR error: {}", e)))?;
-
-        let header = file.header();
-        let data_window = *header.data_window::<[i32; 4]>();
-        let y_min = data_window[1];
-        let y_max = data_window[3];
-        drop(header);
-
-        // Create Frame with f32 for RGBA channels (native precision, no f16 conversion)
-        let frame_rgba = Frame::new::<f32, _, _>(&["R", "G", "B", "A"], data_window)
-            .map_err(|e| FrameError::Image(format!("OpenEXR frame error: {}", e)))?;
-
-        // Read pixels into frame
-        let (_file, mut frames) = file
-            .into_reader(vec![frame_rgba])
-            .map_err(|e| FrameError::Image(format!("OpenEXR reader error: {}", e)))?
-            .read_pixels(y_min, y_max)
-            .map_err(|e| FrameError::Image(format!("OpenEXR read error: {}", e)))?;
-
-        // Extract flat RGBA f32 buffer
-        let buffer_f32: Vec<f32> = frames.remove(0).into_vec();
-
-        trace!("Loaded EXR FLOAT: {}x{} (f32, native precision)", width, height);
-        Ok(super::frame::Frame::from_buffer(
-            PixelBuffer::F32(buffer_f32),
-            PixelFormat::RgbaF32,
-            width,
-            height,
-        ))
-    }
-
-    #[cfg(not(feature = "openexr"))]
-    fn load_exr(path: &Path) -> Result<Frame, FrameError> {
-        trace!("Loading EXR with image crate: {}", path.display());
-
-        let img = image::open(path).map_err(|e| {
-            let err_str = e.to_string();
-            if err_str.contains("DWAA") || err_str.contains("DWAB") {
-                return FrameError::UnsupportedFormat(
-                    "DWAA/DWAB compression not supported. Build with: cargo xtask build --openexr"
-                        .to_string(),
-                );
-            }
-            FrameError::Image(format!("EXR load error: {}", e))
-        })?;
-
-        let width = img.width() as usize;
-        let height = img.height() as usize;
-
-        // Convert to Rgba32F
-        let rgba_img = img.to_rgba32f();
-        let pixels = rgba_img.as_raw();
-
-        // Convert f32 to f16
-        let mut buffer = Vec::with_capacity(pixels.len());
-        for &pixel in pixels {
-            buffer.push(F16::from_f32(pixel));
-        }
-
-        Ok(Frame::from_buffer(
-            PixelBuffer::F16(buffer),
-            PixelFormat::RgbaF16,
-            width,
-            height,
-        ))
     }
 
     // ===== Generic Image Loading (PNG, JPEG, TIFF, etc.) =====

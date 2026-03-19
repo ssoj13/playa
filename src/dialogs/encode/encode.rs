@@ -2123,88 +2123,7 @@ fn pixel_buf_to_rgba8(buffer: &crate::entities::frame::PixelBuffer) -> Vec<u8> {
     }
 }
 
-/// Write frame to EXR file using image crate (fallback when openexr feature disabled)
-#[cfg(not(feature = "openexr"))]
-fn write_exr_frame(
-    frame: &crate::entities::Frame,
-    path: &std::path::Path,
-    settings: &ExrSequenceSettings,
-    channels: ChannelMode,
-    _bit_depth: OutputBitDepth, // Note: image crate EXR always uses F32
-) -> Result<(), EncodeError> {
-    use crate::entities::frame::PixelBuffer;
-    use image::{Rgb, Rgba, ImageBuffer};
-    
-    let buffer = frame.buffer();
-    let (width, height) = frame.resolution();
-    
-    // Convert to f32 for EXR
-    match buffer.as_ref() {
-        PixelBuffer::F32(data) => {
-            match channels {
-                ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> = 
-                        ImageBuffer::from_raw(width as u32, height as u32, data.clone())
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
-                }
-                ChannelMode::Rgb => {
-                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> =
-                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(data))
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
-                }
-            }
-        }
-        PixelBuffer::F16(data) => {
-            let f32_data = f16_to_f32_buf(data);
-            match channels {
-                ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> =
-                        ImageBuffer::from_raw(width as u32, height as u32, f32_data)
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
-                }
-                ChannelMode::Rgb => {
-                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> =
-                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&f32_data))
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
-                }
-            }
-        }
-        PixelBuffer::U8(data) => {
-            // Convert U8 to F32 (0-255 -> 0.0-1.0)
-            let f32_data: Vec<f32> = data.iter().map(|&v| v as f32 / 255.0).collect();
-            match channels {
-                ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<f32>, Vec<f32>> =
-                        ImageBuffer::from_raw(width as u32, height as u32, f32_data)
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGBA32F buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
-                }
-                ChannelMode::Rgb => {
-                    let img: ImageBuffer<Rgb<f32>, Vec<f32>> =
-                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&f32_data))
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create RGB32F buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR save failed: {}", e)))?;
-                }
-            }
-        }
-    }
-    
-    let _ = settings; // TODO: Apply compression settings when image crate supports it
-    Ok(())
-}
-
-/// Write frame to EXR file using openexr crate (when feature enabled)
-#[cfg(feature = "openexr")]
+/// Write frame to EXR file using vfx-exr (pure Rust, all compressions)
 fn write_exr_frame(
     frame: &crate::entities::Frame,
     path: &std::path::Path,
@@ -2213,84 +2132,83 @@ fn write_exr_frame(
     bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
     use crate::entities::frame::PixelBuffer;
-    use openexr::prelude::*;
-    
+    use half::f16;
+    use vfx_exr::prelude::*;
+
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
-    
-    // Build header with dimensions
-    let mut header = Header::from_dimensions(width as i32, height as i32);
-    
-    // Set compression
-    let compression = match settings.compression {
-        ExrCompression::None => Compression::No,
-        ExrCompression::Rle => Compression::Rle,
-        ExrCompression::Zip => Compression::Zip,
-        ExrCompression::Piz => Compression::Piz,
-    };
-    header.set_compression(compression);
-    
-    // Map OutputBitDepth to EXR half/float (EXR only supports F16 and F32)
-    let use_half = matches!(bit_depth, OutputBitDepth::F16 | OutputBitDepth::U8 | OutputBitDepth::U16);
-    
-    match buffer.as_ref() {
-        PixelBuffer::F32(data) => {
-            write_exr_f32_data(path, &header, data, width, height, channels, use_half)?;
-        }
-        PixelBuffer::F16(data) => {
-            let f32_data = f16_to_f32_buf(data);
-            write_exr_f32_data(path, &header, &f32_data, width, height, channels, use_half)?;
-        }
-        PixelBuffer::U8(data) => {
-            // Convert U8 to F32
-            let f32_data: Vec<f32> = data.iter().map(|&v| v as f32 / 255.0).collect();
-            write_exr_f32_data(path, &header, &f32_data, width, height, channels, use_half)?;
-        }
-    }
-    
-    Ok(())
-}
 
-#[cfg(feature = "openexr")]
-fn write_exr_f32_data(
-    path: &std::path::Path,
-    header: &openexr::prelude::Header,
-    data: &[f32],
-    width: usize,
-    height: usize,
-    channels: ChannelMode,
-    _use_half: bool, // RgbaOutputFile always uses half precision internally
-) -> Result<(), EncodeError> {
-    use openexr::prelude::*;
-    
-    // Convert interleaved RGBA f32 data to Vec<Rgba>
-    // Rgba::from_f32 handles the f32 -> internal f16 conversion
-    let rgba_pixels: Vec<Rgba> = data
-        .chunks_exact(4)
-        .map(|chunk| Rgba::from_f32(chunk[0], chunk[1], chunk[2], chunk[3]))
-        .collect();
-    
-    // Create output file
-    let rgba_channels = if channels == ChannelMode::Rgba {
-        RgbaChannels::WriteRgba
-    } else {
-        RgbaChannels::WriteRgb
+    // Convert any pixel buffer to interleaved RGBA f32
+    let f32_data: Vec<f32> = match buffer.as_ref() {
+        PixelBuffer::F32(data) => data.clone(),
+        PixelBuffer::F16(data) => f16_to_f32_buf(data),
+        PixelBuffer::U8(data) => data.iter().map(|&v| v as f32 / 255.0).collect(),
     };
-    
-    let mut file = RgbaOutputFile::new(path, header, rgba_channels, 1)
-        .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to create EXR file: {}", e)))?;
-    
-    // Set frame buffer: (data, x_stride=1, y_stride=width)
-    file.set_frame_buffer(&rgba_pixels, 1, width)
-        .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to set EXR frame buffer: {}", e)))?;
-    
-    // Write pixels (requires unsafe as per openexr-rs API)
-    unsafe {
-        file.write_pixels(height as i32)
-            .map_err(|e| EncodeError::EncodeFrameFailed(format!("Failed to write EXR pixels: {}", e)))?;
-    }
-    
-    Ok(())
+
+    let compression = match settings.compression {
+        ExrCompression::None => Compression::Uncompressed,
+        ExrCompression::Rle => Compression::RLE,
+        ExrCompression::Zip => Compression::ZIP16,
+        ExrCompression::Piz => Compression::PIZ,
+    };
+
+    // Write as f16 or f32 depending on bit depth
+    let use_half = matches!(bit_depth, OutputBitDepth::F16 | OutputBitDepth::U8 | OutputBitDepth::U16);
+
+    let encoding = Encoding {
+        compression,
+        ..Encoding::default()
+    };
+
+    let write_result = match (channels, use_half) {
+        (ChannelMode::Rgba, true) => {
+            let channels_spec = SpecificChannels::rgba(|Vec2(x, y)| {
+                let idx = (y * width + x) * 4;
+                (
+                    f16::from_f32(f32_data[idx]),
+                    f16::from_f32(f32_data[idx + 1]),
+                    f16::from_f32(f32_data[idx + 2]),
+                    f16::from_f32(f32_data[idx + 3]),
+                )
+            });
+            Image::from_encoded_channels((width, height), encoding, channels_spec)
+                .write()
+                .to_file(path)
+        }
+        (ChannelMode::Rgba, false) => {
+            let channels_spec = SpecificChannels::rgba(|Vec2(x, y)| {
+                let idx = (y * width + x) * 4;
+                (f32_data[idx], f32_data[idx + 1], f32_data[idx + 2], f32_data[idx + 3])
+            });
+            Image::from_encoded_channels((width, height), encoding, channels_spec)
+                .write()
+                .to_file(path)
+        }
+        (ChannelMode::Rgb, true) => {
+            let channels_spec = SpecificChannels::rgb(|Vec2(x, y)| {
+                let idx = (y * width + x) * 4;
+                (
+                    f16::from_f32(f32_data[idx]),
+                    f16::from_f32(f32_data[idx + 1]),
+                    f16::from_f32(f32_data[idx + 2]),
+                )
+            });
+            Image::from_encoded_channels((width, height), encoding, channels_spec)
+                .write()
+                .to_file(path)
+        }
+        (ChannelMode::Rgb, false) => {
+            let channels_spec = SpecificChannels::rgb(|Vec2(x, y)| {
+                let idx = (y * width + x) * 4;
+                (f32_data[idx], f32_data[idx + 1], f32_data[idx + 2])
+            });
+            Image::from_encoded_channels((width, height), encoding, channels_spec)
+                .write()
+                .to_file(path)
+        }
+    };
+
+    write_result.map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR write failed: {}", e)))
 }
 
 /// Write frame to PNG file

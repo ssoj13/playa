@@ -54,12 +54,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         info!("No input file provided, starting with empty state (drag-and-drop supported)");
     }
 
-    // Determine EXR backend at compile time
-    const BACKEND: &str = if cfg!(feature = "openexr") {
-        "openexr-rs"
-    } else {
-        "exrs"
-    };
+    const BACKEND: &str = "vfx-exr";
 
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
