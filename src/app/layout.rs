@@ -7,7 +7,6 @@
 
 use super::{DockTab, PlayaApp};
 use crate::dialogs::prefs::prefs::Layout;
-use crate::entities::AttrValue;
 use crate::widgets::timeline::TimelineViewMode;
 use crate::widgets::viewport::ViewportMode;
 
@@ -65,89 +64,6 @@ impl PlayaApp {
             }
         }
         None
-    }
-
-    /// Save current layout to project attrs.
-    /// dock_state is serialized as JSON, timeline/viewport as individual fields.
-    pub fn save_layout_to_attrs(&mut self) {
-        // Serialize dock_state as JSON
-        if let Ok(dock_json) = serde_json::to_string(&self.dock_state) {
-            self.project.attrs.set("layout.dock_state", AttrValue::Str(dock_json));
-        }
-
-        // Timeline state - individual fields
-        self.project.attrs.set("layout.timeline.zoom", AttrValue::Float(self.timeline_state.zoom));
-        self.project.attrs.set("layout.timeline.pan_offset", AttrValue::Float(self.timeline_state.pan_offset));
-        self.project.attrs.set("layout.timeline.outline_width", AttrValue::Float(self.timeline_state.outline_width));
-        let view_mode_str = match self.timeline_state.view_mode {
-            TimelineViewMode::Split => "Split",
-            TimelineViewMode::CanvasOnly => "CanvasOnly",
-            TimelineViewMode::OutlineOnly => "OutlineOnly",
-        };
-        self.project.attrs.set("layout.timeline.view_mode", AttrValue::Str(view_mode_str.to_string()));
-
-        // Viewport state - individual fields
-        self.project.attrs.set("layout.viewport.zoom", AttrValue::Float(self.viewport_state.zoom));
-        self.project.attrs.set("layout.viewport.pan_x", AttrValue::Float(self.viewport_state.pan.x));
-        self.project.attrs.set("layout.viewport.pan_y", AttrValue::Float(self.viewport_state.pan.y));
-        let mode_str = match self.viewport_state.mode {
-            ViewportMode::Manual => "Manual",
-            ViewportMode::AutoFit => "AutoFit",
-            ViewportMode::Auto100 => "Auto100",
-        };
-        self.project.attrs.set("layout.viewport.mode", AttrValue::Str(mode_str.to_string()));
-
-        log::debug!("Layout saved to project attrs");
-    }
-
-    /// Load layout from project attrs.
-    /// Restores dock_state, timeline_state, viewport_state from saved values.
-    pub fn load_layout_from_attrs(&mut self) {
-        // Load dock_state from JSON
-        if let Some(dock_json) = self.project.attrs.get_str("layout.dock_state") {
-            if let Ok(dock) = serde_json::from_str(dock_json) {
-                self.dock_state = dock;
-                log::debug!("Dock state loaded from attrs");
-            }
-        }
-
-        // Load timeline state
-        if let Some(zoom) = self.project.attrs.get_float("layout.timeline.zoom") {
-            self.timeline_state.zoom = zoom;
-        }
-        if let Some(pan) = self.project.attrs.get_float("layout.timeline.pan_offset") {
-            self.timeline_state.pan_offset = pan;
-        }
-        if let Some(width) = self.project.attrs.get_float("layout.timeline.outline_width") {
-            self.timeline_state.outline_width = width;
-        }
-        if let Some(mode_str) = self.project.attrs.get_str("layout.timeline.view_mode") {
-            self.timeline_state.view_mode = match mode_str {
-                "CanvasOnly" => TimelineViewMode::CanvasOnly,
-                "OutlineOnly" => TimelineViewMode::OutlineOnly,
-                _ => TimelineViewMode::Split,
-            };
-        }
-
-        // Load viewport state
-        if let Some(zoom) = self.project.attrs.get_float("layout.viewport.zoom") {
-            self.viewport_state.zoom = zoom;
-        }
-        if let Some(pan_x) = self.project.attrs.get_float("layout.viewport.pan_x") {
-            self.viewport_state.pan.x = pan_x;
-        }
-        if let Some(pan_y) = self.project.attrs.get_float("layout.viewport.pan_y") {
-            self.viewport_state.pan.y = pan_y;
-        }
-        if let Some(mode_str) = self.project.attrs.get_str("layout.viewport.mode") {
-            self.viewport_state.mode = match mode_str {
-                "Manual" => ViewportMode::Manual,
-                "Auto100" => ViewportMode::Auto100,
-                _ => ViewportMode::AutoFit,
-            };
-        }
-
-        log::debug!("Layout loaded from project attrs");
     }
 
     /// Reset layout to defaults.

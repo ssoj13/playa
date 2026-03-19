@@ -164,7 +164,7 @@ impl CpuCompositor {
         }
     }
 
-    /// Blend two F16 buffers with opacity (RGBA format)
+    /// Blend two F16 buffers with opacity — decodes to f32, delegates to blend_f32, encodes back.
     fn blend_f16(
         bottom: &[half::f16],
         top: &[half::f16],
@@ -176,50 +176,28 @@ impl CpuCompositor {
         debug_assert_eq!(bottom.len(), top.len());
         debug_assert_eq!(bottom.len(), result.len());
 
-        for i in (0..bottom.len()).step_by(4) {
-            let top_alpha = top[i + 3].to_f32() * opacity;
-            let inv_alpha = 1.0 - top_alpha;
-
-            let b0 = bottom[i].to_f32();
-            let b1 = bottom[i + 1].to_f32();
-            let b2 = bottom[i + 2].to_f32();
-            let b3 = bottom[i + 3].to_f32();
-            let t0 = top[i].to_f32();
-            let t1 = top[i + 1].to_f32();
-            let t2 = top[i + 2].to_f32();
-
-            result[i] = f16::from_f32(b0 * inv_alpha + apply_blend(b0, t0, mode) * top_alpha);
-            result[i + 1] = f16::from_f32(b1 * inv_alpha + apply_blend(b1, t1, mode) * top_alpha);
-            result[i + 2] = f16::from_f32(b2 * inv_alpha + apply_blend(b2, t2, mode) * top_alpha);
-            result[i + 3] = f16::from_f32(b3 * inv_alpha + top_alpha);
+        let n = bottom.len();
+        let b_f32: Vec<f32> = bottom.iter().map(|v| v.to_f32()).collect();
+        let t_f32: Vec<f32> = top.iter().map(|v| v.to_f32()).collect();
+        let mut r_f32 = vec![0.0f32; n];
+        Self::blend_f32(&b_f32, &t_f32, opacity, mode, &mut r_f32);
+        for (i, &v) in r_f32.iter().enumerate() {
+            result[i] = f16::from_f32(v);
         }
     }
 
-    /// Blend two U8 buffers with opacity (RGBA format)
+    /// Blend two U8 buffers with opacity — decodes to f32, delegates to blend_f32, encodes back.
     fn blend_u8(bottom: &[u8], top: &[u8], opacity: f32, mode: &BlendMode, result: &mut [u8]) {
         debug_assert_eq!(bottom.len(), top.len());
         debug_assert_eq!(bottom.len(), result.len());
 
-        for i in (0..bottom.len()).step_by(4) {
-            let top_alpha = (top[i + 3] as f32 / 255.0) * opacity;
-            let inv_alpha = 1.0 - top_alpha;
-
-            let r = bottom[i] as f32 / 255.0;
-            let g = bottom[i + 1] as f32 / 255.0;
-            let b = bottom[i + 2] as f32 / 255.0;
-            let tr = top[i] as f32 / 255.0;
-            let tg = top[i + 1] as f32 / 255.0;
-            let tb = top[i + 2] as f32 / 255.0;
-
-            let out_r = r * inv_alpha + apply_blend(r, tr, mode) * top_alpha;
-            let out_g = g * inv_alpha + apply_blend(g, tg, mode) * top_alpha;
-            let out_b = b * inv_alpha + apply_blend(b, tb, mode) * top_alpha;
-            let out_a = bottom[i + 3] as f32 / 255.0 * inv_alpha + top_alpha;
-
-            result[i] = (out_r.clamp(0.0, 1.0) * 255.0) as u8;
-            result[i + 1] = (out_g.clamp(0.0, 1.0) * 255.0) as u8;
-            result[i + 2] = (out_b.clamp(0.0, 1.0) * 255.0) as u8;
-            result[i + 3] = (out_a.clamp(0.0, 1.0) * 255.0) as u8;
+        let n = bottom.len();
+        let b_f32: Vec<f32> = bottom.iter().map(|&v| v as f32 / 255.0).collect();
+        let t_f32: Vec<f32> = top.iter().map(|&v| v as f32 / 255.0).collect();
+        let mut r_f32 = vec![0.0f32; n];
+        Self::blend_f32(&b_f32, &t_f32, opacity, mode, &mut r_f32);
+        for (i, &v) in r_f32.iter().enumerate() {
+            result[i] = (v.clamp(0.0, 1.0) * 255.0) as u8;
         }
     }
 

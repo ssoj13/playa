@@ -837,229 +837,16 @@ impl EncodeDialog {
         }
     }
 
-    /// Render H.264 settings
     fn render_h264_settings(&mut self, ui: &mut egui::Ui) {
-        use crate::dialogs::encode::{EncoderImpl, QualityMode};
-
-        // Encoder implementation
-        ui.label("Encoder:");
-        ui.horizontal(|ui| {
-            for impl_type in EncoderImpl::all() {
-                ui.radio_value(
-                    &mut self.codec_settings.h264.encoder_impl,
-                    *impl_type,
-                    impl_type.to_string(),
-                );
-            }
-        });
-
-        ui.add_space(4.0);
-
-        // Quality mode
-        ui.label("Quality Mode:");
-        ui.horizontal(|ui| {
-            for mode in QualityMode::all() {
-                ui.radio_value(
-                    &mut self.codec_settings.h264.quality_mode,
-                    *mode,
-                    mode.to_string(),
-                );
-            }
-        });
-
-        // Quality value
-        ui.horizontal(|ui| {
-            ui.label("Value:");
-            let hint = match self.codec_settings.h264.quality_mode {
-                QualityMode::CRF => "18=best, 23=default, 28=fast",
-                QualityMode::Bitrate => "kbps",
-            };
-            ui.add(
-                egui::Slider::new(&mut self.codec_settings.h264.quality_value, 1..=10000)
-                    .text(hint),
-            );
-        });
-
-        ui.add_space(4.0);
-
-        // Preset
-        ui.horizontal(|ui| {
-            ui.label("Preset:");
-
-            // Presets for H.264 encoders
-            let presets = match self.codec_settings.h264.encoder_impl {
-                EncoderImpl::Hardware => {
-                    // NVENC/QSV/AMF
-                    vec![
-                        "default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6",
-                        "p7",
-                    ]
-                }
-                EncoderImpl::Software | EncoderImpl::Auto => {
-                    // libx264
-                    vec![
-                        "ultrafast",
-                        "superfast",
-                        "veryfast",
-                        "faster",
-                        "fast",
-                        "medium",
-                        "slow",
-                        "slower",
-                        "veryslow",
-                        "placebo",
-                    ]
-                }
-            };
-
-            egui::ComboBox::from_id_salt("h264_preset")
-                .selected_text(&self.codec_settings.h264.preset)
-                .show_ui(ui, |ui| {
-                    for preset in presets {
-                        ui.selectable_value(
-                            &mut self.codec_settings.h264.preset,
-                            preset.to_string(),
-                            preset,
-                        );
-                    }
-                });
-        });
-
-        // Profile (libx264 only)
-        ui.horizontal(|ui| {
-            ui.label("Profile:");
-
-            let profiles = vec!["baseline", "main", "high", "high10", "high422", "high444"];
-
-            egui::ComboBox::from_id_salt("h264_profile")
-                .selected_text(&self.codec_settings.h264.profile)
-                .show_ui(ui, |ui| {
-                    for profile in profiles {
-                        ui.selectable_value(
-                            &mut self.codec_settings.h264.profile,
-                            profile.to_string(),
-                            profile,
-                        );
-                    }
-                });
-        });
-
-        ui.add_space(4.0);
-        ui.label(""); // Empty line for vertical alignment
+        let profiles: &[&str] = &["baseline", "main", "high", "high10", "high422", "high444"];
+        render_h26x_settings(ui, &mut self.codec_settings.h264, "h264",
+            "18=best, 23=default, 28=fast", profiles);
     }
 
-    /// Render H.265 settings
     fn render_h265_settings(&mut self, ui: &mut egui::Ui) {
-        use crate::dialogs::encode::{EncoderImpl, QualityMode};
-
-        // Encoder implementation
-        ui.label("Encoder:");
-        ui.horizontal(|ui| {
-            for impl_type in EncoderImpl::all() {
-                ui.radio_value(
-                    &mut self.codec_settings.h265.encoder_impl,
-                    *impl_type,
-                    impl_type.to_string(),
-                );
-            }
-        });
-
-        ui.add_space(4.0);
-
-        // Quality mode
-        ui.label("Quality Mode:");
-        ui.horizontal(|ui| {
-            for mode in QualityMode::all() {
-                ui.radio_value(
-                    &mut self.codec_settings.h265.quality_mode,
-                    *mode,
-                    mode.to_string(),
-                );
-            }
-        });
-
-        // Quality value
-        ui.horizontal(|ui| {
-            ui.label("Value:");
-            let hint = match self.codec_settings.h265.quality_mode {
-                QualityMode::CRF => "28=default (higher than H.264)",
-                QualityMode::Bitrate => "kbps",
-            };
-            ui.add(
-                egui::Slider::new(&mut self.codec_settings.h265.quality_value, 1..=10000)
-                    .text(hint),
-            );
-        });
-
-        ui.add_space(4.0);
-
-        // Preset
-        ui.horizontal(|ui| {
-            ui.label("Preset:");
-
-            // Presets for H.265 encoders (same as H.264)
-            let presets = match self.codec_settings.h265.encoder_impl {
-                EncoderImpl::Hardware => {
-                    // NVENC/QSV/AMF
-                    vec![
-                        "default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6",
-                        "p7",
-                    ]
-                }
-                EncoderImpl::Software | EncoderImpl::Auto => {
-                    // libx265
-                    vec![
-                        "ultrafast",
-                        "superfast",
-                        "veryfast",
-                        "faster",
-                        "fast",
-                        "medium",
-                        "slow",
-                        "slower",
-                        "veryslow",
-                        "placebo",
-                    ]
-                }
-            };
-
-            egui::ComboBox::from_id_salt("h265_preset")
-                .selected_text(&self.codec_settings.h265.preset)
-                .show_ui(ui, |ui| {
-                    for preset in presets {
-                        ui.selectable_value(
-                            &mut self.codec_settings.h265.preset,
-                            preset.to_string(),
-                            preset,
-                        );
-                    }
-                });
-        });
-
-        ui.add_space(4.0);
-
-        // Profile (main or main10)
-        ui.horizontal(|ui| {
-            ui.label("Profile:");
-
-            let profiles = vec!["main", "main10"];
-
-            egui::ComboBox::from_id_salt("h265_profile")
-                .selected_text(&self.codec_settings.h265.profile)
-                .show_ui(ui, |ui| {
-                    for profile in profiles {
-                        ui.selectable_value(
-                            &mut self.codec_settings.h265.profile,
-                            profile.to_string(),
-                            profile,
-                        );
-                    }
-                });
-        });
-
-        // Empty lines for vertical alignment with H264 tab
-        ui.add_space(4.0);
-        ui.label("");
+        let profiles: &[&str] = &["main", "main10"];
+        render_h26x_settings(ui, &mut self.codec_settings.h265, "h265",
+            "28=default (higher than H.264)", profiles);
     }
 
     /// Render ProRes settings
@@ -1300,4 +1087,83 @@ impl Drop for EncodeDialog {
                 info!("Encode thread panicked during dialog close: {:?}", e);
             }
     }
+}
+
+/// Render H.264/H.265 settings. Codec-specific differences are passed as parameters:
+/// - `id_prefix`: "h264" or "h265" — used as egui ComboBox id_salt to avoid conflicts
+/// - `crf_hint`: the CRF quality hint string shown next to the slider
+/// - `profiles`: available profile strings for the profile ComboBox
+fn render_h26x_settings(
+    ui: &mut egui::Ui,
+    settings: &mut dyn crate::dialogs::encode::H26xSettingsMut,
+    id_prefix: &str,
+    crf_hint: &str,
+    profiles: &[&str],
+) {
+    use crate::dialogs::encode::{EncoderImpl, QualityMode};
+
+    ui.label("Encoder:");
+    ui.horizontal(|ui| {
+        for impl_type in EncoderImpl::all() {
+            ui.radio_value(settings.encoder_impl_mut(), *impl_type, impl_type.to_string());
+        }
+    });
+
+    ui.add_space(4.0);
+
+    ui.label("Quality Mode:");
+    ui.horizontal(|ui| {
+        for mode in QualityMode::all() {
+            ui.radio_value(settings.quality_mode_mut(), *mode, mode.to_string());
+        }
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Value:");
+        let hint = match settings.quality_mode() {
+            QualityMode::CRF => crf_hint,
+            QualityMode::Bitrate => "kbps",
+        };
+        ui.add(egui::Slider::new(settings.quality_value_mut(), 1..=10000).text(hint));
+    });
+
+    ui.add_space(4.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Preset:");
+        let presets: &[&str] = match settings.encoder_impl() {
+            // NVENC/QSV/AMF
+            EncoderImpl::Hardware => &[
+                "default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6", "p7",
+            ],
+            // libx264 / libx265 (identical preset ladder)
+            EncoderImpl::Software | EncoderImpl::Auto => &[
+                "ultrafast", "superfast", "veryfast", "faster", "fast",
+                "medium", "slow", "slower", "veryslow", "placebo",
+            ],
+        };
+        let preset_id = format!("{}_preset", id_prefix);
+        egui::ComboBox::from_id_salt(preset_id)
+            .selected_text(settings.preset())
+            .show_ui(ui, |ui| {
+                for &preset in presets {
+                    ui.selectable_value(settings.preset_mut(), preset.to_string(), preset);
+                }
+            });
+    });
+
+    ui.horizontal(|ui| {
+        ui.label("Profile:");
+        let profile_id = format!("{}_profile", id_prefix);
+        egui::ComboBox::from_id_salt(profile_id)
+            .selected_text(settings.profile())
+            .show_ui(ui, |ui| {
+                for &profile in profiles {
+                    ui.selectable_value(settings.profile_mut(), profile.to_string(), profile);
+                }
+            });
+    });
+
+    ui.add_space(4.0);
+    ui.label(""); // Spacer for visual alignment with other codec tabs
 }

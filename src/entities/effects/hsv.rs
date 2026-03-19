@@ -46,87 +46,73 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
     let out_buffer = match buffer.as_ref() {
         PixelBuffer::U8(data) => {
             let mut result = Vec::with_capacity(data.len());
-
             for chunk in data.chunks_exact(4) {
-                let r = chunk[0] as f32 / 255.0;
-                let g = chunk[1] as f32 / 255.0;
-                let b = chunk[2] as f32 / 255.0;
-                let a = chunk[3];
-
-                let (h, s, v) = rgb_to_hsv(r, g, b);
-
-                // Apply adjustments
-                let h_new = (h + hue_shift).rem_euclid(360.0);
-                let s_new = (s * saturation).clamp(0.0, 1.0);
-                let v_new = (v * value).clamp(0.0, 1.0); // Clamp for LDR
-
-                let (r_out, g_out, b_out) = hsv_to_rgb(h_new, s_new, v_new);
-
+                let (r_out, g_out, b_out) = adjust_hsv(
+                    chunk[0] as f32 / 255.0,
+                    chunk[1] as f32 / 255.0,
+                    chunk[2] as f32 / 255.0,
+                    hue_shift, saturation,
+                    value,
+                    true, // clamp value for LDR
+                );
                 result.push((r_out * 255.0) as u8);
                 result.push((g_out * 255.0) as u8);
                 result.push((b_out * 255.0) as u8);
-                result.push(a);
+                result.push(chunk[3]);
             }
-
             PixelBuffer::U8(result)
         }
 
         PixelBuffer::F16(data) => {
             let mut result = Vec::with_capacity(data.len());
-
             for chunk in data.chunks_exact(4) {
-                let r = chunk[0].to_f32();
-                let g = chunk[1].to_f32();
-                let b = chunk[2].to_f32();
-                let a = chunk[3];
-
-                let (h, s, v) = rgb_to_hsv(r, g, b);
-
-                // Apply adjustments (no value clamp for HDR)
-                let h_new = (h + hue_shift).rem_euclid(360.0);
-                let s_new = (s * saturation).clamp(0.0, 1.0);
-                let v_new = v * value;
-
-                let (r_out, g_out, b_out) = hsv_to_rgb(h_new, s_new, v_new);
-
+                let (r_out, g_out, b_out) = adjust_hsv(
+                    chunk[0].to_f32(), chunk[1].to_f32(), chunk[2].to_f32(),
+                    hue_shift, saturation, value,
+                    false, // no value clamp for HDR
+                );
                 result.push(F16::from_f32(r_out));
                 result.push(F16::from_f32(g_out));
                 result.push(F16::from_f32(b_out));
-                result.push(a);
+                result.push(chunk[3]);
             }
-
             PixelBuffer::F16(result)
         }
 
         PixelBuffer::F32(data) => {
             let mut result = Vec::with_capacity(data.len());
-
             for chunk in data.chunks_exact(4) {
-                let r = chunk[0];
-                let g = chunk[1];
-                let b = chunk[2];
-                let a = chunk[3];
-
-                let (h, s, v) = rgb_to_hsv(r, g, b);
-
-                // Apply adjustments (no value clamp for HDR)
-                let h_new = (h + hue_shift).rem_euclid(360.0);
-                let s_new = (s * saturation).clamp(0.0, 1.0);
-                let v_new = v * value;
-
-                let (r_out, g_out, b_out) = hsv_to_rgb(h_new, s_new, v_new);
-
+                let (r_out, g_out, b_out) = adjust_hsv(
+                    chunk[0], chunk[1], chunk[2],
+                    hue_shift, saturation, value,
+                    false, // no value clamp for HDR
+                );
                 result.push(r_out);
                 result.push(g_out);
                 result.push(b_out);
-                result.push(a);
+                result.push(chunk[3]);
             }
-
             PixelBuffer::F32(result)
         }
     };
 
     Some(Frame::from_buffer(out_buffer, frame.pixel_format(), width, height))
+}
+
+/// Apply HSV adjustments to a single RGB pixel, returning adjusted RGB.
+///
+/// `clamp_value` should be true for LDR formats (U8) to prevent over-bright output.
+#[inline]
+fn adjust_hsv(
+    r: f32, g: f32, b: f32,
+    hue_shift: f32, saturation: f32, value: f32,
+    clamp_value: bool,
+) -> (f32, f32, f32) {
+    let (h, s, v) = rgb_to_hsv(r, g, b);
+    let h_new = (h + hue_shift).rem_euclid(360.0);
+    let s_new = (s * saturation).clamp(0.0, 1.0);
+    let v_new = if clamp_value { (v * value).clamp(0.0, 1.0) } else { v * value };
+    hsv_to_rgb(h_new, s_new, v_new)
 }
 
 /// Convert RGB to HSV.

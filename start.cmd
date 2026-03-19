@@ -1,1 +1,1 @@
-pwsh bootstrap.ps1 build
+python bootstrap.py build

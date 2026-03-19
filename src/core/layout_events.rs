@@ -3,14 +3,6 @@
 //! Events for managing named UI layouts (dock splits, timeline state, viewport state).
 //! Layouts are stored in AppSettings and persisted automatically via serde.
 
-/// Save current layout to project attrs (legacy, kept for compatibility).
-#[derive(Clone, Debug)]
-pub struct SaveLayoutEvent;
-
-/// Load layout from project attrs (legacy, kept for compatibility).
-#[derive(Clone, Debug)]
-pub struct LoadLayoutEvent;
-
 /// Reset layout to defaults.
 #[derive(Clone, Debug)]
 pub struct ResetLayoutEvent;

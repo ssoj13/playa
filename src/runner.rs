@@ -202,7 +202,8 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = app.load_sequences(all_files);
                 }
 
-                // Load playlist as Project
+                // Load playlist as Project (startup-only path; runtime loading goes through
+                // PlayaApp::load_project in project_io.rs which has the same core steps).
                 if let Some(ref playlist_path) = args.playlist {
                     info!("Loading playlist: {}", playlist_path.display());
                     match crate::entities::Project::from_json(playlist_path) {

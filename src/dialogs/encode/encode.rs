@@ -162,6 +162,43 @@ impl Default for H265Settings {
     }
 }
 
+/// Shared mutable access to H.264/H.265 settings fields for the unified UI renderer.
+pub trait H26xSettingsMut {
+    fn encoder_impl_mut(&mut self) -> &mut EncoderImpl;
+    fn quality_mode_mut(&mut self) -> &mut QualityMode;
+    fn quality_value_mut(&mut self) -> &mut u32;
+    fn preset_mut(&mut self) -> &mut String;
+    fn profile_mut(&mut self) -> &mut String;
+    fn encoder_impl(&self) -> EncoderImpl;
+    fn quality_mode(&self) -> QualityMode;
+    fn preset(&self) -> &str;
+    fn profile(&self) -> &str;
+}
+
+impl H26xSettingsMut for H264Settings {
+    fn encoder_impl_mut(&mut self) -> &mut EncoderImpl { &mut self.encoder_impl }
+    fn quality_mode_mut(&mut self) -> &mut QualityMode { &mut self.quality_mode }
+    fn quality_value_mut(&mut self) -> &mut u32 { &mut self.quality_value }
+    fn preset_mut(&mut self) -> &mut String { &mut self.preset }
+    fn profile_mut(&mut self) -> &mut String { &mut self.profile }
+    fn encoder_impl(&self) -> EncoderImpl { self.encoder_impl }
+    fn quality_mode(&self) -> QualityMode { self.quality_mode }
+    fn preset(&self) -> &str { &self.preset }
+    fn profile(&self) -> &str { &self.profile }
+}
+
+impl H26xSettingsMut for H265Settings {
+    fn encoder_impl_mut(&mut self) -> &mut EncoderImpl { &mut self.encoder_impl }
+    fn quality_mode_mut(&mut self) -> &mut QualityMode { &mut self.quality_mode }
+    fn quality_value_mut(&mut self) -> &mut u32 { &mut self.quality_value }
+    fn preset_mut(&mut self) -> &mut String { &mut self.preset }
+    fn profile_mut(&mut self) -> &mut String { &mut self.profile }
+    fn encoder_impl(&self) -> EncoderImpl { self.encoder_impl }
+    fn quality_mode(&self) -> QualityMode { self.quality_mode }
+    fn preset(&self) -> &str { &self.preset }
+    fn profile(&self) -> &str { &self.profile }
+}
+
 /// ProRes profile variants
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(clippy::upper_case_acronyms)]

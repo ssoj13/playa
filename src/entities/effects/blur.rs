@@ -46,11 +46,9 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
     // Build Gaussian kernel
     let kernel = gaussian_kernel(radius);
 
-    // Separable blur: horizontal pass
-    let temp = convolve_horizontal(&src_f32, width, height, &kernel);
-
-    // Vertical pass on temp result
-    let result = convolve_vertical(&temp, width, height, &kernel);
+    // Separable blur: horizontal then vertical pass
+    let temp = convolve_axis(&src_f32, width, height, &kernel, true);
+    let result = convolve_axis(&temp, width, height, &kernel, false);
 
     // Convert back to original format
     let out_buffer = from_f32_buffer(&result, frame.pixel_format(), width, height);
@@ -141,10 +139,11 @@ fn gaussian_kernel(radius: f32) -> Vec<f32> {
     kernel
 }
 
-/// Horizontal convolution pass.
+/// Single-axis convolution pass (separable Gaussian).
 ///
-/// For each row, convolve with kernel. Edge pixels use clamped sampling.
-fn convolve_horizontal(src: &[f32], width: usize, height: usize, kernel: &[f32]) -> Vec<f32> {
+/// `horizontal=true` convolves along X (rows); `false` convolves along Y (columns).
+/// Edge pixels use clamped sampling.
+fn convolve_axis(src: &[f32], width: usize, height: usize, kernel: &[f32], horizontal: bool) -> Vec<f32> {
     let mut dst = vec![0.0f32; src.len()];
     let half = (kernel.len() / 2) as i32;
 
@@ -156,45 +155,13 @@ fn convolve_horizontal(src: &[f32], width: usize, height: usize, kernel: &[f32])
             let mut a = 0.0;
 
             for (ki, &weight) in kernel.iter().enumerate() {
-                // Sample x coordinate with clamping
-                let sx = (x as i32 + ki as i32 - half).clamp(0, width as i32 - 1) as usize;
-                let idx = (y * width + sx) * 4;
-
-                r += src[idx] * weight;
-                g += src[idx + 1] * weight;
-                b += src[idx + 2] * weight;
-                a += src[idx + 3] * weight;
-            }
-
-            let dst_idx = (y * width + x) * 4;
-            dst[dst_idx] = r;
-            dst[dst_idx + 1] = g;
-            dst[dst_idx + 2] = b;
-            dst[dst_idx + 3] = a;
-        }
-    }
-
-    dst
-}
-
-/// Vertical convolution pass.
-///
-/// For each column, convolve with kernel. Edge pixels use clamped sampling.
-fn convolve_vertical(src: &[f32], width: usize, height: usize, kernel: &[f32]) -> Vec<f32> {
-    let mut dst = vec![0.0f32; src.len()];
-    let half = (kernel.len() / 2) as i32;
-
-    for y in 0..height {
-        for x in 0..width {
-            let mut r = 0.0;
-            let mut g = 0.0;
-            let mut b = 0.0;
-            let mut a = 0.0;
-
-            for (ki, &weight) in kernel.iter().enumerate() {
-                // Sample y coordinate with clamping
-                let sy = (y as i32 + ki as i32 - half).clamp(0, height as i32 - 1) as usize;
-                let idx = (sy * width + x) * 4;
+                let idx = if horizontal {
+                    let sx = (x as i32 + ki as i32 - half).clamp(0, width as i32 - 1) as usize;
+                    (y * width + sx) * 4
+                } else {
+                    let sy = (y as i32 + ki as i32 - half).clamp(0, height as i32 - 1) as usize;
+                    (sy * width + x) * 4
+                };
 
                 r += src[idx] * weight;
                 g += src[idx + 1] * weight;

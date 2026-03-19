@@ -86,15 +86,7 @@ impl PlayaApp {
                 self.event_bus.emit(ViewportRefreshEvent);
                 continue;
             }
-            // Layout events - save/load/reset UI layout
-            if downcast_event::<crate::core::layout_events::SaveLayoutEvent>(&event).is_some() {
-                self.save_layout_to_attrs();
-                continue;
-            }
-            if downcast_event::<crate::core::layout_events::LoadLayoutEvent>(&event).is_some() {
-                self.load_layout_from_attrs();
-                continue;
-            }
+            // Layout events - reset/select/create/delete/update/rename UI layout
             if downcast_event::<crate::core::layout_events::ResetLayoutEvent>(&event).is_some() {
                 self.reset_layout();
                 continue;

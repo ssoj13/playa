@@ -282,117 +282,41 @@ pub fn build_inverse_matrix_3x3(
     ]
 }
 
-/// Sample F32 buffer with bilinear interpolation.
-/// 
-/// Returns `[R, G, B, A]` in 0-1 range, or `[0,0,0,0]` if outside bounds.
+/// Sample a typed pixel buffer with bilinear interpolation.
+///
+/// `decode` converts a single stored element to f32 (e.g. identity, `.to_f32()`, `/ 255.0`).
+/// Returns `[R, G, B, A]` normalized to the decoded range, or `[0,0,0,0]` if outside bounds.
 #[inline]
-fn sample_f32(buffer: &[f32], width: usize, height: usize, x: f32, y: f32) -> [f32; 4] {
-    // Bounds check - return transparent if outside
+fn sample_bilinear<T: Copy>(buffer: &[T], width: usize, height: usize, x: f32, y: f32, decode: impl Fn(T) -> f32) -> [f32; 4] {
     if x < 0.0 || y < 0.0 || x >= width as f32 || y >= height as f32 {
         return [0.0, 0.0, 0.0, 0.0];
     }
-    
-    let x0 = x.floor() as usize;
-    let y0 = y.floor() as usize;
-    let x1 = (x0 + 1).min(width - 1);
-    let y1 = (y0 + 1).min(height - 1);
-    
-    let fx = x - x0 as f32;
-    let fy = y - y0 as f32;
-    
-    // Sample 4 corners
-    let idx00 = (y0 * width + x0) * 4;
-    let idx10 = (y0 * width + x1) * 4;
-    let idx01 = (y1 * width + x0) * 4;
-    let idx11 = (y1 * width + x1) * 4;
-    
-    let mut result = [0.0f32; 4];
-    for c in 0..4 {
-        let c00 = buffer[idx00 + c];
-        let c10 = buffer[idx10 + c];
-        let c01 = buffer[idx01 + c];
-        let c11 = buffer[idx11 + c];
-        
-        // Bilinear interpolation
-        let top = c00 * (1.0 - fx) + c10 * fx;
-        let bottom = c01 * (1.0 - fx) + c11 * fx;
-        result[c] = top * (1.0 - fy) + bottom * fy;
-    }
-    
-    result
-}
 
-/// Sample F16 buffer with bilinear interpolation.
-/// 
-/// Returns `[R, G, B, A]` in 0-1 range, or `[0,0,0,0]` if outside bounds.
-#[inline]
-fn sample_f16(buffer: &[F16], width: usize, height: usize, x: f32, y: f32) -> [f32; 4] {
-    if x < 0.0 || y < 0.0 || x >= width as f32 || y >= height as f32 {
-        return [0.0, 0.0, 0.0, 0.0];
-    }
-    
     let x0 = x.floor() as usize;
     let y0 = y.floor() as usize;
     let x1 = (x0 + 1).min(width - 1);
     let y1 = (y0 + 1).min(height - 1);
-    
-    let fx = x - x0 as f32;
-    let fy = y - y0 as f32;
-    
-    let idx00 = (y0 * width + x0) * 4;
-    let idx10 = (y0 * width + x1) * 4;
-    let idx01 = (y1 * width + x0) * 4;
-    let idx11 = (y1 * width + x1) * 4;
-    
-    let mut result = [0.0f32; 4];
-    for c in 0..4 {
-        let c00 = buffer[idx00 + c].to_f32();
-        let c10 = buffer[idx10 + c].to_f32();
-        let c01 = buffer[idx01 + c].to_f32();
-        let c11 = buffer[idx11 + c].to_f32();
-        
-        let top = c00 * (1.0 - fx) + c10 * fx;
-        let bottom = c01 * (1.0 - fx) + c11 * fx;
-        result[c] = top * (1.0 - fy) + bottom * fy;
-    }
-    
-    result
-}
 
-/// Sample U8 buffer with bilinear interpolation.
-/// 
-/// Returns `[R, G, B, A]` in 0-1 range, or `[0,0,0,0]` if outside bounds.
-#[inline]
-fn sample_u8(buffer: &[u8], width: usize, height: usize, x: f32, y: f32) -> [f32; 4] {
-    if x < 0.0 || y < 0.0 || x >= width as f32 || y >= height as f32 {
-        return [0.0, 0.0, 0.0, 0.0];
-    }
-    
-    let x0 = x.floor() as usize;
-    let y0 = y.floor() as usize;
-    let x1 = (x0 + 1).min(width - 1);
-    let y1 = (y0 + 1).min(height - 1);
-    
     let fx = x - x0 as f32;
     let fy = y - y0 as f32;
-    
+
     let idx00 = (y0 * width + x0) * 4;
     let idx10 = (y0 * width + x1) * 4;
     let idx01 = (y1 * width + x0) * 4;
     let idx11 = (y1 * width + x1) * 4;
-    
+
     let mut result = [0.0f32; 4];
     for c in 0..4 {
-        let c00 = buffer[idx00 + c] as f32 / 255.0;
-        let c10 = buffer[idx10 + c] as f32 / 255.0;
-        let c01 = buffer[idx01 + c] as f32 / 255.0;
-        let c11 = buffer[idx11 + c] as f32 / 255.0;
-        
+        let c00 = decode(buffer[idx00 + c]);
+        let c10 = decode(buffer[idx10 + c]);
+        let c01 = decode(buffer[idx01 + c]);
+        let c11 = decode(buffer[idx11 + c]);
+
         let top = c00 * (1.0 - fx) + c10 * fx;
         let bottom = c01 * (1.0 - fx) + c11 * fx;
         result[c] = top * (1.0 - fy) + bottom * fy;
     }
-    
+
     result
 }
 
@@ -535,40 +459,34 @@ pub fn transform_frame_with_camera(
         }
     };
 
-    // Transform based on pixel format (output same format as input)
-    match (src_buffer.as_ref(), src_format) {
-        (PixelBuffer::F32(buf), PixelFormat::RgbaF32) => {
+    // Parallel pixel remap: sample source at the inverse-transformed coord for each dst pixel.
+    // A local macro captures the shared loop body, parameterizing on decode/encode/ctor.
+    macro_rules! remap {
+        // F32: copy_from_slice directly since color is already [f32;4]
+        (f32, $buf:expr, $decode:expr) => {{
             let mut dst_buf = vec![0.0f32; dst_w * dst_h * 4];
-
-            // Parallel row processing with rayon
             dst_buf
                 .par_chunks_mut(dst_w * 4)
                 .enumerate()
                 .for_each(|(y, row)| {
                     for x in 0..dst_w {
-                        // Transform dst coord (image space) -> frame space (centered)
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let frame_pt = space::image_to_frame(dst_pt, comp_size);
-
-                        // Transform to object space
                         let color = if let Some(obj_pt) = transform_point(frame_pt) {
                             let src_pt = space::object_to_src(obj_pt, src_size);
-                            sample_f32(buf, src_w, src_h, src_pt.x, src_pt.y)
+                            sample_bilinear($buf, src_w, src_h, src_pt.x, src_pt.y, $decode)
                         } else {
-                            [0.0, 0.0, 0.0, 0.0] // Transparent for invalid points
+                            [0.0, 0.0, 0.0, 0.0]
                         };
-
                         let idx = x * 4;
                         row[idx..idx + 4].copy_from_slice(&color);
                     }
                 });
-
             Frame::from_f32_buffer(dst_buf, dst_w, dst_h)
-        }
-
-        (PixelBuffer::F16(buf), PixelFormat::RgbaF16) => {
+        }};
+        // F16: decode to f32 for sampling, encode back
+        (f16, $buf:expr, $decode:expr) => {{
             let mut dst_buf = vec![F16::ZERO; dst_w * dst_h * 4];
-
             dst_buf
                 .par_chunks_mut(dst_w * 4)
                 .enumerate()
@@ -576,28 +494,24 @@ pub fn transform_frame_with_camera(
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let frame_pt = space::image_to_frame(dst_pt, comp_size);
-
                         let color = if let Some(obj_pt) = transform_point(frame_pt) {
                             let src_pt = space::object_to_src(obj_pt, src_size);
-                            sample_f16(buf, src_w, src_h, src_pt.x, src_pt.y)
+                            sample_bilinear($buf, src_w, src_h, src_pt.x, src_pt.y, $decode)
                         } else {
                             [0.0, 0.0, 0.0, 0.0]
                         };
-
                         let idx = x * 4;
-                        row[idx] = F16::from_f32(color[0]);
+                        row[idx]     = F16::from_f32(color[0]);
                         row[idx + 1] = F16::from_f32(color[1]);
                         row[idx + 2] = F16::from_f32(color[2]);
                         row[idx + 3] = F16::from_f32(color[3]);
                     }
                 });
-
             Frame::from_f16_buffer(dst_buf, dst_w, dst_h)
-        }
-
-        (PixelBuffer::U8(buf), PixelFormat::Rgba8) => {
+        }};
+        // U8: decode to f32 for sampling, encode back with clamp
+        (u8, $buf:expr, $decode:expr) => {{
             let mut dst_buf = vec![0u8; dst_w * dst_h * 4];
-
             dst_buf
                 .par_chunks_mut(dst_w * 4)
                 .enumerate()
@@ -605,26 +519,27 @@ pub fn transform_frame_with_camera(
                     for x in 0..dst_w {
                         let dst_pt = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
                         let frame_pt = space::image_to_frame(dst_pt, comp_size);
-
                         let color = if let Some(obj_pt) = transform_point(frame_pt) {
                             let src_pt = space::object_to_src(obj_pt, src_size);
-                            sample_u8(buf, src_w, src_h, src_pt.x, src_pt.y)
+                            sample_bilinear($buf, src_w, src_h, src_pt.x, src_pt.y, $decode)
                         } else {
                             [0.0, 0.0, 0.0, 0.0]
                         };
-
                         let idx = x * 4;
-                        row[idx] = (color[0] * 255.0).clamp(0.0, 255.0) as u8;
+                        row[idx]     = (color[0] * 255.0).clamp(0.0, 255.0) as u8;
                         row[idx + 1] = (color[1] * 255.0).clamp(0.0, 255.0) as u8;
                         row[idx + 2] = (color[2] * 255.0).clamp(0.0, 255.0) as u8;
                         row[idx + 3] = (color[3] * 255.0).clamp(0.0, 255.0) as u8;
                     }
                 });
-
             Frame::from_u8_buffer(dst_buf, dst_w, dst_h)
-        }
-        
-        // Fallback: copy without transform if format mismatch
+        }};
+    }
+
+    match (src_buffer.as_ref(), src_format) {
+        (PixelBuffer::F32(buf), PixelFormat::RgbaF32) => remap!(f32, buf, |v| v),
+        (PixelBuffer::F16(buf), PixelFormat::RgbaF16) => remap!(f16, buf, |v: F16| v.to_f32()),
+        (PixelBuffer::U8(buf),  PixelFormat::Rgba8)   => remap!(u8,  buf, |v: u8| v as f32 / 255.0),
         _ => {
             log::warn!("transform_frame: unsupported format {:?}, returning copy", src_format);
             src.clone()
