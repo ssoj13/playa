@@ -598,19 +598,19 @@ pub fn handle_app_event(
 
     // === UI State ===
     if downcast_event::<ToggleHelpEvent>(event).is_some() {
-        *show_help = !*show_help;
+        **show_help = !**show_help;
         return Some(result);
     }
     if downcast_event::<TogglePlaylistEvent>(event).is_some() {
-        *show_playlist = !*show_playlist;
+        **show_playlist = !**show_playlist;
         return Some(result);
     }
     if downcast_event::<ToggleSettingsEvent>(event).is_some() {
-        *show_settings = !*show_settings;
+        **show_settings = !**show_settings;
         return Some(result);
     }
     if downcast_event::<ToggleAttributeEditorEvent>(event).is_some() {
-        *show_attributes_editor = !*show_attributes_editor;
+        **show_attributes_editor = !**show_attributes_editor;
         return Some(result);
     }
     if let Some(e) = downcast_event::<SetGizmoPrefsEvent>(event) {
@@ -618,16 +618,16 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<ToggleEncodeDialogEvent>(event).is_some() {
-        *show_encode_dialog = !*show_encode_dialog;
-        if *show_encode_dialog && encode_dialog.is_none() {
+        **show_encode_dialog = !**show_encode_dialog;
+        if **show_encode_dialog && encode_dialog.is_none() {
             trace!("[ToggleEncodeDialog] Opening encode dialog");
-            *encode_dialog = Some(EncodeDialog::load_from_settings(&settings.encode_dialog));
+            **encode_dialog = Some(EncodeDialog::load_from_settings(&settings.encode_dialog));
         }
         return Some(result);
     }
     if downcast_event::<ToggleFullscreenEvent>(event).is_some() {
-        *is_fullscreen = !*is_fullscreen;
-        *fullscreen_dirty = true;
+        **is_fullscreen = !**is_fullscreen;
+        **fullscreen_dirty = true;
         return Some(result);
     }
     if downcast_event::<ToggleFrameNumbersEvent>(event).is_some() {
@@ -635,7 +635,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<ResetSettingsEvent>(event).is_some() {
-        *reset_settings_pending = true;
+        **reset_settings_pending = true;
         return Some(result);
     }
 
