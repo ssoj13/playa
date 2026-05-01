@@ -6,3 +6,6 @@ rustflags = [
 
 [alias]
 xtask = "run --package xtask --"
+
+[net]
+git-fetch-with-cli = true

@@ -1,3 +1,0 @@
-[submodule "crates/vfx-rs"]
-	path = crates/vfx-rs
-	url = git@github.com:ssoj13/vfx-rs.git
