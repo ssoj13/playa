@@ -2381,18 +2381,19 @@ fn write_exr_pass_through(
         return Ok(false);
     }
 
-    // Read full multi-layer source (every layer carries spec.attributes
-    // populated by vfx_io reader: compression, channelformats, custom EXR
-    // attrs all preserved).
-    let layered = vfx_io::exr::read_layers(&src).map_err(|e| {
+    // Byte-exact pass-through (Phase E in vfx-rs): read every chunk's raw
+    // compressed_block payload via vfx_exr::block::read, write it back via
+    // vfx_exr::block::write. No decompress + recompress, so DWAA / DWAB /
+    // B44 / HTJ2K survive transcode without quality loss. Custom header
+    // attrs (chromaticities, timecode, owner, …) preserved automatically
+    // because the source Header is reused verbatim.
+    let layered = vfx_io::exr::read_layers_passthrough(&src).map_err(|e| {
         EncodeError::EncodeFrameFailed(format!(
             "EXR pass-through read failed for {:?}: {}",
             src, e
         ))
     })?;
-
-    // Write back preserving per-layer compression via spec.attributes.
-    vfx_io::exr::write_layers(dest_path, &layered).map_err(|e| {
+    vfx_io::exr::write_layers_passthrough(dest_path, &layered).map_err(|e| {
         EncodeError::EncodeFrameFailed(format!("EXR pass-through write failed: {}", e))
     })?;
 
