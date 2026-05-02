@@ -101,26 +101,78 @@ impl Loader {
 
     // ===== EXR Loading =====
 
-    /// Read EXR header metadata via vfx-exr
+    /// Read EXR header metadata via vfx-exr.
+    ///
+    /// Reports OIIO-aligned info: dimensions, channel count, channel names of
+    /// the first layer, total layer count (multi-layer EXR), and compression
+    /// of the first layer as an OIIO-style string (`"piz"`, `"dwaa:45"`,
+    /// `"htj2k:32"`, …) via [`vfx_io::exr::compression_str`].
     fn header_exr(path: &Path) -> Result<Attrs, FrameError> {
         trace!("Reading EXR header with vfx-exr: {}", path.display());
-        use vfx_exr::prelude::*;
+        use std::io::Cursor;
+        use vfx_exr::meta::MetaData;
 
-        let file = InputFile::open(path)
+        // MetaData::read_from_buffered parses ALL headers in one shot — one
+        // syscall + one parse, no pixel decode. Multi-layer files yield
+        // `headers: SmallVec<[Header; 1]>` where each entry is a full layer.
+        let bytes = std::fs::read(path)
+            .map_err(|e| FrameError::Image(format!("EXR open error: {}", e)))?;
+        let meta = MetaData::read_from_buffered(Cursor::new(&bytes), false)
             .map_err(|e| FrameError::Image(format!("EXR header error: {}", e)))?;
 
-        let header = file.header();
-        let width = header.layer_size.x() as u32;
-        let height = header.layer_size.y() as u32;
-        let channel_count = header.channels.list.len() as u32;
+        let first = meta
+            .headers
+            .first()
+            .ok_or_else(|| FrameError::Image("EXR has no layers".to_string()))?;
 
-        let mut meta = Attrs::new();
-        meta.set(A_WIDTH, AttrValue::UInt(width));
-        meta.set(A_HEIGHT, AttrValue::UInt(height));
-        meta.set("format", AttrValue::Str(format!("EXR ({:?})", header.compression)));
-        meta.set("channels", AttrValue::UInt(channel_count));
+        let width = first.layer_size.x() as u32;
+        let height = first.layer_size.y() as u32;
+        let channel_count = first.channels.list.len() as u32;
+        let layer_count = meta.headers.len() as u32;
 
-        Ok(meta)
+        // OIIO-style compression string via the vfx-io codec.
+        let compression_str = vfx_io::exr::compression_str::format(&first.compression);
+
+        // Channel names of the first layer (comma-joined for the UI line).
+        let channel_names: String = first
+            .channels
+            .list
+            .iter()
+            .map(|c| c.name.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // Layer names (only meaningful when there's more than one).
+        let layer_names: String = meta
+            .headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| {
+                h.own_attributes
+                    .layer_name
+                    .as_ref()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| format!("Layer{}", i))
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let mut meta_attrs = Attrs::new();
+        meta_attrs.set(A_WIDTH, AttrValue::UInt(width));
+        meta_attrs.set(A_HEIGHT, AttrValue::UInt(height));
+        meta_attrs.set(
+            "format",
+            AttrValue::Str(format!("EXR ({})", compression_str)),
+        );
+        meta_attrs.set("compression", AttrValue::Str(compression_str));
+        meta_attrs.set("channels", AttrValue::UInt(channel_count));
+        meta_attrs.set("channel_names", AttrValue::Str(channel_names));
+        meta_attrs.set("layers", AttrValue::UInt(layer_count));
+        if layer_count > 1 {
+            meta_attrs.set("layer_names", AttrValue::Str(layer_names));
+        }
+
+        Ok(meta_attrs)
     }
 
     /// Load EXR via vfx-exr — reads RGBA as f16 (native for HALF, converted for FLOAT)

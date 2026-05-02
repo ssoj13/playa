@@ -50,7 +50,8 @@ log = "0.4"
 lru = "0.16"
 num_cpus = "1.17"
 once_cell = "1.21"
-vfx-exr = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", rev = "ee5d2e47786a1a684d0e1450d914a76702846253", features = ["htj2k"] }
+vfx-exr = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["htj2k"] }
+vfx-io  = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["exr", "htj2k"] }
 playa-ffmpeg = { version = "8.0.3", features = ["static"] }
 rayon = "1.11"
 regex = "1.12"
