@@ -5283,8 +5283,17 @@ dependencies = [
  "murmur3",
  "rayon-core",
  "smallvec",
+ "vfx-jph",
  "wide",
  "zune-inflate",
+]
+
+[[package]]
+name = "vfx-jph"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/vfx-rs.git?rev=ee5d2e47786a1a684d0e1450d914a76702846253#ee5d2e47786a1a684d0e1450d914a76702846253"
+dependencies = [
+ "image",
 ]
 
 [[package]]

@@ -630,14 +630,32 @@ impl SequenceFormat {
     }
 }
 
-/// EXR compression mode
+/// EXR compression mode. Quality knob for DWA lives separately in
+/// [`ExrSequenceSettings::dwa_quality`] so the variants stay `Eq + Hash`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ExrCompression {
     None,
     Rle,
+    /// Per-scanline ZIP (smaller blocks, slightly faster random access)
+    Zips,
     #[default]
+    /// 16-scanline ZIP (vfx-exr `ZIP16`, the OpenEXR default)
     Zip,
     Piz,
+    /// Lossless for f16/u32, lossy for f32 (drops 8 bits of mantissa)
+    Pxr24,
+    /// Lossy for f16; f32/u32 stored uncompressed
+    B44,
+    /// B44 with uniform-area optimization
+    B44a,
+    /// 32-scanline DCT, lossy. Quality controlled by `dwa_quality`
+    Dwaa,
+    /// 256-scanline DCT, lossy. Faster full-frame decode than DWAA
+    Dwab,
+    /// 32-scanline HTJ2K (requires `vfx-exr/htj2k` feature, enabled in Cargo.toml)
+    HtJ2k32,
+    /// 256-scanline HTJ2K
+    HtJ2k256,
 }
 
 impl ExrCompression {
@@ -645,9 +663,36 @@ impl ExrCompression {
         &[
             ExrCompression::None,
             ExrCompression::Rle,
+            ExrCompression::Zips,
             ExrCompression::Zip,
             ExrCompression::Piz,
+            ExrCompression::Pxr24,
+            ExrCompression::B44,
+            ExrCompression::B44a,
+            ExrCompression::Dwaa,
+            ExrCompression::Dwab,
+            ExrCompression::HtJ2k32,
+            ExrCompression::HtJ2k256,
         ]
+    }
+
+    /// True if this compression discards data (DWA, B44 family, PXR24 for f32).
+    pub fn is_lossy(self) -> bool {
+        matches!(
+            self,
+            ExrCompression::B44
+                | ExrCompression::B44a
+                | ExrCompression::Dwaa
+                | ExrCompression::Dwab
+                | ExrCompression::HtJ2k32
+                | ExrCompression::HtJ2k256
+                | ExrCompression::Pxr24
+        )
+    }
+
+    /// True if this compression has a configurable quality knob.
+    pub fn has_quality_knob(self) -> bool {
+        matches!(self, ExrCompression::Dwaa | ExrCompression::Dwab)
     }
 }
 
@@ -656,47 +701,43 @@ impl std::fmt::Display for ExrCompression {
         match self {
             ExrCompression::None => write!(f, "None"),
             ExrCompression::Rle => write!(f, "RLE"),
+            ExrCompression::Zips => write!(f, "ZIPS"),
             ExrCompression::Zip => write!(f, "ZIP"),
             ExrCompression::Piz => write!(f, "PIZ"),
+            ExrCompression::Pxr24 => write!(f, "PXR24"),
+            ExrCompression::B44 => write!(f, "B44 (lossy)"),
+            ExrCompression::B44a => write!(f, "B44A (lossy)"),
+            ExrCompression::Dwaa => write!(f, "DWAA (lossy)"),
+            ExrCompression::Dwab => write!(f, "DWAB (lossy)"),
+            ExrCompression::HtJ2k32 => write!(f, "HTJ2K-32 (lossy)"),
+            ExrCompression::HtJ2k256 => write!(f, "HTJ2K-256 (lossy)"),
         }
     }
 }
 
-/// EXR bit depth
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum ExrBitDepth {
-    #[default]
-    Half,  // F16
-    Float, // F32
-}
+/// Default DWA quality per OpenEXR convention (lower = smaller, more loss).
+pub const DWA_QUALITY_DEFAULT: f32 = 45.0;
 
-impl ExrBitDepth {
-    pub fn all() -> &'static [ExrBitDepth] {
-        &[ExrBitDepth::Half, ExrBitDepth::Float]
-    }
-}
-
-impl std::fmt::Display for ExrBitDepth {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExrBitDepth::Half => write!(f, "Half (16-bit)"),
-            ExrBitDepth::Float => write!(f, "Float (32-bit)"),
-        }
-    }
-}
-
-/// EXR sequence settings
+/// EXR sequence settings. Bit depth comes from the global [`OutputBitDepth`]
+/// (filtered to F16/F32 by [`FormatCapabilities`]); per-channel mixed types
+/// will live on the future multi-layer source-image path, not here.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExrSequenceSettings {
-    pub bit_depth: ExrBitDepth,
     pub compression: ExrCompression,
+    /// Quality 0..=100 for DWAA/DWAB. Ignored for other compressions.
+    #[serde(default = "default_dwa_quality")]
+    pub dwa_quality: f32,
+}
+
+fn default_dwa_quality() -> f32 {
+    DWA_QUALITY_DEFAULT
 }
 
 impl Default for ExrSequenceSettings {
     fn default() -> Self {
         Self {
-            bit_depth: ExrBitDepth::Half,
             compression: ExrCompression::Zip,
+            dwa_quality: DWA_QUALITY_DEFAULT,
         }
     }
 }
@@ -2148,8 +2189,16 @@ fn write_exr_frame(
     let compression = match settings.compression {
         ExrCompression::None => Compression::Uncompressed,
         ExrCompression::Rle => Compression::RLE,
+        ExrCompression::Zips => Compression::ZIP1,
         ExrCompression::Zip => Compression::ZIP16,
         ExrCompression::Piz => Compression::PIZ,
+        ExrCompression::Pxr24 => Compression::PXR24,
+        ExrCompression::B44 => Compression::B44,
+        ExrCompression::B44a => Compression::B44A,
+        ExrCompression::Dwaa => Compression::DWAA(Some(settings.dwa_quality)),
+        ExrCompression::Dwab => Compression::DWAB(Some(settings.dwa_quality)),
+        ExrCompression::HtJ2k32 => Compression::HTJ2K32,
+        ExrCompression::HtJ2k256 => Compression::HTJ2K256,
     };
 
     // Write as f16 or f32 depending on bit depth

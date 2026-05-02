@@ -1010,6 +1010,22 @@ impl EncodeDialog {
                             }
                         });
                 });
+                // DWA loss level — only meaningful for DWAA/DWAB.
+                // OpenEXR semantics: lower = less loss, 45 = visually lossless (default),
+                // higher = smaller files / more loss. NOT the usual "quality 0-100".
+                if self.sequence_settings.format_settings.exr.compression.has_quality_knob() {
+                    ui.horizontal(|ui| {
+                        ui.label("DWA loss level:")
+                            .on_hover_text("Lower = less loss / larger files. 45 = visually lossless (OpenEXR default).");
+                        ui.add(
+                            egui::Slider::new(
+                                &mut self.sequence_settings.format_settings.exr.dwa_quality,
+                                0.0..=200.0,
+                            )
+                            .text("(45 default)"),
+                        );
+                    });
+                }
                 ui.add_space(4.0);
                 ui.label("EXR: HDR format, preserves full dynamic range");
             }
