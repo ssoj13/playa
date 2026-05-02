@@ -694,6 +694,41 @@ impl ExrCompression {
     pub fn has_quality_knob(self) -> bool {
         matches!(self, ExrCompression::Dwaa | ExrCompression::Dwab)
     }
+
+    /// OIIO-style compression string ready to drop into
+    /// `ImageSpec.attributes["compression"]`. DWA variants embed the quality
+    /// level after a colon: `"dwaa:45"`. HTJ2K variants always carry an
+    /// explicit `:32` / `:256` suffix to avoid ambiguity. Format matches
+    /// `vfx_io::exr::compression_str::format` so vfx-io reads it back to
+    /// the right vfx-exr compression enum.
+    pub fn to_oiio_string(self, dwa_quality: f32) -> String {
+        match self {
+            ExrCompression::None => "none".to_string(),
+            ExrCompression::Rle => "rle".to_string(),
+            ExrCompression::Zips => "zips".to_string(),
+            ExrCompression::Zip => "zip".to_string(),
+            ExrCompression::Piz => "piz".to_string(),
+            ExrCompression::Pxr24 => "pxr24".to_string(),
+            ExrCompression::B44 => "b44".to_string(),
+            ExrCompression::B44a => "b44a".to_string(),
+            ExrCompression::Dwaa => {
+                if dwa_quality.fract() == 0.0 && dwa_quality.is_finite() {
+                    format!("dwaa:{}", dwa_quality as i64)
+                } else {
+                    format!("dwaa:{}", dwa_quality)
+                }
+            }
+            ExrCompression::Dwab => {
+                if dwa_quality.fract() == 0.0 && dwa_quality.is_finite() {
+                    format!("dwab:{}", dwa_quality as i64)
+                } else {
+                    format!("dwab:{}", dwa_quality)
+                }
+            }
+            ExrCompression::HtJ2k32 => "htj2k:32".to_string(),
+            ExrCompression::HtJ2k256 => "htj2k:256".to_string(),
+        }
+    }
 }
 
 impl std::fmt::Display for ExrCompression {
@@ -2173,91 +2208,98 @@ fn write_exr_frame(
     bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
     use crate::entities::frame::PixelBuffer;
-    use half::f16;
-    use vfx_exr::prelude::*;
+    use vfx_core::AttrValue as CoreAttrValue;
+    use vfx_io::exr::{ExrWriter, ExrWriterOptions};
+    use vfx_io::{
+        ChannelKind, ChannelSampleType, ChannelSamples, ImageChannel, ImageLayer, LayeredImage,
+        Metadata,
+    };
 
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
+    let pixel_count = width * height;
 
-    // Convert any pixel buffer to interleaved RGBA f32
+    // Convert any pixel buffer to interleaved RGBA f32 once.
     let f32_data: Vec<f32> = match buffer.as_ref() {
         PixelBuffer::F32(data) => data.clone(),
         PixelBuffer::F16(data) => f16_to_f32_buf(data),
         PixelBuffer::U8(data) => data.iter().map(|&v| v as f32 / 255.0).collect(),
     };
 
-    let compression = match settings.compression {
-        ExrCompression::None => Compression::Uncompressed,
-        ExrCompression::Rle => Compression::RLE,
-        ExrCompression::Zips => Compression::ZIP1,
-        ExrCompression::Zip => Compression::ZIP16,
-        ExrCompression::Piz => Compression::PIZ,
-        ExrCompression::Pxr24 => Compression::PXR24,
-        ExrCompression::B44 => Compression::B44,
-        ExrCompression::B44a => Compression::B44A,
-        ExrCompression::Dwaa => Compression::DWAA(Some(settings.dwa_quality)),
-        ExrCompression::Dwab => Compression::DWAB(Some(settings.dwa_quality)),
-        ExrCompression::HtJ2k32 => Compression::HTJ2K32,
-        ExrCompression::HtJ2k256 => Compression::HTJ2K256,
+    // EXR supports F16 / F32 only; the global filter rejects U8/U16 for EXR.
+    let use_half = matches!(
+        bit_depth,
+        OutputBitDepth::F16 | OutputBitDepth::U8 | OutputBitDepth::U16
+    );
+    let sample_type = if use_half {
+        ChannelSampleType::F16
+    } else {
+        ChannelSampleType::F32
     };
 
-    // Write as f16 or f32 depending on bit depth
-    let use_half = matches!(bit_depth, OutputBitDepth::F16 | OutputBitDepth::U8 | OutputBitDepth::U16);
-
-    let encoding = Encoding {
-        compression,
-        ..Encoding::default()
+    let n_out = match channels {
+        ChannelMode::Rgba => 4,
+        ChannelMode::Rgb => 3,
     };
 
-    let write_result = match (channels, use_half) {
-        (ChannelMode::Rgba, true) => {
-            let channels_spec = SpecificChannels::rgba(|Vec2(x, y)| {
-                let idx = (y * width + x) * 4;
-                (
-                    f16::from_f32(f32_data[idx]),
-                    f16::from_f32(f32_data[idx + 1]),
-                    f16::from_f32(f32_data[idx + 2]),
-                    f16::from_f32(f32_data[idx + 3]),
-                )
-            });
-            Image::from_encoded_channels((width, height), encoding, channels_spec)
-                .write()
-                .to_file(path)
+    // De-interleave into per-channel planar buffers (vfx-io stores F16 as F32
+    // in memory; the writer down-converts at write time).
+    let mut planar: Vec<Vec<f32>> = (0..n_out)
+        .map(|_| Vec::with_capacity(pixel_count))
+        .collect();
+    for px in 0..pixel_count {
+        let base = px * 4;
+        for c in 0..n_out {
+            planar[c].push(f32_data[base + c]);
         }
-        (ChannelMode::Rgba, false) => {
-            let channels_spec = SpecificChannels::rgba(|Vec2(x, y)| {
-                let idx = (y * width + x) * 4;
-                (f32_data[idx], f32_data[idx + 1], f32_data[idx + 2], f32_data[idx + 3])
-            });
-            Image::from_encoded_channels((width, height), encoding, channels_spec)
-                .write()
-                .to_file(path)
-        }
-        (ChannelMode::Rgb, true) => {
-            let channels_spec = SpecificChannels::rgb(|Vec2(x, y)| {
-                let idx = (y * width + x) * 4;
-                (
-                    f16::from_f32(f32_data[idx]),
-                    f16::from_f32(f32_data[idx + 1]),
-                    f16::from_f32(f32_data[idx + 2]),
-                )
-            });
-            Image::from_encoded_channels((width, height), encoding, channels_spec)
-                .write()
-                .to_file(path)
-        }
-        (ChannelMode::Rgb, false) => {
-            let channels_spec = SpecificChannels::rgb(|Vec2(x, y)| {
-                let idx = (y * width + x) * 4;
-                (f32_data[idx], f32_data[idx + 1], f32_data[idx + 2])
-            });
-            Image::from_encoded_channels((width, height), encoding, channels_spec)
-                .write()
-                .to_file(path)
-        }
+    }
+
+    let names: &[&str] = &["R", "G", "B", "A"];
+    let kinds: &[ChannelKind] = &[
+        ChannelKind::Color,
+        ChannelKind::Color,
+        ChannelKind::Color,
+        ChannelKind::Alpha,
+    ];
+
+    let mut vfx_channels = Vec::with_capacity(n_out);
+    for c in 0..n_out {
+        vfx_channels.push(ImageChannel {
+            name: names[c].to_string(),
+            kind: kinds[c],
+            sample_type,
+            samples: ChannelSamples::F32(std::mem::take(&mut planar[c])),
+            sampling: (1, 1),
+            // OpenEXR convention: alpha quantized linearly; chroma channels exponentially.
+            quantize_linearly: c == 3,
+        });
+    }
+
+    // Per-layer compression goes into spec.attributes — vfx-io's writer reads it
+    // back per layer (see vfx-rs commit 781aba9). Future multi-layer encode reuses
+    // this same path with more layers.
+    let mut layer = ImageLayer {
+        name: String::new(),
+        width: width as u32,
+        height: height as u32,
+        channels: vfx_channels,
+        ..Default::default()
+    };
+    layer.spec.attributes.insert(
+        "compression".to_string(),
+        CoreAttrValue::String(settings.compression.to_oiio_string(settings.dwa_quality)),
+    );
+
+    let layered = LayeredImage {
+        layers: vec![layer],
+        metadata: Metadata::default(),
     };
 
-    write_result.map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR write failed: {}", e)))
+    // Writer options encoding is the FALLBACK only — per-layer spec wins.
+    let writer = ExrWriter::with_options(ExrWriterOptions::default());
+    writer
+        .write_layers(path, &layered)
+        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR write failed: {}", e)))
 }
 
 /// Write frame to PNG file
