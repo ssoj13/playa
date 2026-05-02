@@ -85,7 +85,10 @@ impl FileNode {
     
     // --- Internal ---
     
-    fn resolve_frame_path(&self, frame_number: i32) -> Option<PathBuf> {
+    /// Resolve a per-frame source path from the file mask. Public so the
+    /// encode pass-through path can read source EXRs directly without going
+    /// through the compositor.
+    pub fn resolve_frame_path(&self, frame_number: i32) -> Option<PathBuf> {
         let mask = self.file_mask()?;
         if media::is_video(Path::new(&mask)) {
             // Video files use @frame suffix to target specific frame

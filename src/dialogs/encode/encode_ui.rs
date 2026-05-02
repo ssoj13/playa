@@ -602,7 +602,7 @@ impl EncodeDialog {
 
                         // === Format-specific settings ===
                         ui.add_enabled_ui(!self.is_encoding, |ui| {
-                            self.render_sequence_format_settings(ui);
+                            self.render_sequence_format_settings(ui, project);
                         });
                     }
                 }
@@ -992,42 +992,106 @@ impl EncodeDialog {
     }
 
     /// Render format-specific settings for image sequence export
-    fn render_sequence_format_settings(&mut self, ui: &mut egui::Ui) {
+    fn render_sequence_format_settings(&mut self, ui: &mut egui::Ui, project: &Project) {
+        // Used by EXR pass-through info panel below.
+        let _project = project;
         // Per-format settings (compression, quality, etc.)
         match self.sequence_settings.format {
             SequenceFormat::Exr => {
+                // Encode mode (Display only vs Pass-through). Pass-through reads
+                // each source EXR via vfx-io and writes back preserving every
+                // layer + per-layer compression — the OIIO-aligned transcode path.
                 ui.horizontal(|ui| {
-                    ui.label("Compression:");
-                    egui::ComboBox::from_id_salt("exr_compression")
-                        .selected_text(self.sequence_settings.format_settings.exr.compression.to_string())
+                    ui.label("Mode:");
+                    egui::ComboBox::from_id_salt("exr_mode")
+                        .selected_text(
+                            self.sequence_settings
+                                .format_settings
+                                .exr
+                                .mode
+                                .to_string(),
+                        )
                         .show_ui(ui, |ui| {
-                            for comp in ExrCompression::all() {
+                            for m in crate::dialogs::encode::ExrEncodeMode::all() {
                                 ui.selectable_value(
-                                    &mut self.sequence_settings.format_settings.exr.compression,
-                                    *comp,
-                                    comp.to_string(),
-                                );
+                                    &mut self.sequence_settings.format_settings.exr.mode,
+                                    *m,
+                                    m.to_string(),
+                                )
+                                .on_hover_text(match m {
+                                    crate::dialogs::encode::ExrEncodeMode::DisplayOnly =>
+                                        "Single RGBA layer from compositor output. Standard EXR write.",
+                                    crate::dialogs::encode::ExrEncodeMode::PassThrough =>
+                                        "Read source EXR via vfx-io and preserve every layer + per-layer compression. Falls back to display-only if source isn't EXR.",
+                                });
                             }
                         });
                 });
-                // DWA loss level — only meaningful for DWAA/DWAB.
-                // OpenEXR semantics: lower = less loss, 45 = visually lossless (default),
-                // higher = smaller files / more loss. NOT the usual "quality 0-100".
-                if self.sequence_settings.format_settings.exr.compression.has_quality_knob() {
+                // Compression / DWA controls only relevant for Display-only mode
+                // (Pass-through preserves source per-layer compression).
+                let pass_through = matches!(
+                    self.sequence_settings.format_settings.exr.mode,
+                    crate::dialogs::encode::ExrEncodeMode::PassThrough,
+                );
+                ui.add_enabled_ui(!pass_through, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label("DWA loss level:")
-                            .on_hover_text("Lower = less loss / larger files. 45 = visually lossless (OpenEXR default).");
-                        ui.add(
-                            egui::Slider::new(
-                                &mut self.sequence_settings.format_settings.exr.dwa_quality,
-                                0.0..=200.0,
+                        ui.label("Compression:");
+                        egui::ComboBox::from_id_salt("exr_compression")
+                            .selected_text(
+                                self.sequence_settings
+                                    .format_settings
+                                    .exr
+                                    .compression
+                                    .to_string(),
                             )
-                            .text("(45 default)"),
-                        );
+                            .show_ui(ui, |ui| {
+                                for comp in ExrCompression::all() {
+                                    ui.selectable_value(
+                                        &mut self
+                                            .sequence_settings
+                                            .format_settings
+                                            .exr
+                                            .compression,
+                                        *comp,
+                                        comp.to_string(),
+                                    );
+                                }
+                            });
                     });
-                }
+                    // DWA loss level — only meaningful for DWAA/DWAB.
+                    // OpenEXR semantics: lower = less loss, 45 = visually lossless,
+                    // higher = smaller files / more loss. NOT the usual "quality 0-100".
+                    if self
+                        .sequence_settings
+                        .format_settings
+                        .exr
+                        .compression
+                        .has_quality_knob()
+                    {
+                        ui.horizontal(|ui| {
+                            ui.label("DWA loss level:").on_hover_text(
+                                "Lower = less loss / larger files. 45 = visually lossless (OpenEXR default).",
+                            );
+                            ui.add(
+                                egui::Slider::new(
+                                    &mut self
+                                        .sequence_settings
+                                        .format_settings
+                                        .exr
+                                        .dwa_quality,
+                                    0.0..=200.0,
+                                )
+                                .text("(45 default)"),
+                            );
+                        });
+                    }
+                });
                 ui.add_space(4.0);
-                ui.label("EXR: HDR format, preserves full dynamic range");
+                if pass_through {
+                    self.render_exr_source_layer_info(ui, project);
+                } else {
+                    ui.label("EXR: HDR format, preserves full dynamic range");
+                }
             }
             SequenceFormat::Png => {
                 ui.horizontal(|ui| {
@@ -1086,6 +1150,73 @@ impl EncodeDialog {
         ui.separator();
         ui.add_space(4.0);
         ui.label("Padding patterns: #### (4 digits), %04d (printf), @ (no padding)");
+    }
+
+    /// Step 5: live source-layer info panel for EXR Pass-through mode.
+    ///
+    /// Walks the project for the first EXR `FileNode`, opens its first frame
+    /// via [`SourceImage::open_exr`] (one full read so we can list per-layer
+    /// compression strings), and renders layer count + names + compressions.
+    fn render_exr_source_layer_info(&mut self, ui: &mut egui::Ui, project: &Project) {
+        use crate::entities::{NodeKind, SourceImage};
+
+        // Find first EXR FileNode source path (first frame).
+        let media = project.media.read().expect("media lock poisoned");
+        let mut first_path = None;
+        for node in media.values() {
+            if let NodeKind::File(fnode) = node.as_ref() {
+                if let Some(mask) = fnode.file_mask() {
+                    if std::path::Path::new(&mask)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|s| s.eq_ignore_ascii_case("exr"))
+                        .unwrap_or(false)
+                    {
+                        let start = fnode.attrs.get_i32(crate::entities::keys::A_FILE_START)
+                            .unwrap_or(0);
+                        if let Some(p) = fnode.resolve_frame_path(start) {
+                            first_path = Some(p);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        drop(media);
+
+        let Some(path) = first_path else {
+            ui.colored_label(
+                egui::Color32::from_rgb(220, 180, 80),
+                "Pass-through: no EXR source in project — will fall back to display-only",
+            );
+            return;
+        };
+
+        match SourceImage::open_exr(&path) {
+            Ok(src) => {
+                ui.label(format!(
+                    "Pass-through source: {}  ({} layer{})",
+                    path.display(),
+                    src.layer_count(),
+                    if src.layer_count() == 1 { "" } else { "s" },
+                ));
+                let names = src.layer_names();
+                let compressions = src.layer_compressions();
+                ui.indent("exr_source_layers", |ui| {
+                    for (i, (name, comp)) in names.iter().zip(compressions.iter()).enumerate() {
+                        let marker = if i == src.display_layer_idx { "▶" } else { " " };
+                        ui.label(format!("{} {}  —  {}", marker, name, comp));
+                    }
+                });
+                ui.label("Pass-through preserves every layer + per-layer compression.");
+            }
+            Err(e) => {
+                ui.colored_label(
+                    egui::Color32::from_rgb(220, 80, 80),
+                    format!("Pass-through preview failed: {}", e),
+                );
+            }
+        }
     }
 }
 

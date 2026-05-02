@@ -753,15 +753,53 @@ impl std::fmt::Display for ExrCompression {
 /// Default DWA quality per OpenEXR convention (lower = smaller, more loss).
 pub const DWA_QUALITY_DEFAULT: f32 = 45.0;
 
+/// EXR encode mode — what the writer pulls from for each output frame.
+///
+/// `DisplayOnly` is the historical playa behavior: take whatever the
+/// compositor produced (single RGBA layer) and write it out with the chosen
+/// compression. `PassThrough` reads the source EXR via vfx-io and writes
+/// it back preserving every layer + per-layer compression / metadata via
+/// `vfx_io::exr::write_layers` — only available when the source frames are
+/// EXR files coming from a `FileNode`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ExrEncodeMode {
+    /// Write the compositor output as a single RGBA EXR layer (default).
+    #[default]
+    DisplayOnly,
+    /// Read each source EXR via vfx-io and write back preserving all layers,
+    /// per-layer compression, channelformats and custom attrs. Falls back to
+    /// `DisplayOnly` if the source file isn't an EXR or can't be opened.
+    PassThrough,
+}
+
+impl ExrEncodeMode {
+    pub fn all() -> &'static [ExrEncodeMode] {
+        &[ExrEncodeMode::DisplayOnly, ExrEncodeMode::PassThrough]
+    }
+}
+
+impl std::fmt::Display for ExrEncodeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExrEncodeMode::DisplayOnly => write!(f, "Display only (single RGBA)"),
+            ExrEncodeMode::PassThrough => write!(f, "Pass-through (preserve all layers)"),
+        }
+    }
+}
+
 /// EXR sequence settings. Bit depth comes from the global [`OutputBitDepth`]
 /// (filtered to F16/F32 by [`FormatCapabilities`]); per-channel mixed types
-/// will live on the future multi-layer source-image path, not here.
+/// flow through `mode = PassThrough` which preserves the source layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExrSequenceSettings {
     pub compression: ExrCompression,
     /// Quality 0..=100 for DWAA/DWAB. Ignored for other compressions.
     #[serde(default = "default_dwa_quality")]
     pub dwa_quality: f32,
+    /// Encode mode — DisplayOnly (default, current behavior) or PassThrough
+    /// (read source EXR via vfx-io, preserve all layers / per-layer compression).
+    #[serde(default)]
+    pub mode: ExrEncodeMode,
 }
 
 fn default_dwa_quality() -> f32 {
@@ -773,6 +811,7 @@ impl Default for ExrSequenceSettings {
         Self {
             compression: ExrCompression::Zip,
             dwa_quality: DWA_QUALITY_DEFAULT,
+            mode: ExrEncodeMode::DisplayOnly,
         }
     }
 }
@@ -2300,6 +2339,66 @@ fn write_exr_frame(
         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR write failed: {}", e)))
 }
 
+/// Pass-through EXR transcode: read the source EXR for `frame_idx` via vfx-io
+/// and write it back preserving every layer + per-layer compression. The
+/// source path comes from the first EXR `FileNode` in the project.
+///
+/// Returns `Ok(true)` if the pass-through succeeded, `Ok(false)` if no EXR
+/// source was found (caller should fall back to display-only encode).
+fn write_exr_pass_through(
+    project: &crate::entities::Project,
+    frame_idx: i32,
+    dest_path: &std::path::Path,
+) -> Result<bool, EncodeError> {
+    use crate::entities::NodeKind;
+
+    // Find the first FileNode whose file mask points to .exr.
+    let media = project.media.read().expect("media lock poisoned");
+    let mut source_path = None;
+    for node in media.values() {
+        if let NodeKind::File(fnode) = node.as_ref() {
+            if let Some(mask) = fnode.file_mask() {
+                if std::path::Path::new(&mask)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.eq_ignore_ascii_case("exr"))
+                    .unwrap_or(false)
+                {
+                    if let Some(p) = fnode.resolve_frame_path(frame_idx) {
+                        source_path = Some(p);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    drop(media);
+
+    let Some(src) = source_path else {
+        return Ok(false);
+    };
+    if !src.exists() {
+        return Ok(false);
+    }
+
+    // Read full multi-layer source (every layer carries spec.attributes
+    // populated by vfx_io reader: compression, channelformats, custom EXR
+    // attrs all preserved).
+    let layered = vfx_io::exr::read_layers(&src).map_err(|e| {
+        EncodeError::EncodeFrameFailed(format!(
+            "EXR pass-through read failed for {:?}: {}",
+            src, e
+        ))
+    })?;
+
+    // Write back preserving per-layer compression via spec.attributes.
+    vfx_io::exr::write_layers(dest_path, &layered).map_err(|e| {
+        EncodeError::EncodeFrameFailed(format!("EXR pass-through write failed: {}", e))
+    })?;
+
+    Ok(true)
+}
+
 /// Write frame to PNG file
 fn write_png_frame(
     frame: &crate::entities::Frame,
@@ -2607,7 +2706,24 @@ pub fn encode_image_sequence(
         // Write frame based on format
         match settings.format {
             SequenceFormat::Exr => {
-                write_exr_frame(&frame_to_write, &frame_path, &settings.format_settings.exr, settings.channels, settings.bit_depth)?;
+                let exr_settings = &settings.format_settings.exr;
+                let did_pass_through = match exr_settings.mode {
+                    ExrEncodeMode::PassThrough => {
+                        write_exr_pass_through(project, frame_idx, &frame_path)?
+                    }
+                    ExrEncodeMode::DisplayOnly => false,
+                };
+                if !did_pass_through {
+                    // Either DisplayOnly mode or pass-through couldn't find an
+                    // EXR source — fall back to compositor-output single-layer write.
+                    write_exr_frame(
+                        &frame_to_write,
+                        &frame_path,
+                        exr_settings,
+                        settings.channels,
+                        settings.bit_depth,
+                    )?;
+                }
             }
             SequenceFormat::Png => {
                 write_png_frame(&frame_to_write, &frame_path, &settings.format_settings.png, settings.channels, settings.bit_depth)?;
