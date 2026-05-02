@@ -2209,7 +2209,6 @@ fn write_exr_frame(
 ) -> Result<(), EncodeError> {
     use crate::entities::frame::PixelBuffer;
     use vfx_core::AttrValue as CoreAttrValue;
-    use vfx_io::exr::{ExrWriter, ExrWriterOptions};
     use vfx_io::{
         ChannelKind, ChannelSampleType, ChannelSamples, ImageChannel, ImageLayer, LayeredImage,
         Metadata,
@@ -2295,10 +2294,9 @@ fn write_exr_frame(
         metadata: Metadata::default(),
     };
 
-    // Writer options encoding is the FALLBACK only — per-layer spec wins.
-    let writer = ExrWriter::with_options(ExrWriterOptions::default());
-    writer
-        .write_layers(path, &layered)
+    // Free convenience function — internally builds an ExrWriter with default
+    // options. Per-layer compression comes from layer.spec.attributes (above).
+    vfx_io::exr::write_layers(path, &layered)
         .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR write failed: {}", e)))
 }
 

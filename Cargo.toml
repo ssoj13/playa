@@ -50,8 +50,9 @@ log = "0.4"
 lru = "0.16"
 num_cpus = "1.17"
 once_cell = "1.21"
-vfx-exr = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["htj2k"] }
-vfx-io  = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["exr", "htj2k"] }
+vfx-exr  = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["htj2k"] }
+vfx-io   = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["exr", "htj2k"] }
+vfx-core = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main" }
 playa-ffmpeg = { version = "8.0.3", features = ["static"] }
 rayon = "1.11"
 regex = "1.12"
@@ -85,8 +86,9 @@ lto = false
 # OIIO-aligned refactor (see vfx-rs/TODO2.md). Remove these lines once the
 # upstream rev is bumped to include the merged changes.
 [patch."ssh://git@github.com/ssoj13/vfx-rs.git"]
-vfx-exr = { path = "../vfx-rs/crates/exr/vfx-exr" }
-vfx-io  = { path = "../vfx-rs/crates/oiio/vfx-io" }
+vfx-exr  = { path = "../vfx-rs/crates/exr/vfx-exr" }
+vfx-io   = { path = "../vfx-rs/crates/oiio/vfx-io" }
+vfx-core = { path = "../vfx-rs/crates/foundation/vfx-core" }
 
 [package.metadata.packager]
 product-name = "Playa"
