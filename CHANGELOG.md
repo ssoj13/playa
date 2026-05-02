@@ -89,6 +89,24 @@ in ~36s on the project's MSVC + vcpkg toolchain.
 
 ---
 
+### Phase E in playa — byte-exact pass-through (commit `7cbc20c`)
+
+`write_exr_pass_through` switched from decoded read+write
+(`vfx_io::exr::read_layers` + `write_layers`) to byte-exact
+(`read_layers_passthrough` + `write_layers_passthrough`) — uses the new
+chunk-pass-through pipeline added upstream in vfx-rs commit `dfd56d1`.
+
+The source EXR's `compressed_block` bytes (DWAA / DWAB / B44 / HTJ2K /
+PIZ / ZIP / ...) flow through unchanged — no decompress + recompress,
+so lossy formats keep their exact source quality. Custom EXR header
+attrs (chromaticities, timecode, owner, capture_date, worldToCamera,
+...) preserved verbatim because the source Header is fed back into
+the chunk writer.
+
+Verified via bootstrap (40.6s release build).
+
+---
+
 ## Pending follow-ups
 
 See `vfx-rs/TODO2.md` for the full multi-repo plan. Playa-specific items
@@ -96,7 +114,7 @@ still open:
 
 - **Pass-through + overrides** — third encode mode where modified layers
   re-encode with the chosen compression and untouched layers stay byte-exact
-  (depends on vfx-rs Phase E chunk passthrough).
+  (mixed-write support pending in vfx-rs).
 - **Layer picker widget** in the Project panel — switch which layer feeds
   the viewport `Frame` for multi-layer EXR sources.
 - **`SourceImage` runtime cache on `FileNode`** — currently re-opened per
