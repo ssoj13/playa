@@ -15,30 +15,34 @@ from module rustdocs and code tracing — not from rumors or the old README.
 
 ```
 playa/
-├── Cargo.toml          # workspace = ["xtask"], excludes crates/playa-py
+├── Cargo.toml          # workspace: playa-engine, playa-events, playa-io, playa-ui, xtask; excludes playa-py
 ├── build.rs            # minimal, only cargo:rerun-if-changed
-├── bootstrap.ps1/.sh   # wrappers → cargo xtask
+├── bootstrap.py        # vcpkg + VS env → `cargo xtask` (build, test, …)
 ├── xtask/              # build automation (release/post/pre, lib_discovery)
 ├── crates/
-│   ├── playa-py/       # Python bindings (PyO3, separate workspace)
-│   └── vfx-rs/         # path-dep for vfx-exr (EXR I/O), vfx-jph and others
+│   ├── playa-engine/
+│   ├── playa-events/
+│   ├── playa-io/
+│   ├── playa-ui/
+│   └── playa-py/       # Python bindings — separate workspace (`xtask`/maturin)
 ├── src/                # application code (see below)
 └── md/                 # documentation (this file, DEVELOP, DIAGRAMS, TODO, WGPU)
 ```
 
 ### `src/` — module map
 
+**Layout:** `crates/playa-engine` holds `core/`, `entities/`, `defaults/`, `utils/`.
+`crates/playa-ui` holds `widgets/`, `dialogs/`, `help`, `ui`; the root `lib` re-exports
+them as `playa::widgets` / `playa::dialogs` etc. (so `crate::widgets` in `app/` still resolves).
+
 ```
 src/
-├── main.rs             # binary: ffmpeg::init → cli → log → run_app
-├── lib.rs              # lib crate: pub mod core/app/entities/widgets/...
+├── main.rs             # binary: playa_io::init_ffmpeg → cli → log → run_app
+├── lib.rs              # re-exports playa_engine, playa_events, playa_ui (widgets/dialogs/help/ui)
 ├── runner.rs           # eframe::run_native + state restoration
 ├── cli.rs              # clap::Args + version with backend info
 ├── config.rs           # PathConfig (CLI/ENV/dirs-next), theme colors, defaults
-├── help.rs             # F1 overlay
 ├── shell.rs            # OS integration (drag-drop)
-├── ui.rs               # composition of top menu/panels
-├── utils.rs            # sequence parsing, media extensions
 ├── main_events.rs      # central event handler (AppEventContext)
 │
 ├── app/                # PlayaApp + eframe::App impl
@@ -50,55 +54,13 @@ src/
 │   ├── project_io.rs   # save/load Project, load_sequences
 │   └── api.rs          # REST server start, ApiCommand handling
 │
-├── core/               # the "engine" — UI-independent
-│   ├── event_bus.rs        # EventBus (sub/emit/poll), Event, BoxedEvent
-│   ├── player.rs           # Player: state in Attrs, JKL shuttle, FPS presets
-│   ├── player_events.rs    # SetFrame, TogglePlayPause, JogForward/Backward, ...
-│   ├── workers.rs          # Workers: work-stealing deques + epoch
-│   ├── cache_man.rs        # CacheManager: memory limit + epoch + dirty_repaint
-│   ├── global_cache.rs     # GlobalFrameCache: nested HashMap + lru::LruCache
-│   ├── debounced_preloader.rs  # 500ms delay before full preload
-│   └── layout_events.rs    # ResetLayout, LayoutSelected/Created/Deleted/...
-│
-├── entities/           # data model + business logic
-│   ├── attrs.rs            # Attrs: HashMap<&str, AttrValue> + dirty + schema
-│   ├── attr_schemas.rs     # FILE/COMP/LAYER/CAMERA/TEXT/PLAYER/PROJECT_SCHEMA
-│   ├── keys.rs             # const keys: A_IN, A_OUT, A_FRAME, A_SPEED, ...
-│   ├── traits.rs           # FrameCache, WorkerPool, CacheStrategy (DI inversion)
-│   ├── node.rs             # trait Node + ComputeContext
-│   ├── node_kind.rs        # enum NodeKind { File, Comp, Camera, Text }
-│   ├── file_node.rs        # FileNode: file_mask, file_start, file_end
-│   ├── comp_node.rs        # CompNode + Layer: composition with effects
-│   ├── camera_node.rs      # CameraNode: fov, near/far, POI vs rotation
-│   ├── text_node.rs        # TextNode: cosmic-text, shared FontSystem
-│   ├── comp_events.rs      # CurrentFrameChanged/LayersChanged/AttrsChanged
-│   ├── frame.rs            # Frame, PixelBuffer (U8/F16/F32), FrameStatus
-│   ├── compositor.rs       # CpuCompositor, BlendMode, apply_blend
-│   ├── gpu_compositor.rs   # GpuCompositor (OpenGL FBO + GLSL)
-│   ├── transform.rs        # 3D affine + sample_bilinear (rayon par_chunks)
-│   ├── space.rs            # image_to_frame / frame_to_image / object_to_src
-│   ├── loader.rs           # extension classification → exr/video/generic
-│   ├── loader_video.rs     # FFmpeg metadata and frame decoding
-│   ├── project.rs          # Project: media pool + active + modify_comp pattern
-│   └── effects/            # blur.rs, brightness.rs, hsv.rs (+ Effect, EffectType)
-│
-├── widgets/            # reusable egui widgets (communicate via EventBus)
-│   ├── viewport/           # OpenGL viewport: renderer/shaders/gizmo/pick/tool
-│   ├── timeline/           # timeline with layers, work area, bookmarks
-│   ├── project/            # media panel (Project)
-│   ├── node_editor/        # composition graph (egui-snarl)
-│   ├── ae/                 # Attribute Editor (universal for Attrs)
-│   ├── status/             # status bar (FPS, file name, cache, render time)
-│   ├── file_dialogs.rs     # rfd wrappers
-│   └── actions.rs          # ActionQueue { hovered, events: Vec<BoxedEvent> }
-│
-├── dialogs/            # modal dialogs
-│   ├── prefs/              # AppSettings, HotkeyHandler, prefs_events
-│   └── encode/             # EncodeDialog: H.264/265, ProRes, NVENC/QSV/AMF
-│
-└── server/             # REST API
-    ├── mod.rs              # re-exports + endpoint enumeration
-    └── api.rs              # ApiServer, ApiCommand, SharedApiState (rouille)
+├── server/             # REST API
+│   ├── mod.rs          # re-exports + endpoint enumeration
+│   └── api.rs          # ApiServer, ApiCommand, SharedApiState (rouille)
+
+(See **`crates/playa-engine`** for `core/` and **`entities/`** (including
+`loader.rs` → **`playa_io`**), and **`crates/playa-ui`** for `widgets/` + `dialogs/`
++ `help` + compositor-heavy `ui`.)
 ```
 
 ---
@@ -108,7 +70,7 @@ src/
 ### 1. Event-driven, no direct calls between widgets
 
 Widgets **don't call each other** and don't reach into `PlayaApp` directly.
-Instead they emit typed events into the `EventBus` (`src/core/event_bus.rs`).
+Instead they emit typed events into the `EventBus` (`playa_engine::core::event_bus`).
 
 ```text
         emit::<E>(event)
@@ -521,10 +483,14 @@ egui_dock tree with configurable visibility for the Project/Attributes panels.
 
 ## Build pipeline
 
-`bootstrap.ps1` / `bootstrap.sh` → `cargo xtask`. The thin `build.rs` does
-nothing — dependency management and DLL/so copying are delegated to xtask.
+`python bootstrap.py build` (default **release**; add `-d` / `--debug` for debug) sets
+`VCPKG_ROOT` / `VCPKGRS_TRIPLET`, merges the MSVC environment (vcv-rs or `vcvars64.bat`),
+then runs `cargo xtask build`. The thin `build.rs` does nothing — dependency management
+and DLL/so copying are delegated to xtask.
 
 ```
+python bootstrap.py build             # release via xtask
+python bootstrap.py build -d          # debug
 cargo xtask build [--release|--debug]   # build + post-build copy
 cargo xtask post                        # copy native libs
 cargo xtask verify                      # check dependencies

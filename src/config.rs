@@ -130,21 +130,13 @@ fn get_data_dir(config: &PathConfig) -> PathBuf {
     get_app_dir(config, dirs_next::data_dir)
 }
 
-// ============================================================================
-// Default Values
-// ============================================================================
-
-/// Default frames per second for new comps/files.
-pub const DEFAULT_FPS: f32 = 24.0;
+pub use playa_engine::defaults::{DEFAULT_DIM, DEFAULT_FPS, DEFAULT_SRC_LEN};
 
 /// Default playback speed multiplier.
 pub const DEFAULT_SPEED: f32 = 1.0;
 
 /// Default layer opacity.
 pub const DEFAULT_OPACITY: f32 = 1.0;
-
-/// Default composition dimensions (width, height).
-pub const DEFAULT_DIM: (usize, usize) = (1920, 1080);
 
 /// Default camera near clip plane.
 pub const DEFAULT_NEAR_CLIP: f32 = 1.0;
@@ -157,9 +149,6 @@ pub const DEFAULT_FOV: f32 = 39.6;
 
 /// Minimum speed value (prevents division by zero).
 pub const MIN_SPEED: f32 = 0.001;
-
-/// Default source length for new nodes.
-pub const DEFAULT_SRC_LEN: i32 = 100;
 
 // ============================================================================
 // Frame Status Colors (for cache visualization)

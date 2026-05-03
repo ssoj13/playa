@@ -1,0 +1,19 @@
+[package]
+name = "playa-io"
+version = "0.1.142"
+edition = "2024"
+publish = false
+description = "Playa media I/O — video (FFmpeg), EXR (vfx-exr/io), generic images"
+
+[lib]
+name = "playa_io"
+path = "src/lib.rs"
+
+[dependencies]
+half = "2.7"
+image = { version = "0.25", features = ["png", "jpeg", "tiff", "tga", "hdr"] }
+log = "0.4"
+playa-ffmpeg = { version = "8.0.3", features = ["static"] }
+vfx-core = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main" }
+vfx-exr = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["htj2k"] }
+vfx-io = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["exr", "htj2k"] }

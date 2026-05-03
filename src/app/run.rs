@@ -341,7 +341,7 @@ impl PlayaApp {
         );
         let desired_is_cpu = matches!(
             self.settings.compositor_backend,
-            crate::dialogs::prefs::CompositorBackend::Cpu
+            playa_events::CompositorBackend::Cpu
         );
 
         // Only create new compositor if we need to switch
@@ -351,8 +351,8 @@ impl PlayaApp {
                 self.settings.compositor_backend
             );
             let new_backend = match self.settings.compositor_backend {
-                crate::dialogs::prefs::CompositorBackend::Cpu => CompositorType::Cpu(CpuCompositor),
-                crate::dialogs::prefs::CompositorBackend::Gpu => {
+                playa_events::CompositorBackend::Cpu => CompositorType::Cpu(CpuCompositor),
+                playa_events::CompositorBackend::Gpu => {
                     CompositorType::Gpu(GpuCompositor::new(gl.clone()))
                 }
             };

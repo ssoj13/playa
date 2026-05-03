@@ -308,11 +308,23 @@ impl PlayaApp {
                 &mut changed,
             );
             if !changed.is_empty() {
-                self.event_bus.emit_boxed(Box::new(SetLayerAttrsEvent {
-                    comp_uuid,
-                    layer_uuids: ae_focus.to_vec(),
-                    attrs: changed,
-                }));
+                let attrs: Vec<(String, serde_json::Value)> = changed
+                    .into_iter()
+                    .filter_map(|(k, v)| match serde_json::to_value(&v) {
+                        Ok(j) => Some((k, j)),
+                        Err(err) => {
+                            log::warn!("[AE] layer attr JSON {:?}: {}", k, err);
+                            None
+                        }
+                    })
+                    .collect();
+                if !attrs.is_empty() {
+                    self.event_bus.emit_boxed(Box::new(SetLayerAttrsEvent {
+                        comp_uuid,
+                        layer_uuids: ae_focus.to_vec(),
+                        attrs,
+                    }));
+                }
             }
 
             // === Effects UI (single layer only) ===

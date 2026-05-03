@@ -11,7 +11,7 @@ use playa::config;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize FFmpeg
-    playa_ffmpeg::init()?;
+    playa_io::init_ffmpeg()?;
 
     // Parse command-line arguments first (needed for log setup)
     let args = Args::parse();

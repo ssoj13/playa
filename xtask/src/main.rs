@@ -209,7 +209,7 @@ fn cmd_build(release: bool) -> Result<()> {
     println!("Step 1/1: Building...");
 
     let mut cmd = Command::new("cargo");
-    cmd.arg("build");
+    cmd.args(["build", "-p", "playa"]);
 
     if release {
         cmd.arg("--release");

@@ -6,8 +6,10 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::module_inception)]
 
-// Core engine (cache, events, player, workers)
-pub mod core;
+// Engine: cache, events, player, workers, entities, loaders, compositor
+pub use playa_engine::{core, defaults, entities, utils};
+/// Typed events + [`playa_events::bus::EventBus`] (single cross-layer messaging path).
+pub use playa_events;
 
 // Main application (PlayaApp struct and related)
 pub mod app;
@@ -19,15 +21,12 @@ pub use runner::run_app;
 // App modules
 pub mod cli;
 pub mod config;
-pub mod dialogs;
-pub mod entities;
-pub mod help;
 pub mod main_events;
 pub mod server;
 pub mod shell;
-pub mod ui;
-pub mod utils;
-pub mod widgets;
+
+/// UI (widgets, dialogs, help, composition) — extracted to the `playa-ui` crate.
+pub use playa_ui::{dialogs, help, ui, widgets};
 
 // Re-export commonly used types from core
 pub use core::cache_man::CacheManager;

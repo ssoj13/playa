@@ -69,7 +69,7 @@ use crate::widgets::project::project_events::*;
 use crate::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
-use crate::widgets::viewport::tool::SetToolEvent;
+use playa_events::viewport_tool::SetToolEvent;
 use crate::widgets::node_editor::node_events::*;
 use crate::dialogs::prefs::prefs_events::*;
 use crate::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
@@ -960,11 +960,23 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SetLayerAttrsEvent>(event) {
         log::trace!("[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}", e.comp_uuid, e.layer_uuids, e.attrs);
         project.modify_comp(e.comp_uuid, |comp| {
-            let values: Vec<(&str, crate::entities::AttrValue)> = e.attrs.iter()
-                .map(|(k, v)| (k.as_str(), v.clone()))
-                .collect();
+            use crate::entities::AttrValue;
             for layer_uuid in &e.layer_uuids {
-                comp.set_child_attrs(*layer_uuid, values.clone());
+                if let Some(layer) = comp.get_layer_mut(*layer_uuid) {
+                    for (key, json_v) in &e.attrs {
+                        match serde_json::from_value::<AttrValue>(json_v.clone()) {
+                            Ok(value) => layer.attrs.set(key, value),
+                            Err(err) => log::warn!(
+                                "[SetLayerAttrs] skip key {:?}: {}",
+                                key,
+                                err
+                            ),
+                        }
+                    }
+                    if layer.attrs.is_dirty() {
+                        comp.mark_dirty();
+                    }
+                }
             }
         });
 
