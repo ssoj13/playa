@@ -3965,6 +3965,22 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 name = "playa"
 version = "0.1.142"
 dependencies = [
+ "clap",
+ "env_logger",
+ "log",
+ "playa-app",
+ "playa-engine",
+ "playa-events",
+ "playa-io",
+ "playa-ui",
+ "puffin",
+ "puffin_egui",
+]
+
+[[package]]
+name = "playa-app"
+version = "0.1.142"
+dependencies = [
  "anyhow",
  "clap",
  "const_format",
@@ -3979,10 +3995,7 @@ dependencies = [
  "num_cpus",
  "playa-engine",
  "playa-events",
- "playa-io",
  "playa-ui",
- "puffin",
- "puffin_egui",
  "regex",
  "rfd",
  "rouille",

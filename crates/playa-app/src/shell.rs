@@ -5,16 +5,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::core::cache_man::CacheManager;
-use crate::dialogs::prefs::AppSettings;
-use crate::entities::Project;
-use crate::core::event_bus::{CompEventEmitter, EventBus};
-use crate::entities::CacheStrategy;
+use playa_engine::core::cache_man::CacheManager;
+use playa_ui::dialogs::prefs::AppSettings;
+use playa_engine::entities::Project;
+use playa_engine::core::event_bus::{CompEventEmitter, EventBus};
+use playa_engine::entities::CacheStrategy;
 use crate::main_events::{handle_app_event, AppEventContext, EventResult};
-use crate::core::player::Player;
-use crate::widgets::timeline::TimelineState;
-use crate::widgets::viewport::ViewportState;
-use crate::widgets::node_editor::NodeEditorState;
+use playa_engine::core::player::Player;
+use playa_ui::widgets::timeline::TimelineState;
+use playa_ui::widgets::viewport::ViewportState;
+use playa_ui::widgets::node_editor::NodeEditorState;
 
 /// Common shell state shared by all standalone binaries
 pub struct Shell {
@@ -54,8 +54,8 @@ impl Shell {
 
     /// Load a sequence from path
     pub fn load_sequence(&mut self, path: &str) {
-        use crate::entities::FileNode;
-        use crate::entities::node::Node;
+        use playa_engine::entities::FileNode;
+        use playa_engine::entities::node::Node;
         
         let path_buf = PathBuf::from(path);
         if !path_buf.exists() {

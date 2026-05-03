@@ -11,7 +11,7 @@
 /// 2. Run cargo build
 /// 3. Copy all native libraries and shaders
 ///
-/// See xtask/ directory for implementation details.
+/// See crates/xtask for implementation details.
 fn main() {
     // Only rerun if build.rs itself changes
     println!("cargo:rerun-if-changed=build.rs");

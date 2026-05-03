@@ -6,9 +6,9 @@
 //! - Dock panel visibility sync
 
 use super::{DockTab, PlayaApp};
-use crate::dialogs::prefs::prefs::Layout;
-use crate::widgets::timeline::TimelineViewMode;
-use crate::widgets::viewport::ViewportMode;
+use playa_ui::dialogs::prefs::prefs::Layout;
+use playa_ui::widgets::timeline::TimelineViewMode;
+use playa_ui::widgets::viewport::ViewportMode;
 
 impl PlayaApp {
     /// Sync dock tabs visibility with show_* flags.

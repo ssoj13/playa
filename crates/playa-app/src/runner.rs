@@ -7,9 +7,9 @@ use log::{info, trace, warn};
 use crate::app::PlayaApp;
 use crate::cli::Args;
 use crate::config;
-use crate::core::player::Player;
-use crate::core::workers::Workers;
-use crate::widgets::status::StatusBar;
+use playa_engine::core::player::Player;
+use playa_engine::core::workers::Workers;
+use playa_ui::widgets::status::StatusBar;
 
 /// Run the playa application with given arguments.
 ///
@@ -201,7 +201,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 // PlayaApp::load_project in project_io.rs which has the same core steps).
                 if let Some(ref playlist_path) = args.playlist {
                     info!("Loading playlist: {}", playlist_path.display());
-                    match crate::entities::Project::from_json(playlist_path) {
+                    match playa_engine::entities::Project::from_json(playlist_path) {
                         Ok(mut project) => {
                             project.attach_schemas();
 

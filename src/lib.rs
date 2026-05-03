@@ -11,26 +11,18 @@ pub use playa_engine::{core, defaults, entities, utils};
 /// Typed events + [`playa_events::bus::EventBus`] (single cross-layer messaging path).
 pub use playa_events;
 
-// Main application (PlayaApp struct and related)
-pub mod app;
-
-// Application runner (entry point for CLI and Python)
-pub mod runner;
-pub use runner::run_app;
-
-// App modules
-pub mod cli;
-pub mod config;
-pub mod main_events;
-pub mod server;
-pub mod shell;
-
-/// UI (widgets, dialogs, help, composition) — extracted to the `playa-ui` crate.
 pub use playa_ui::{dialogs, help, ui, widgets};
+
+pub use playa_app::cli;
+pub use playa_app::config;
+pub use playa_app::run_app;
+pub use playa_app::{app, main_events, runner, server, shell};
 
 // Re-export commonly used types from core
 pub use core::cache_man::CacheManager;
-pub use core::event_bus::{downcast_event, BoxedEvent, CompEventEmitter, EventBus, EventEmitter};
+pub use core::event_bus::{
+    downcast_event, BoxedEvent, CompEventEmitter, EventBus, EventEmitter,
+};
 pub use core::global_cache::GlobalFrameCache;
 pub use entities::CacheStrategy;
 pub use core::player::Player;

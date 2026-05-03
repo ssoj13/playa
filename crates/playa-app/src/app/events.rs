@@ -7,14 +7,14 @@
 //! - Focus detection (determine_focused_window)
 
 use super::PlayaApp;
-use crate::core::event_bus::downcast_event;
-use crate::dialogs::prefs::prefs_events::HotkeyWindow;
-use crate::entities::comp_events::*;
-use crate::entities::node::Node;
+use playa_engine::core::event_bus::downcast_event;
+use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
+use playa_engine::entities::comp_events::*;
+use playa_engine::entities::node::Node;
 use crate::main_events::{self, AppEventContext};
-use crate::widgets::ae::EffectAction;
-use crate::widgets::project::project_events::ClearCacheEvent;
-use crate::widgets::viewport::ViewportRefreshEvent;
+use playa_ui::widgets::ae::EffectAction;
+use playa_ui::widgets::project::project_events::ClearCacheEvent;
+use playa_ui::widgets::viewport::ViewportRefreshEvent;
 
 use eframe::egui;
 use log::{info, trace};
@@ -87,28 +87,28 @@ impl PlayaApp {
                 continue;
             }
             // Layout events - reset/select/create/delete/update/rename UI layout
-            if downcast_event::<crate::core::layout_events::ResetLayoutEvent>(&event).is_some() {
+            if downcast_event::<playa_engine::core::layout_events::ResetLayoutEvent>(&event).is_some() {
                 self.reset_layout();
                 continue;
             }
             // Named layout events
-            if let Some(evt) = downcast_event::<crate::core::layout_events::LayoutSelectedEvent>(&event) {
+            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutSelectedEvent>(&event) {
                 self.select_layout(&evt.0);
                 continue;
             }
-            if let Some(evt) = downcast_event::<crate::core::layout_events::LayoutCreatedEvent>(&event) {
+            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutCreatedEvent>(&event) {
                 self.create_layout(evt.0.clone());
                 continue;
             }
-            if let Some(evt) = downcast_event::<crate::core::layout_events::LayoutDeletedEvent>(&event) {
+            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutDeletedEvent>(&event) {
                 self.delete_layout(&evt.0);
                 continue;
             }
-            if downcast_event::<crate::core::layout_events::LayoutUpdatedEvent>(&event).is_some() {
+            if downcast_event::<playa_engine::core::layout_events::LayoutUpdatedEvent>(&event).is_some() {
                 self.update_current_layout();
                 continue;
             }
-            if let Some(evt) = downcast_event::<crate::core::layout_events::LayoutRenamedEvent>(&event) {
+            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutRenamedEvent>(&event) {
                 self.rename_layout(&evt.0, &evt.1);
                 continue;
             }
@@ -221,14 +221,14 @@ impl PlayaApp {
             info!("Created new comp: {}", uuid);
         }
         if let Some(name) = deferred_new_camera {
-            use crate::entities::CameraNode;
+            use playa_engine::entities::CameraNode;
             let camera = CameraNode::new(&name);
             let uuid = camera.uuid();
             self.project.add_node(camera.into());
             info!("Created new camera: {}", uuid);
         }
         if let Some((name, text)) = deferred_new_text {
-            use crate::entities::TextNode;
+            use playa_engine::entities::TextNode;
             let text_node = TextNode::new(&name, &text);
             let uuid = text_node.uuid();
             self.project.add_node(text_node.into());
@@ -315,7 +315,7 @@ impl PlayaApp {
         layer_uuid: Uuid,
         actions: Vec<EffectAction>,
     ) {
-        use crate::entities::effects::Effect;
+        use playa_engine::entities::effects::Effect;
         
         let mut needs_invalidate = false;
         
@@ -425,7 +425,7 @@ impl PlayaApp {
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
-            use crate::entities::comp_events::{
+            use playa_engine::entities::comp_events::{
                 AlignLayersStartEvent, AlignLayersEndEvent, 
                 TrimLayersStartEvent, TrimLayersEndEvent, 
                 DuplicateLayersEvent, CopyLayersEvent, PasteLayersEvent, 

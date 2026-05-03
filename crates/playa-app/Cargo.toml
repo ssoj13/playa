@@ -1,0 +1,34 @@
+[package]
+name = "playa-app"
+version = "0.1.142"
+edition = "2024"
+publish = false
+description = "Playa desktop host — PlayaApp, event routing, REST API, CLI"
+
+[lib]
+name = "playa_app"
+path = "src/lib.rs"
+
+[dependencies]
+playa-engine = { path = "../playa-engine" }
+playa-events = { path = "../playa-events" }
+playa-ui = { path = "../playa-ui" }
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+const_format = "0.2"
+crossbeam-channel = "0.5"
+dirs-next = "2.0"
+eframe = { version = "0.33", features = ["persistence"] }
+egui_dock = { version = "0.18", features = ["serde"] }
+egui_glow = "0.33"
+env_logger = "0.11"
+image = { version = "0.25", features = ["png", "jpeg", "tiff", "tga", "hdr"] }
+log = "0.4"
+num_cpus = "1.17"
+regex = "1.12"
+rfd = "0.17"
+rouille = "3.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.22", features = ["v4", "serde"] }
+scanseq = "0.1.5"

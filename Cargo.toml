@@ -1,11 +1,12 @@
 [workspace]
 members = [
     ".",
+    "crates/playa-app",
     "crates/playa-engine",
     "crates/playa-events",
     "crates/playa-io",
     "crates/playa-ui",
-    "xtask",
+    "crates/xtask",
 ]
 exclude = ["crates/playa-py"]
 resolver = "2"
@@ -31,34 +32,17 @@ default = []
 profiler = ["dep:puffin", "dep:puffin_egui"]
 
 [dependencies]
-anyhow = "1.0"
-clap = { version = "4.6", features = ["derive"] }
-const_format = "0.2"
-crossbeam-channel = "0.5"
-dirs-next = "2.0"
+playa-app = { path = "crates/playa-app" }
 playa-engine = { path = "crates/playa-engine" }
 playa-events = { path = "crates/playa-events" }
 playa-io = { path = "crates/playa-io" }
 playa-ui = { path = "crates/playa-ui" }
-eframe = { version = "0.33", features = ["persistence"] }
-egui_dock = { version = "0.18", features = ["serde"] }
-egui_glow = "0.33"
+clap = { version = "4.6", features = ["derive"] }
 env_logger = "0.11"
-image = { version = "0.25", features = ["png", "jpeg", "tiff", "tga", "hdr"] }
 log = "0.4"
-num_cpus = "1.17"
-regex = "1.12"
-rfd = "0.17"
-rouille = "3.6"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-uuid = { version = "1.22", features = ["v4", "serde"] }
-scanseq = "0.1.5"
+
 puffin = { version = "0.20", optional = true }
 puffin_egui = { version = "0.30", optional = true }
-
-# Build dependencies moved to xtask: Use `cargo xtask build` to build with automatic dependency management
-# Set RPATH on Linux to search for .so files in executable directory (configured in .cargo/config.toml)
 
 # Binary targets
 [[bin]]
@@ -68,12 +52,7 @@ path = "src/main.rs"
 [profile.release]
 strip = false
 lto = false
-# codegen-units = 1
 
-# Local development patch: redirect vfx-exr (and any future vfx-io use) to the
-# sibling working copy in C:\projects\projects.rust.cg\vfx-rs while we land the
-# OIIO-aligned refactor (see vfx-rs/TODO2.md). Remove these lines once the
-# upstream rev is bumped to include the merged changes.
 [patch."ssh://git@github.com/ssoj13/vfx-rs.git"]
 vfx-exr  = { path = "../vfx-rs/crates/exr/vfx-exr" }
 vfx-io   = { path = "../vfx-rs/crates/oiio/vfx-io" }
@@ -100,13 +79,8 @@ allow-downgrades = true
 installer-mode = "perMachine"
 
 [package.metadata.packager.macos]
-# Code signing identity used by cargo-packager (Developer ID Application certificate)
-# Changing certificates? Update this string to match the new identity exactly.
 signing-identity = "Developer ID Application: Alexander Khalyavin (Y8PQ7YASU9)"
-# Notarization disabled (requires additional setup with Apple ID + app-specific password)
 
 [package.metadata.release]
-# Customize the release commit message
 pre-release-commit-message = "chore: Release {{crate_name}} v{{version}}"
-# Run git-cliff before creating the release commit to update CHANGELOG.md
 pre-release-hook = ["git-cliff", "--tag", "v{{version}}", "-o", "CHANGELOG.md"]

@@ -13,11 +13,11 @@ use eframe::egui;
 use egui_dock::TabViewer;
 
 use crate::app::{DockTab, PlayaApp};
-use crate::entities::node::Node;
-use crate::widgets::node_editor::render_node_editor;
-use crate::widgets::viewport::ViewportRefreshEvent;
-use crate::ui;
-use crate::widgets;
+use playa_engine::entities::node::Node;
+use playa_ui::widgets::node_editor::render_node_editor;
+use playa_ui::widgets::viewport::ViewportRefreshEvent;
+use playa_ui::ui;
+use playa_ui::widgets;
 
 impl PlayaApp {
     /// Render project browser tab.
@@ -87,7 +87,7 @@ impl PlayaApp {
         let frame_not_ready = self
             .frame
             .as_ref()
-            .map(|f| f.status() != crate::entities::frame::FrameStatus::Loaded)
+            .map(|f| f.status() != playa_engine::entities::frame::FrameStatus::Loaded)
             .unwrap_or(true);
         // Also re-fetch if we have no frame yet (workers may have cached it)
         let no_frame = self.frame.is_none();
@@ -100,7 +100,7 @@ impl PlayaApp {
             let new_frame_loaded = self
                 .frame
                 .as_ref()
-                .map(|f| f.status() == crate::entities::frame::FrameStatus::Loaded)
+                .map(|f| f.status() == playa_engine::entities::frame::FrameStatus::Loaded)
                 .unwrap_or(false);
             if new_frame_loaded {
                 self.viewport_state.last_rendered_epoch = current_epoch;
@@ -188,7 +188,7 @@ impl PlayaApp {
             if let Some(comp_uuid) = active {
                 self.project.modify_comp(comp_uuid, |comp| {
                     let comp_name = comp.name().to_string();
-                    if crate::widgets::ae::render(
+                    if playa_ui::widgets::ae::render(
                         ui,
                         &mut comp.attrs,
                         &mut self.attributes_state,
@@ -228,7 +228,7 @@ impl PlayaApp {
         comp_uuid: uuid::Uuid,
         ae_focus: &[uuid::Uuid],
     ) {
-        use crate::entities::comp_events::SetLayerAttrsEvent;
+        use playa_engine::entities::comp_events::SetLayerAttrsEvent;
 
         let render_data = self
             .project
@@ -254,7 +254,7 @@ impl PlayaApp {
                         return None;
                     }
 
-                    let mut merged = crate::entities::Attrs::new();
+                    let mut merged = playa_engine::entities::Attrs::new();
                     let mut mixed_keys: HashSet<String> = HashSet::new();
 
                     if let Some(first_uuid) = ae_focus.first()
@@ -298,8 +298,8 @@ impl PlayaApp {
             .flatten();
 
         if let Some((mut attrs, mixed_keys, display_name)) = render_data {
-            let mut changed: Vec<(String, crate::entities::AttrValue)> = Vec::new();
-            crate::widgets::ae::render_with_mixed(
+            let mut changed: Vec<(String, playa_engine::entities::AttrValue)> = Vec::new();
+            playa_ui::widgets::ae::render_with_mixed(
                 ui,
                 &mut attrs,
                 &mut self.attributes_state,
@@ -341,7 +341,7 @@ impl PlayaApp {
 
                 if let Some(mut effects) = effects_opt {
                     let effect_actions =
-                        crate::widgets::ae::render_effects(ui, &mut effects, &mut self.attributes_state);
+                        playa_ui::widgets::ae::render_effects(ui, &mut effects, &mut self.attributes_state);
 
                     // Handle effect actions
                     if !effect_actions.is_empty() {
@@ -361,7 +361,7 @@ impl PlayaApp {
             let mut node_changed = false;
             self.project.modify_node(node_uuid, |node| {
                 let name = node.name().to_string();
-                if crate::widgets::ae::render(ui, node.attrs_mut(), &mut self.attributes_state, &name)
+                if playa_ui::widgets::ae::render(ui, node.attrs_mut(), &mut self.attributes_state, &name)
                 {
                     node_changed = true;
                 }
@@ -392,7 +392,7 @@ impl PlayaApp {
 
         let mut common_keys: BTreeSet<String> = BTreeSet::new();
         let mut first = true;
-        let mut all_attrs: Vec<crate::entities::Attrs> = Vec::new();
+        let mut all_attrs: Vec<playa_engine::entities::Attrs> = Vec::new();
 
         for uuid in ae_focus {
             if let Some(attrs) = self.project.with_node(*uuid, |n| n.attrs().clone()) {
@@ -412,7 +412,7 @@ impl PlayaApp {
             return;
         }
 
-        let mut merged = crate::entities::Attrs::new();
+        let mut merged = playa_engine::entities::Attrs::new();
         let mut mixed_keys: HashSet<String> = HashSet::new();
 
         // Copy first node's attrs for common keys
@@ -435,8 +435,8 @@ impl PlayaApp {
             }
         }
 
-        let mut changed: Vec<(String, crate::entities::AttrValue)> = Vec::new();
-        crate::widgets::ae::render_with_mixed(
+        let mut changed: Vec<(String, playa_engine::entities::AttrValue)> = Vec::new();
+        playa_ui::widgets::ae::render_with_mixed(
             ui,
             &mut merged,
             &mut self.attributes_state,

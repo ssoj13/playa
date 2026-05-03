@@ -7,9 +7,9 @@
 //! - Screenshot capture (take_screenshot, capture_raw_frame)
 
 use super::PlayaApp;
-use crate::core::player_events::*;
-use crate::entities::frame::{PixelBuffer, TonemapMode};
-use crate::entities::node::Node;
+use playa_engine::core::player_events::*;
+use playa_engine::entities::frame::{PixelBuffer, TonemapMode};
+use playa_engine::entities::node::Node;
 use crate::server::ApiCommand;
 
 use eframe::egui;

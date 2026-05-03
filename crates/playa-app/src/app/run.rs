@@ -13,7 +13,7 @@ use egui_dock::DockArea;
 use log::{info, trace};
 
 use crate::app::{DockTabs, PlayaApp};
-use crate::dialogs::prefs::render_settings_window;
+use playa_ui::dialogs::prefs::render_settings_window;
 
 impl eframe::App for PlayaApp {
     /// Main frame update - called every frame by eframe.
@@ -126,7 +126,7 @@ impl eframe::App for PlayaApp {
         if let Some(new_frame) = self.player.update(&mut self.project) {
             // Emit same event as scrubbing - unified handling in handle_events()
             self.event_bus
-                .emit(crate::core::player_events::SetFrameEvent(new_frame));
+                .emit(playa_engine::core::player_events::SetFrameEvent(new_frame));
         }
 
         // Handle composition events (SetFrameEvent -> triggers frame loading)
@@ -211,7 +211,7 @@ impl eframe::App for PlayaApp {
                 let pointer_released = ui.input(|i| i.pointer.any_released());
                 if pointer_released {
                     self.event_bus
-                        .emit(crate::core::layout_events::LayoutUpdatedEvent);
+                        .emit(playa_engine::core::layout_events::LayoutUpdatedEvent);
                 }
             }
         });
@@ -312,9 +312,9 @@ impl PlayaApp {
     /// Reset all settings to defaults.
     pub fn reset_settings(&mut self, ctx: &egui::Context) {
         info!("Resetting settings to default");
-        self.settings = crate::dialogs::prefs::AppSettings::default();
+        self.settings = playa_ui::dialogs::prefs::AppSettings::default();
         self.player.reset_settings();
-        self.viewport_state = crate::widgets::viewport::ViewportState::new();
+        self.viewport_state = playa_ui::widgets::viewport::ViewportState::new();
         self.shader_manager.reset_settings();
 
         // Reset window size
@@ -331,8 +331,8 @@ impl PlayaApp {
 
     /// Update compositor backend based on settings (CPU vs GPU).
     pub fn update_compositor_backend(&mut self, gl: &std::sync::Arc<glow::Context>) {
-        use crate::entities::compositor::{CompositorType, CpuCompositor};
-        use crate::entities::gpu_compositor::GpuCompositor;
+        use playa_engine::entities::compositor::{CompositorType, CpuCompositor};
+        use playa_engine::entities::gpu_compositor::GpuCompositor;
 
         // Check current backend type first (cheap)
         let current_is_cpu = matches!(

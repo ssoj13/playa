@@ -15,20 +15,20 @@ mod tabs;
 pub use tabs::DockTabs;
 
 use crate::config;
-use crate::core::cache_man::CacheManager;
-use crate::core::event_bus::{CompEventEmitter, EventBus};
-use crate::core::player::Player;
-use crate::core::workers::Workers;
-use crate::core::DebouncedPreloader;
-use crate::dialogs::encode::EncodeDialog;
-use crate::dialogs::prefs::{AppSettings, HotkeyHandler};
-use crate::dialogs::prefs::prefs_events::HotkeyWindow;
-use crate::entities;
-use crate::entities::{Frame, Project};
-use crate::widgets::ae::AttributesState;
-use crate::widgets::node_editor::NodeEditorState;
-use crate::widgets::status::StatusBar;
-use crate::widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
+use playa_engine::core::cache_man::CacheManager;
+use playa_engine::core::event_bus::{CompEventEmitter, EventBus};
+use playa_engine::core::player::Player;
+use playa_engine::core::workers::Workers;
+use playa_engine::core::DebouncedPreloader;
+use playa_ui::dialogs::encode::EncodeDialog;
+use playa_ui::dialogs::prefs::{AppSettings, HotkeyHandler};
+use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
+use playa_engine::entities;
+use playa_engine::entities::{Frame, Project};
+use playa_ui::widgets::ae::AttributesState;
+use playa_ui::widgets::node_editor::NodeEditorState;
+use playa_ui::widgets::status::StatusBar;
+use playa_ui::widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
 
 use egui_dock::DockState;
 use std::sync::Arc;
@@ -65,7 +65,7 @@ pub struct PlayaApp {
     #[serde(skip)]
     pub viewport_renderer: Arc<std::sync::Mutex<ViewportRenderer>>,
     pub viewport_state: ViewportState,
-    pub timeline_state: crate::widgets::timeline::TimelineState,
+    pub timeline_state: playa_ui::widgets::timeline::TimelineState,
     #[serde(skip)]
     pub shader_manager: Shaders,
     /// Selected media item UUID in Project panel (persistent)
@@ -147,7 +147,7 @@ pub struct PlayaApp {
     pub node_editor_state: NodeEditorState,
     /// Gizmo state for viewport transform manipulation
     #[serde(skip)]
-    pub gizmo_state: crate::widgets::viewport::gizmo::GizmoState,
+    pub gizmo_state: playa_ui::widgets::viewport::gizmo::GizmoState,
     /// REST API shared state (updated each frame for remote clients)
     #[serde(skip)]
     pub api_state: Arc<crate::server::SharedApiState>,
@@ -197,7 +197,7 @@ impl Default for PlayaApp {
             status_bar,
             viewport_renderer: Arc::new(std::sync::Mutex::new(ViewportRenderer::new())),
             viewport_state: ViewportState::new(),
-            timeline_state: crate::widgets::timeline::TimelineState::default(),
+            timeline_state: playa_ui::widgets::timeline::TimelineState::default(),
             shader_manager: Shaders::new(),
             selected_media_uuid: None,
             last_render_time_ms: 0.0,
@@ -243,7 +243,7 @@ impl Default for PlayaApp {
             ae_focus: Vec::new(),
             attributes_state: AttributesState::default(),
             node_editor_state: NodeEditorState::new(),
-            gizmo_state: crate::widgets::viewport::gizmo::GizmoState::default(),
+            gizmo_state: playa_ui::widgets::viewport::gizmo::GizmoState::default(),
             api_state: Arc::new(crate::server::SharedApiState::default()),
             api_command_rx: None, // Started later when settings are loaded
             pending_screenshots: Vec::new(),

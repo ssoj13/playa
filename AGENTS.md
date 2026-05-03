@@ -15,52 +15,35 @@ from module rustdocs and code tracing — not from rumors or the old README.
 
 ```
 playa/
-├── Cargo.toml          # workspace: playa-engine, playa-events, playa-io, playa-ui, xtask; excludes playa-py
+├── Cargo.toml          # workspace + thin `lib` aggregator; excludes playa-py
 ├── build.rs            # minimal, only cargo:rerun-if-changed
 ├── bootstrap.py        # vcpkg + VS env → `cargo xtask` (build, test, …)
-├── xtask/              # build automation (release/post/pre, lib_discovery)
 ├── crates/
+│   ├── playa-app/      # PlayaApp + main_events + runner + cli + server + shell + config
 │   ├── playa-engine/
 │   ├── playa-events/
 │   ├── playa-io/
 │   ├── playa-ui/
+│   ├── xtask/          # build automation (release/post/pre, lib_discovery)
 │   └── playa-py/       # Python bindings — separate workspace (`xtask`/maturin)
-├── src/                # application code (see below)
+├── src/                # `main.rs`; `lib.rs` re-exports engine/ui/app for `playa::` API
 └── md/                 # documentation (this file, DEVELOP, DIAGRAMS, TODO, WGPU)
 ```
 
 ### `src/` — module map
 
-**Layout:** `crates/playa-engine` holds `core/`, `entities/`, `defaults/`, `utils/`.
-`crates/playa-ui` holds `widgets/`, `dialogs/`, `help`, `ui`; the root `lib` re-exports
-them as `playa::widgets` / `playa::dialogs` etc. (so `crate::widgets` in `app/` still resolves).
+**Layout:** `crates/playa-engine` (`core`, `entities`, `defaults`, `utils`), **`crates/playa-app`**
+(`app/`, **`main_events`**, `runner`, `cli`, **`server/`**, **`shell`**, **`config`**), **`crates/playa-ui`**
+(`widgets/`, `dialogs/`, `help`, `ui`). The root **`lib.rs`** aggregates re-exports so the public **`playa::`**
+crate surface (GUI + Python bindings) stays unchanged.
 
 ```
 src/
-├── main.rs             # binary: playa_io::init_ffmpeg → cli → log → run_app
-├── lib.rs              # re-exports playa_engine, playa_events, playa_ui (widgets/dialogs/help/ui)
-├── runner.rs           # eframe::run_native + state restoration
-├── cli.rs              # clap::Args + version with backend info
-├── config.rs           # PathConfig (CLI/ENV/dirs-next), theme colors, defaults
-├── shell.rs            # OS integration (drag-drop)
-├── main_events.rs      # central event handler (AppEventContext)
-│
-├── app/                # PlayaApp + eframe::App impl
-│   ├── mod.rs          # PlayaApp struct (47+ fields), Default, build_dock_state
-│   ├── run.rs          # eframe::App::update() — main frame
-│   ├── events.rs       # handle_events: poll EventBus → handle_app_event
-│   ├── tabs.rs         # DockTabs: TabViewer for egui_dock
-│   ├── layout.rs       # named layouts, sync_dock_tabs_visibility
-│   ├── project_io.rs   # save/load Project, load_sequences
-│   └── api.rs          # REST server start, ApiCommand handling
-│
-├── server/             # REST API
-│   ├── mod.rs          # re-exports + endpoint enumeration
-│   └── api.rs          # ApiServer, ApiCommand, SharedApiState (rouille)
+├── main.rs             # binary: playa_io::init_ffmpeg → log → run_app
+├── lib.rs              # re-exports playa_engine + playa_events + playa_ui + playa_app surfaces
+└── README.md           # src-level notes only
 
-(See **`crates/playa-engine`** for `core/` and **`entities/`** (including
-`loader.rs` → **`playa_io`**), and **`crates/playa-ui`** for `widgets/` + `dialogs/`
-+ `help` + compositor-heavy `ui`.)
+(crates/playa-app/src mirrors the former monolith: app/, server/, runner, cli, shell, …)
 ```
 
 ---

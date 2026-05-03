@@ -15,12 +15,12 @@
 
 ```
 playa/
-├── Cargo.toml          # workspace = ["xtask"], excludes crates/playa-py
+├── Cargo.toml          # workspace members: crates/playa-* + crates/xtask; playa-py — отдельно
 ├── build.rs            # минимальный, только cargo:rerun-if-changed
 ├── bootstrap.ps1/.sh   # обёртки → cargo xtask
-├── xtask/              # build automation (release/post/pre, lib_discovery)
 ├── crates/
 │   ├── playa-py/       # Python bindings (PyO3, отдельный workspace)
+│   ├── xtask/          # build automation (release/post/pre, lib_discovery)
 │   └── vfx-rs/         # путь-зависимость vfx-exr (EXR I/O), vfx-jph и др.
 ├── src/                # код приложения (см. ниже)
 └── md/                 # документация (этот файл, DEVELOP, DIAGRAMS, TODO, WGPU)

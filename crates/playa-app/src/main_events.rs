@@ -59,20 +59,20 @@ use log::trace;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::dialogs::encode::EncodeDialog;
-use crate::entities::Project;
-use crate::entities::node::Node;
-use crate::core::event_bus::{BoxedEvent, downcast_event};
-use crate::core::player::Player;
-use crate::core::player_events::*;
-use crate::widgets::project::project_events::*;
-use crate::entities::comp_events::*;
-use crate::widgets::timeline::timeline_events::*;
-use crate::widgets::viewport::viewport_events::*;
+use playa_ui::dialogs::encode::EncodeDialog;
+use playa_engine::entities::Project;
+use playa_engine::entities::node::Node;
+use playa_engine::core::event_bus::{BoxedEvent, downcast_event};
+use playa_engine::core::player::Player;
+use playa_engine::core::player_events::*;
+use playa_ui::widgets::project::project_events::*;
+use playa_engine::entities::comp_events::*;
+use playa_ui::widgets::timeline::timeline_events::*;
+use playa_ui::widgets::viewport::viewport_events::*;
 use playa_events::viewport_tool::SetToolEvent;
-use crate::widgets::node_editor::node_events::*;
-use crate::dialogs::prefs::prefs_events::*;
-use crate::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
+use playa_ui::widgets::node_editor::node_events::*;
+use playa_ui::dialogs::prefs::prefs_events::*;
+use playa_engine::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
 /// After removing one or more comps, fix the active comp and node editor if the active was removed.
 ///
@@ -81,7 +81,7 @@ fn handle_media_removal(
     removed_uuids: &[Uuid],
     project: &mut Project,
     player: &mut Player,
-    node_editor_state: &mut crate::widgets::node_editor::NodeEditorState,
+    node_editor_state: &mut playa_ui::widgets::node_editor::NodeEditorState,
 ) {
     for &uuid in removed_uuids {
         project.del_comp(uuid);
@@ -103,7 +103,7 @@ fn handle_media_removal(
 /// Align all selected layers in a comp so their start or end bound lands on current_frame.
 ///
 /// `use_start=true` aligns the play_start bound; `use_start=false` aligns play_end.
-fn align_layers_to_frame(comp: &mut crate::entities::Comp, use_start: bool) {
+fn align_layers_to_frame(comp: &mut playa_engine::entities::Comp, use_start: bool) {
     let current_frame = comp.frame();
     let selected = comp.layer_selection.clone();
     for layer_uuid in selected {
@@ -120,7 +120,7 @@ fn align_layers_to_frame(comp: &mut crate::entities::Comp, use_start: bool) {
 
 /// Jump to next/prev layer edge in composition
 /// direction > 0: next edge, direction < 0: prev edge
-fn jump_to_edge(comp: &mut crate::entities::Comp, forward: bool) {
+fn jump_to_edge(comp: &mut playa_engine::entities::Comp, forward: bool) {
     let current = comp.frame();
     let edges = comp.get_child_edges();
     if edges.is_empty() {
@@ -202,10 +202,10 @@ fn adjust_fps_base(player: &mut Player, project: &mut Project, increase: bool) {
 pub struct AppEventContext<'a> {
     pub player: &'a mut Player,
     pub project: &'a mut Project,
-    pub timeline_state: &'a mut crate::widgets::timeline::TimelineState,
-    pub node_editor_state: &'a mut crate::widgets::node_editor::NodeEditorState,
-    pub viewport_state: &'a mut crate::widgets::viewport::ViewportState,
-    pub settings: &'a mut crate::dialogs::prefs::AppSettings,
+    pub timeline_state: &'a mut playa_ui::widgets::timeline::TimelineState,
+    pub node_editor_state: &'a mut playa_ui::widgets::node_editor::NodeEditorState,
+    pub viewport_state: &'a mut playa_ui::widgets::viewport::ViewportState,
+    pub settings: &'a mut playa_ui::dialogs::prefs::AppSettings,
     pub show_help: &'a mut bool,
     pub show_playlist: &'a mut bool,
     pub show_settings: &'a mut bool,
@@ -271,7 +271,7 @@ impl EventResult {
 ///
 /// `default_ppf` (2.0) is the baseline pixels-per-frame at zoom 1.0.
 fn fit_timeline_to_range(
-    timeline_state: &mut crate::widgets::timeline::TimelineState,
+    timeline_state: &mut playa_ui::widgets::timeline::TimelineState,
     canvas_width: f32,
     min_frame: i32,
     max_frame: i32,
@@ -359,11 +359,11 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<StepForwardLargeEvent>(event).is_some() {
-        player.step(crate::core::player::FRAME_JUMP_STEP, project);
+        player.step(playa_engine::core::player::FRAME_JUMP_STEP, project);
         return Some(result);
     }
     if downcast_event::<StepBackwardLargeEvent>(event).is_some() {
-        player.step(-crate::core::player::FRAME_JUMP_STEP, project);
+        player.step(-playa_engine::core::player::FRAME_JUMP_STEP, project);
         return Some(result);
     }
     if downcast_event::<JumpToStartEvent>(event).is_some() {
@@ -895,7 +895,7 @@ pub fn handle_app_event(
     // Slide layer: move "in" while compensating trim_in/trim_out
     if let Some(e) = downcast_event::<SlideLayerEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
-            use crate::entities::AttrValue;
+            use playa_engine::entities::AttrValue;
             if let Some(uuid) = comp.idx_to_uuid(e.layer_idx) {
                 comp.set_child_attrs(uuid, vec![
                     (A_IN, AttrValue::Int(e.new_in)),
@@ -914,7 +914,7 @@ pub fn handle_app_event(
     // Reset trims to zero for selected layers (Ctrl+R)
     if let Some(e) = downcast_event::<ResetTrimsEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
-            use crate::entities::AttrValue;
+            use playa_engine::entities::AttrValue;
             for layer_uuid in comp.layer_selection.clone() {
                 if let Some(layer) = comp.get_layer_mut(layer_uuid) {
                     let old_trim_in = layer.attrs.get_i32_or_zero(A_TRIM_IN);
@@ -940,7 +940,7 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(event) {
         log::trace!("[LayerAttrsChanged] comp={}, layers={:?}, opacity={}", e.comp_uuid, e.layer_uuids, e.opacity);
         project.modify_comp(e.comp_uuid, |comp| {
-            use crate::entities::AttrValue;
+            use playa_engine::entities::AttrValue;
             // Apply to all targeted layers (multi-selection support)
             for layer_uuid in &e.layer_uuids {
                 comp.set_child_attrs(*layer_uuid, vec![
@@ -960,7 +960,7 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<SetLayerAttrsEvent>(event) {
         log::trace!("[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}", e.comp_uuid, e.layer_uuids, e.attrs);
         project.modify_comp(e.comp_uuid, |comp| {
-            use crate::entities::AttrValue;
+            use playa_engine::entities::AttrValue;
             for layer_uuid in &e.layer_uuids {
                 if let Some(layer) = comp.get_layer_mut(*layer_uuid) {
                     for (key, json_v) in &e.attrs {
@@ -983,9 +983,9 @@ pub fn handle_app_event(
         return Some(result);
     }
     // Batch per-layer transform update (from viewport gizmo)
-    if let Some(e) = downcast_event::<crate::entities::comp_events::SetLayerTransformsEvent>(event) {
+    if let Some(e) = downcast_event::<playa_engine::entities::comp_events::SetLayerTransformsEvent>(event) {
         project.modify_comp(e.comp_uuid, |comp| {
-            use crate::entities::AttrValue;
+            use playa_engine::entities::AttrValue;
             for (layer_uuid, pos, rot, scale) in &e.updates {
                 comp.set_child_attrs(
                     *layer_uuid,
@@ -1045,7 +1045,7 @@ pub fn handle_app_event(
         trace!("DuplicateLayersEvent: comp={}", e.comp_uuid);
         // Duplicate selected layers, insert copies above originals
         // Collect (layer_uuid, source_uuid, attrs_clone)
-        let layers_to_dup: Vec<(Uuid, Uuid, crate::entities::Attrs)> = project
+        let layers_to_dup: Vec<(Uuid, Uuid, playa_engine::entities::Attrs)> = project
             .with_comp(e.comp_uuid, |comp| {
                 comp.layer_selection
                     .iter()
@@ -1082,9 +1082,9 @@ pub fn handle_app_event(
                     // Find insert position (above original)
                     let insert_idx = comp.uuid_to_idx(orig_uuid).unwrap_or(0);
                     // Update attrs with new name
-                    attrs.set("name", crate::entities::AttrValue::Str(new_name.clone()));
+                    attrs.set("name", playa_engine::entities::AttrValue::Str(new_name.clone()));
                     // Create new Layer using from_attrs
-                    let new_layer = crate::entities::comp_node::Layer::from_attrs(source_uuid, attrs);
+                    let new_layer = playa_engine::entities::comp_node::Layer::from_attrs(source_uuid, attrs);
                     let new_uuid = new_layer.uuid();
                     // Direct layers.insert() doesn't mark dirty
                     comp.layers.insert(insert_idx, new_layer);
@@ -1108,7 +1108,7 @@ pub fn handle_app_event(
                 trace!("Copy: no layers selected");
                 return Vec::new();
             }
-            let mut items: Vec<crate::widgets::timeline::ClipboardLayer> = Vec::new();
+            let mut items: Vec<playa_ui::widgets::timeline::ClipboardLayer> = Vec::new();
             for uuid in &comp.layer_selection {
                 // Use get_layer() to access source_uuid field, not attrs
                 if let Some(layer) = comp.get_layer(*uuid) {
@@ -1116,7 +1116,7 @@ pub fn handle_app_event(
                     let original_start = layer.attrs.get_i32(A_IN).unwrap_or(0);
                     let name = layer.attrs.get_str("name").unwrap_or("?");
                     trace!("  Copy layer '{}' (source={}) at frame {}", name, source_uuid, original_start);
-                    items.push(crate::widgets::timeline::ClipboardLayer {
+                    items.push(playa_ui::widgets::timeline::ClipboardLayer {
                         source_uuid,
                         attrs: layer.attrs.clone(),
                         original_start,
@@ -1161,16 +1161,16 @@ pub fn handle_app_event(
                 for (item, new_name) in clipboard_copy.into_iter().zip(names) {
                     let mut attrs = item.attrs.clone();
                     // Update name
-                    attrs.set("name", crate::entities::AttrValue::Str(new_name.clone()));
+                    attrs.set("name", playa_engine::entities::AttrValue::Str(new_name.clone()));
                     // Shift both in and out by offset to preserve duration
                     let old_in = attrs.get_i32(A_IN).unwrap_or(0);
                     let old_out = attrs.get_i32(A_OUT).unwrap_or(old_in + 100);
                     let new_in = old_in + offset;
                     let new_out = old_out + offset;
-                    attrs.set(A_IN, crate::entities::AttrValue::Int(new_in));
-                    attrs.set(A_OUT, crate::entities::AttrValue::Int(new_out));
+                    attrs.set(A_IN, playa_engine::entities::AttrValue::Int(new_in));
+                    attrs.set(A_OUT, playa_engine::entities::AttrValue::Int(new_out));
                     // Create and insert new Layer at tracked position
-                    let new_layer = crate::entities::comp_node::Layer::from_attrs(item.source_uuid, attrs);
+                    let new_layer = playa_engine::entities::comp_node::Layer::from_attrs(item.source_uuid, attrs);
                     let new_uuid = new_layer.uuid();
                     // Direct layers.insert() doesn't mark dirty
                     comp.layers.insert(insert_idx, new_layer);
@@ -1231,7 +1231,7 @@ pub fn handle_app_event(
 
     // === Bookmarks ===
     if let Some(e) = downcast_event::<SetBookmarkEvent>(event) {
-        use crate::entities::AttrValue;
+        use playa_engine::entities::AttrValue;
         project.modify_comp(e.comp_uuid, |comp| {
             // Get or create bookmarks map
             let mut bookmarks = comp.attrs
@@ -1251,7 +1251,7 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<JumpToBookmarkEvent>(event) {
-        use crate::entities::AttrValue;
+        use playa_engine::entities::AttrValue;
         if let Some(frame) = project.with_comp(e.comp_uuid, |comp| {
             comp.attrs.get_map("bookmarks").and_then(|m| {
                 m.get(&e.slot.to_string()).and_then(|v| {

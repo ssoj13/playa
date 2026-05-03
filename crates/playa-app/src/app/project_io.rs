@@ -7,8 +7,8 @@
 //! - Frame preloading (enqueue_frame_loads_around_playhead)
 
 use super::PlayaApp;
-use crate::entities::FileNode;
-use crate::entities::node::Node;
+use playa_engine::entities::FileNode;
+use playa_engine::entities::node::Node;
 
 use log::{error, info, trace, warn};
 use std::path::PathBuf;
@@ -164,7 +164,7 @@ impl PlayaApp {
 
     /// Load project from JSON file.
     pub fn load_project(&mut self, path: PathBuf) {
-        match crate::entities::Project::from_json(&path) {
+        match playa_engine::entities::Project::from_json(&path) {
             Ok(mut project) => {
                 info!("Loaded project from {}", path.display());
 
