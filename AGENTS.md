@@ -405,7 +405,7 @@ This lets `Delete` in Project remove media, while in Timeline it removes a layer
 ## Persistence
 
 - Window: `eframe` saves position/size itself (`persist_window: true`),
-  `persistence_path` is set in `runner.rs` via `config::config_file("playa.json")`.
+  `persistence_path` is set in `crates/playa-app/src/runner.rs` via `config::config_file("playa.json")`.
 - App state: `eframe` serializes `PlayaApp` into the same JSON via
   `eframe::APP_KEY` (`#[serde(default)]`, runtime-only fields are
   `#[serde(skip)]`).
@@ -570,7 +570,7 @@ for heavy tasks.
 1. A struct in the right `*_events.rs` (next to its "own" domain).
 2. Emit: `event_bus.emit(MyEvent { ... })` or via `ActionQueue`.
 3. Handle: `if let Some(e) = downcast_event::<MyEvent>(&event)` in
-   `app/events.rs::handle_events` or `main_events.rs::handle_app_event`.
+   `crates/playa-app/src/app/events.rs::handle_events` or **`main_events`** `handle_app_event`.
 4. If the event mutates the project — do it inside `project.modify_comp`
    so auto-invalidation kicks in.
 

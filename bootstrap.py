@@ -2,11 +2,10 @@
 """
 bootstrap.py - Unified build/test/package script for Playa.
 
-Cross-platform Python replacement for bootstrap.ps1.
-Single-file solution with no external dependencies (stdlib only).
+Cross-platform (Python 3, stdlib only). Replaces obsolete bootstrap.ps1 / .sh.
 
 Commands:
-    build         Build playa via xtask (default: debug)
+    build         Build playa via `cargo xtask` (default: release profile)
     test          Run all tests via xtask
     check         Run clippy and fmt check
     clean         Clean build artifacts
@@ -18,8 +17,7 @@ Commands:
 
 Usage:
     python bootstrap.py build
-    python bootstrap.py build --release
-    python bootstrap.py build
+    python bootstrap.py build -d
     python bootstrap.py test
     python bootstrap.py python --install
 """
@@ -312,17 +310,22 @@ def run_build(args: argparse.Namespace) -> int:
     """Build playa via xtask."""
     header("BUILD")
 
-    cmd = ["cargo", "xtask", "build"]
-
-    if args.debug:
-        step("Mode: debug")
-    else:
-        cmd.append("--release")
-        step("Mode: release")
-
     if args.features:
+        cmd = ["cargo", "build", "-p", "playa"]
+        if not args.debug:
+            cmd.append("--release")
+            step("Mode: release")
+        else:
+            step("Mode: debug")
         cmd.extend(["--features", args.features])
         step(f"Features: {args.features}")
+    else:
+        cmd = ["cargo", "xtask", "build"]
+        if args.debug:
+            step("Mode: debug")
+        else:
+            cmd.append("--release")
+            step("Mode: release")
 
     print()
     step("Building...")
@@ -677,23 +680,23 @@ HELP_TEXT = f"""
    -i, --install   Build and install into .venv
    -d, --debug     Build debug instead of release
 
- XTASK COMMANDS (forwarded to cargo xtask)
+ XTASK COMMANDS (forwarded to cargo xtask — see crates/xtask)
+   changelog       Regenerate CHANGELOG.md from git
+   deploy          Copy playa binary to install prefix (--install-dir)
    tag-dev         Create dev tag (triggers Build workflow)
    tag-rel         Create release tag (triggers Release workflow)
    pr              Create PR: dev -> main
-   changelog       Preview unreleased CHANGELOG.md
-   wipe            Clean target directory from stale binaries
-   post            Copy native libraries (OpenEXR builds)
-   verify          Verify dependencies present
+   wipe            Remove stale binaries from target/
+   wipe-wf         Delete GitHub Actions workflow runs (needs gh CLI)
 
  EXAMPLES
    python bootstrap.py build                     # Release build (default)
-   python bootstrap.py build -d                  # Debug build
-   python bootstrap.py build -e                  # Release + OpenEXR C++
-   python bootstrap.py test                      # Run tests
-   python bootstrap.py check                     # Clippy + fmt
-   python bootstrap.py python --install          # Build & install Python
-   python bootstrap.py install                   # Install from crates.io
+   python bootstrap.py build -d                 # Debug build
+   python bootstrap.py build -f profiler        # Extra Cargo features
+   python bootstrap.py test                       # Run tests
+   python bootstrap.py check                      # Clippy + fmt
+   python bootstrap.py python --install           # Build & install Python wheel in .venv
+   python bootstrap.py install                    # Install from crates.io
 """
 
 
@@ -710,8 +713,8 @@ COMMANDS = [
 
 # Xtask-forwarded commands (no special handling needed)
 XTASK_COMMANDS = [
-    # Must match Subcommand enums in crates/xtask/src/main.rs
-    "build",
+    # Forwarded to `cargo xtask`; do NOT list `build` / `test` here — those are
+    # handled by `bootstrap.py` so release/debug and extra flags work.
     "changelog",
     "tag-dev",
     "tag-rel",
@@ -719,7 +722,6 @@ XTASK_COMMANDS = [
     "deploy",
     "wipe",
     "wipe-wf",
-    "test",
 ]
 
 

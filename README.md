@@ -63,9 +63,11 @@ Download from [Releases](https://github.com/ssoj13/playa/releases/latest):
 
 | Platform | Recommended | Alternative |
 |----------|-------------|-------------|
-| **Windows** | `playa-x.x.x-exrs-x64-setup.exe` | `.msi`, portable `.zip` |
-| **macOS** | `playa-x.x.x-exrs.dmg` | OpenEXR variant for DWAA/DWAB |
-| **Linux** | `playa-x.x.x-exrs.AppImage` | `.deb` package |
+| **Windows** | `playa-x.x.x-*-setup.exe` (see [Releases](https://github.com/ssoj13/playa/releases/latest)) | `.msi`, portable `.zip` |
+| **macOS** | `playa-x.x.x*.dmg` | Code-signed DMG bundles |
+| **Linux** | `playa-x.x.x*.AppImage` | `.deb` package |
+
+Names on the Releases page may include legacy `exrs` tags; current default engine is **vfx-exr** (pure Rust, DWAA/DWAB-capable).
 
 **macOS**: All DMG releases are code-signed and notarized.
 

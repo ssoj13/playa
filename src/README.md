@@ -35,9 +35,8 @@ Workers run in **`playa-engine`**; frame cache epochs and LRU handling are docum
 **`crates/playa-py`** is a **separate workspace** (`[workspace.exclude]`). Build helpers:
 
 ```bash
-python bootstrap.py python          # wheel / maturin flow
-python bootstrap.py python-reqs      # developer Python deps (see script help)
-python bootstrap.py python --install # optional; see bootstrap.py HELP_TEXT
+python bootstrap.py python -i          # build wheel and install into .venv
+python bootstrap.py python-reqs        # developer Python tooling
 ```
 
 **Usage:**

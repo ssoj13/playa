@@ -146,9 +146,10 @@ pkg-config --modversion libavcodec libavformat libavutil libswscale
 ### bootstrap.py
 
 - Cross-platform (**Windows / Linux / macOS**): no `bootstrap.ps1` / `.sh` in-tree.
-- **build / test**: sets `VCPKG_ROOT`, `VCPKGRS_TRIPLET`, and on Windows merges the MSVC toolchain environment; builds the **`xtask`** binary once (`cargo build -p xtask`) when missing under `target/debug/`; forwards to **`cargo xtask`**.
+- **build** (without `-f`): same env setup + optional `xtask` rebuild; forwards to **`cargo xtask build`** (release by default).
+- **build** (with `-f` / `--features`): runs **`cargo build -p playa`** with **`--features`**, matching profile (`-d` → debug).
+- **test**: forwards to **`cargo xtask test`**.
 - **package / publish**: ensures optional tooling (**cargo-packager**, **cargo-release**) via **cargo-binstall** when needed.
-- **Extra Cargo features**: `python bootstrap.py build -f profiler` forwards `--features` to the underlying **`cargo`** invocation.
 - **`python`-related commands**: operate on `crates/playa-py/` (venv + **maturin**).
 
 See `bootstrap.py --help` / embedded `HELP_TEXT`.
