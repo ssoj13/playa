@@ -258,14 +258,13 @@ doesn't know the real types and is testable in isolation.
    → if worker_epoch != current_epoch → skip
    → else compose_internal(comp, frame, ctx)
 7. compose_internal:
-   → for each layer (layers.iter().rev() — bottom-up):
-       a) source_node = ctx.media[source_uuid]
-       b) source_frame = source_node.compute(layer_frame, ctx) (recursive)
-       c) for fx in layer.effects: source_frame = fx.apply(source_frame)
-       d) transform::apply (rayon par_chunks_mut, sample_bilinear)
-       e) push (frame, opacity, blend_mode, inv_matrix) into a Vec
-   → CpuCompositor.blend_with_dim(frames, dim) — Porter-Duff in blend_f32
-   → unify formats: blend_u8/blend_f16 decode to f32, delegate, encode back
+   → build `Vec<(Frame, opacity, BlendMode, inv_matrix)>` (same as before)
+   → **Cpu prefs** (`ComputeContext.gpu_blend_bridge == None`): `THREAD_COMPOSITOR` /
+     `CpuCompositor::blend_with_dim` on the worker
+   → **Gpu prefs** + bridge wired: `GpuBlendBridge::delegate_blend_blocking` — stacks are blended
+     on the **UI thread** when `PlayaApp::drain_gpu_blend_queue` runs `GpuBlendBridge::drain_into_compositor`
+     against `project.compositor` (after `update_compositor_backend` / GL sync)
+   → encode / blocking `get_frame`: always **no bridge** — Cpu compositor on that thread
 8. global_cache.insert(comp, frame, result)
    → cache_manager.track_memory(size); if over the limit → evict LRU
    → mark_dirty() → main loop will call ctx.request_repaint()
@@ -365,17 +364,15 @@ with a rayon macro for the parallel arms.
 
 ## Compositing: CPU vs GPU
 
-| Component | Where | Status |
-|-----------|-------|--------|
-| `CpuCompositor` | works everywhere, including in workers | main path |
-| `GpuCompositor` | OpenGL FBO + GLSL, 10–50× faster | **viewport-only**, not used in `compose_internal` |
+| Component | Where | Role |
+|-----------|-------|------|
+| `CpuCompositor` | any thread (workers, encode, nested preload) | Final blend when project prefs are **Cpu**, or fallback when bridge returns `GpuBlendReport::NotQueued` — via per-thread `THREAD_COMPOSITOR` in `comp_node` |
+| `GpuCompositor` | **UI thread only** (GL current) | Final blend when prefs are **Gpu** and `GpuBlendBridge` delivers the stacked layers from workers |
 
-The `CompositorType::blend()` interface takes `Vec<(Frame, opacity, BlendMode, [f32; 9])>`
-with 3×3 matrices (column-major for GL) — the API is unified. However
-`compose_internal` runs in workers where no GL context is available (the
-context belongs to the eframe main thread). So real GPU compositing is only
-used for viewport effects today, and layers are blended on CPU. A migration
-plan is outlined in the header of `compositor.rs`.
+The `CompositorType::blend()` / `blend_with_dim()` API is shared; matrices `[f32; 9]` are **column-major for GL**.
+**Important split:** Cpu compositing still ignores those matrices — transforms are applied earlier in compose (pixels are pre-warped). Gpu shaders consume `u_top_transform`; **full matrix parity** Cpu vs Gpu is documented as future work in `crates/playa-engine/src/entities/compositor.rs`.
+
+Workers never call OpenGL directly. When Gpu blending is enabled, `CompNode::compose_internal` forwards the finished stack through `GpuBlendBridge` (`GpuBlendReport` models enqueue failure vs completed round-trip — see rustdocs). The shell app **`playa-app`** drains the queue (`drain_gpu_blend_queue`) immediately after **`update_compositor_backend`**. Blocking encode (`get_frame`) omits the bridge on purpose so jobs never wait on the UI channel.
 
 `BlendMode`: Normal · Screen · Add · Subtract · Multiply · Divide · Difference · Overlay
 (`apply_blend()` is the single place with the Porter–Duff formulas).
@@ -387,17 +384,18 @@ plan is outlined in the header of `compositor.rs`.
 ```
 1. exit_requested?               → Close viewport
 2. start_api_server()            (lazy: on first frame, if enabled)
-3. update_compositor_backend(gl) (CPU↔GPU per Settings)
-4. apply theme/font              (last_applied_* guards)
-5. handle_events()               poll EventBus → handle_app_event
-6. process player.update()       (advances frame by wall-clock)
-7. handle dropped files          (drag-drop)
-8. DockArea.show(ctx, &mut DockTabs(self))
-9. handle_keyboard_input()       (HotkeyHandler by focused window)
-10. process API commands         (mpsc::Receiver<ApiCommand>)
-11. update_api_state()           (writes SharedApiState under RwLock)
-12. handle pending screenshots   (PNG via glReadPixels or from current frame)
-13. cache_manager.take_dirty()   → ctx.request_repaint() if a load happened
+3. update_compositor_backend(gl) (CPU↔GPU per Settings — (re)binds `GpuCompositor` to current GL when Gpu)
+4. drain_gpu_blend_queue(ctx)    unblocks workers blocked in `GpuBlendBridge::delegate_blend_blocking` (Gpu path)
+5. apply theme/font              (last_applied_* guards)
+6. handle_events()               poll EventBus → handle_app_event
+7. process player.update()       (advances frame by wall-clock)
+8. handle dropped files          (drag-drop)
+9. DockArea.show(ctx, &mut DockTabs(self))
+10. handle_keyboard_input()       (HotkeyHandler by focused window)
+11. process API commands         (mpsc::Receiver<ApiCommand>)
+12. update_api_state()           (writes SharedApiState under RwLock)
+13. handle pending screenshots   (PNG via glReadPixels or from current frame)
+14. cache_manager.take_dirty()   → ctx.request_repaint() if a load happened
 ```
 
 **Hotkey routing** — `HotkeyHandler` stores `(HotkeyWindow, key) → EventFactory`.
@@ -613,8 +611,10 @@ for heavy tasks.
 | Rotation sign | `space::to_math_rot(deg)` inverts | UI is CW+, glam is CCW+ |
 | Cache LRU | use `lru::LruCache`, not a custom `IndexSet` | O(1) instead of O(n) `shift_remove` |
 | `process_blocking` in workers | none — workers are `std::thread::sleep(1ms)` | No async runtimes nested inside |
-| `THREAD_COMPOSITOR` | `thread_local!` on purpose | A worker has no GL context, you can't share `RefCell<Compositor>` across threads |
-| GPU compositor | currently **viewport-only** | `compose_internal` runs in workers without GL — migration plan in the header of `compositor.rs` |
+| `THREAD_COMPOSITOR` | `thread_local!` on purpose | Cpu final blend per worker thread when Gpu bridge is `None`; also used when `GpuBlendReport::NotQueued` returns the original stack |
+| `GpuBlendBridge` / `GpuBlendReport` | worker enqueue + UI drain | Workers block until `drain_gpu_blend_queue`; `SendError` recovery uses `.0.frames` on modern `std::sync::mpsc::SendError` (Rust 1.95+) |
+
+**Cpu vs Gpu transform parity:** Cpu compositor ignores per-layer matrices (transform baked before blend); Gpu path applies `u_top_transform` — unify when ready (see `compositor.rs` rustdocs).
 
 ---
 

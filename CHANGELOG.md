@@ -25,7 +25,13 @@ Workers have no bound OpenGL context; when project prefs select the **Gpu** comp
   so they match the bridged Gpu path (removed stale “viewport-only / compose never Gpu” wording);
   `gpu_blend_bridge.rs` explains ownership; **`gpu_compositor.rs`** drops obsolete integration / compile-toggle scaffolding from the header.
 
-Verify: **`python bootstrap.py build`** (project bootstrap).
+Verify: **`python bootstrap.py build`** and **`python bootstrap.py test`** (workspace unit tests + members).
+
+- **Tests / CI:** `cargo xtask test` runs **`cargo test --workspace`** so `playa-engine` unit tests execute;
+  `GpuBlendBridge` gains `NotQueued` + CPU round-trip coverage. **Windows:** `playa-engine/build.rs` links
+  **`vfw32`** for static FFmpeg **avdevice**. **Rustdoc** examples in `playa-engine` use **`playa_engine::`**
+  imports so **doctests** compile. **`bootstrap.py test`:** forwards **`--debug`** to xtask with **`-d`**;
+  no longer passes invalid **`--release`** to **`xtask test`**; **`--nocapture`** maps to xtask’s **`--nocapture`**.
 
 ### EXR Phase 1 — extended compression UI (commit `71ce94a`)
 

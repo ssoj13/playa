@@ -143,7 +143,10 @@ enum Commands {
     #[clap(name = "wipe-wf")]
     WipeWf,
 
-    /// 🧪 Run all tests (unit + integration)
+    /// 🧪 Run all workspace tests (unit + integration)
+    ///
+    /// Runs tests for **every workspace member**, not only the root `playa` package
+    /// (`cargo test`'s default is `default-members`).
     ///
     /// Runs the complete test suite including:
     /// - Unit tests (fast, isolated component tests)
@@ -712,9 +715,9 @@ fn cmd_test(is_release: bool, nocapture: bool) -> Result<()> {
     println!("Profile: {}", profile);
     println!();
 
-    // Build cargo test command
+    // Build cargo test command (workspace: include playa-engine and other member crates, not only `default-members`)
     let mut cmd = Command::new("cargo");
-    cmd.arg("test");
+    cmd.args(["test", "--workspace"]);
 
     if is_release {
         cmd.arg("--release");
@@ -730,11 +733,16 @@ fn cmd_test(is_release: bool, nocapture: bool) -> Result<()> {
     // Show test output
     cmd.arg("--show-output");
 
-    println!(
-        "Running: cargo test {}-- {}--show-output",
-        if is_release { "--release " } else { "" },
-        if nocapture { "--nocapture " } else { "" }
-    );
+    let mut line = String::from("Running: cargo test --workspace");
+    if is_release {
+        line.push_str(" --release");
+    }
+    line.push_str(" --");
+    if nocapture {
+        line.push_str(" --nocapture");
+    }
+    line.push_str(" --show-output");
+    println!("{line}");
     println!();
 
     // Run tests

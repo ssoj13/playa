@@ -484,7 +484,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::entities::Frame;
+    /// # use playa_engine::entities::Frame;
     /// # use std::path::PathBuf;
     /// let frame = Frame::new_unloaded(PathBuf::from("render.0001.exr"));
     /// match frame.load() {
@@ -716,7 +716,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::entities::frame::{Frame, CropAlign, PixelDepth};
+    /// # use playa_engine::entities::frame::{Frame, CropAlign, PixelDepth};
     /// let frame = Frame::new(1920, 1080, PixelDepth::U8);
     /// let cropped = frame.crop_copy(640, 480, CropAlign::Center);
     /// // Original frame unchanged, cropped is 640x480
@@ -751,7 +751,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::entities::frame::{Frame, CropAlign, PixelDepth};
+    /// # use playa_engine::entities::frame::{Frame, CropAlign, PixelDepth};
     /// let frame = Frame::new(1920, 1080, PixelDepth::U8);
     /// frame.crop(640, 480, CropAlign::Center); // Mutates frame to 640x480
     /// ```
@@ -885,7 +885,7 @@ impl Frame {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use playa::entities::frame::{Frame, TonemapMode, PixelFormat};
+    /// # use playa_engine::entities::frame::{Frame, TonemapMode, PixelFormat};
     /// let hdr_frame = Frame::new_f16(1920, 1080);
     /// let ldr_frame = hdr_frame.tonemap(TonemapMode::ACES).unwrap();
     /// assert_eq!(ldr_frame.pixel_format(), PixelFormat::Rgba8);

@@ -158,3 +158,51 @@ pub fn gpu_blend_arc_pair() -> (Arc<GpuBlendBridge>, Receiver<GpuBlendRequest>) 
     let (b, rx) = GpuBlendBridge::pair();
     (Arc::new(b), rx)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{GpuBlendBridge, GpuBlendReport, GpuBlendRequest};
+    use crate::entities::CompositorType;
+    use crate::entities::Frame;
+    use crate::entities::compositor::{BlendMode, CpuCompositor, IDENTITY_TRANSFORM};
+
+    #[test]
+    fn delegate_not_queued_when_ui_receiver_dropped() {
+        let (bridge, rx) = GpuBlendBridge::pair();
+        drop(rx);
+        let f = Frame::placeholder(4, 4);
+        let stack = vec![(f, 1.0, BlendMode::Normal, IDENTITY_TRANSFORM)];
+        match bridge.delegate_blend_blocking(stack, (4, 4)) {
+            GpuBlendReport::NotQueued(v) => assert_eq!(v.len(), 1),
+            other => panic!("expected NotQueued, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn delegate_completed_after_drain_cpu() {
+        let (bridge, rq_rx) = GpuBlendBridge::pair();
+        let f = Frame::placeholder(2, 2);
+        let stack = vec![(f, 1.0, BlendMode::Normal, IDENTITY_TRANSFORM)];
+
+        // Blocking `recv` so the producer can enqueue before we blend (try_recv drains are UI-frame ordered).
+        let consumer = std::thread::spawn(move || {
+            let GpuBlendRequest {
+                frames,
+                dim,
+                reply,
+            } = rq_rx.recv().expect("enqueue");
+            let mut compositor = CompositorType::Cpu(CpuCompositor);
+            let out = compositor.blend_with_dim(frames, dim);
+            let _ = reply.send(out);
+        });
+
+        let report = bridge.delegate_blend_blocking(stack, (2, 2));
+        consumer.join().expect("consumer join");
+
+        assert!(
+            matches!(report, GpuBlendReport::Completed(Some(_))),
+            "expected Completed(Some(..)), got {:?}",
+            report
+        );
+    }
+}

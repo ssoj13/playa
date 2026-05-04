@@ -351,11 +351,12 @@ def run_test(args: argparse.Namespace) -> int:
 
     cmd = ["cargo", "xtask", "test"]
 
-    if not args.debug:
-        cmd.append("--release")
+    # xtask `test`: release profile is the default; `--debug` selects debug for `cargo test`.
+    if args.debug:
+        cmd.append("--debug")
 
     if args.nocapture:
-        cmd.extend(["--", "--nocapture"])
+        cmd.append("--nocapture")
 
     print()
     step("Running tests...")

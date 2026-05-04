@@ -47,7 +47,7 @@ impl CacheManager {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use playa::CacheManager;
+    /// # use playa_engine::core::CacheManager;
     /// let manager = CacheManager::new(0.75, 2.0); // 75% of available, reserve 2GB for system
     /// ```
     pub fn new(mem_fraction: f64, reserve_gb: f64) -> Self {

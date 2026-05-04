@@ -710,7 +710,8 @@ mod tests {
     #[test]
     fn test_cache_clear_comp_o1() {
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
-        let cache = GlobalFrameCache::new(100, manager, CacheStrategy::All);
+        // Capacity must exceed 101 entries (100 for comp1 + 1 for comp2) so eviction does not shrink comp1 mid-test.
+        let cache = GlobalFrameCache::new(512, manager, CacheStrategy::All);
 
         let frame = make_loaded_frame(64, 64);
         let comp1 = Uuid::new_v4();
