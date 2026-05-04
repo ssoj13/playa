@@ -81,6 +81,8 @@ through the vtable. Don't simplify it.
 
 **Event categories** (live next to the widgets and entities they belong to):
 
+**Path column:** prefixes `core/` … `entities/` are under **`crates/playa-engine/src/`**; `widgets/` … `dialogs/` under **`crates/playa-ui/src/`**.
+
 | File | Events |
 |------|---------|
 | `core/player_events.rs` | `SetFrameEvent`, `TogglePlayPauseEvent`, `Step{F,B}*`, `Jump*`, `Jog{F,B}` |
@@ -125,7 +127,7 @@ The UI is never blocked by a worker reading.
 ### 4. Schema-aware Attrs → automatic cache invalidation
 
 `Attrs` is a shared container for Frame, Layer, Comp, Camera, Project. Each
-type has a `*_SCHEMA` in `attr_schemas.rs` describing attribute flags:
+type has a `*_SCHEMA` in `entities/attr_schemas.rs` (**`playa-engine`**) describing attribute flags:
 
 | Flag | Effect |
 |------|--------|
@@ -218,18 +220,21 @@ would thrash: clear cache → load 50 frames → clear → load again.
 `Some(uuid)` only if ≥ 500 ms have elapsed since `schedule()`. Until then
 **only the current frame** is loaded.
 
-### 9. Dependency inversion: `core` depends on `entities`
+### 9. Dependency inversion: `core` ↔ `entities` (`playa-engine`)
 
-`entities/traits.rs` defines the interfaces (`FrameCache`, `WorkerPool`,
-`CacheStrategy`) that **the entities themselves** expect from infrastructure.
-Concrete implementations (`GlobalFrameCache`, `Workers`) live in `core/`.
-Dependency graph:
+`entities/traits.rs` (**`crates/playa-engine/src/entities/traits.rs`**) defines the interfaces
+(`FrameCache`, `WorkerPool`, `CacheStrategy`) that **entities** expect from infrastructure.
+Concrete implementations (`GlobalFrameCache`, `Workers`) live in **`crates/playa-engine/src/core/`**.
+The host (`playa-app`) composes **`playa-ui`** and routes events/`Project` mutations; **`compute()`**
+uses `ComputeContext` trait hooks.
+
+Conceptual layering:
 
 ```
-app  ──→ widgets, dialogs, server, main_events
-         │      │       │        │
-         ▼      ▼       ▼        ▼
-         core ──→ entities (via trait objects in ComputeContext)
+playa-app (+ playa-ui)  ──→  orchestration / EventBus handlers / PlayaApp state
+                                      │
+                                      ▼
+                             playa-engine: core ──→ entities (via ComputeContext traits)
 ```
 
 `ComputeContext` carries `&dyn FrameCache`, `Option<&dyn WorkerPool>` — a node
@@ -455,7 +460,7 @@ otherwise the current `Frame` is serialized to PNG.
 ## Layouts
 
 `AppSettings.layouts: HashMap<String, Layout>` — named layouts (dock splits,
-timeline state, viewport state). Events live in `core/layout_events.rs`:
+timeline state, viewport state). Events live in `core/layout_events.rs` (**`playa-engine`**):
 `LayoutSelected/Created/Deleted/Updated/Renamed`. The old
 `SaveLayoutEvent`/`LoadLayoutEvent` were removed — they were replaced by
 a structured schema with auto-generated names ("Layout 2", "Layout 3", ...).
@@ -469,13 +474,16 @@ egui_dock tree with configurable visibility for the Project/Attributes panels.
 
 `python bootstrap.py build` (default **release**; add `-d` / `--debug` for debug) sets
 `VCPKG_ROOT` / `VCPKGRS_TRIPLET`, merges the MSVC environment (`vcvars64.bat` or
-Developer PowerShell) on Windows, then runs **`cargo xtask build`**. The thin `build.rs`
-is intentionally minimal; native deps are wired through Cargo + **vcpkg** (details in **`DEVELOP.md`**).
+Developer PowerShell) on Windows, then runs **`cargo xtask build`**, unless **`--features` /
+`-f`** is set — then it invokes **`cargo build -p playa`** with **`--features`**
+(see **`DEVELOP.md`**). The thin **`build.rs`** only reruns Cargo when changed; natives go through
+Cargo + **vcpkg**.
 
 ```
 python bootstrap.py build               # release via xtask
 python bootstrap.py build -d           # debug
 python bootstrap.py test
+python bootstrap.py build -f profiler # example: `profiler` Cargo feature
 cargo xtask build [--release|--debug]
 cargo xtask test [--debug] [--nocapture]
 cargo xtask deploy [--install-dir P]   # install playa binary
@@ -559,9 +567,9 @@ for heavy tasks.
 
 ### Adding a NodeKind
 
-1. `entities/foo_node.rs` with a struct and `impl Node`.
-2. A variant in `enum NodeKind`.
-3. A schema in `attr_schemas.rs` (compose shared `IDENTITY`, `TIMING`, `TRANSFORM`).
+1. `crates/playa-engine/src/entities/foo_node.rs` with a struct and `impl Node`.
+2. A variant in **`playa-engine`** `enum NodeKind`.
+3. A schema in **`playa-engine`** `entities/attr_schemas.rs` (compose shared `IDENTITY`, `TIMING`, `TRANSFORM`).
 4. Mark `is_renderable()` and `is_listed()` as needed.
 5. If there's an `add_child_layer` — update `NodeKind::add_child_layer()`.
 
@@ -576,10 +584,10 @@ for heavy tasks.
 
 ### Adding an effect
 
-1. `entities/effects/foo.rs` with a function `apply(&Frame, &Effect) → Frame`.
-2. A variant in the `EffectType` enum.
-3. A schema `FX_FOO_SCHEMA` (fields with `FLAG_DAG | FLAG_DISPLAY | FLAG_KEYABLE`).
-4. Match arms in `effects::schema()` and `effects::apply()`.
+1. `crates/playa-engine/src/entities/effects/foo.rs` with a function `apply(&Frame, &Effect) → Frame`.
+2. A variant in the **`playa-engine`** `EffectType` enum.
+3. Schema **`FX_FOO_SCHEMA`** in **`entities/attr_schemas.rs`** (fields with `FLAG_DAG | FLAG_DISPLAY | FLAG_KEYABLE`).
+4. Match arms in **`effects::schema()`** and **`effects::apply()`**.
 
 ---
 
@@ -587,8 +595,7 @@ for heavy tasks.
 
 - **Windows 11**, PowerShell 7+ (`pwsh`). Not `bash`. Instead of `/dev/null` —
   `$null`; escape `\` or use forward `/` where accepted.
-- **vcpkg** in `C:\vcpkg`, ENV: `$env:VCPKG_ROOT`. Before building the
-  OpenEXR variant, activate `vcvars64.bat` (via `Developer PowerShell for VS 2022`).
+- **vcpkg** in `C:\vcpkg`, ENV: `$env:VCPKG_ROOT`. MSVC toolchain must be active for Windows native links (**Developer PowerShell for VS** or `vcvars64.bat`).
 - **Sciter / Flutter** are not used (that belongs to RustDesk). Here the
   UI is a single stack — egui/eframe + glow OpenGL.
 
