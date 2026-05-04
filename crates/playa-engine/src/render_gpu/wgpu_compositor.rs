@@ -9,7 +9,7 @@ use std::sync::mpsc;
 
 use crate::entities::compositor::{BlendMode, CpuCompositor};
 use crate::entities::frame::{CropAlign, Frame, FrameStatus, PixelBuffer, PixelFormat};
-use log::{trace, warn};
+use log::warn;
 use wgpu::util::DeviceExt;
 
 const BLEND_SHADER: &str = include_str!("shaders/layer_blend.wgsl");
@@ -58,7 +58,7 @@ impl WgpuCompositor {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -306,7 +306,8 @@ impl WgpuCompositor {
 
         let texture = Self::mk_tex(&self.device, w_u32, h_u32, tf, "playa_blend_upload", usage);
 
-        let pix = frame.buffer().as_ref();
+        let buffer = frame.buffer();
+        let pix = buffer.as_ref();
         let row = Self::pixel_row_bytes(frame.width(), frame.pixel_format(), tf);
         if row == 0 {
             return Err("unsupported pixel/format combination".into());
@@ -472,7 +473,7 @@ impl WgpuCompositor {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::TexelCopyBuffer {
+            wgpu::TexelCopyBufferInfo {
                 buffer: &staging,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
@@ -493,8 +494,10 @@ impl WgpuCompositor {
         slice.map_async(wgpu::MapMode::Read, move |res| {
             let _ = tx.send(res);
         });
-        let _ = self.device.poll(wgpu::PollType::Wait);
-        rx.recv().map_err(|e| format!("map channel: {e}"))??;
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        rx.recv()
+            .map_err(|e| format!("map channel: {e}"))?
+            .map_err(|e| format!("map_async: {e}"))?;
 
         let out = {
             let view = slice.get_mapped_range();
@@ -572,7 +575,7 @@ impl WgpuCompositor {
         frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
         dim: (usize, usize),
     ) -> Option<Frame> {
-        let mut out = self.blend(frames)?;
+        let out = self.blend(frames)?;
         out.crop(dim.0, dim.1, CropAlign::LeftTop);
         Some(out)
     }

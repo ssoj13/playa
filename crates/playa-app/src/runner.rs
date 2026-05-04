@@ -56,6 +56,36 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     const BACKEND: &str = "vfx-exr";
 
+    // Request `FLOAT32_FILTERABLE` so the viewport can linearly sample
+    // Rgba32Float textures (EXR float frames). All Vulkan/DX12/Metal
+    // adapters expose it; falls back gracefully on backends that don't.
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(ref mut setup) = wgpu_options.wgpu_setup {
+        setup.device_descriptor = Arc::new(|adapter| {
+            let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                wgpu::Limits::downlevel_webgl2_defaults()
+            } else {
+                wgpu::Limits::default()
+            };
+            let mut features = wgpu::Features::empty();
+            if adapter
+                .features()
+                .contains(wgpu::Features::FLOAT32_FILTERABLE)
+            {
+                features |= wgpu::Features::FLOAT32_FILTERABLE;
+            }
+            wgpu::DeviceDescriptor {
+                label: Some("playa wgpu device"),
+                required_features: features,
+                required_limits: wgpu::Limits {
+                    max_texture_dimension_2d: 8192,
+                    ..base_limits
+                },
+                ..Default::default()
+            }
+        });
+    }
+
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(format!(
@@ -68,6 +98,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .with_drag_and_drop(true),
         persist_window: true,
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options,
         #[cfg(not(target_arch = "wasm32"))]
         persistence_path: Some(config::config_file("playa.json", &path_config)),
         ..Default::default()

@@ -24,6 +24,7 @@ eframe = { version = "0.33", default-features = false, features = [
     "persistence",
 ] }
 egui-wgpu = { workspace = true }
+wgpu = { workspace = true }
 egui_dnd = "0.14"
 egui_dock = { workspace = true }
 egui_extras = "0.33"

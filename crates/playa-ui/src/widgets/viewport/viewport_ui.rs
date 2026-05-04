@@ -112,7 +112,8 @@ pub fn render(
             let mut r = renderer_arc.lock().unwrap();
             r.update_shader(shader_manager);
             if needs_upload {
-                r.stage_frame(&render_state, w, h, img.buffer(), img.pixel_format());
+                let buf = img.buffer();
+                r.stage_frame(&render_state, w, h, buf.as_ref(), img.pixel_format());
             } else {
                 r.skip_upload_this_frame(render_state);
             }

@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use egui_wgpu::{CallbackResources, CallbackTrait, PaintCallbackInfo, ScreenDescriptor};
+use eframe::egui::PaintCallbackInfo;
+use egui_wgpu::{CallbackResources, CallbackTrait, ScreenDescriptor};
 use log::{error, info, trace};
 use playa_engine::entities::frame::{PixelBuffer, PixelFormat};
 use wgpu::util::DeviceExt;
@@ -577,7 +578,8 @@ impl CallbackTrait for ViewportPaintCallback {
             return Vec::new();
         }
 
-        if let Err(e) = guard.ensure_pipeline(device, output_fmt, guard.tex_format) {
+        let tex_fmt = guard.tex_format;
+        if let Err(e) = guard.ensure_pipeline(device, output_fmt, tex_fmt) {
             error!("{}", e);
             guard.last_error = Some(e);
             return Vec::new();
@@ -601,7 +603,7 @@ impl CallbackTrait for ViewportPaintCallback {
         render_pass: &mut wgpu::RenderPass<'static>,
         _res: &CallbackResources,
     ) {
-        let Ok(mut guard) = self.inner.lock() else {
+        let Ok(guard) = self.inner.lock() else {
             return;
         };
         let Some(output_fmt) = guard.output_format else {
@@ -620,10 +622,10 @@ impl CallbackTrait for ViewportPaintCallback {
 
         let clip_px = info.clip_rect_in_pixels();
         render_pass.set_scissor_rect(
-            clip_px.left_px,
-            clip_px.top_px,
-            clip_px.width_px.max(1),
-            clip_px.height_px.max(1),
+            clip_px.left_px.max(0) as u32,
+            clip_px.top_px.max(0) as u32,
+            clip_px.width_px.max(1) as u32,
+            clip_px.height_px.max(1) as u32,
         );
 
         render_pass.set_pipeline(pipeline);

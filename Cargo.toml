@@ -20,7 +20,7 @@ egui-wgpu = "0.33"
 egui_dock = { version = "0.18", features = ["serde"] }
 env_logger = "0.11"
 glam = "0.32"
-half = "2.7"
+half = { version = "2.7", features = ["bytemuck"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "tga", "hdr"] }
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
