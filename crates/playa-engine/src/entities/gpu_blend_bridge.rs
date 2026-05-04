@@ -106,7 +106,7 @@ impl GpuBlendBridge {
         };
 
         match self.tx.send(req) {
-            Err(e) => GpuBlendReport::NotQueued(e.into_inner().frames),
+            Err(send_err) => GpuBlendReport::NotQueued(send_err.0.frames),
             Ok(()) => match reply_rx.recv() {
                 Ok(frame) => GpuBlendReport::Completed(frame),
                 Err(_) => {
