@@ -1704,7 +1704,7 @@ impl CompNode {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
         {
-            CompositorType::Gpu(_) => gpu_blend_bridge,
+            CompositorType::Wgpu(_) => gpu_blend_bridge,
             CompositorType::Cpu(_) => None,
         };
 

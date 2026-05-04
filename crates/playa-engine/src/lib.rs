@@ -8,4 +8,5 @@
 pub mod core;
 pub mod defaults;
 pub mod entities;
+pub mod render_gpu;
 pub mod utils;

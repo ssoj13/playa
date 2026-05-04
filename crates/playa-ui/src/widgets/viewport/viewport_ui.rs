@@ -9,7 +9,7 @@ use super::gizmo::GizmoState;
 use super::pick;
 use super::shaders::Shaders;
 use super::tool::ToolMode;
-use super::{ViewportRenderer, ViewportState};
+use super::{ViewportPaintCallback, ViewportRenderer, ViewportState};
 use crate::widgets::actions::ActionQueue;
 use crate::widgets::file_dialogs::create_media_dialog;
 use playa_engine::core::event_bus::BoxedEvent;
@@ -96,42 +96,40 @@ pub fn render(
 
         handle_viewport_input(&ctx, ui, panel_rect, viewport_state, response.hovered());
 
-        // Render the frame first (OpenGL callback). Any egui overlays drawn before this
-        // would be overdrawn by the callback, so keep overlays after it.
+        // Present the raster first (wgpu callback). Anything drawn before stays underneath.
         let render_start = std::time::Instant::now();
 
-        let renderer = viewport_renderer.clone();
+        let renderer_arc = viewport_renderer.clone();
         let render_state = viewport_state.render_state();
         let mut needs_upload = texture_needs_upload;
         {
-            let r = renderer.lock().unwrap();
+            let r = renderer_arc.lock().unwrap();
             if r.needs_texture_update(w, h) {
                 needs_upload = true;
             }
         }
+        {
+            let mut r = renderer_arc.lock().unwrap();
+            r.update_shader(shader_manager);
+            if needs_upload {
+                r.stage_frame(&render_state, w, h, img.buffer(), img.pixel_format());
+            } else {
+                r.skip_upload_this_frame(render_state);
+            }
+        }
 
-        let maybe_pixels = if needs_upload {
-            Some((img.buffer(), img.pixel_format()))
-        } else {
-            None
-        };
-
-        ui.painter().add(egui::PaintCallback {
-            rect: panel_rect,
-            callback: Arc::new(egui_glow::CallbackFn::new(move |_info, painter| {
-                let gl = painter.gl();
-                let mut renderer = renderer.lock().unwrap();
-                if let Some((pixels, pixel_format)) = maybe_pixels.as_ref() {
-                    renderer.upload_texture(gl, w, h, pixels, *pixel_format);
-                }
-                renderer.render(gl, &render_state);
-            })),
-        });
+        ui.painter()
+            .add(egui_wgpu::Callback::new_paint_callback(
+                panel_rect,
+                ViewportPaintCallback {
+                    inner: renderer_arc,
+                },
+            ));
 
         render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
 
         // Render gizmo for transform manipulation (Move/Rotate/Scale tools)
-        // (must be after GL callback so it stays visible).
+        // (must be after raster callback so it stays visible.)
         let (_gizmo_consumed, gizmo_events) =
             gizmo_state.render(ui, viewport_state, project, player);
         actions.events.extend(gizmo_events);

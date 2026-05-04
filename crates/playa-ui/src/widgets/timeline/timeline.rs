@@ -4,7 +4,8 @@
 //! are bridged to the EventBus; renderers read `TimelineConfig`/`TimelineState`
 //! to draw rows/bars and handle interactions.
 
-use eframe::egui::{self, Pos2};
+use crate::widgets::dnd::GlobalDragState;
+use eframe::egui;
 use playa_engine::entities::Attrs;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -182,49 +183,6 @@ fn create_hatch_texture(ctx: &egui::Context) -> egui::TextureHandle {
             ..Default::default()
         },
     )
-}
-
-/// Global drag state - tracks what is currently being dragged
-#[derive(Clone, Debug)]
-pub enum GlobalDragState {
-    /// Dragging clip/comp from Project Window to timeline
-    ProjectItem {
-        source_uuid: Uuid,
-        duration: Option<i32>,
-    },
-    /// Panning timeline horizontally (middle mouse button)
-    TimelinePan {
-        drag_start_pos: Pos2,
-        initial_pan_offset: f32,
-    },
-    /// Moving layer horizontally and/or vertically
-    MovingLayer {
-        layer_idx: usize,
-        initial_start: i32, // Now supports negative values
-        drag_start_x: f32,
-        drag_start_y: f32,
-    },
-    /// Adjusting layer play start (left edge)
-    AdjustPlayStart {
-        layer_idx: usize,
-        initial_play_start: i32,
-        drag_start_x: f32,
-    },
-    /// Adjusting layer play end (right edge)
-    AdjustPlayEnd {
-        layer_idx: usize,
-        initial_play_end: i32,
-        drag_start_x: f32,
-    },
-    /// Sliding layer - moves in while compensating trim_in/trim_out to keep visible content in place
-    SlidingLayer {
-        layer_idx: usize,
-        initial_in: i32,
-        initial_trim_in: i32,
-        initial_trim_out: i32,
-        speed: f32,
-        drag_start_x: f32,
-    },
 }
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Serialize, Deserialize)]

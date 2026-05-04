@@ -2,16 +2,17 @@
 //!
 //! Two backends live behind [`CompositorType`]:
 //! - **CPU** — [`CpuCompositor`], works on any thread (workers, encode, nested preload).
-//! - **GPU** — [`GpuCompositor`], needs a current OpenGL context on the calling thread.
+//! - **WGPU** — [`crate::render_gpu::WgpuCompositor`], UI thread + shared `wgpu` queue from `eframe`.
 //!
 //! # How [`CompNode`](crate::entities::comp_node::CompNode) uses this
 //!
 //! Final `blend_with_dim` for the active project **must** run against the same [`CompositorType`] the
-//! user selected. Workers do not have GL, so when prefs pick GPU,
+//! user selected. Workers do not surface the desktop `wgpu` queue, so when prefs pick the GPU raster
+//! path,
 //! [`CompNode::compose_internal`](crate::entities::comp_node::CompNode::compose_internal) moves the
 //! stacked rasters through [`super::gpu_blend_bridge::GpuBlendBridge`]; the desktop host drains that
-//! queue on the UI thread (`PlayaApp::drain_gpu_blend_queue`) **after** the GL context and compositor
-//! backend are in sync — see `gpu_blend_bridge.rs`. Cpu prefs keep everything on workers via a
+//! queue on the UI thread (`PlayaApp::drain_gpu_blend_queue`) **after** the GPU compositor is wired to
+//! the current `wgpu::Device`/queue — see `gpu_blend_bridge.rs`. Cpu prefs keep everything on workers via a
 //! per-thread Cpu compositor (`THREAD_COMPOSITOR` in `comp_node`).
 //!
 //! Encode / blocking `get_frame` paths intentionally omit the bridge
@@ -21,15 +22,14 @@
 //!
 //! The API carries inverse 3×3 matrices `[f32; 9]` per layer ([`IDENTITY_TRANSFORM`] when flat).
 //!
-//! **Present today:** matrices flow through `blend` / [`CompositorType::blend_with_dim`]; the Gpu
-//! shader reads `u_top_transform` (see [`super::gpu_compositor::GpuCompositor`]).
+//! **Present today:** matrices flow through `blend` / [`CompositorType::blend_with_dim`]; the WGSL
+//! shader reads `u_top_transform` (see `render_gpu/shaders/layer_blend.wgsl`).
 //!
 //! **Still asymmetric:** the Cpu path ignores the matrix bundle — transforms are baked into pixels
 //! earlier in compose. Skipping Cpu transform there while feeding raw mats only to Gpu is future work.
 
 use crate::entities::frame::{Frame, FrameStatus, PixelBuffer};
-
-use super::gpu_compositor::GpuCompositor;
+use crate::render_gpu::WgpuCompositor;
 
 /// Supported blend modes for layer compositing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,18 +50,18 @@ pub enum BlendMode {
 pub enum CompositorType {
     /// CPU compositor - works everywhere, slower
     Cpu(CpuCompositor),
-    /// GPU compositor - requires OpenGL context, 10-50x faster
-    Gpu(GpuCompositor),
+    /// wgpu raster compositor (UI thread).
+    Wgpu(WgpuCompositor),
 }
 
 impl Clone for CompositorType {
     fn clone(&self) -> Self {
-        // GPU compositor can't be cloned (OpenGL resources are tied to context)
+        // GPU compositor can't be cloned (wgpu resources are tied to the shared device queue)
         // This is expected during Project serialization (compositor is #[serde(skip)])
         // but should NOT happen in normal code - use RefCell or Arc instead
-        if matches!(self, CompositorType::Gpu(_)) {
+        if matches!(self, CompositorType::Wgpu(_)) {
             log::warn!(
-                "CompositorType::clone() called on GPU variant - downgrading to CPU. \
+                "CompositorType::clone() called on Wgpu variant - downgrading to CPU. \
                         This may indicate a bug if not during serialization."
             );
         }
@@ -82,7 +82,7 @@ impl CompositorType {
     pub fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
         match self {
             CompositorType::Cpu(cpu) => cpu.blend(frames),
-            CompositorType::Gpu(gpu) => gpu.blend(frames),
+            CompositorType::Wgpu(gpu) => gpu.blend(frames),
         }
     }
 
@@ -94,7 +94,7 @@ impl CompositorType {
     ) -> Option<Frame> {
         match self {
             CompositorType::Cpu(cpu) => cpu.blend_with_dim(frames, dim),
-            CompositorType::Gpu(gpu) => gpu.blend_with_dim(frames, dim),
+            CompositorType::Wgpu(gpu) => gpu.blend_with_dim(frames, dim),
         }
     }
 }

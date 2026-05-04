@@ -4,17 +4,17 @@
 //!
 //! # Why this module exists (problem)
 //!
-//! Workers run without a bound OpenGL context, but [`super::gpu_compositor::GpuCompositor`] must
-//! upload textures and draws on the UI thread while the GL context is current. Passing a raw
-//! `&GpuCompositor` into [`super::node::ComputeContext`] would imply GL calls from arbitrary
-//! threads—undefined behaviour.
+//! Workers cannot block on [`crate::render_gpu::WgpuCompositor`]: uploads belong on the UI thread.
+//!
+//! Passing a raw
+//! [`WgpuCompositor`](crate::render_gpu::WgpuCompositor) into [`super::node::ComputeContext`] would imply draws from arbitrary threads.
 //!
 //! # What we do (solution)
 //!
 //! 1. The worker wraps the layer stack in [`GpuBlendRequest`] and sends it via an unbounded
 //!    [`std::sync::mpsc::channel`].
 //! 2. The UI drains the queue ([`GpuBlendBridge::drain_into_compositor`]) **after**
-//!    [`CompositorType`](super::compositor::CompositorType) holds a GPU backend with GL current.
+//!    [`CompositorType`](super::compositor::CompositorType) holds a WGPU backend tied to [`eframe`].
 //! 3. Workers block on the per-request reply channel ([`GpuBlendBridge::delegate_blend_blocking`])
 //!    until the drain runs—serialization that keeps `compute`'s synchronous contract.
 //!

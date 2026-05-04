@@ -12,7 +12,6 @@ pub mod effects;
 pub mod file_node;
 pub mod frame;
 pub mod gpu_blend_bridge;
-pub mod gpu_compositor;
 pub mod keys;
 pub mod loader;
 pub mod node;

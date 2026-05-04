@@ -32,14 +32,17 @@ use super::timeline_events::{
     TimelineSnapChangedEvent, TimelineZoomChangedEvent,
 };
 use super::timeline_helpers::{
-    RulerAction, detect_layer_tool_with_geom, draw_drop_preview, draw_frame_ruler,
-    frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
+    RulerAction, detect_layer_tool_with_geom, draw_drop_preview, drop_preview_thumb_rect,
+    draw_frame_ruler, frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
 };
-use super::{GlobalDragState, TimelineConfig, TimelineState};
-use crate::widgets::project::project_events::{ProjectActiveChangedEvent, SelectionFocusEvent};
+use super::{TimelineConfig, TimelineState};
+use crate::widgets::dnd::{
+    GlobalDragState, ProjectDragSnapOverlay, global_drag_state_id, project_drag_snap_overlay_id,
+};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
 use playa_engine::core::event_bus::BoxedEvent;
+use playa_events::project_media::{ProjectActiveChangedEvent, SelectionFocusEvent};
 use playa_engine::core::player_events::{
     JumpToEndEvent, JumpToStartEvent, SetFrameEvent, SetLoopEvent, StopEvent, TogglePlayPauseEvent,
 };
@@ -1269,71 +1272,95 @@ pub fn render_canvas(
                             painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 100));
                         }
 
-                        // Check for drag'n'drop from Project Window using global drag state
-                        let global_drag: Option<GlobalDragState> = ui.ctx().data(|data| {
-                            data.get_temp(egui::Id::new("global_drag_state"))
-                        });
+                        let global_drag: Option<GlobalDragState> =
+                            ui.ctx().data(|data| data.get_temp(global_drag_state_id()));
 
-                        if let Some(GlobalDragState::ProjectItem { source_uuid, duration, .. }) = global_drag {
-                            // Use mouse Y position directly, adjust only for time overlap
-                            if let Some(hover_pos) = ui.ctx().input(|i| i.pointer.hover_pos())
-                                && hover_pos.x >= timeline_rect.min.x && hover_pos.x <= timeline_rect.max.x {
-                                    let raw_drop_frame = screen_x_to_frame(hover_pos.x, timeline_rect.min.x, config, state).round() as i32;
-                                    let dur = duration.unwrap_or(10).max(1);
+                        match global_drag.as_ref() {
+                            Some(GlobalDragState::ProjectItem {
+                                source_uuid,
+                                duration,
+                                ..
+                            }) => {
+                                if let Some(hover_pos) =
+                                    ui.ctx().input(|i| i.pointer.hover_pos().or_else(|| i.pointer.latest_pos()))
+                                {
+                                    if timeline_rect.contains(hover_pos)
+                                    {
+                                        let raw_drop_frame = screen_x_to_frame(
+                                            hover_pos.x,
+                                            timeline_rect.min.x,
+                                            config,
+                                            state,
+                                        )
+                                            .round() as i32;
+                                        let dur = duration.unwrap_or(10).max(1);
 
-                                    // Calculate mouse row for visual positioning
-                                    let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y) / config.layer_height).floor() as i32;
-                                    let mouse_row = mouse_row_raw.max(0) as usize;
+                                        // Calculate mouse row for visual positioning
+                                        let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y)
+                                            / config.layer_height)
+                                            .floor() as i32;
+                                        let mouse_row = mouse_row_raw.max(0) as usize;
 
-                                    // Drop at cursor position, insert at mouse row
-                                    let drop_frame = raw_drop_frame;
-                                    let insert_idx = mouse_row.min(comp.layers.len());
+                                        let drop_frame = raw_drop_frame;
+                                        let insert_idx = mouse_row.min(comp.layers.len());
 
-                                    // Check for cyclic dependency
-                                    let is_cycle = {
-                                        let media = project.media.read().expect("media lock");
-                                        comp.check_collisions(source_uuid, &media, true)
-                                    };
+                                        let is_cycle = project.would_create_cycle(comp_id, *source_uuid);
 
-                                    // Use mouse position for preview Y (shows insertion point)
-                                    let row_y = if hover_pos.y >= timeline_rect.min.y {
-                                        row_to_y(mouse_row, config, timeline_rect)
-                                    } else {
-                                        // Above timeline -> show at top
-                                        timeline_rect.min.y
-                                    };
+                                        let row_y = row_to_y(mouse_row, config, timeline_rect);
 
-                                    draw_drop_preview(
-                                        ui.painter(),
-                                        drop_frame,
-                                        row_y,
-                                        dur,
-                                        timeline_rect,
-                                        config,
-                                        state,
-                                        is_cycle,
-                                    );
-
-                                    // Only allow drop if not a cycle
-                                    if !is_cycle && ui.ctx().input(|i| i.pointer.any_released()) {
-                                        dispatch(Box::new(AddLayerEvent {
-                                            comp_uuid: comp_id,
-                                            source_uuid,
-                                            start_frame: drop_frame,
-                                            insert_idx: Some(insert_idx),
-                                        }));
+                                        let thumb_rect = drop_preview_thumb_rect(
+                                            drop_frame,
+                                            row_y,
+                                            dur,
+                                            timeline_rect,
+                                            config,
+                                            state,
+                                        );
                                         ui.ctx().data_mut(|data| {
-                                            data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));
+                                            data.insert_temp(
+                                                project_drag_snap_overlay_id(),
+                                                ProjectDragSnapOverlay {
+                                                    rect: thumb_rect,
+                                                    is_cycle,
+                                                },
+                                            );
                                         });
-                                    } else if is_cycle && ui.ctx().input(|i| i.pointer.any_released()) {
-                                        // Clear drag state even if cycle detected
-                                        ui.ctx().data_mut(|data| {
-                                            data.remove::<GlobalDragState>(egui::Id::new("global_drag_state"));
-                                        });
-                                        log::warn!("Blocked cyclic dependency: {} -> {}", source_uuid, comp_id);
+
+                                        if !is_cycle
+                                            && ui.ctx().input(|i| i.pointer.primary_released())
+                                        {
+                                            dispatch(Box::new(AddLayerEvent {
+                                                comp_uuid: comp_id,
+                                                source_uuid: *source_uuid,
+                                                start_frame: drop_frame,
+                                                insert_idx: Some(insert_idx),
+                                            }));
+                                            ui.ctx().data_mut(|data| {
+                                                data.remove::<GlobalDragState>(
+                                                    global_drag_state_id(),
+                                                );
+                                            });
+                                        } else if is_cycle
+                                            && ui.ctx().input(|i| i.pointer.primary_released())
+                                        {
+                                            ui.ctx().data_mut(|data| {
+                                                data.remove::<GlobalDragState>(
+                                                    global_drag_state_id(),
+                                                );
+                                            });
+                                            log::warn!(
+                                                "Blocked cyclic dependency: {} -> {}",
+                                                source_uuid,
+                                                comp_id
+                                            );
+                                        }
                                     }
                                 }
-            } else if state.drag_state.is_none() && global_drag.is_none() {
+                            }
+                            _ => {}
+                        }
+
+                        if state.drag_state.is_none() && global_drag.is_none() {
                 // Handle click/drag interaction only if no active drag state
                 // Use tab_rect instead of timeline_response to handle clicks in empty area
                 // Exclude ruler_rect to avoid interfering with ruler scrubbing
@@ -1411,7 +1438,7 @@ pub fn render_canvas(
                             }
                         }
                     }
-            }
+                        }
         });
     });
 

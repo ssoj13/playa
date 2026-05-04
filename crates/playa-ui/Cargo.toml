@@ -14,11 +14,19 @@ playa-engine = { path = "../playa-engine" }
 playa-events = { path = "../playa-events" }
 playa-io = { path = "../playa-io", default-features = false }
 bytemuck = { workspace = true }
-eframe = { workspace = true }
+eframe = { version = "0.33", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "wgpu",
+    "wayland",
+    "web_screen_reader",
+    "x11",
+    "persistence",
+] }
+egui-wgpu = { workspace = true }
 egui_dnd = "0.14"
 egui_dock = { workspace = true }
 egui_extras = "0.33"
-egui_glow = { workspace = true }
 egui_ltreeview = { version = "0.6.1", features = ["persistence"] }
 egui-snarl = { version = "0.9", features = ["serde"] }
 glam = { workspace = true }

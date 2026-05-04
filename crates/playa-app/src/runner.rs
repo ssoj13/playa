@@ -67,6 +67,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             .with_resizable(true)
             .with_drag_and_drop(true),
         persist_window: true,
+        renderer: eframe::Renderer::Wgpu,
         #[cfg(not(target_arch = "wasm32"))]
         persistence_path: Some(config::config_file("playa.json", &path_config)),
         ..Default::default()

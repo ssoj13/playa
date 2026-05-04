@@ -2,7 +2,8 @@
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use playa_engine::entities::{Comp, Node};
 
-use super::{GlobalDragState, TimelineConfig, TimelineState};
+use super::{TimelineConfig, TimelineState};
+use crate::widgets::dnd::GlobalDragState;
 use playa_engine::entities::keys::{A_IN, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
 /// Action from ruler interaction
@@ -357,6 +358,28 @@ pub(super) fn row_to_y(row: usize, config: &TimelineConfig, timeline_rect: Rect)
     timeline_rect.min.y + (row as f32 * config.layer_height)
 }
 
+pub(super) fn drop_preview_thumb_rect(
+    frame: i32,
+    row_y: f32,
+    duration: i32,
+    timeline_rect: Rect,
+    config: &TimelineConfig,
+    state: &TimelineState,
+) -> Rect {
+    let start_x = frame_to_screen_x(frame as f32, timeline_rect.min.x, config, state);
+    let end_x = frame_to_screen_x(
+        (frame + duration) as f32,
+        timeline_rect.min.x,
+        config,
+        state,
+    );
+    let bar_height = (config.layer_height - 8.0).max(2.0);
+    Rect::from_min_max(
+        Pos2::new(start_x, row_y + 4.0),
+        Pos2::new(end_x, row_y + 4.0 + bar_height),
+    )
+}
+
 /// Draw drop preview (ghost) using the standard layer move style.
 /// If `is_cycle` is true, draws red to indicate invalid drop.
 pub(super) fn draw_drop_preview(
@@ -369,17 +392,13 @@ pub(super) fn draw_drop_preview(
     state: &TimelineState,
     is_cycle: bool,
 ) {
-    let start_x = frame_to_screen_x(frame as f32, timeline_rect.min.x, config, state);
-    let end_x = frame_to_screen_x(
-        (frame + duration) as f32,
-        timeline_rect.min.x,
+    let thumb_rect = drop_preview_thumb_rect(
+        frame,
+        row_y,
+        duration,
+        timeline_rect,
         config,
         state,
-    );
-    let bar_height = (config.layer_height - 8.0).max(2.0);
-    let thumb_rect = Rect::from_min_max(
-        Pos2::new(start_x, row_y + 4.0),
-        Pos2::new(end_x, row_y + 4.0 + bar_height),
     );
     let color = if is_cycle {
         Color32::from_rgba_unmultiplied(255, 80, 80, 200) // Red for cycle

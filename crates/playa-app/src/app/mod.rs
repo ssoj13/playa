@@ -165,7 +165,7 @@ pub struct PlayaApp {
     /// REST API command receiver (polled each frame)
     #[serde(skip)]
     pub api_command_rx: Option<std::sync::mpsc::Receiver<crate::server::ApiCommand>>,
-    /// Pending screenshot requests (full window capture via glReadPixels)
+    /// Pending screenshot requests (broadcast via [`egui::ViewportCommand::Screenshot`] + CPU path for raw frame)
     /// Multiple clients can wait - all receive the same screenshot (broadcast)
     /// (viewport_only, response_channel) - viewport_only=true means full window, false means raw frame
     #[serde(skip)]
@@ -320,7 +320,7 @@ impl PlayaApp {
                 .compositor
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()),
-            CompositorType::Gpu(_)
+            CompositorType::Wgpu(_)
         );
         if !is_gpu {
             return None;
@@ -329,7 +329,7 @@ impl PlayaApp {
     }
 
     /// Batches [`GpuBlendBridge::drain_into_compositor`](playa_engine::entities::GpuBlendBridge::drain_into_compositor)
-    /// **after** `update_compositor_backend` so Gpu resources match the refreshed GL reference.
+    /// **after** `update_compositor_backend` so Gpu resources match the current wgpu device/queue wiring.
     ///
     /// Returning `usize > 0` triggers `request_repaint` because workers flushed pixels asynchronously
     /// and egui otherwise idles until the next input tick.

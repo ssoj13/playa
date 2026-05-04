@@ -14,6 +14,11 @@ use playa_engine::entities::node::Node;
 
 use eframe::egui;
 use image::{ImageBuffer, Rgba};
+use std::sync::Arc;
+
+/// Full-window JPEG waiters bundled into [`egui::ViewportCommand::Screenshot`].
+#[derive(Clone)]
+pub(crate) struct WindowScreenshotWaiters(pub Vec<crossbeam_channel::Sender<Result<Vec<u8>, String>>>);
 
 impl PlayaApp {
     /// Start REST API server if enabled in settings.
@@ -156,7 +161,7 @@ impl PlayaApp {
     }
 
     /// Queue screenshot request.
-    /// viewport_only=true: full window via glReadPixels (includes UI)
+    /// viewport_only=true: full native window JPEG (wgpu → egui screenshot path; includes chrome + UI)
     /// viewport_only=false: raw frame data only (no UI)
     /// Both go through paint callback for unified async handling.
     pub fn take_screenshot(
@@ -218,6 +223,69 @@ impl PlayaApp {
             "Raw frame screenshot: {}x{}, {} bytes",
             width,
             height,
+            jpeg_bytes.len()
+        );
+        Ok(jpeg_bytes)
+    }
+
+    /// Dispatches JPEG to waiters recorded in [`WindowScreenshotWaiters`] user payloads.
+    pub fn consume_egui_screenshots(&mut self, ctx: &egui::Context) {
+        let shots: Vec<_> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|ev| {
+                    if let egui::Event::Screenshot { user_data, image, .. } = ev {
+                        Some((user_data.clone(), image.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        });
+
+        for (user_data, image) in shots {
+            let Some(arc_any) = user_data.data else {
+                continue;
+            };
+            let Ok(waiters) = Arc::downcast::<WindowScreenshotWaiters>(arc_any) else {
+                continue;
+            };
+            let encoded = Self::encode_color_image_jpeg(&image);
+            for w in waiters.0.iter() {
+                let _ = w.send(encoded.clone());
+            }
+        }
+    }
+
+    fn encode_color_image_jpeg(image: &egui::ColorImage) -> Result<Vec<u8>, String> {
+        let [width, height] = image.size;
+        let rgba: Vec<u8> = image
+            .pixels
+            .iter()
+            .flat_map(|c| c.to_array())
+            .collect();
+
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(width as u32, height as u32, rgba)
+                .ok_or_else(|| "Failed to create image buffer from screenshot".to_string())?;
+
+        let mut jpeg_bytes: Vec<u8> = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
+        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90);
+        encoder
+            .encode(
+                rgb_img.as_raw(),
+                rgb_img.width(),
+                rgb_img.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|e| format!("JPEG encoding failed: {}", e))?;
+
+        log::info!(
+            "Window screenshot: {}x{}, {} bytes",
+            rgb_img.width(),
+            rgb_img.height(),
             jpeg_bytes.len()
         );
         Ok(jpeg_bytes)

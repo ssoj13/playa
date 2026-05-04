@@ -1,6 +1,6 @@
-//! Viewport widget - image viewer with pan/zoom
+//! Viewport widget - image viewer with pan/zoom / scrubbing
 //!
-//! OpenGL renderer with scrubbing support
+//! Raster is presented through wgpu inside egui’s paint callbacks.
 
 mod coords;
 pub mod gizmo;
@@ -12,7 +12,7 @@ mod viewport;
 pub mod viewport_events;
 mod viewport_ui;
 
-pub use renderer::ViewportRenderer;
+pub use renderer::{ViewportPaintCallback, ViewportRenderer};
 pub use shaders::Shaders;
 pub use viewport::{ViewportMode, ViewportRenderState, ViewportState};
 pub use viewport_events::ViewportRefreshEvent;

@@ -8,27 +8,20 @@
 
 use std::sync::Arc;
 
-use eframe::{egui, glow};
+use eframe::egui;
 use egui_dock::DockArea;
 use log::{info, trace};
 
+use crate::app::api::WindowScreenshotWaiters;
 use crate::app::{DockTabs, PlayaApp};
 use playa_ui::dialogs::prefs::render_settings_window;
 
 impl eframe::App for PlayaApp {
     /// Main frame update - called every frame by eframe.
     ///
-    /// Flow:
-    /// 1. Handle API exit request
-    /// 2. Start API server (lazy init)
-    /// 3. Update compositor backend (sync GL + `CompositorType`)
-    /// 4. Drain `GpuBlendBridge` (`PlayaApp::drain_gpu_blend_queue`) so Gpu workers unblock
-    /// 5. Apply theme and font settings
-    /// 6. Process player updates and events
-    /// 7. Handle dropped files
-    /// 8. Render UI (dock panels, dialogs)
-    /// 9. Handle keyboard input
-    /// 10. Handle screenshots
+    /// Each frame: API exit, lazy API start, wgpu output format + compositor sync, screenshot
+    /// deliveries, GPU blend drain, settings/player/event loop, docked UI & dialogs; ends by
+    /// scheduling any new screenshots for the compositor-backed capture path.
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Reset node editor flags each frame - will be set if tab is rendered
         // Handle exit request from REST API
@@ -42,11 +35,15 @@ impl eframe::App for PlayaApp {
         // Start REST API server if enabled (lazy start on first frame)
         self.start_api_server(ctx);
 
-        // Get GL context and update compositor backend
-        if let Some(gl) = frame.gl() {
-            self.update_compositor_backend(gl);
+        if let Some(rs) = frame.wgpu_render_state() {
+            self.viewport_renderer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .set_output_format(rs.target_format);
+            self.update_compositor_backend(&rs.device, &rs.queue);
         }
-        // Must follow compositor sync: workers blocked on GpuBlendBridge need the freshest GL+FBO state.
+
+        self.consume_egui_screenshots(ctx);
         self.drain_gpu_blend_queue(ctx);
 
         // NOTE: Events processed after player.update() to catch events from player too
@@ -188,6 +185,14 @@ impl eframe::App for PlayaApp {
             );
         }
 
+        // Snapped ghost rect is rewritten only when this frame's timeline draw runs above a valid
+        // drop strip; clearing here avoids stale screen-space rects when the timeline tab is hidden.
+        ctx.data_mut(|data| {
+            data.remove::<playa_ui::widgets::dnd::ProjectDragSnapOverlay>(
+                playa_ui::widgets::dnd::project_drag_snap_overlay_id(),
+            );
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.is_fullscreen {
                 self.render_viewport_tab(ui);
@@ -220,6 +225,8 @@ impl eframe::App for PlayaApp {
                 }
             }
         });
+
+        playa_ui::widgets::dnd::paint_global_project_drag_overlay(ctx);
 
         // Process keyboard input after hover states were updated by panel rendering
         self.handle_keyboard_input(ctx);
@@ -260,7 +267,7 @@ impl eframe::App for PlayaApp {
         // This must not depend on "Settings window opened".
         self.apply_cache_strategy_if_changed();
 
-        // Handle pending screenshots (glReadPixels after all rendering)
+        // Handle queued screenshot requests after UI + egui primitives are finalized for this tick.
         self.handle_pending_screenshots(ctx);
     }
 
@@ -285,19 +292,16 @@ impl eframe::App for PlayaApp {
     }
 
     /// Cleanup on application exit.
-    fn on_exit(&mut self, gl: Option<&glow::Context>) {
+    fn on_exit(&mut self) {
         // Cancel all pending frame loads by incrementing epoch
         // Workers check epoch before executing, so stale tasks will be skipped
         self.cache_manager.increment_epoch();
         self.debounced_preloader.cancel();
         trace!("Cancelled pending frame loads for fast shutdown");
 
-        // Cleanup OpenGL resources
-        if let Some(gl) = gl {
-            let mut renderer = self.viewport_renderer.lock().unwrap();
-            renderer.destroy(gl);
-            trace!("ViewportRenderer resources cleaned up");
-        }
+        let mut renderer = self.viewport_renderer.lock().unwrap_or_else(|e| e.into_inner());
+        renderer.destroy();
+        trace!("ViewportRenderer GPU resources cleaned up");
     }
 }
 
@@ -332,12 +336,11 @@ impl PlayaApp {
         }
     }
 
-    /// Update compositor backend based on settings (CPU vs GPU).
-    pub fn update_compositor_backend(&mut self, gl: &std::sync::Arc<glow::Context>) {
+    /// Update compositor backend based on settings (CPU vs wgpu offload path).
+    pub fn update_compositor_backend(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         use playa_engine::entities::compositor::{CompositorType, CpuCompositor};
-        use playa_engine::entities::gpu_compositor::GpuCompositor;
+        use playa_engine::render_gpu::WgpuCompositor;
 
-        // Check current backend type first (cheap)
         let current_is_cpu = matches!(
             *self
                 .project
@@ -351,7 +354,6 @@ impl PlayaApp {
             playa_events::CompositorBackend::Cpu
         );
 
-        // Only create new compositor if we need to switch
         if current_is_cpu != desired_is_cpu {
             info!(
                 "Switching compositor to: {:?}",
@@ -360,7 +362,7 @@ impl PlayaApp {
             let new_backend = match self.settings.compositor_backend {
                 playa_events::CompositorBackend::Cpu => CompositorType::Cpu(CpuCompositor),
                 playa_events::CompositorBackend::Gpu => {
-                    CompositorType::Gpu(GpuCompositor::new(gl.clone()))
+                    CompositorType::Wgpu(WgpuCompositor::new(device, queue))
                 }
             };
             self.project.set_compositor(new_backend);
@@ -381,20 +383,17 @@ impl PlayaApp {
         self.applied_cache_strategy = desired;
     }
 
-    /// Handle pending screenshot requests via glReadPixels.
-    /// Broadcasts one capture to all waiting clients.
+    /// Full-window grabs use [`egui::ViewportCommand::Screenshot`] (decoded in
+    /// [`PlayaApp::consume_egui_screenshots`]); raw-pixel grabs stay CPU-only (`capture_raw_frame`).
     fn handle_pending_screenshots(&mut self, ctx: &egui::Context) {
         if self.pending_screenshots.is_empty() {
             return;
         }
 
-        // Drain all waiters: (viewport_only, sender)
         let all_waiters: Vec<_> = std::mem::take(&mut self.pending_screenshots);
 
-        // Split by type
-        let mut window_waiters: Vec<crossbeam_channel::Sender<Result<Vec<u8>, String>>> =
-            Vec::new();
-        let mut frame_waiters: Vec<crossbeam_channel::Sender<Result<Vec<u8>, String>>> = Vec::new();
+        let mut window_waiters = Vec::new();
+        let mut frame_waiters = Vec::new();
         for (viewport_only, sender) in all_waiters {
             if viewport_only {
                 window_waiters.push(sender);
@@ -403,134 +402,28 @@ impl PlayaApp {
             }
         }
 
-        // Pre-capture raw frame data for frame_waiters (before callback, on main thread)
-        let frame_result: Option<Result<Vec<u8>, String>> = if !frame_waiters.is_empty() {
-            Some(self.capture_raw_frame())
-        } else {
-            None
-        };
-
-        // Get window size for glReadPixels
-        let screen_rect = ctx.input(|i| i.viewport_rect());
-        let width = screen_rect.width() as i32;
-        let height = screen_rect.height() as i32;
         log::info!(
-            "Screenshot: {} window + {} frame waiters, {}x{}",
+            "Screenshot: {} window + {} frame waiters",
             window_waiters.len(),
-            frame_waiters.len(),
-            width,
-            height
+            frame_waiters.len()
         );
 
-        // Wrap both sets of waiters for callback access
-        type WaiterList = Vec<crossbeam_channel::Sender<Result<Vec<u8>, String>>>;
-        let holder: Arc<
-            std::sync::Mutex<(WaiterList, WaiterList, Option<Result<Vec<u8>, String>>)>,
-        > = Arc::new(std::sync::Mutex::new((
-            window_waiters,
-            frame_waiters,
-            frame_result,
-        )));
-        let holder_clone = Arc::clone(&holder);
+        let frame_result = if frame_waiters.is_empty() {
+            None
+        } else {
+            Some(self.capture_raw_frame())
+        };
+        if let Some(ref result) = frame_result {
+            for waiter in frame_waiters {
+                let _ = waiter.send(result.clone());
+            }
+        }
 
-        // Add paint callback via layer_painter
-        let layer_id =
-            egui::LayerId::new(egui::Order::Foreground, egui::Id::new("screenshot_capture"));
-        let painter = ctx.layer_painter(layer_id);
-        painter.add(egui::PaintCallback {
-            rect: screen_rect,
-            callback: Arc::new(egui_glow::CallbackFn::new(move |_info, gl_painter| {
-                use eframe::glow::HasContext;
-                let gl = gl_painter.gl();
-
-                // Take all data (only first callback execution processes)
-                let (window_waiters, frame_waiters, frame_result) =
-                    std::mem::take(&mut *holder_clone.lock().unwrap());
-                if window_waiters.is_empty() && frame_waiters.is_empty() {
-                    return;
-                }
-
-                log::info!(
-                    "PaintCallback: {} window + {} frame waiters",
-                    window_waiters.len(),
-                    frame_waiters.len()
-                );
-
-                // Send pre-captured frame data to frame waiters
-                if let Some(result) = frame_result {
-                    for waiter in frame_waiters {
-                        let _ = waiter.send(result.clone());
-                    }
-                }
-
-                // Capture full window for window waiters
-                if !window_waiters.is_empty() {
-                    // Allocate buffer for pixels (RGBA)
-                    let mut pixels = vec![0u8; (width * height * 4) as usize];
-
-                    unsafe {
-                        gl.read_pixels(
-                            0,
-                            0,
-                            width,
-                            height,
-                            eframe::glow::RGBA,
-                            eframe::glow::UNSIGNED_BYTE,
-                            eframe::glow::PixelPackData::Slice(Some(&mut pixels)),
-                        );
-                    }
-
-                    // Flip vertically (OpenGL origin is bottom-left) - fast row swap
-                    let row_size = (width * 4) as usize;
-                    let half_height = height as usize / 2;
-                    for y in 0..half_height {
-                        let top_start = y * row_size;
-                        let bottom_start = ((height as usize) - 1 - y) * row_size;
-                        let (top_slice, rest) = pixels.split_at_mut(top_start + row_size);
-                        let top_row = &mut top_slice[top_start..];
-                        let bottom_row =
-                            &mut rest[bottom_start - top_start - row_size..][..row_size];
-                        top_row.swap_with_slice(bottom_row);
-                    }
-
-                    // Encode to JPEG
-                    use image::{ImageBuffer, Rgba};
-                    let result = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(
-                        width as u32,
-                        height as u32,
-                        pixels,
-                    )
-                    .ok_or_else(|| "Failed to create image buffer".to_string())
-                    .and_then(|img| {
-                        let mut jpeg_bytes: Vec<u8> = Vec::new();
-                        let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
-                        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
-                        let mut encoder =
-                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90);
-                        encoder
-                            .encode(
-                                rgb_img.as_raw(),
-                                rgb_img.width(),
-                                rgb_img.height(),
-                                image::ExtendedColorType::Rgb8,
-                            )
-                            .map_err(|e| format!("JPEG encoding failed: {}", e))?;
-                        log::info!(
-                            "Window screenshot: {}x{}, {} bytes",
-                            width,
-                            height,
-                            jpeg_bytes.len()
-                        );
-                        Ok(jpeg_bytes)
-                    });
-
-                    // Broadcast to window waiters
-                    for waiter in window_waiters {
-                        let _ = waiter.send(result.clone());
-                    }
-                }
-            })),
-        });
-        let _ = holder; // Keep alive until callback runs
+        if !window_waiters.is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
+                WindowScreenshotWaiters(window_waiters),
+            )));
+            ctx.request_repaint();
+        }
     }
 }

@@ -314,8 +314,8 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 {
                     ui.ctx().data_mut(|data| {
                         data.insert_temp(
-                            egui::Id::new("global_drag_state"),
-                            crate::widgets::timeline::GlobalDragState::ProjectItem {
+                            crate::widgets::dnd::global_drag_state_id(),
+                            crate::widgets::dnd::GlobalDragState::ProjectItem {
                                 source_uuid: *comp_uuid,
                                 duration: Some(frame_count),
                             },
