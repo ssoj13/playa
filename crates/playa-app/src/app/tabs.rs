@@ -14,10 +14,10 @@ use egui_dock::TabViewer;
 
 use crate::app::{DockTab, PlayaApp};
 use playa_engine::entities::node::Node;
-use playa_ui::widgets::node_editor::render_node_editor;
-use playa_ui::widgets::viewport::ViewportRefreshEvent;
 use playa_ui::ui;
 use playa_ui::widgets;
+use playa_ui::widgets::node_editor::render_node_editor;
+use playa_ui::widgets::viewport::ViewportRefreshEvent;
 
 impl PlayaApp {
     /// Render project browser tab.
@@ -340,8 +340,11 @@ impl PlayaApp {
                     .flatten();
 
                 if let Some(mut effects) = effects_opt {
-                    let effect_actions =
-                        playa_ui::widgets::ae::render_effects(ui, &mut effects, &mut self.attributes_state);
+                    let effect_actions = playa_ui::widgets::ae::render_effects(
+                        ui,
+                        &mut effects,
+                        &mut self.attributes_state,
+                    );
 
                     // Handle effect actions
                     if !effect_actions.is_empty() {
@@ -354,15 +357,18 @@ impl PlayaApp {
 
     /// Render node attributes (File, Comp, Camera, Text nodes).
     fn render_node_attributes(&mut self, ui: &mut egui::Ui, ae_focus: &[uuid::Uuid]) {
-
         if ae_focus.len() == 1 {
             // Single node - edit directly
             let node_uuid = ae_focus[0];
             let mut node_changed = false;
             self.project.modify_node(node_uuid, |node| {
                 let name = node.name().to_string();
-                if playa_ui::widgets::ae::render(ui, node.attrs_mut(), &mut self.attributes_state, &name)
-                {
+                if playa_ui::widgets::ae::render(
+                    ui,
+                    node.attrs_mut(),
+                    &mut self.attributes_state,
+                    &name,
+                ) {
                     node_changed = true;
                 }
             });

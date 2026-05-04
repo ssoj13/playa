@@ -1,11 +1,11 @@
-use playa_engine::core::cache_man::CacheManager;
-use playa_engine::entities::node::Node;
-use playa_engine::entities::Project;
-use playa_engine::entities::frame::{Frame, PixelFormat};
-use playa_engine::core::event_bus::BoxedEvent;
-use playa_engine::core::player::Player;
 use crate::widgets::viewport::ViewportState;
 use eframe::egui;
+use playa_engine::core::cache_man::CacheManager;
+use playa_engine::core::event_bus::BoxedEvent;
+use playa_engine::core::player::Player;
+use playa_engine::entities::Project;
+use playa_engine::entities::frame::{Frame, PixelFormat};
+use playa_engine::entities::node::Node;
 use std::sync::Arc;
 
 /// Status bar component (simplified, no cache progress)
@@ -91,7 +91,11 @@ impl StatusBar {
                         0
                     };
                     // Spammy per-frame log, use trace level
-                    log::trace!("StatusBar: cache_manager present, usage={}MB, limit={}MB", usage_mb, limit_mb);
+                    log::trace!(
+                        "StatusBar: cache_manager present, usage={}MB, limit={}MB",
+                        usage_mb,
+                        limit_mb
+                    );
                     ui.monospace(format!("Mem: {}/{}MB ({}%)", usage_mb, limit_mb, percent));
                     ui.separator();
                 } else {
@@ -101,7 +105,9 @@ impl StatusBar {
                 // Loop toggle
                 let mut loop_enabled = player.loop_enabled();
                 if ui.checkbox(&mut loop_enabled, "Loop").changed() {
-                    dispatch(Box::new(playa_engine::core::player_events::SetLoopEvent(loop_enabled)));
+                    dispatch(Box::new(playa_engine::core::player_events::SetLoopEvent(
+                        loop_enabled,
+                    )));
                 }
 
                 ui.separator();

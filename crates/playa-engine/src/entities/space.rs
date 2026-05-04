@@ -35,7 +35,7 @@ use glam::Vec2;
 // =============================================================================
 
 /// Image space -> Frame space (centered, Y-up).
-/// 
+///
 /// Converts screen/image pixel coords to centered frame coords.
 /// - Image (0, 0) = top-left -> Frame (-w/2, h/2)
 /// - Image (w/2, h/2) = center -> Frame (0, 0)
@@ -48,7 +48,7 @@ pub fn image_to_frame(p: Vec2, size: (usize, usize)) -> Vec2 {
 }
 
 /// Frame space -> Image space.
-/// 
+///
 /// Inverse of image_to_frame.
 #[inline]
 pub fn frame_to_image(p: Vec2, size: (usize, usize)) -> Vec2 {

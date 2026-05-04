@@ -51,9 +51,8 @@ impl VideoMetadata {
         let frame_count = (duration_secs * fps).round() as usize;
 
         let codec_params = stream.parameters();
-        let decoder_ctx = ffmpeg::codec::context::Context::from_parameters(codec_params).map_err(
-            |e| IoError::LoadError(format!("Failed to create decoder context: {}", e)),
-        )?;
+        let decoder_ctx = ffmpeg::codec::context::Context::from_parameters(codec_params)
+            .map_err(|e| IoError::LoadError(format!("Failed to create decoder context: {}", e)))?;
         let decoder = decoder_ctx
             .decoder()
             .video()
@@ -73,10 +72,14 @@ pub fn get_video_dimensions(path: &Path) -> Result<(usize, usize), IoError> {
     Ok((metadata.width as usize, metadata.height as usize))
 }
 
-pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(RawPixelBuffer, RawPixelFormat, usize, usize), IoError> {
+pub fn decode_frame(
+    path: &Path,
+    frame_num: usize,
+) -> Result<(RawPixelBuffer, RawPixelFormat, usize, usize), IoError> {
     init_ffmpeg_logging();
 
-    let mut ictx = ffmpeg::format::input(path).map_err(|e| IoError::LoadError(format!("Failed to open video: {}", e)))?;
+    let mut ictx = ffmpeg::format::input(path)
+        .map_err(|e| IoError::LoadError(format!("Failed to open video: {}", e)))?;
 
     let stream = ictx
         .streams()
@@ -140,7 +143,10 @@ pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(RawPixelBuffer, Ra
             )
         };
         if seek_ret < 0 {
-            warn!("Video seek failed (ret={}), falling back to decode-from-start", seek_ret);
+            warn!(
+                "Video seek failed (ret={}), falling back to decode-from-start",
+                seek_ret
+            );
         }
     }
 
@@ -165,9 +171,9 @@ pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(RawPixelBuffer, Ra
 
                 if reached_target {
                     let mut rgba_frame = ffmpeg::util::frame::video::Video::empty();
-                    scaler.run(&decoded, &mut rgba_frame).map_err(|e| {
-                        IoError::LoadError(format!("Failed to scale frame: {}", e))
-                    })?;
+                    scaler
+                        .run(&decoded, &mut rgba_frame)
+                        .map_err(|e| IoError::LoadError(format!("Failed to scale frame: {}", e)))?;
 
                     let rgba_data = rgba_frame.data(0);
                     let stride = rgba_frame.stride(0) as usize;
@@ -176,7 +182,8 @@ pub fn decode_frame(path: &Path, frame_num: usize) -> Result<(RawPixelBuffer, Ra
                     for y in 0..height as usize {
                         let src = y * stride;
                         let dst = y * row_bytes;
-                        output[dst..dst + row_bytes].copy_from_slice(&rgba_data[src..src + row_bytes]);
+                        output[dst..dst + row_bytes]
+                            .copy_from_slice(&rgba_data[src..src + row_bytes]);
                     }
 
                     return Ok((

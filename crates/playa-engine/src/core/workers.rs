@@ -9,8 +9,8 @@
 
 use crossbeam::deque::{Injector, Worker};
 use log::trace;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
 use crate::entities::WorkerPool;
@@ -32,11 +32,11 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// });
 /// ```
 pub struct Workers {
-    injector: Arc<Injector<Job>>,          // Global queue for external tasks
+    injector: Arc<Injector<Job>>, // Global queue for external tasks
     // Note: stealers Vec cloned into each thread, not stored here
-    handles: Vec<thread::JoinHandle<()>>,  // Thread handles for proper shutdown
-    current_epoch: Arc<AtomicU64>,         // Epoch counter (shared with CacheManager)
-    shutdown: Arc<AtomicBool>,             // Shutdown signal
+    handles: Vec<thread::JoinHandle<()>>, // Thread handles for proper shutdown
+    current_epoch: Arc<AtomicU64>,        // Epoch counter (shared with CacheManager)
+    shutdown: Arc<AtomicBool>,            // Shutdown signal
 }
 
 impl Workers {
@@ -119,7 +119,10 @@ impl Workers {
             handles.push(handle);
         }
 
-        trace!("Workers initialized: {} threads (work-stealing)", num_threads);
+        trace!(
+            "Workers initialized: {} threads (work-stealing)",
+            num_threads
+        );
 
         Self {
             injector,

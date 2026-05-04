@@ -151,6 +151,9 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             app.applied_workers = desired_workers;
             app.path_config = path_config_for_app;
 
+            // serde skips `GpuBlendBridge` channels — rebuild before any worker touches `CompNode::compute`.
+            app.ensure_gpu_blend_initialized();
+
             // Attempt to load shaders from the shaders directory
             if app
                 .shader_manager

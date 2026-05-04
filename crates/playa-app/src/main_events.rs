@@ -59,20 +59,20 @@ use log::trace;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use playa_ui::dialogs::encode::EncodeDialog;
-use playa_engine::entities::Project;
-use playa_engine::entities::node::Node;
 use playa_engine::core::event_bus::{BoxedEvent, downcast_event};
 use playa_engine::core::player::Player;
 use playa_engine::core::player_events::*;
-use playa_ui::widgets::project::project_events::*;
+use playa_engine::entities::Project;
 use playa_engine::entities::comp_events::*;
+use playa_engine::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
+use playa_engine::entities::node::Node;
+use playa_events::viewport_tool::SetToolEvent;
+use playa_ui::dialogs::encode::EncodeDialog;
+use playa_ui::dialogs::prefs::prefs_events::*;
+use playa_ui::widgets::node_editor::node_events::*;
+use playa_ui::widgets::project::project_events::*;
 use playa_ui::widgets::timeline::timeline_events::*;
 use playa_ui::widgets::viewport::viewport_events::*;
-use playa_events::viewport_tool::SetToolEvent;
-use playa_ui::widgets::node_editor::node_events::*;
-use playa_ui::dialogs::prefs::prefs_events::*;
-use playa_engine::entities::keys::{A_IN, A_OUT, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
 
 /// After removing one or more comps, fix the active comp and node editor if the active was removed.
 ///
@@ -89,7 +89,13 @@ fn handle_media_removal(
     // If active comp was among the removed ones, pick a new active
     let active_still_exists = player
         .active_comp()
-        .map(|a| project.media.read().expect("media lock poisoned").contains_key(&a))
+        .map(|a| {
+            project
+                .media
+                .read()
+                .expect("media lock poisoned")
+                .contains_key(&a)
+        })
         .unwrap_or(false);
     if !active_still_exists {
         let first = project.order().first().cloned();
@@ -107,9 +113,14 @@ fn align_layers_to_frame(comp: &mut playa_engine::entities::Comp, use_start: boo
     let current_frame = comp.frame();
     let selected = comp.layer_selection.clone();
     for layer_uuid in selected {
-        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
+        let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else {
+            continue;
+        };
         let (play_start, play_end) = comp.child_work_area_abs(layer_uuid).unwrap_or_else(|| {
-            (comp.child_start(layer_uuid).unwrap_or(0), comp.child_end(layer_uuid).unwrap_or(0))
+            (
+                comp.child_start(layer_uuid).unwrap_or(0),
+                comp.child_end(layer_uuid).unwrap_or(0),
+            )
         });
         let bound = if use_start { play_start } else { play_end };
         let layer_in = comp.child_in(layer_uuid).unwrap_or(0);
@@ -146,17 +157,15 @@ fn jump_to_edge(comp: &mut playa_engine::entities::Comp, forward: bool) {
 /// Scan folder for image sequences using scanseq.
 /// Returns first frame of each detected sequence for Comp::detect_from_paths.
 fn scan_folder_for_media(root: &std::path::Path) -> Vec<PathBuf> {
-    use scanseq::core::{Scanner, scan_files, VIDEO_EXTS};
+    use scanseq::core::{Scanner, VIDEO_EXTS, scan_files};
 
     let mut all_paths: Vec<PathBuf> = Vec::new();
 
     // Use scanseq for image sequences (min_len=5 to filter short sequences)
-    let scanner = Scanner::path(root)
-        .recursive(true)
-        .min_len(5)
-        .scan();
+    let scanner = Scanner::path(root).recursive(true).min_len(5).scan();
 
-    trace!("scanseq found {} sequences in {:.1}ms",
+    trace!(
+        "scanseq found {} sequences in {:.1}ms",
         scanner.len(),
         scanner.result.elapsed_ms
     );
@@ -255,7 +264,9 @@ impl EventResult {
         self.enqueue_frames |= other.enqueue_frames;
         // Accumulate paths instead of overwriting
         if let Some(paths) = other.load_sequences {
-            self.load_sequences.get_or_insert_with(Vec::new).extend(paths);
+            self.load_sequences
+                .get_or_insert_with(Vec::new)
+                .extend(paths);
         }
         // Bool flags: set to true if any event sets them
         self.quick_save |= other.quick_save;
@@ -285,10 +296,7 @@ fn fit_timeline_to_range(
 
 /// Handle a single app event (called from main event loop).
 /// Returns Some(result) if event was handled, None otherwise.
-pub fn handle_app_event(
-    event: &BoxedEvent,
-    ctx: &mut AppEventContext<'_>,
-) -> Option<EventResult> {
+pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Option<EventResult> {
     let AppEventContext {
         player,
         project,
@@ -312,10 +320,16 @@ pub fn handle_app_event(
         let was_playing = player.is_playing();
         player.set_is_playing(!was_playing);
         if player.is_playing() {
-            trace!("TogglePlayPause: starting playback at frame {}", player.current_frame(project));
+            trace!(
+                "TogglePlayPause: starting playback at frame {}",
+                player.current_frame(project)
+            );
             player.last_frame_time = Some(std::time::Instant::now());
         } else {
-            trace!("TogglePlayPause: pausing at frame {}", player.current_frame(project));
+            trace!(
+                "TogglePlayPause: pausing at frame {}",
+                player.current_frame(project)
+            );
             player.last_frame_time = None;
             player.set_fps_play(player.fps_base());
         }
@@ -329,19 +343,24 @@ pub fn handle_app_event(
         trace!("SetFrame: moving to frame {}", e.0);
         if let Some(comp_uuid) = player.active_comp() {
             // Get old frame before setting new one (for distance calculation)
-            let old_frame = project.with_comp(comp_uuid, |comp| comp.frame()).unwrap_or(e.0);
+            let old_frame = project
+                .with_comp(comp_uuid, |comp| comp.frame())
+                .unwrap_or(e.0);
             let distance = (e.0 - old_frame).abs();
-            
+
             // Big jump (scrub/seek) vs sequential (playback):
             // - distance > 1: user jumped to new position, cancel old preload tasks
             // - distance <= 1: sequential playback, keep loading frames ahead
             if distance > 1 {
                 if let Some(manager) = project.cache_manager() {
                     manager.increment_epoch();
-                    trace!("SetFrame: jump detected (distance={}), epoch incremented", distance);
+                    trace!(
+                        "SetFrame: jump detected (distance={}), epoch incremented",
+                        distance
+                    );
                 }
             }
-            
+
             project.modify_comp(comp_uuid, |comp| {
                 comp.set_frame(e.0);
             });
@@ -407,7 +426,10 @@ pub fn handle_app_event(
 
     // === Play Range Control ===
     if downcast_event::<SetPlayRangeStartEvent>(event).is_some() {
-        log::trace!("[B] SetPlayRangeStartEvent received, active_comp={:?}", player.active_comp());
+        log::trace!(
+            "[B] SetPlayRangeStartEvent received, active_comp={:?}",
+            player.active_comp()
+        );
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 let current = comp.frame();
@@ -417,7 +439,10 @@ pub fn handle_app_event(
         return Some(result);
     }
     if downcast_event::<SetPlayRangeEndEvent>(event).is_some() {
-        log::trace!("[N] SetPlayRangeEndEvent received, active_comp={:?}", player.active_comp());
+        log::trace!(
+            "[N] SetPlayRangeEndEvent received, active_comp={:?}",
+            player.active_comp()
+        );
         if let Some(comp_uuid) = player.active_comp() {
             project.modify_comp(comp_uuid, |comp| {
                 let current = comp.frame();
@@ -542,8 +567,10 @@ pub fn handle_app_event(
     //       → if non-Comp (File/Text/Camera): wrap in preview comp singleton
     //       → player.set_active_comp() → viewport/timeline update
     if let Some(e) = downcast_event::<ProjectActiveChangedEvent>(event) {
-        let is_comp = project.with_node(e.uuid, |n| n.as_comp().is_some()).unwrap_or(false);
-        
+        let is_comp = project
+            .with_node(e.uuid, |n| n.as_comp().is_some())
+            .unwrap_or(false);
+
         let active_uuid = if is_comp {
             e.uuid
         } else {
@@ -559,11 +586,11 @@ pub fn handle_app_event(
                 }
             }
         };
-        
+
         player.set_active_comp(Some(active_uuid), project);
         project.selection_anchor = project.order().iter().position(|u| *u == e.uuid);
         node_editor_state.set_comp(active_uuid);
-        
+
         // If target_frame specified (dive-into-comp), set frame in new comp
         if let Some(local_frame) = e.target_frame {
             // Add child comp's "in" offset to get absolute frame
@@ -753,7 +780,7 @@ pub fn handle_app_event(
             let name = project.gen_name(s.name());
             let (start, end) = s.play_range(true);
             let trimmed_duration = (end - start + 1).max(1);
-            let renderable = s.is_renderable();  // false for camera/light/null/audio
+            let renderable = s.is_renderable(); // false for camera/light/null/audio
             let is_camera = s.as_camera().is_some();
             (trimmed_duration, s.dim(), name, renderable, is_camera)
         });
@@ -769,8 +796,21 @@ pub fn handle_app_event(
                 // Camera uses RH convention: looks in -Z direction.
                 // Camera at Z=+1000 looks toward origin (Z=0) where layers live.
                 // User can adjust via layer.position in inspector.
-                let initial_pos = if is_camera { Some([0.0, 0.0, 800.0]) } else { None };
-                node.add_child_layer(e.source_uuid, &name, e.start_frame, duration, e.insert_idx, source_dim, renderable, initial_pos)
+                let initial_pos = if is_camera {
+                    Some([0.0, 0.0, 800.0])
+                } else {
+                    None
+                };
+                node.add_child_layer(
+                    e.source_uuid,
+                    &name,
+                    e.start_frame,
+                    duration,
+                    e.insert_idx,
+                    source_dim,
+                    renderable,
+                    initial_pos,
+                )
             } else {
                 Err(anyhow::anyhow!("Parent comp not found"))
             }
@@ -785,9 +825,13 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<RemoveLayerEvent>(event) {
-        let child_uuid = project.with_comp(e.comp_uuid, |comp| {
-            comp.get_children().get(e.layer_idx).map(|(child_uuid, _)| *child_uuid)
-        }).flatten();
+        let child_uuid = project
+            .with_comp(e.comp_uuid, |comp| {
+                comp.get_children()
+                    .get(e.layer_idx)
+                    .map(|(child_uuid, _)| *child_uuid)
+            })
+            .flatten();
 
         if let Some(child_uuid) = child_uuid {
             project.modify_comp(e.comp_uuid, |comp| {
@@ -833,7 +877,9 @@ pub fn handle_app_event(
     if let Some(e) = downcast_event::<MoveAndReorderLayerEvent>(event) {
         log::trace!(
             "[EVENT] MoveAndReorder received: layer_idx={} new_start={} new_idx={}",
-            e.layer_idx, e.new_start, e.new_idx
+            e.layer_idx,
+            e.new_start,
+            e.new_idx
         );
         project.modify_comp(e.comp_uuid, |comp| {
             if let Some(dragged_uuid) = comp.idx_to_uuid(e.layer_idx) {
@@ -897,14 +943,20 @@ pub fn handle_app_event(
         project.modify_comp(e.comp_uuid, |comp| {
             use playa_engine::entities::AttrValue;
             if let Some(uuid) = comp.idx_to_uuid(e.layer_idx) {
-                comp.set_child_attrs(uuid, vec![
-                    (A_IN, AttrValue::Int(e.new_in)),
-                    (A_TRIM_IN, AttrValue::Int(e.new_trim_in)),
-                    (A_TRIM_OUT, AttrValue::Int(e.new_trim_out)),
-                ]);
+                comp.set_child_attrs(
+                    uuid,
+                    vec![
+                        (A_IN, AttrValue::Int(e.new_in)),
+                        (A_TRIM_IN, AttrValue::Int(e.new_trim_in)),
+                        (A_TRIM_OUT, AttrValue::Int(e.new_trim_out)),
+                    ],
+                );
                 log::trace!(
                     "[SLIDE] layer {} -> in={}, trim_in={}, trim_out={}",
-                    e.layer_idx, e.new_in, e.new_trim_in, e.new_trim_out
+                    e.layer_idx,
+                    e.new_in,
+                    e.new_trim_in,
+                    e.new_trim_out
                 );
             }
         });
@@ -924,7 +976,9 @@ pub fn handle_app_event(
                     layer.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
                     log::trace!(
                         "[RESET TRIMS] layer {} -> trim_in: {} -> 0, trim_out: {} -> 0",
-                        layer_uuid, old_trim_in, old_trim_out
+                        layer_uuid,
+                        old_trim_in,
+                        old_trim_out
                     );
                 }
             }
@@ -938,18 +992,26 @@ pub fn handle_app_event(
     // NOTE: SelectAllLayersEvent and ClearLayerSelectionEvent handlers
     // are below (after clipboard events) with proper layer_selection_anchor handling
     if let Some(e) = downcast_event::<LayerAttributesChangedEvent>(event) {
-        log::trace!("[LayerAttrsChanged] comp={}, layers={:?}, opacity={}", e.comp_uuid, e.layer_uuids, e.opacity);
+        log::trace!(
+            "[LayerAttrsChanged] comp={}, layers={:?}, opacity={}",
+            e.comp_uuid,
+            e.layer_uuids,
+            e.opacity
+        );
         project.modify_comp(e.comp_uuid, |comp| {
             use playa_engine::entities::AttrValue;
             // Apply to all targeted layers (multi-selection support)
             for layer_uuid in &e.layer_uuids {
-                comp.set_child_attrs(*layer_uuid, vec![
-                    ("visible", AttrValue::Bool(e.visible)),
-                    ("solo", AttrValue::Bool(e.solo)),
-                    ("opacity", AttrValue::Float(e.opacity)),
-                    ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
-                    (A_SPEED, AttrValue::Float(e.speed)),
-                ]);
+                comp.set_child_attrs(
+                    *layer_uuid,
+                    vec![
+                        ("visible", AttrValue::Bool(e.visible)),
+                        ("solo", AttrValue::Bool(e.solo)),
+                        ("opacity", AttrValue::Float(e.opacity)),
+                        ("blend_mode", AttrValue::Str(e.blend_mode.clone())),
+                        (A_SPEED, AttrValue::Float(e.speed)),
+                    ],
+                );
             }
         });
         // Emit AttrsChangedEvent to trigger cache invalidation
@@ -958,7 +1020,12 @@ pub fn handle_app_event(
     }
     // Generic layer attrs change (from Attribute Editor)
     if let Some(e) = downcast_event::<SetLayerAttrsEvent>(event) {
-        log::trace!("[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}", e.comp_uuid, e.layer_uuids, e.attrs);
+        log::trace!(
+            "[SetLayerAttrs] comp={}, layers={:?}, attrs={:?}",
+            e.comp_uuid,
+            e.layer_uuids,
+            e.attrs
+        );
         project.modify_comp(e.comp_uuid, |comp| {
             use playa_engine::entities::AttrValue;
             for layer_uuid in &e.layer_uuids {
@@ -966,11 +1033,7 @@ pub fn handle_app_event(
                     for (key, json_v) in &e.attrs {
                         match serde_json::from_value::<AttrValue>(json_v.clone()) {
                             Ok(value) => layer.attrs.set(key, value),
-                            Err(err) => log::warn!(
-                                "[SetLayerAttrs] skip key {:?}: {}",
-                                key,
-                                err
-                            ),
+                            Err(err) => log::warn!("[SetLayerAttrs] skip key {:?}: {}", key, err),
                         }
                     }
                     if layer.attrs.is_dirty() {
@@ -983,7 +1046,9 @@ pub fn handle_app_event(
         return Some(result);
     }
     // Batch per-layer transform update (from viewport gizmo)
-    if let Some(e) = downcast_event::<playa_engine::entities::comp_events::SetLayerTransformsEvent>(event) {
+    if let Some(e) =
+        downcast_event::<playa_engine::entities::comp_events::SetLayerTransformsEvent>(event)
+    {
         project.modify_comp(e.comp_uuid, |comp| {
             use playa_engine::entities::AttrValue;
             for (layer_uuid, pos, rot, scale) in &e.updates {
@@ -1013,7 +1078,9 @@ pub fn handle_app_event(
             let current_frame = comp.frame();
             let selected = comp.layer_selection.clone();
             for layer_uuid in selected {
-                let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
+                let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else {
+                    continue;
+                };
                 let _ = comp.set_child_start(layer_idx, current_frame);
             }
         });
@@ -1025,7 +1092,9 @@ pub fn handle_app_event(
             let current_frame = comp.frame();
             let selected = comp.layer_selection.clone();
             for layer_uuid in selected {
-                let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else { continue };
+                let Some(layer_idx) = comp.uuid_to_idx(layer_uuid) else {
+                    continue;
+                };
                 let _ = comp.set_child_end(layer_idx, current_frame);
             }
         });
@@ -1050,9 +1119,8 @@ pub fn handle_app_event(
                 comp.layer_selection
                     .iter()
                     .filter_map(|uuid| {
-                        comp.get_layer(*uuid).map(|layer| {
-                            (*uuid, layer.source_uuid(), layer.attrs.clone())
-                        })
+                        comp.get_layer(*uuid)
+                            .map(|layer| (*uuid, layer.source_uuid(), layer.attrs.clone()))
                     })
                     .collect()
             })
@@ -1078,13 +1146,19 @@ pub fn handle_app_event(
                 // Clear selection - will select only new layers
                 comp.layer_selection.clear();
 
-                for ((orig_uuid, source_uuid, mut attrs), new_name) in layers_to_dup.into_iter().zip(names) {
+                for ((orig_uuid, source_uuid, mut attrs), new_name) in
+                    layers_to_dup.into_iter().zip(names)
+                {
                     // Find insert position (above original)
                     let insert_idx = comp.uuid_to_idx(orig_uuid).unwrap_or(0);
                     // Update attrs with new name
-                    attrs.set("name", playa_engine::entities::AttrValue::Str(new_name.clone()));
+                    attrs.set(
+                        "name",
+                        playa_engine::entities::AttrValue::Str(new_name.clone()),
+                    );
                     // Create new Layer using from_attrs
-                    let new_layer = playa_engine::entities::comp_node::Layer::from_attrs(source_uuid, attrs);
+                    let new_layer =
+                        playa_engine::entities::comp_node::Layer::from_attrs(source_uuid, attrs);
                     let new_uuid = new_layer.uuid();
                     // Direct layers.insert() doesn't mark dirty
                     comp.layers.insert(insert_idx, new_layer);
@@ -1115,7 +1189,10 @@ pub fn handle_app_event(
                     let source_uuid = layer.source_uuid();
                     let original_start = layer.attrs.get_i32(A_IN).unwrap_or(0);
                     let name = layer.attrs.get_str("name").unwrap_or("?");
-                    trace!("  Copy layer '{}' (source={}) at frame {}", name, source_uuid, original_start);
+                    trace!(
+                        "  Copy layer '{}' (source={}) at frame {}",
+                        name, source_uuid, original_start
+                    );
                     items.push(playa_ui::widgets::timeline::ClipboardLayer {
                         source_uuid,
                         attrs: layer.attrs.clone(),
@@ -1135,14 +1212,20 @@ pub fn handle_app_event(
         return Some(result);
     }
     if let Some(e) = downcast_event::<PasteLayersEvent>(event) {
-        trace!("PasteLayersEvent: comp={}, frame={}", e.comp_uuid, e.target_frame);
+        trace!(
+            "PasteLayersEvent: comp={}, frame={}",
+            e.comp_uuid, e.target_frame
+        );
         // Paste layers from clipboard at original frame positions (no offset)
         if timeline_state.clipboard.is_empty() {
             trace!("Paste: clipboard is empty");
         } else {
             // No offset - paste at original positions
             let offset = 0;
-            trace!("Pasting {} layers at original positions", timeline_state.clipboard.len());
+            trace!(
+                "Pasting {} layers at original positions",
+                timeline_state.clipboard.len()
+            );
 
             // Generate names before taking write lock
             let names: Vec<String> = timeline_state
@@ -1161,7 +1244,10 @@ pub fn handle_app_event(
                 for (item, new_name) in clipboard_copy.into_iter().zip(names) {
                     let mut attrs = item.attrs.clone();
                     // Update name
-                    attrs.set("name", playa_engine::entities::AttrValue::Str(new_name.clone()));
+                    attrs.set(
+                        "name",
+                        playa_engine::entities::AttrValue::Str(new_name.clone()),
+                    );
                     // Shift both in and out by offset to preserve duration
                     let old_in = attrs.get_i32(A_IN).unwrap_or(0);
                     let old_out = attrs.get_i32(A_OUT).unwrap_or(old_in + 100);
@@ -1170,7 +1256,10 @@ pub fn handle_app_event(
                     attrs.set(A_IN, playa_engine::entities::AttrValue::Int(new_in));
                     attrs.set(A_OUT, playa_engine::entities::AttrValue::Int(new_out));
                     // Create and insert new Layer at tracked position
-                    let new_layer = playa_engine::entities::comp_node::Layer::from_attrs(item.source_uuid, attrs);
+                    let new_layer = playa_engine::entities::comp_node::Layer::from_attrs(
+                        item.source_uuid,
+                        attrs,
+                    );
                     let new_uuid = new_layer.uuid();
                     // Direct layers.insert() doesn't mark dirty
                     comp.layers.insert(insert_idx, new_layer);
@@ -1234,31 +1323,35 @@ pub fn handle_app_event(
         use playa_engine::entities::AttrValue;
         project.modify_comp(e.comp_uuid, |comp| {
             // Get or create bookmarks map
-            let mut bookmarks = comp.attrs
-                .get_map("bookmarks")
-                .cloned()
-                .unwrap_or_default();
-            
+            let mut bookmarks = comp.attrs.get_map("bookmarks").cloned().unwrap_or_default();
+
             let key = e.slot.to_string();
             if let Some(frame) = e.frame {
                 bookmarks.insert(key, AttrValue::Int(frame));
             } else {
                 bookmarks.remove(&key);
             }
-            
+
             comp.attrs.set_map("bookmarks", bookmarks);
         });
         return Some(result);
     }
     if let Some(e) = downcast_event::<JumpToBookmarkEvent>(event) {
         use playa_engine::entities::AttrValue;
-        if let Some(frame) = project.with_comp(e.comp_uuid, |comp| {
-            comp.attrs.get_map("bookmarks").and_then(|m| {
-                m.get(&e.slot.to_string()).and_then(|v| {
-                    if let AttrValue::Int(f) = v { Some(*f) } else { None }
+        if let Some(frame) = project
+            .with_comp(e.comp_uuid, |comp| {
+                comp.attrs.get_map("bookmarks").and_then(|m| {
+                    m.get(&e.slot.to_string()).and_then(|v| {
+                        if let AttrValue::Int(f) = v {
+                            Some(*f)
+                        } else {
+                            None
+                        }
+                    })
                 })
             })
-        }).flatten() {
+            .flatten()
+        {
             project.modify_comp(e.comp_uuid, |comp| {
                 comp.set_frame(frame);
             });

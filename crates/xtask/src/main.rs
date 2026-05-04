@@ -1,3 +1,4 @@
+mod env_setup;
 mod release;
 
 use anyhow::{Context, Result};
@@ -123,10 +124,8 @@ enum Commands {
 
     /// Remove executables and shared libraries from ./target (non-recursive)
     ///
-    /// Cleans platform-specific artifacts so exrs packaging doesn't pick up stale files:
-    /// - Windows: *.exe, *.dll, *.msi
-    /// - Linux:   *.so*
-    /// - macOS:   *.dylib, *.so*
+    /// Clears installers and stray binaries/libs under `target/`, `target/release`, `target/debug`
+    /// plus packager staging dirs — useful after restoring CI cache artifacts or rebuilding installers.
     Wipe {
         /// Verbose output (list scanned dirs and skipped files)
         #[arg(short = 'v', long = "verbose")]
@@ -175,11 +174,12 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    if matches!(cli.command, Commands::Build { .. } | Commands::Test { .. }) {
+        env_setup::prepare_build_environment().context("Build environment bootstrap")?;
+    }
+
     match cli.command {
-        Commands::Build {
-            release: _,
-            debug,
-        } => {
+        Commands::Build { release: _, debug } => {
             let is_release = !debug;
             cmd_build(is_release)
         }
@@ -669,23 +669,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
     std::fs::copy(&source_exe, &target_exe).context("Failed to copy executable")?;
     println!("  ✓ Copied {}", exe_name);
 
-    // Copy DLLs/SOs
-    let lib_pattern = if cfg!(target_os = "windows") {
-        "*.dll"
-    } else {
-        "*.so*"
-    };
-
-    for entry in glob::glob(&format!("target/release/{}", lib_pattern))
-        .context("Failed to read library files")?
-    {
-        let entry = entry?;
-        let file_name = entry.file_name().unwrap();
-        let target_file = target_dir.join(file_name);
-        std::fs::copy(&entry, &target_file)
-            .context(format!("Failed to copy {}", file_name.to_string_lossy()))?;
-        println!("  ✓ Copied {}", file_name.to_string_lossy());
-    }
+    // Native deps are linked statically (vfx-exr, playa-ffmpeg, …); no extra DLL/SO bundles to ship.
 
     // Copy shaders directory from project root (optional)
     let source_shaders = PathBuf::from("shaders");

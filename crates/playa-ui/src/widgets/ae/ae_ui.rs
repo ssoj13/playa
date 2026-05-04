@@ -27,10 +27,10 @@
 //! }
 //! ```
 
-use playa_engine::entities::{AttrValue, Attrs};
-use playa_engine::entities::effects::{Effect, EffectType};
 use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui};
 use egui_extras::{Column, TableBuilder};
+use playa_engine::entities::effects::{Effect, EffectType};
+use playa_engine::entities::{AttrValue, Attrs};
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -63,9 +63,21 @@ impl Default for AttributesState {
 ///
 /// Returns `true` if any attribute was modified by user interaction.
 /// The caller should emit change events when this returns true.
-pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) -> bool {
+pub fn render(
+    ui: &mut Ui,
+    attrs: &mut Attrs,
+    state: &mut AttributesState,
+    display_name: &str,
+) -> bool {
     let mut changed = Vec::new();
-    render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut changed);
+    render_impl(
+        ui,
+        attrs,
+        state,
+        display_name,
+        &HashSet::new(),
+        &mut changed,
+    );
     !changed.is_empty()
 }
 
@@ -125,7 +137,8 @@ fn render_impl(
 
     // Sort attributes by order field from schema (lower = higher in list)
     let keys: Vec<String> = if let Some(schema) = schema {
-        let mut pairs: Vec<_> = attrs.iter()
+        let mut pairs: Vec<_> = attrs
+            .iter()
             .map(|(k, _)| (k.clone(), schema.get(k).map(|d| d.order).unwrap_or(999.0)))
             .collect();
         pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -248,10 +261,13 @@ fn render_value_editor(
             AttrValue::Float(v) if ui_options.len() >= 2 => {
                 let min: f32 = ui_options[0].parse().unwrap_or(0.0);
                 let max: f32 = ui_options[1].parse().unwrap_or(1.0);
-                let step: f64 = ui_options.get(2)
+                let step: f64 = ui_options
+                    .get(2)
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0.01);
-                scope_changed |= ui.add(egui::Slider::new(v, min..=max).step_by(step)).changed();
+                scope_changed |= ui
+                    .add(egui::Slider::new(v, min..=max).step_by(step))
+                    .changed();
             }
 
             // Default widgets by type
@@ -266,7 +282,14 @@ fn render_value_editor(
             }
             AttrValue::UInt(v) => {
                 let mut temp = *v as i32;
-                if ui.add(egui::DragValue::new(&mut temp).speed(1.0).range(0..=i32::MAX)).changed() {
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut temp)
+                            .speed(1.0)
+                            .range(0..=i32::MAX),
+                    )
+                    .changed()
+                {
                     *v = temp.max(0) as u32;
                     scope_changed = true;
                 }
@@ -277,23 +300,37 @@ fn render_value_editor(
             AttrValue::Vec3(arr) => {
                 ui.horizontal(|ui| {
                     ui.label("X:");
-                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1)).changed();
+                    scope_changed |= ui
+                        .add(egui::DragValue::new(&mut arr[0]).speed(0.1))
+                        .changed();
                     ui.label("Y:");
-                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1)).changed();
+                    scope_changed |= ui
+                        .add(egui::DragValue::new(&mut arr[1]).speed(0.1))
+                        .changed();
                     ui.label("Z:");
-                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1)).changed();
+                    scope_changed |= ui
+                        .add(egui::DragValue::new(&mut arr[2]).speed(0.1))
+                        .changed();
                 });
             }
             AttrValue::Vec4(arr) => {
                 ui.horizontal(|ui| {
                     ui.label("X:");
-                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[0]).speed(0.1)).changed();
+                    scope_changed |= ui
+                        .add(egui::DragValue::new(&mut arr[0]).speed(0.1))
+                        .changed();
                     ui.label("Y:");
-                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[1]).speed(0.1)).changed();
+                    scope_changed |= ui
+                        .add(egui::DragValue::new(&mut arr[1]).speed(0.1))
+                        .changed();
                     ui.label("Z:");
-                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[2]).speed(0.1)).changed();
+                    scope_changed |= ui
+                        .add(egui::DragValue::new(&mut arr[2]).speed(0.1))
+                        .changed();
                     ui.label("W:");
-                    scope_changed |= ui.add(egui::DragValue::new(&mut arr[3]).speed(0.1)).changed();
+                    scope_changed |= ui
+                        .add(egui::DragValue::new(&mut arr[3]).speed(0.1))
+                        .changed();
                 });
             }
             AttrValue::Mat3(_) => {
@@ -307,7 +344,10 @@ fn render_value_editor(
             }
             AttrValue::Int8(v) => {
                 let mut temp = *v as i32;
-                if ui.add(egui::DragValue::new(&mut temp).speed(1.0).range(-128..=127)).changed() {
+                if ui
+                    .add(egui::DragValue::new(&mut temp).speed(1.0).range(-128..=127))
+                    .changed()
+                {
                     *v = temp.clamp(-128, 127) as i8;
                     scope_changed = true;
                 }
@@ -363,10 +403,10 @@ pub fn render_effects(
     state: &mut AttributesState,
 ) -> Vec<EffectAction> {
     let mut actions: Vec<EffectAction> = Vec::new();
-    
+
     ui.add_space(8.0);
     ui.separator();
-    
+
     // Header with Add button
     ui.horizontal(|ui| {
         ui.strong("Effects");
@@ -378,7 +418,10 @@ pub fn render_effects(
                 .width(100.0)
                 .show_ui(ui, |ui| {
                     for effect_type in EffectType::all() {
-                        if ui.selectable_label(false, effect_type.display_name()).clicked() {
+                        if ui
+                            .selectable_label(false, effect_type.display_name())
+                            .clicked()
+                        {
                             selected_type = Some(effect_type.clone());
                         }
                     }
@@ -388,12 +431,12 @@ pub fn render_effects(
             }
         });
     });
-    
+
     if effects.is_empty() {
         ui.label("No effects");
         return actions;
     }
-    
+
     // Render each effect
     let effects_count = effects.len();
     for (idx, effect) in effects.iter_mut().enumerate() {
@@ -404,13 +447,13 @@ pub fn render_effects(
                 if ui.small_button(collapse_icon).clicked() {
                     actions.push(EffectAction::ToggleCollapsed(effect.uuid));
                 }
-                
+
                 // Enable checkbox
                 let mut enabled = effect.enabled;
                 if ui.checkbox(&mut enabled, "").changed() {
                     actions.push(EffectAction::ToggleEnabled(effect.uuid));
                 }
-                
+
                 // Effect name (dimmed if disabled)
                 let name_text = egui::RichText::new(effect.name());
                 let name_text = if effect.enabled {
@@ -419,13 +462,17 @@ pub fn render_effects(
                     name_text.weak()
                 };
                 ui.label(name_text);
-                
+
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Delete button
-                    if ui.small_button("✕").on_hover_text("Remove effect").clicked() {
+                    if ui
+                        .small_button("✕")
+                        .on_hover_text("Remove effect")
+                        .clicked()
+                    {
                         actions.push(EffectAction::Remove(effect.uuid));
                     }
-                    
+
                     // Reorder buttons
                     ui.add_enabled_ui(idx < effects_count - 1, |ui| {
                         if ui.small_button("▼").on_hover_text("Move down").clicked() {
@@ -439,19 +486,19 @@ pub fn render_effects(
                     });
                 });
             });
-            
+
             // Effect parameters (if not collapsed)
             if !effect.collapsed {
                 render_effect_attrs(ui, effect, state, &mut actions);
             }
-            
+
             // Separator between effects
             if idx < effects_count - 1 {
                 ui.add_space(2.0);
             }
         });
     }
-    
+
     actions
 }
 
@@ -463,30 +510,33 @@ fn render_effect_attrs(
     actions: &mut Vec<EffectAction>,
 ) {
     let schema = effect.effect_type.schema();
-    
+
     // Get attribute keys sorted by order
     let keys: Vec<String> = {
-        let mut pairs: Vec<_> = effect.attrs.iter()
+        let mut pairs: Vec<_> = effect
+            .attrs
+            .iter()
             .map(|(k, _)| (k.clone(), schema.get(&k).map(|d| d.order).unwrap_or(999.0)))
             .collect();
         pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         pairs.into_iter().map(|(k, _)| k).collect()
     };
-    
+
     if keys.is_empty() {
         return;
     }
-    
-    let row_height = ui.text_style_height(&TextStyle::Body)
+
+    let row_height = ui
+        .text_style_height(&TextStyle::Body)
         .max(ui.spacing().interact_size.y);
-    
+
     // Use same column width as main attributes
     let available_width = ui.available_width();
     let min_label = 100.0;
     let max_label = (available_width - 120.0).max(min_label);
-    
+
     let table_top = ui.cursor().min;
-    
+
     TableBuilder::new(ui)
         .id_salt(format!("fx_attrs_{}", effect.uuid))
         .striped(true)
@@ -505,24 +555,37 @@ fn render_effect_attrs(
                         });
                         row.col(|ui| {
                             // Get UI hints from schema
-                            let (min, max, speed) = schema.get(key)
+                            let (min, max, speed) = schema
+                                .get(key)
                                 .map(|def| {
                                     let opts = def.ui_options;
-                                    let min = opts.get(0).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-                                    let max = opts.get(1).and_then(|s| s.parse::<f64>().ok()).unwrap_or(100.0);
-                                    let speed = opts.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.1);
+                                    let min = opts
+                                        .get(0)
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.0);
+                                    let max = opts
+                                        .get(1)
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(100.0);
+                                    let speed = opts
+                                        .get(2)
+                                        .and_then(|s| s.parse::<f64>().ok())
+                                        .unwrap_or(0.1);
                                     (min, max, speed)
                                 })
                                 .unwrap_or((0.0, 100.0, 0.1));
-                            
+
                             match value {
                                 AttrValue::Float(v) => {
                                     let mut temp = *v;
-                                    if ui.add(
-                                        egui::DragValue::new(&mut temp)
-                                            .speed(speed)
-                                            .range(min..=max)
-                                    ).changed() {
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut temp)
+                                                .speed(speed)
+                                                .range(min..=max),
+                                        )
+                                        .changed()
+                                    {
                                         actions.push(EffectAction::AttrChanged(
                                             effect.uuid,
                                             key.clone(),
@@ -532,11 +595,14 @@ fn render_effect_attrs(
                                 }
                                 AttrValue::Int(v) => {
                                     let mut temp = *v;
-                                    if ui.add(
-                                        egui::DragValue::new(&mut temp)
-                                            .speed(speed)
-                                            .range(min as i32..=max as i32)
-                                    ).changed() {
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut temp)
+                                                .speed(speed)
+                                                .range(min as i32..=max as i32),
+                                        )
+                                        .changed()
+                                    {
                                         actions.push(EffectAction::AttrChanged(
                                             effect.uuid,
                                             key.clone(),
@@ -553,7 +619,7 @@ fn render_effect_attrs(
                 }
             }
         });
-    
+
     // Draw splitter line (aligned with main attributes splitter)
     let table_bottom = ui.cursor().min;
     let x = table_top.x + state.name_column_width;

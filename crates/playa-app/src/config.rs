@@ -156,7 +156,7 @@ pub const MIN_SPEED: f32 = 0.001;
 
 pub mod frame_status {
     use super::*;
-    
+
     pub const PLACEHOLDER: Color32 = Color32::from_rgba_premultiplied(40, 40, 45, 128);
     pub const HEADER: Color32 = Color32::from_rgba_premultiplied(60, 100, 180, 128);
     pub const LOADING: Color32 = Color32::from_rgba_premultiplied(220, 160, 60, 128);
@@ -172,7 +172,7 @@ pub mod frame_status {
 
 pub mod timeline {
     use super::*;
-    
+
     /// Selected clip/layer background
     pub const SELECTED_BG: Color32 = Color32::from_rgb(70, 100, 140);
     /// Hovered clip/layer background
@@ -191,7 +191,7 @@ pub mod timeline {
 
 pub mod ui {
     use super::*;
-    
+
     /// Panel background
     pub const PANEL_BG: Color32 = Color32::from_rgb(30, 32, 36);
     /// Separator line

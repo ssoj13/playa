@@ -4013,7 +4013,6 @@ dependencies = [
  "bytemuck",
  "cosmic-text",
  "crossbeam",
- "egui",
  "egui_glow",
  "enum_dispatch",
  "glam 0.32.1",
@@ -4084,15 +4083,12 @@ dependencies = [
  "log",
  "playa-engine",
  "playa-events",
- "playa-ffmpeg",
+ "playa-io",
  "rfd",
  "serde",
  "serde_json",
  "transform-gizmo-egui",
  "uuid",
- "vfx-core",
- "vfx-exr",
- "vfx-io",
 ]
 
 [[package]]
@@ -5650,6 +5646,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "vcv-rs"
+version = "0.1.0"
+source = "git+https://github.com/ssoj13/vcv-rs#ebf232b6d9f18d4d7a3e2e9e2d87855f129226ee"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "winreg",
+]
+
+[[package]]
 name = "vec1"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6840,6 +6847,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.55.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb5a765337c50e9ec252c2069be9bf91c7df47afb103b642ba3a53bf8101be97"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7003,9 +7020,8 @@ dependencies = [
  "anyhow",
  "clap",
  "fs_extra",
- "glob",
  "indicatif",
- "walkdir",
+ "vcv-rs",
 ]
 
 [[package]]

@@ -164,12 +164,10 @@ Subcommands (**current codebase**):
 |---------|---------|
 | `build [--release \| --debug]` | `cargo build -p playa` in the chosen profile. |
 | `test [--debug] [--nocapture]` | Runs the workspace test suite. |
-| `deploy [--install-dir PATH]` | Copies `playa` into a conventional install prefix. |
+| `deploy [--install-dir PATH]` | Copies the **`playa`** binary (+ optional **`shaders/`**) into an install prefix. |
 | `changelog` | Regenerates **`CHANGELOG.md`**. |
 | `tag-dev` / `tag-rel` / `pr` | Maintainer release automation (needs `git` / CI expectations). |
 | `wipe` / `wipe-wf` | Cleans select `target/` artifacts; workflow-run cleanup (**`wipe-wf`** uses **gh** CLI). |
-
-Legacy helper sources under `crates/xtask/src/` (for example **`pre_build`** / **`post_build`**) remain for compatibility with older pipelines but are **not** exposed as `cargo xtask` subcommands anymore.
 
 ---
 

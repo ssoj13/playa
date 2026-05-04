@@ -90,7 +90,13 @@ pub struct AttrDef {
 impl AttrDef {
     /// Create new attribute definition (default: auto UI by type, order=99)
     pub const fn new(name: &'static str, attr_type: AttrType, flags: AttrFlags) -> Self {
-        Self { name, attr_type, flags, ui_options: &[], order: 99.0 }
+        Self {
+            name,
+            attr_type,
+            flags,
+            ui_options: &[],
+            order: 99.0,
+        }
     }
 
     /// Create attribute with UI options (combobox values or slider range)
@@ -100,9 +106,15 @@ impl AttrDef {
         flags: AttrFlags,
         ui_options: &'static [&'static str],
     ) -> Self {
-        Self { name, attr_type, flags, ui_options, order: 99.0 }
+        Self {
+            name,
+            attr_type,
+            flags,
+            ui_options,
+            order: 99.0,
+        }
     }
-    
+
     /// Create attribute with order (for AE display sorting)
     pub const fn with_order(
         name: &'static str,
@@ -110,9 +122,15 @@ impl AttrDef {
         flags: AttrFlags,
         order: f32,
     ) -> Self {
-        Self { name, attr_type, flags, ui_options: &[], order }
+        Self {
+            name,
+            attr_type,
+            flags,
+            ui_options: &[],
+            order,
+        }
     }
-    
+
     /// Create attribute with UI options and order
     pub const fn with_ui_order(
         name: &'static str,
@@ -121,29 +139,35 @@ impl AttrDef {
         ui_options: &'static [&'static str],
         order: f32,
     ) -> Self {
-        Self { name, attr_type, flags, ui_options, order }
+        Self {
+            name,
+            attr_type,
+            flags,
+            ui_options,
+            order,
+        }
     }
-    
+
     /// Check if attribute affects DAG (render graph)
     pub const fn is_dag(&self) -> bool {
         self.flags & FLAG_DAG != 0
     }
-    
+
     /// Check if attribute is shown in UI
     pub const fn is_display(&self) -> bool {
         self.flags & FLAG_DISPLAY != 0
     }
-    
+
     /// Check if attribute can be keyframed
     pub const fn is_keyable(&self) -> bool {
         self.flags & FLAG_KEYABLE != 0
     }
-    
+
     /// Check if attribute is read-only
     pub const fn is_readonly(&self) -> bool {
         self.flags & FLAG_READONLY != 0
     }
-    
+
     /// Check if attribute is internal
     pub const fn is_internal(&self) -> bool {
         self.flags & FLAG_INTERNAL != 0
@@ -160,43 +184,47 @@ pub struct AttrSchema {
 impl AttrSchema {
     /// Create schema from static slice (clones into Box)
     pub fn new(name: &'static str, defs: &[AttrDef]) -> Self {
-        Self { name, defs: defs.to_vec().into_boxed_slice() }
+        Self {
+            name,
+            defs: defs.to_vec().into_boxed_slice(),
+        }
     }
-    
+
     /// Create schema by composing multiple slices (for DRY schemas)
     /// Example: `AttrSchema::from_slices("Layer", &[IDENTITY, TIMING, TRANSFORM])`
     pub fn from_slices(name: &'static str, slices: &[&[AttrDef]]) -> Self {
-        let defs: Vec<AttrDef> = slices.iter()
-            .flat_map(|s| s.iter().cloned())
-            .collect();
-        Self { name, defs: defs.into_boxed_slice() }
+        let defs: Vec<AttrDef> = slices.iter().flat_map(|s| s.iter().cloned()).collect();
+        Self {
+            name,
+            defs: defs.into_boxed_slice(),
+        }
     }
-    
+
     /// Find attribute definition by name
     pub fn get(&self, name: &str) -> Option<&AttrDef> {
         self.defs.iter().find(|d| d.name == name)
     }
-    
+
     /// Check if attribute affects DAG
     pub fn is_dag(&self, name: &str) -> bool {
         self.get(name).is_some_and(|d| d.is_dag())
     }
-    
+
     /// Check if attribute is display
     pub fn is_display(&self, name: &str) -> bool {
         self.get(name).is_some_and(|d| d.is_display())
     }
-    
+
     /// Get all DAG attributes
     pub fn dag_attrs(&self) -> impl Iterator<Item = &AttrDef> {
         self.defs.iter().filter(|d| d.is_dag())
     }
-    
+
     /// Get all display attributes
     pub fn display_attrs(&self) -> impl Iterator<Item = &AttrDef> {
         self.defs.iter().filter(|d| d.is_display())
     }
-    
+
     /// Iterate all definitions
     pub fn iter(&self) -> impl Iterator<Item = &AttrDef> {
         self.defs.iter()
@@ -242,8 +270,14 @@ impl std::hash::Hash for AttrValue {
             Float(v) => v.to_bits().hash(state),
             Vec3(arr) => arr.iter().for_each(|f| f.to_bits().hash(state)),
             Vec4(arr) => arr.iter().for_each(|f| f.to_bits().hash(state)),
-            Mat3(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
-            Mat4(m) => m.iter().flat_map(|r| r.iter()).for_each(|f| f.to_bits().hash(state)),
+            Mat3(m) => m
+                .iter()
+                .flat_map(|r| r.iter())
+                .for_each(|f| f.to_bits().hash(state)),
+            Mat4(m) => m
+                .iter()
+                .flat_map(|r| r.iter())
+                .for_each(|f| f.to_bits().hash(state)),
             Uuid(v) => v.hash(state),
             List(v) => v.hash(state),
             Map(v) => {
@@ -293,8 +327,14 @@ impl PartialEq for AttrValue {
             (Float(a), Float(b)) => f32_bits_eq(*a, *b),
             (Vec3(a), Vec3(b)) => f32_slice_bits_eq(a, b),
             (Vec4(a), Vec4(b)) => f32_slice_bits_eq(a, b),
-            (Mat3(a), Mat3(b)) => a.iter().zip(b.iter()).all(|(ra, rb)| f32_slice_bits_eq(ra, rb)),
-            (Mat4(a), Mat4(b)) => a.iter().zip(b.iter()).all(|(ra, rb)| f32_slice_bits_eq(ra, rb)),
+            (Mat3(a), Mat3(b)) => a
+                .iter()
+                .zip(b.iter())
+                .all(|(ra, rb)| f32_slice_bits_eq(ra, rb)),
+            (Mat4(a), Mat4(b)) => a
+                .iter()
+                .zip(b.iter())
+                .all(|(ra, rb)| f32_slice_bits_eq(ra, rb)),
             (Uuid(a), Uuid(b)) => a == b,
             (List(a), List(b)) => a == b,
             (Map(a), Map(b)) => {
@@ -332,7 +372,7 @@ pub struct Attrs {
     #[serde(skip)]
     #[serde(default = "Attrs::default_dirty")]
     dirty: AtomicBool,
-    
+
     /// Optional schema reference for automatic dirty detection
     /// If set, only DAG attributes mark dirty on change
     #[serde(skip)]
@@ -357,7 +397,7 @@ impl Attrs {
             schema: None,
         }
     }
-    
+
     /// Create Attrs with schema for automatic DAG detection
     pub fn with_schema(schema: &'static AttrSchema) -> Self {
         Self {
@@ -366,12 +406,12 @@ impl Attrs {
             schema: Some(schema),
         }
     }
-    
+
     /// Attach schema (for deserialized entities)
     pub fn attach_schema(&mut self, schema: &'static AttrSchema) {
         self.schema = Some(schema);
     }
-    
+
     /// Get current schema reference
     pub fn schema(&self) -> Option<&'static AttrSchema> {
         self.schema
@@ -382,28 +422,27 @@ impl Attrs {
     /// If no schema: always marks dirty (legacy behavior).
     pub fn set(&mut self, key: impl Into<String>, value: AttrValue) {
         let key = key.into();
-        
+
         // Check if value actually changed
         let changed = match self.map.get(&key) {
             Some(existing) => existing != &value,
             None => true, // New key = changed
         };
-        
+
         self.map.insert(key.clone(), value);
-        
+
         // Only mark dirty if value changed AND attr is DAG
         if changed {
             let is_dag = match &self.schema {
                 Some(schema) => schema.is_dag(&key),
                 None => true, // No schema = legacy, always dirty
             };
-            
+
             if is_dag {
                 self.dirty.store(true, Ordering::Relaxed);
             }
         }
     }
-
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
         self.map.get(key)
@@ -619,7 +658,9 @@ impl Attrs {
         // Clamp speed to safe range (0.1..4.0) to prevent duration explosion
         let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
         // Use f64 for intermediate calc to prevent overflow on large values
-        let offset = (trim_in as f64 / speed as f64).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+        let offset = (trim_in as f64 / speed as f64)
+            .round()
+            .clamp(i32::MIN as f64, i32::MAX as f64) as i32;
         in_val.saturating_add(offset)
     }
 
@@ -635,8 +676,12 @@ impl Attrs {
         // Visible source frames (at least 1 to prevent negative duration)
         let visible_src = (src_len - trim_in - trim_out).max(1);
         // Use f64 to prevent overflow on large frame counts
-        let visible_timeline = (visible_src as f64 / speed as f64).round().clamp(1.0, i32::MAX as f64) as i32;
-        layer_start.saturating_add(visible_timeline).saturating_sub(1)
+        let visible_timeline = (visible_src as f64 / speed as f64)
+            .round()
+            .clamp(1.0, i32::MAX as f64) as i32;
+        layer_start
+            .saturating_add(visible_timeline)
+            .saturating_sub(1)
     }
 
     /// Get source length (original duration in source frames)
@@ -651,7 +696,9 @@ impl Attrs {
         let src_len = self.get_i32_or_zero(A_SRC_LEN);
         let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
         // Use f64 to prevent overflow on large frame counts
-        let duration = (src_len as f64 / speed as f64).ceil().clamp(1.0, i32::MAX as f64) as i32;
+        let duration = (src_len as f64 / speed as f64)
+            .ceil()
+            .clamp(1.0, i32::MAX as f64) as i32;
         in_val.saturating_add(duration).saturating_sub(1)
     }
 
@@ -707,13 +754,15 @@ impl Attrs {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         for key in keys {
             if let Some(ref inc) = include_set
-                && !inc.contains(key.as_str()) {
-                    continue;
-                }
+                && !inc.contains(key.as_str())
+            {
+                continue;
+            }
             if let Some(ref exc) = exclude_set
-                && exc.contains(key.as_str()) {
-                    continue;
-                }
+                && exc.contains(key.as_str())
+            {
+                continue;
+            }
             key.hash(&mut hasher);
             if let Some(val) = self.map.get(key) {
                 val.hash(&mut hasher);

@@ -115,7 +115,12 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
         }
     };
 
-    Some(Frame::from_buffer(out_buffer, frame.pixel_format(), width, height))
+    Some(Frame::from_buffer(
+        out_buffer,
+        frame.pixel_format(),
+        width,
+        height,
+    ))
 }
 
 #[cfg(test)]

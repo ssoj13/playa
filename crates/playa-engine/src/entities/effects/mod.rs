@@ -65,7 +65,9 @@ pub mod hsv;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::entities::attrs::{AttrDef, AttrSchema, AttrType, AttrValue, Attrs, FLAG_DAG, FLAG_DISPLAY, FLAG_KEYABLE};
+use crate::entities::attrs::{
+    AttrDef, AttrSchema, AttrType, AttrValue, Attrs, FLAG_DAG, FLAG_DISPLAY, FLAG_KEYABLE,
+};
 use crate::entities::frame::Frame;
 
 // ============================================================================
@@ -147,19 +149,16 @@ const HSV_ATTRS: &[AttrDef] = &[
 ];
 
 /// Schema for Gaussian Blur effect
-pub static FX_GAUSSIAN_BLUR_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::new("FX_GaussianBlur", BLUR_ATTRS)
-});
+pub static FX_GAUSSIAN_BLUR_SCHEMA: LazyLock<AttrSchema> =
+    LazyLock::new(|| AttrSchema::new("FX_GaussianBlur", BLUR_ATTRS));
 
 /// Schema for Brightness/Contrast effect
-pub static FX_BRIGHTNESS_CONTRAST_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::new("FX_BrightnessContrast", BC_ATTRS)
-});
+pub static FX_BRIGHTNESS_CONTRAST_SCHEMA: LazyLock<AttrSchema> =
+    LazyLock::new(|| AttrSchema::new("FX_BrightnessContrast", BC_ATTRS));
 
 /// Schema for HSV Adjust effect
-pub static FX_HSV_ADJUST_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::new("FX_AdjustHSV", HSV_ATTRS)
-});
+pub static FX_HSV_ADJUST_SCHEMA: LazyLock<AttrSchema> =
+    LazyLock::new(|| AttrSchema::new("FX_AdjustHSV", HSV_ATTRS));
 
 // ============================================================================
 // Effect Struct

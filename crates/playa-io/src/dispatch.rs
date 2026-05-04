@@ -65,7 +65,10 @@ fn header_video(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     Ok(vec![
         ("width".into(), AttrKv::UInt(meta.width)),
         ("height".into(), AttrKv::UInt(meta.height)),
-        ("format".into(), AttrKv::Str(format!("Video ({})", actual_path.display()))),
+        (
+            "format".into(),
+            AttrKv::Str(format!("Video ({})", actual_path.display())),
+        ),
         ("channels".into(), AttrKv::UInt(3)),
         ("frames".into(), AttrKv::UInt(meta.frame_count as u32)),
         ("fps".into(), AttrKv::Float(meta.fps as f32)),
@@ -84,6 +87,14 @@ fn decode_video(path: &Path) -> Result<DecodedRaster, IoError> {
     })
 }
 
+#[cfg(not(feature = "exr"))]
+fn header_exr(_path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
+    Err(IoError::UnsupportedFormat(
+        "EXR decoding is disabled for this build (Wasm / stripped I/O)".to_string(),
+    ))
+}
+
+#[cfg(feature = "exr")]
 fn header_exr(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     trace!("Reading EXR header with vfx-exr: {}", path.display());
     use std::io::Cursor;
@@ -144,6 +155,14 @@ fn header_exr(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     Ok(v)
 }
 
+#[cfg(not(feature = "exr"))]
+fn decode_exr(_path: &Path) -> Result<DecodedRaster, IoError> {
+    Err(IoError::UnsupportedFormat(
+        "EXR decoding is disabled for this build (Wasm / stripped I/O)".to_string(),
+    ))
+}
+
+#[cfg(feature = "exr")]
 fn decode_exr(path: &Path) -> Result<DecodedRaster, IoError> {
     trace!("Loading EXR with vfx-exr: {}", path.display());
     use half::f16;

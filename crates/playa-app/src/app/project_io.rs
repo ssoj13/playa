@@ -18,7 +18,13 @@ impl PlayaApp {
     /// Attach composition event emitter to all comps in the current project.
     pub fn attach_comp_event_emitter(&mut self) {
         let emitter = self.comp_event_emitter.clone();
-        for arc_node in self.project.media.write().expect("media lock poisoned").values_mut() {
+        for arc_node in self
+            .project
+            .media
+            .write()
+            .expect("media lock poisoned")
+            .values_mut()
+        {
             // Arc::make_mut: copy-on-write if other refs exist (rare at startup)
             let node = std::sync::Arc::make_mut(arc_node);
             node.set_event_emitter(emitter.clone());
@@ -54,7 +60,10 @@ impl PlayaApp {
                     let name = node.name().to_string();
                     let frames = node.frame_count();
                     let (start, end) = node.play_range(true);
-                    info!("Adding FileNode: {} ({}) frames={} range={}..{}", name, uuid, frames, start, end);
+                    info!(
+                        "Adding FileNode: {} ({}) frames={} range={}..{}",
+                        name, uuid, frames, start, end
+                    );
 
                     // add_node() adds to media pool and order
                     self.project.add_node(node.into());
@@ -72,7 +81,10 @@ impl PlayaApp {
                     self.player.set_active_comp(Some(uuid), &mut self.project);
                     let total = self.player.total_frames(&self.project);
                     let range = self.player.play_range(&self.project);
-                    info!("After activation: total_frames={} play_range={:?}", total, range);
+                    info!(
+                        "After activation: total_frames={} play_range={:?}",
+                        total, range
+                    );
                     self.node_editor_state.set_comp(uuid);
                     self.node_editor_state.mark_dirty();
                     self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
@@ -106,6 +118,10 @@ impl PlayaApp {
     ///
     /// # Arguments
     /// * `radius` - Frames around playhead to preload (-1 = entire comp, 0 = current only)
+    ///
+    /// Hooks [`GpuBlendBridge`](playa_engine::entities::GpuBlendBridge) whenever the live compositor uses the Gpu
+    /// backend (`gpu_blend_bridge_ref_for_preload`). Nested worker preloads intentionally keep the bridge `None`
+    /// inside their private [`ComputeContext`](playa_engine::entities::ComputeContext) (see engine sources).
     pub fn enqueue_frame_loads_around_playhead(&self, radius: i32) {
         // Get active comp
         let Some(comp_uuid) = self.player.active_comp() else {
@@ -117,9 +133,13 @@ impl PlayaApp {
         let effective_radius = if radius < 0 { i32::MAX } else { radius };
 
         // Trigger preload (works for both File and Layer modes)
-        trace!("[PRELOAD] enqueue_frame_loads: comp={}, radius={}", comp_uuid, effective_radius);
+        trace!(
+            "[PRELOAD] enqueue_frame_loads: comp={}, radius={}",
+            comp_uuid, effective_radius
+        );
+        let bridge = self.gpu_blend_bridge_ref_for_preload();
         self.project.with_comp(comp_uuid, |comp| {
-            comp.signal_preload(&self.workers, &self.project, effective_radius);
+            comp.signal_preload(&self.workers, &self.project, bridge, effective_radius);
         });
     }
 
@@ -170,7 +190,7 @@ impl PlayaApp {
 
                 // Attach schemas (not serialized)
                 project.attach_schemas();
-                
+
                 // Rebuild runtime + set cache manager (unified)
                 project.rebuild_with_manager(
                     Arc::clone(&self.cache_manager),

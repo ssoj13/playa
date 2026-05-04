@@ -51,7 +51,8 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
                     chunk[0] as f32 / 255.0,
                     chunk[1] as f32 / 255.0,
                     chunk[2] as f32 / 255.0,
-                    hue_shift, saturation,
+                    hue_shift,
+                    saturation,
                     value,
                     true, // clamp value for LDR
                 );
@@ -67,8 +68,12 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
             let mut result = Vec::with_capacity(data.len());
             for chunk in data.chunks_exact(4) {
                 let (r_out, g_out, b_out) = adjust_hsv(
-                    chunk[0].to_f32(), chunk[1].to_f32(), chunk[2].to_f32(),
-                    hue_shift, saturation, value,
+                    chunk[0].to_f32(),
+                    chunk[1].to_f32(),
+                    chunk[2].to_f32(),
+                    hue_shift,
+                    saturation,
+                    value,
                     false, // no value clamp for HDR
                 );
                 result.push(F16::from_f32(r_out));
@@ -83,8 +88,7 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
             let mut result = Vec::with_capacity(data.len());
             for chunk in data.chunks_exact(4) {
                 let (r_out, g_out, b_out) = adjust_hsv(
-                    chunk[0], chunk[1], chunk[2],
-                    hue_shift, saturation, value,
+                    chunk[0], chunk[1], chunk[2], hue_shift, saturation, value,
                     false, // no value clamp for HDR
                 );
                 result.push(r_out);
@@ -96,7 +100,12 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
         }
     };
 
-    Some(Frame::from_buffer(out_buffer, frame.pixel_format(), width, height))
+    Some(Frame::from_buffer(
+        out_buffer,
+        frame.pixel_format(),
+        width,
+        height,
+    ))
 }
 
 /// Apply HSV adjustments to a single RGB pixel, returning adjusted RGB.
@@ -104,14 +113,22 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
 /// `clamp_value` should be true for LDR formats (U8) to prevent over-bright output.
 #[inline]
 fn adjust_hsv(
-    r: f32, g: f32, b: f32,
-    hue_shift: f32, saturation: f32, value: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    hue_shift: f32,
+    saturation: f32,
+    value: f32,
     clamp_value: bool,
 ) -> (f32, f32, f32) {
     let (h, s, v) = rgb_to_hsv(r, g, b);
     let h_new = (h + hue_shift).rem_euclid(360.0);
     let s_new = (s * saturation).clamp(0.0, 1.0);
-    let v_new = if clamp_value { (v * value).clamp(0.0, 1.0) } else { v * value };
+    let v_new = if clamp_value {
+        (v * value).clamp(0.0, 1.0)
+    } else {
+        v * value
+    };
     hsv_to_rgb(h_new, s_new, v_new)
 }
 

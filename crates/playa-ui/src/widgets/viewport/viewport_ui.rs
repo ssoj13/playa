@@ -1,23 +1,23 @@
 //! Viewport widget - UI rendering
 
 use eframe::egui;
-use glam::{Vec3, Vec4, Mat4, Quat, EulerRot};
+use glam::{EulerRot, Mat4, Quat, Vec3, Vec4};
 use log::info;
 use std::sync::{Arc, Mutex};
 
-use super::shaders::Shaders;
-use super::{ViewportRenderer, ViewportState};
 use super::gizmo::GizmoState;
 use super::pick;
+use super::shaders::Shaders;
 use super::tool::ToolMode;
-use playa_engine::entities::node::Node;
-use playa_engine::entities::Project;
-use playa_engine::entities::frame::{Frame, FrameStatus};
-use playa_engine::entities::comp_events::{CompSelectionChangedEvent, HoverLayerEvent};
-use playa_engine::core::event_bus::BoxedEvent;
-use playa_engine::core::player::Player;
+use super::{ViewportRenderer, ViewportState};
 use crate::widgets::actions::ActionQueue;
 use crate::widgets::file_dialogs::create_media_dialog;
+use playa_engine::core::event_bus::BoxedEvent;
+use playa_engine::core::player::Player;
+use playa_engine::entities::Project;
+use playa_engine::entities::comp_events::{CompSelectionChangedEvent, HoverLayerEvent};
+use playa_engine::entities::frame::{Frame, FrameStatus};
+use playa_engine::entities::node::Node;
 
 pub type ViewportActions = ActionQueue;
 
@@ -67,10 +67,13 @@ pub fn render(
     if double_clicked {
         info!("Double-click detected, opening file dialog");
         if let Some(paths) = create_media_dialog("Select Media Files").pick_files()
-            && !paths.is_empty() {
-                info!("Files selected: {:?}", paths);
-                actions.send(crate::widgets::project::project_events::AddClipsEvent(paths));
-            }
+            && !paths.is_empty()
+        {
+            info!("Files selected: {:?}", paths);
+            actions.send(crate::widgets::project::project_events::AddClipsEvent(
+                paths,
+            ));
+        }
     }
 
     if let Some(error) = error_msg {
@@ -149,12 +152,21 @@ pub fn render(
         // Note: Scrubbing moved to RMB in Select tool (see right_drag_tool_event)
 
         // LMB click in Select mode: pick layer under cursor
-        if let Some(evt) = left_click_pick_event(&ctx, &response, panel_rect, viewport_state, player, project) {
+        if let Some(evt) =
+            left_click_pick_event(&ctx, &response, panel_rect, viewport_state, player, project)
+        {
             actions.events.push(evt);
         }
 
         // Hover/selection highlight: update hovered_layer based on tool mode
-        if let Some(evt) = hover_layer_event(&ctx, panel_rect, viewport_state, player, project, tools_selection_highlight) {
+        if let Some(evt) = hover_layer_event(
+            &ctx,
+            panel_rect,
+            viewport_state,
+            player,
+            project,
+            tools_selection_highlight,
+        ) {
             actions.events.push(evt);
         }
 
@@ -164,7 +176,9 @@ pub fn render(
             // Composing = composition in progress (waiting for source frames)
             FrameStatus::Header | FrameStatus::Loading | FrameStatus::Composing => {
                 let msg = match frame_state {
-                    FrameStatus::Composing => format!("Composing frame {}...", player.current_frame(project)),
+                    FrameStatus::Composing => {
+                        format!("Composing frame {}...", player.current_frame(project))
+                    }
                     _ => format!("Loading frame {}...", player.current_frame(project)),
                 };
                 ui.painter().text(
@@ -199,7 +213,17 @@ pub fn render(
             ToolMode::Move | ToolMode::Rotate | ToolMode::Scale => tools_selection_highlight,
         };
         if show_highlight {
-            draw_hover_highlight(ui, panel_rect, viewport_state, player, project, tool, hover_stroke_width, hover_corner_length, hover_opacity);
+            draw_hover_highlight(
+                ui,
+                panel_rect,
+                viewport_state,
+                player,
+                project,
+                tool,
+                hover_stroke_width,
+                hover_corner_length,
+                hover_opacity,
+            );
         }
     }
 
@@ -232,9 +256,10 @@ pub fn render(
 
     // If shader changed, recompile in renderer immediately
     if shader_manager.current_shader != old_shader
-        && let Ok(mut renderer) = viewport_renderer.lock() {
-            renderer.update_shader(shader_manager);
-        }
+        && let Ok(mut renderer) = viewport_renderer.lock()
+    {
+        renderer.update_shader(shader_manager);
+    }
 
     // Track hover state for input routing
     actions.hovered = response.hovered();
@@ -302,12 +327,13 @@ fn right_drag_tool_event(
     });
 
     if pressed {
-        viewport_state.rmb_tool_drag_active =
-            latest_pos.is_some_and(|p| panel_rect.contains(p));
+        viewport_state.rmb_tool_drag_active = latest_pos.is_some_and(|p| panel_rect.contains(p));
         // Initialize scrubber on press for Select tool
         if matches!(tool, ToolMode::Select) && viewport_state.rmb_tool_drag_active {
             let bounds = viewport_state.get_image_screen_bounds();
-            viewport_state.scrubber.start_scrubbing(bounds, viewport_state.image_size, 0.5);
+            viewport_state
+                .scrubber
+                .start_scrubbing(bounds, viewport_state.image_size, 0.5);
         }
     }
     if released || !down {
@@ -327,23 +353,30 @@ fn right_drag_tool_event(
         let (play_start, play_end) = project
             .with_node(comp_uuid, |n| n.play_range(true))
             .unwrap_or((0, 100));
-        
-        let image_bounds = viewport_state.scrubber.frozen_bounds()
+
+        let image_bounds = viewport_state
+            .scrubber
+            .frozen_bounds()
             .unwrap_or_else(|| viewport_state.get_image_screen_bounds());
-        
+
         // Map mouse X to frame
         let frame = crate::widgets::viewport::viewport::fit(
             local_x,
-            image_bounds.min.x, image_bounds.max.x,
-            play_start as f32, play_end as f32,
-        ).round() as i32;
+            image_bounds.min.x,
+            image_bounds.max.x,
+            play_start as f32,
+            play_end as f32,
+        )
+        .round() as i32;
         let frame_clamped = frame.clamp(play_start, play_end);
-        
+
         viewport_state.scrubber.set_clamped(frame != frame_clamped);
         viewport_state.scrubber.set_current_frame(frame_clamped);
         viewport_state.scrubber.set_visual_x(local_x);
-        
-        return Some(Box::new(playa_engine::core::player_events::SetFrameEvent(frame_clamped)));
+
+        return Some(Box::new(playa_engine::core::player_events::SetFrameEvent(
+            frame_clamped,
+        )));
     }
 
     // Transform tools: need delta movement
@@ -371,7 +404,9 @@ fn right_drag_tool_event(
     let mut updates = Vec::new();
     project.with_comp(comp_uuid, |comp| {
         for layer_uuid in &selected {
-            let Some(layer) = comp.get_layer(*layer_uuid) else { continue };
+            let Some(layer) = comp.get_layer(*layer_uuid) else {
+                continue;
+            };
             let mut pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
             let mut rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
             let mut scale = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
@@ -406,10 +441,9 @@ fn right_drag_tool_event(
         return None;
     }
 
-    Some(Box::new(playa_engine::entities::comp_events::SetLayerTransformsEvent {
-        comp_uuid,
-        updates,
-    }))
+    Some(Box::new(
+        playa_engine::entities::comp_events::SetLayerTransformsEvent { comp_uuid, updates },
+    ))
 }
 
 fn render_help_overlay(ui: &mut egui::Ui, panel_rect: egui::Rect) {
@@ -499,19 +533,24 @@ fn hover_layer_event(
 
     // Raycast pick
     let media = project.media.read().ok()?;
-    let hovered = project.with_comp(comp_uuid, |comp| {
-        pick::pick_layer_at(
-            hover_pos,
-            panel_rect,
-            viewport_state,
-            comp,
-            frame_idx,
-            &media,
-        ).layer_uuid
-    }).flatten();
+    let hovered = project
+        .with_comp(comp_uuid, |comp| {
+            pick::pick_layer_at(
+                hover_pos,
+                panel_rect,
+                viewport_state,
+                comp,
+                frame_idx,
+                &media,
+            )
+            .layer_uuid
+        })
+        .flatten();
 
     // Only emit if changed
-    let current = project.with_comp(comp_uuid, |comp| comp.hovered_layer).flatten();
+    let current = project
+        .with_comp(comp_uuid, |comp| comp.hovered_layer)
+        .flatten();
     if current == hovered {
         return None;
     }
@@ -573,152 +612,176 @@ fn draw_hover_highlight(
     corner_length: f32,
     opacity: f32,
 ) {
-    let Some(comp_uuid) = player.active_comp() else { return };
+    let Some(comp_uuid) = player.active_comp() else {
+        return;
+    };
     let frame_idx = player.current_frame(project);
-    
+
     // Get camera VP matrix if camera is active
     let camera_vp: Option<Mat4> = {
         let media = project.media.read().ok();
         media.and_then(|m| {
-            project.with_comp(comp_uuid, |comp| {
-                let (camera, pos, rot) = comp.active_camera(frame_idx, &m)?;
-                let (comp_w, comp_h) = comp.dim();
-                let aspect = comp_w as f32 / comp_h as f32;
-                Some(camera.view_projection_matrix(pos, rot, aspect, comp_h as f32))
-            }).flatten()
+            project
+                .with_comp(comp_uuid, |comp| {
+                    let (camera, pos, rot) = comp.active_camera(frame_idx, &m)?;
+                    let (comp_w, comp_h) = comp.dim();
+                    let aspect = comp_w as f32 / comp_h as f32;
+                    Some(camera.view_projection_matrix(pos, rot, aspect, comp_h as f32))
+                })
+                .flatten()
         })
     };
-    
+
     // Get layers to highlight based on tool mode
-    let layers_data: Vec<([f32; 3], [f32; 3], [f32; 3], f32, f32)> = project.with_comp(comp_uuid, |comp| {
-        let layer_uuids: Vec<uuid::Uuid> = match tool {
-            ToolMode::Select => comp.hovered_layer.into_iter().collect(),
-            ToolMode::Move | ToolMode::Rotate | ToolMode::Scale => comp.layer_selection.clone(),
-        };
-        
-        layer_uuids.into_iter().filter_map(|uuid| {
-            let layer = comp.get_layer(uuid)?;
-            let pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
-            let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
-            let scl = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
-            let w = layer.attrs.get_u32("width").unwrap_or(100) as f32;
-            let h = layer.attrs.get_u32("height").unwrap_or(100) as f32;
-            Some((pos, rot, scl, w, h))
-        }).collect()
-    }).unwrap_or_default();
-    
-    if layers_data.is_empty() { return }
-    
+    let layers_data: Vec<([f32; 3], [f32; 3], [f32; 3], f32, f32)> = project
+        .with_comp(comp_uuid, |comp| {
+            let layer_uuids: Vec<uuid::Uuid> = match tool {
+                ToolMode::Select => comp.hovered_layer.into_iter().collect(),
+                ToolMode::Move | ToolMode::Rotate | ToolMode::Scale => comp.layer_selection.clone(),
+            };
+
+            layer_uuids
+                .into_iter()
+                .filter_map(|uuid| {
+                    let layer = comp.get_layer(uuid)?;
+                    let pos = layer.attrs.get_vec3("position").unwrap_or([0.0, 0.0, 0.0]);
+                    let rot = layer.attrs.get_vec3("rotation").unwrap_or([0.0, 0.0, 0.0]);
+                    let scl = layer.attrs.get_vec3("scale").unwrap_or([1.0, 1.0, 1.0]);
+                    let w = layer.attrs.get_u32("width").unwrap_or(100) as f32;
+                    let h = layer.attrs.get_u32("height").unwrap_or(100) as f32;
+                    Some((pos, rot, scl, w, h))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if layers_data.is_empty() {
+        return;
+    }
+
     // Draw highlight for each layer
     for (position, rotation_deg, scale, width, height) in layers_data {
+        // Layer corners in object space (centered, Y-up)
+        let half_w = width * 0.5;
+        let half_h = height * 0.5;
+        let corners_obj = [
+            [-half_w, -half_h],
+            [half_w, -half_h],
+            [half_w, half_h],
+            [-half_w, half_h],
+        ];
 
-    // Layer corners in object space (centered, Y-up)
-    let half_w = width * 0.5;
-    let half_h = height * 0.5;
-    let corners_obj = [
-        [-half_w, -half_h],
-        [half_w, -half_h],
-        [half_w, half_h],
-        [-half_w, half_h],
-    ];
+        // Build forward transform: object -> comp/world space
+        let pos = Vec3::from(position);
+        let scl = Vec3::from(scale);
+        let rot_rad = [
+            rotation_deg[0].to_radians(),
+            rotation_deg[1].to_radians(),
+            rotation_deg[2].to_radians(),
+        ];
+        // Rotation: ZYX order, CW+ convention (negate for glam CCW+)
+        let quat = Quat::from_euler(EulerRot::ZYX, -rot_rad[2], -rot_rad[1], -rot_rad[0]);
 
-    // Build forward transform: object -> comp/world space
-    let pos = Vec3::from(position);
-    let scl = Vec3::from(scale);
-    let rot_rad = [
-        rotation_deg[0].to_radians(),
-        rotation_deg[1].to_radians(),
-        rotation_deg[2].to_radians(),
-    ];
-    // Rotation: ZYX order, CW+ convention (negate for glam CCW+)
-    let quat = Quat::from_euler(
-        EulerRot::ZYX,
-        -rot_rad[2],
-        -rot_rad[1],
-        -rot_rad[0],
-    );
+        // Transform corners to screen space
+        let mut screen_corners = Vec::with_capacity(4);
+        for [ox, oy] in corners_obj {
+            // Object -> world/comp: pos + R * S * obj
+            let obj_pt = Vec3::new(ox * scl.x, oy * scl.y, 0.0);
+            let world_pt = pos + quat * obj_pt;
 
-    // Transform corners to screen space
-    let mut screen_corners = Vec::with_capacity(4);
-    for [ox, oy] in corners_obj {
-        // Object -> world/comp: pos + R * S * obj
-        let obj_pt = Vec3::new(ox * scl.x, oy * scl.y, 0.0);
-        let world_pt = pos + quat * obj_pt;
-        
-        // Project to screen based on whether camera is active
-        let screen_pos = if let Some(vp) = camera_vp {
-            // 3D mode: project through camera VP, then apply viewport transform
-            let clip = vp * Vec4::new(world_pt.x, world_pt.y, world_pt.z, 1.0);
-            if clip.w.abs() < 1e-6 {
-                continue; // Behind camera
-            }
-            let ndc = Vec3::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
-            
-            // NDC [-1,1] -> frame space -> screen
-            // frame_x = ndc_x * comp_w/2, frame_y = ndc_y * comp_h/2
-            let comp_w = viewport_state.image_size.x;
-            let comp_h = viewport_state.image_size.y;
-            let frame_x = ndc.x * comp_w * 0.5;
-            let frame_y = ndc.y * comp_h * 0.5;
-            
-            // Frame -> viewport (zoom + pan) -> screen
-            let vp_x = frame_x * viewport_state.zoom + viewport_state.pan.x;
-            let vp_y = frame_y * viewport_state.zoom + viewport_state.pan.y;
-            let screen_x = vp_x + viewport_state.viewport_size.x * 0.5;
-            let screen_y = viewport_state.viewport_size.y * 0.5 - vp_y; // Y flip for screen
-            
-            panel_rect.left_top() + egui::vec2(screen_x, screen_y)
-        } else {
-            // 2D mode: simple frame -> image -> screen
-            let image_x = world_pt.x + viewport_state.image_size.x * 0.5;
-            let image_y = viewport_state.image_size.y * 0.5 - world_pt.y;
-            let screen = viewport_state.image_to_screen(egui::vec2(image_x, image_y));
-            panel_rect.left_top() + screen
-        };
-        
-        screen_corners.push(egui::pos2(screen_pos.x, screen_pos.y));
-    }
-    
-    if screen_corners.len() < 4 { continue; } // Some corners behind camera
+            // Project to screen based on whether camera is active
+            let screen_pos = if let Some(vp) = camera_vp {
+                // 3D mode: project through camera VP, then apply viewport transform
+                let clip = vp * Vec4::new(world_pt.x, world_pt.y, world_pt.z, 1.0);
+                if clip.w.abs() < 1e-6 {
+                    continue; // Behind camera
+                }
+                let ndc = Vec3::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
 
-    // Draw corner brackets instead of full rectangle
-    let painter = ui.painter();
-    let alpha = (opacity * 255.0) as u8;
-    let stroke = egui::Stroke::new(stroke_width, egui::Color32::from_rgba_unmultiplied(255, 200, 100, alpha));
-    
-    // Use corner length from settings, but clamp to half of shortest edge
-    let edge_lengths: Vec<f32> = (0..4)
-        .map(|i| {
-            let p1 = screen_corners[i];
-            let p2 = screen_corners[(i + 1) % 4];
-            ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt()
-        })
-        .collect();
-    let min_edge = edge_lengths.iter().cloned().fold(f32::INFINITY, f32::min);
-    let bracket_len = corner_length.min(min_edge * 0.5); // Don't exceed half of shortest edge
-    
-    // Draw corner brackets at each corner
-    for i in 0..4 {
-        let corner = screen_corners[i];
-        let prev = screen_corners[(i + 3) % 4];
-        let next = screen_corners[(i + 1) % 4];
-        
-        // Direction to previous corner
-        let to_prev = egui::vec2(prev.x - corner.x, prev.y - corner.y);
-        let len_prev = (to_prev.x.powi(2) + to_prev.y.powi(2)).sqrt();
-        let dir_prev = if len_prev > 0.0 { to_prev / len_prev } else { egui::vec2(0.0, 0.0) };
-        
-        // Direction to next corner
-        let to_next = egui::vec2(next.x - corner.x, next.y - corner.y);
-        let len_next = (to_next.x.powi(2) + to_next.y.powi(2)).sqrt();
-        let dir_next = if len_next > 0.0 { to_next / len_next } else { egui::vec2(0.0, 0.0) };
-        
-        // Draw two bracket lines from corner
-        let end_prev = egui::pos2(corner.x + dir_prev.x * bracket_len, corner.y + dir_prev.y * bracket_len);
-        let end_next = egui::pos2(corner.x + dir_next.x * bracket_len, corner.y + dir_next.y * bracket_len);
-        
-        painter.line_segment([corner, end_prev], stroke);
-        painter.line_segment([corner, end_next], stroke);
-    }
+                // NDC [-1,1] -> frame space -> screen
+                // frame_x = ndc_x * comp_w/2, frame_y = ndc_y * comp_h/2
+                let comp_w = viewport_state.image_size.x;
+                let comp_h = viewport_state.image_size.y;
+                let frame_x = ndc.x * comp_w * 0.5;
+                let frame_y = ndc.y * comp_h * 0.5;
+
+                // Frame -> viewport (zoom + pan) -> screen
+                let vp_x = frame_x * viewport_state.zoom + viewport_state.pan.x;
+                let vp_y = frame_y * viewport_state.zoom + viewport_state.pan.y;
+                let screen_x = vp_x + viewport_state.viewport_size.x * 0.5;
+                let screen_y = viewport_state.viewport_size.y * 0.5 - vp_y; // Y flip for screen
+
+                panel_rect.left_top() + egui::vec2(screen_x, screen_y)
+            } else {
+                // 2D mode: simple frame -> image -> screen
+                let image_x = world_pt.x + viewport_state.image_size.x * 0.5;
+                let image_y = viewport_state.image_size.y * 0.5 - world_pt.y;
+                let screen = viewport_state.image_to_screen(egui::vec2(image_x, image_y));
+                panel_rect.left_top() + screen
+            };
+
+            screen_corners.push(egui::pos2(screen_pos.x, screen_pos.y));
+        }
+
+        if screen_corners.len() < 4 {
+            continue;
+        } // Some corners behind camera
+
+        // Draw corner brackets instead of full rectangle
+        let painter = ui.painter();
+        let alpha = (opacity * 255.0) as u8;
+        let stroke = egui::Stroke::new(
+            stroke_width,
+            egui::Color32::from_rgba_unmultiplied(255, 200, 100, alpha),
+        );
+
+        // Use corner length from settings, but clamp to half of shortest edge
+        let edge_lengths: Vec<f32> = (0..4)
+            .map(|i| {
+                let p1 = screen_corners[i];
+                let p2 = screen_corners[(i + 1) % 4];
+                ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt()
+            })
+            .collect();
+        let min_edge = edge_lengths.iter().cloned().fold(f32::INFINITY, f32::min);
+        let bracket_len = corner_length.min(min_edge * 0.5); // Don't exceed half of shortest edge
+
+        // Draw corner brackets at each corner
+        for i in 0..4 {
+            let corner = screen_corners[i];
+            let prev = screen_corners[(i + 3) % 4];
+            let next = screen_corners[(i + 1) % 4];
+
+            // Direction to previous corner
+            let to_prev = egui::vec2(prev.x - corner.x, prev.y - corner.y);
+            let len_prev = (to_prev.x.powi(2) + to_prev.y.powi(2)).sqrt();
+            let dir_prev = if len_prev > 0.0 {
+                to_prev / len_prev
+            } else {
+                egui::vec2(0.0, 0.0)
+            };
+
+            // Direction to next corner
+            let to_next = egui::vec2(next.x - corner.x, next.y - corner.y);
+            let len_next = (to_next.x.powi(2) + to_next.y.powi(2)).sqrt();
+            let dir_next = if len_next > 0.0 {
+                to_next / len_next
+            } else {
+                egui::vec2(0.0, 0.0)
+            };
+
+            // Draw two bracket lines from corner
+            let end_prev = egui::pos2(
+                corner.x + dir_prev.x * bracket_len,
+                corner.y + dir_prev.y * bracket_len,
+            );
+            let end_next = egui::pos2(
+                corner.x + dir_next.x * bracket_len,
+                corner.y + dir_next.y * bracket_len,
+            );
+
+            painter.line_segment([corner, end_prev], stroke);
+            painter.line_segment([corner, end_next], stroke);
+        }
     } // end for each layer
 }

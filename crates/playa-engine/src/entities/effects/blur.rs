@@ -53,7 +53,12 @@ pub fn apply(frame: &Frame, attrs: &Attrs) -> Option<Frame> {
     // Convert back to original format
     let out_buffer = from_f32_buffer(&result, frame.pixel_format(), width, height);
 
-    Some(Frame::from_buffer(out_buffer, frame.pixel_format(), width, height))
+    Some(Frame::from_buffer(
+        out_buffer,
+        frame.pixel_format(),
+        width,
+        height,
+    ))
 }
 
 /// Convert any PixelBuffer to f32 RGBA for processing.
@@ -81,12 +86,7 @@ fn to_f32_buffer(buffer: &PixelBuffer, width: usize, height: usize) -> Vec<f32> 
 }
 
 /// Convert f32 buffer back to original pixel format.
-fn from_f32_buffer(
-    data: &[f32],
-    format: PixelFormat,
-    width: usize,
-    height: usize,
-) -> PixelBuffer {
+fn from_f32_buffer(data: &[f32], format: PixelFormat, width: usize, height: usize) -> PixelBuffer {
     match format {
         PixelFormat::Rgba8 => {
             let mut result = Vec::with_capacity(width * height * 4);
@@ -102,9 +102,7 @@ fn from_f32_buffer(
             }
             PixelBuffer::F16(result)
         }
-        PixelFormat::RgbaF32 => {
-            PixelBuffer::F32(data.to_vec())
-        }
+        PixelFormat::RgbaF32 => PixelBuffer::F32(data.to_vec()),
     }
 }
 
@@ -143,7 +141,13 @@ fn gaussian_kernel(radius: f32) -> Vec<f32> {
 ///
 /// `horizontal=true` convolves along X (rows); `false` convolves along Y (columns).
 /// Edge pixels use clamped sampling.
-fn convolve_axis(src: &[f32], width: usize, height: usize, kernel: &[f32], horizontal: bool) -> Vec<f32> {
+fn convolve_axis(
+    src: &[f32],
+    width: usize,
+    height: usize,
+    kernel: &[f32],
+    horizontal: bool,
+) -> Vec<f32> {
     let mut dst = vec![0.0f32; src.len()];
     let half = (kernel.len() / 2) as i32;
 

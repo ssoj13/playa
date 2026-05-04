@@ -12,6 +12,23 @@ exclude = ["crates/playa-py"]
 resolver = "2"
 default-members = ["."]
 
+[workspace.dependencies]
+anyhow = "1.0"
+bytemuck = "1.25"
+clap = { version = "4.6", features = ["derive"] }
+eframe = { version = "0.33", features = ["persistence"] }
+egui_dock = { version = "0.18", features = ["serde"] }
+egui_glow = "0.33"
+env_logger = "0.11"
+glam = "0.32"
+half = "2.7"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "tga", "hdr"] }
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.22", features = ["v4", "serde"] }
+playa-ffmpeg = { version = "8.0.3", features = ["static"] }
+
 [package]
 name = "playa"
 version = "0.1.142"
@@ -35,14 +52,17 @@ profiler = ["dep:puffin", "dep:puffin_egui"]
 playa-app = { path = "crates/playa-app" }
 playa-engine = { path = "crates/playa-engine" }
 playa-events = { path = "crates/playa-events" }
-playa-io = { path = "crates/playa-io" }
+playa-io = { path = "crates/playa-io", default-features = false }
 playa-ui = { path = "crates/playa-ui" }
-clap = { version = "4.6", features = ["derive"] }
-env_logger = "0.11"
-log = "0.4"
+clap = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
 
 puffin = { version = "0.20", optional = true }
 puffin_egui = { version = "0.30", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+playa-io = { path = "crates/playa-io", features = ["exr", "ffmpeg"] }
 
 # Binary targets
 [[bin]]

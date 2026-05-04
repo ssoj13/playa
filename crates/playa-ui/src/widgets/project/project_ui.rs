@@ -2,12 +2,12 @@ use eframe::egui;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
-use playa_engine::entities::Project;
-use playa_engine::entities::node::Node;
+use crate::widgets::file_dialogs::create_media_dialog;
+use crate::widgets::project::project::ProjectActions;
 use crate::widgets::project::project_events::*;
 use playa_engine::core::player::Player;
-use crate::widgets::project::project::ProjectActions;
-use crate::widgets::file_dialogs::create_media_dialog;
+use playa_engine::entities::Project;
+use playa_engine::entities::node::Node;
 
 /// Render project window (dock tab): Unified list of Clips & Compositions
 pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> ProjectActions {
@@ -130,7 +130,7 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
 
                 let fps = comp.fps() as u32;
                 let frame_count = comp.frame_count();
-                
+
                 // Determine node type for icon and display
                 let (icon, icon_color, display_text) = if comp.is_file() {
                     let text = if let Some(mask) = comp.file_mask() {
@@ -144,12 +144,24 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     };
                     ("[F]", egui::Color32::from_rgb(100, 180, 100), text) // Green for files
                 } else if comp.is_camera() {
-                    ("[K]", egui::Color32::from_rgb(255, 200, 100), comp.name().to_string()) // Orange for camera
+                    (
+                        "[K]",
+                        egui::Color32::from_rgb(255, 200, 100),
+                        comp.name().to_string(),
+                    ) // Orange for camera
                 } else if comp.is_text() {
-                    ("[T]", egui::Color32::from_rgb(200, 150, 255), comp.name().to_string()) // Purple for text
+                    (
+                        "[T]",
+                        egui::Color32::from_rgb(200, 150, 255),
+                        comp.name().to_string(),
+                    ) // Purple for text
                 } else {
                     // Comp
-                    ("[C]", egui::Color32::from_rgb(100, 150, 255), format!("{} (Layer)", comp.name())) // Blue for comp
+                    (
+                        "[C]",
+                        egui::Color32::from_rgb(100, 150, 255),
+                        format!("{} (Layer)", comp.name()),
+                    ) // Blue for comp
                 };
 
                 let available_width = ui.available_width();
@@ -291,22 +303,25 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                         anchor,
                     }));
                     actions.events.push(Box::new(SelectionFocusEvent(sel)));
-                    actions.events.push(Box::new(ProjectActiveChangedEvent::new(*comp_uuid)));
+                    actions
+                        .events
+                        .push(Box::new(ProjectActiveChangedEvent::new(*comp_uuid)));
                 }
 
                 // Drag handling
                 if response.drag_started()
-                    && let Some(_pos) = response.interact_pointer_pos() {
-                        ui.ctx().data_mut(|data| {
-                            data.insert_temp(
-                                egui::Id::new("global_drag_state"),
-                                crate::widgets::timeline::GlobalDragState::ProjectItem {
-                                    source_uuid: *comp_uuid,
-                                    duration: Some(frame_count),
-                                },
-                            );
-                        });
-                    }
+                    && let Some(_pos) = response.interact_pointer_pos()
+                {
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(
+                            egui::Id::new("global_drag_state"),
+                            crate::widgets::timeline::GlobalDragState::ProjectItem {
+                                source_uuid: *comp_uuid,
+                                duration: Some(frame_count),
+                            },
+                        );
+                    });
+                }
 
                 if response.dragged() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -320,10 +335,11 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
 
     // Double-click on empty area opens file dialog (same as Add Clip button)
     if panel_response.double_clicked()
-            && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
-            && !paths.is_empty() {
-                actions.send(AddClipsEvent(paths));
-            }
+        && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
+        && !paths.is_empty()
+    {
+        actions.send(AddClipsEvent(paths));
+    }
 
     // Set hover state for input routing
     actions.hovered = panel_response.hovered();

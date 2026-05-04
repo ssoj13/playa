@@ -32,17 +32,17 @@ impl NodeKind {
     pub fn is_file(&self) -> bool {
         matches!(self, NodeKind::File(_))
     }
-    
+
     /// Check if this is a comp node
     pub fn is_comp(&self) -> bool {
         matches!(self, NodeKind::Comp(_))
     }
-    
+
     /// Check if this is a camera node
     pub fn is_camera(&self) -> bool {
         matches!(self, NodeKind::Camera(_))
     }
-    
+
     /// Check if this is a text node
     pub fn is_text(&self) -> bool {
         matches!(self, NodeKind::Text(_))
@@ -82,11 +82,20 @@ impl NodeKind {
         initial_position: Option<[f32; 3]>,
     ) -> anyhow::Result<Uuid> {
         match self {
-            NodeKind::Comp(comp) => comp.add_child_layer(source_uuid, name, start_frame, duration, insert_idx, source_dim, renderable, initial_position),
+            NodeKind::Comp(comp) => comp.add_child_layer(
+                source_uuid,
+                name,
+                start_frame,
+                duration,
+                insert_idx,
+                source_dim,
+                renderable,
+                initial_position,
+            ),
             _ => anyhow::bail!("Cannot add child to non-Comp node"),
         }
     }
-    
+
     /// Get as FileNode reference
     pub fn as_file(&self) -> Option<&FileNode> {
         match self {
@@ -94,7 +103,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get as FileNode mutable reference
     pub fn as_file_mut(&mut self) -> Option<&mut FileNode> {
         match self {
@@ -102,7 +111,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get as CompNode reference
     pub fn as_comp(&self) -> Option<&CompNode> {
         match self {
@@ -110,7 +119,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get as CompNode mutable reference
     pub fn as_comp_mut(&mut self) -> Option<&mut CompNode> {
         match self {
@@ -118,7 +127,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get as CameraNode reference
     pub fn as_camera(&self) -> Option<&CameraNode> {
         match self {
@@ -126,7 +135,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get as CameraNode mutable reference
     pub fn as_camera_mut(&mut self) -> Option<&mut CameraNode> {
         match self {
@@ -134,7 +143,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get as TextNode reference
     pub fn as_text(&self) -> Option<&TextNode> {
         match self {
@@ -142,7 +151,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get as TextNode mutable reference
     pub fn as_text_mut(&mut self) -> Option<&mut TextNode> {
         match self {
@@ -150,7 +159,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Get file mask (only for FileNode)
     pub fn file_mask(&self) -> Option<String> {
         match self {
@@ -158,7 +167,7 @@ impl NodeKind {
             _ => None,
         }
     }
-    
+
     /// Set event emitter (only affects CompNode)
     pub fn set_event_emitter(&mut self, emitter: crate::core::event_bus::CompEventEmitter) {
         if let NodeKind::Comp(n) = self {
@@ -171,33 +180,33 @@ impl NodeKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_node_kind_file() {
         let file = FileNode::new("test.*.exr".to_string(), 1, 100, 24.0);
         let kind: NodeKind = file.into();
-        
+
         assert!(kind.is_file());
         assert!(!kind.is_comp());
         assert_eq!(kind.node_type(), "File");
     }
-    
+
     #[test]
     fn test_node_kind_comp() {
         let comp = CompNode::new("Test Comp", 0, 100, 24.0);
         let kind: NodeKind = comp.into();
-        
+
         assert!(!kind.is_file());
         assert!(kind.is_comp());
         assert_eq!(kind.node_type(), "Comp");
     }
-    
+
     #[test]
     fn test_node_trait_delegation() {
         let file = FileNode::new("test.*.exr".to_string(), 1, 100, 24.0);
         let file_uuid = file.uuid();
         let kind: NodeKind = file.into();
-        
+
         assert_eq!(kind.uuid(), file_uuid);
         assert!(kind.inputs().is_empty());
     }

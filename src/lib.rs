@@ -20,12 +20,10 @@ pub use playa_app::{app, main_events, runner, server, shell};
 
 // Re-export commonly used types from core
 pub use core::cache_man::CacheManager;
-pub use core::event_bus::{
-    downcast_event, BoxedEvent, CompEventEmitter, EventBus, EventEmitter,
-};
+pub use core::event_bus::{BoxedEvent, CompEventEmitter, EventBus, EventEmitter, downcast_event};
 pub use core::global_cache::GlobalFrameCache;
-pub use entities::CacheStrategy;
 pub use core::player::Player;
+pub use entities::CacheStrategy;
 
 // Re-export entities
-pub use entities::{Attrs, AttrValue, Comp, Frame, Project};
+pub use entities::{AttrValue, Attrs, Comp, Frame, Project};

@@ -159,15 +159,27 @@ struct ApiResponse {
 
 impl ApiResponse {
     fn ok() -> Self {
-        Self { success: true, message: None, error: None }
+        Self {
+            success: true,
+            message: None,
+            error: None,
+        }
     }
 
     fn ok_msg(msg: &str) -> Self {
-        Self { success: true, message: Some(msg.to_string()), error: None }
+        Self {
+            success: true,
+            message: Some(msg.to_string()),
+            error: None,
+        }
     }
 
     fn err(msg: &str) -> Self {
-        Self { success: false, message: None, error: Some(msg.to_string()) }
+        Self {
+            success: false,
+            message: None,
+            error: Some(msg.to_string()),
+        }
     }
 }
 
@@ -229,7 +241,8 @@ impl ApiServer {
 
         // Handle preflight
         if request.method() == "OPTIONS" {
-            return Response::empty_204().with_additional_header("Access-Control-Allow-Origin", "*")
+            return Response::empty_204()
+                .with_additional_header("Access-Control-Allow-Origin", "*")
                 .with_additional_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 .with_additional_header("Access-Control-Allow-Headers", "Content-Type");
         }
@@ -350,7 +363,11 @@ impl ApiServer {
         let comp = state.comp.read().unwrap().clone();
         let cache = state.cache.read().unwrap().clone();
 
-        Response::json(&StatusResponse { player, comp, cache })
+        Response::json(&StatusResponse {
+            player,
+            comp,
+            cache,
+        })
     }
 
     fn get_player(state: &Arc<SharedApiState>) -> Response {
@@ -391,10 +408,13 @@ impl ApiServer {
         match rouille::input::json_input::<EventRequest>(request) {
             Ok(req) => {
                 let payload = serde_json::to_string(&req.payload).unwrap_or_default();
-                Self::send_command(tx, ApiCommand::EmitEvent {
-                    event_type: req.event_type,
-                    payload,
-                })
+                Self::send_command(
+                    tx,
+                    ApiCommand::EmitEvent {
+                        event_type: req.event_type,
+                        payload,
+                    },
+                )
             }
             Err(e) => Response::json(&ApiResponse::err(&format!("Invalid JSON: {}", e)))
                 .with_status_code(400),
@@ -402,7 +422,11 @@ impl ApiServer {
     }
 
     /// Handle screenshot request - sends command and waits for JPEG response
-    fn handle_screenshot(tx: &mpsc::Sender<ApiCommand>, state: &SharedApiState, viewport_only: bool) -> Response {
+    fn handle_screenshot(
+        tx: &mpsc::Sender<ApiCommand>,
+        state: &SharedApiState,
+        viewport_only: bool,
+    ) -> Response {
         // Trigger immediate repaint to minimize wait time
         if let Some(ctx) = state.egui_ctx.read().unwrap().as_ref() {
             ctx.request_repaint();
@@ -429,15 +453,9 @@ impl ApiServer {
 
         // Wait for response with timeout
         match resp_rx.recv_timeout(Duration::from_secs(15)) {
-            Ok(Ok(jpeg_bytes)) => {
-                Response::from_data("image/jpeg", jpeg_bytes)
-            }
-            Ok(Err(err)) => {
-                Response::json(&ApiResponse::err(&err)).with_status_code(500)
-            }
-            Err(_) => {
-                Response::json(&ApiResponse::err("Screenshot timeout")).with_status_code(504)
-            }
+            Ok(Ok(jpeg_bytes)) => Response::from_data("image/jpeg", jpeg_bytes),
+            Ok(Err(err)) => Response::json(&ApiResponse::err(&err)).with_status_code(500),
+            Err(_) => Response::json(&ApiResponse::err("Screenshot timeout")).with_status_code(504),
         }
     }
 }

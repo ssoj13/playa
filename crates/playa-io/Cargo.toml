@@ -3,17 +3,26 @@ name = "playa-io"
 version = "0.1.142"
 edition = "2024"
 publish = false
-description = "Playa media I/O — video (FFmpeg), EXR (vfx-exr/io), generic images"
+description = "Playa media I/O — optional FFmpeg video, optional EXR (vfx-rs), generic images; WebCodecs scaffold for Wasm"
 
 [lib]
 name = "playa_io"
 path = "src/lib.rs"
 
+[features]
+default = ["exr", "ffmpeg"]
+# Desk / full native stacks
+exr = ["dep:vfx-exr", "dep:vfx-io", "dep:vfx-core"]
+ffmpeg = ["dep:playa-ffmpeg"]
+# Future: wasm-bindgen + web_sys bindings for browser WebCodecs
+webcodecs = []
+
 [dependencies]
-half = "2.7"
-image = { version = "0.25", features = ["png", "jpeg", "tiff", "tga", "hdr"] }
-log = "0.4"
-playa-ffmpeg = { version = "8.0.3", features = ["static"] }
-vfx-core = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main" }
-vfx-exr = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["htj2k"] }
-vfx-io = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["exr", "htj2k"] }
+half = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
+playa-ffmpeg = { workspace = true, optional = true }
+
+vfx-core = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", optional = true }
+vfx-exr = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", optional = true, features = ["htj2k"] }
+vfx-io = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", optional = true, features = ["exr", "htj2k"] }

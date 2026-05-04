@@ -31,7 +31,11 @@ pub struct CacheStatsSnapshot {
 impl CacheStatsSnapshot {
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
-        if total == 0 { 0.0 } else { self.hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
     }
 }
 
@@ -54,7 +58,9 @@ pub trait FrameCache: Send + Sync {
     fn len(&self) -> usize;
 
     /// Check if cache is empty.
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     /// Set caching strategy.
     fn set_strategy(&self, strategy: CacheStrategy);

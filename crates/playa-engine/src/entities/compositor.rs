@@ -1,37 +1,34 @@
-//! Frame compositor - blends multiple frames into one.
+//! Frame compositor — blends multiple layers into one [`Frame`].
 //!
-//! Private module used by Comp for multi-layer blending.
-//! Provides modular compositing backend:
-//! - CPU compositor (default, works everywhere)
-//! - GPU compositor (requires OpenGL context, 10-50x faster)
+//! Two backends live behind [`CompositorType`]:
+//! - **CPU** — [`CpuCompositor`], works on any thread (workers, encode, nested preload).
+//! - **GPU** — [`GpuCompositor`], needs a current OpenGL context on the calling thread.
 //!
-//! # GPU Transform Support (WIP)
+//! # How [`CompNode`](crate::entities::comp_node::CompNode) uses this
 //!
-//! The blend API includes transform matrices `[f32; 9]` for GPU-accelerated
-//! layer transforms. Current state:
+//! Final `blend_with_dim` for the active project **must** run against the same [`CompositorType`] the
+//! user selected. Workers do not have GL, so when prefs pick GPU,
+//! [`CompNode::compose_internal`](crate::entities::comp_node::CompNode::compose_internal) moves the
+//! stacked rasters through [`super::gpu_blend_bridge::GpuBlendBridge`]; the desktop host drains that
+//! queue on the UI thread (`PlayaApp::drain_gpu_blend_queue`) **after** the GL context and compositor
+//! backend are in sync — see `gpu_blend_bridge.rs`. Cpu prefs keep everything on workers via a
+//! per-thread Cpu compositor (`THREAD_COMPOSITOR` in `comp_node`).
 //!
-//! - **API ready**: `blend()` accepts `Vec<(Frame, f32, BlendMode, [f32; 9])>`
-//! - **GPU shader ready**: `gpu_compositor.rs` has `u_top_transform` mat3 uniform
-//! - **Matrix builder ready**: `transform::build_inverse_matrix_3x3()`
-//! - **compose_internal ready**: passes inverse matrices from layer attrs
+//! Encode / blocking `get_frame` paths intentionally omit the bridge
+//! (`ComputeContext.gpu_blend_bridge == None`) so deterministic jobs never block on channels.
 //!
-//! **NOT YET WORKING:**
-//! - CPU compositor ignores transform matrix (applies CPU transform beforehand)
-//! - GPU compositor not used for compose (requires GL context, can't run in workers)
-//! - Switching GPU/CPU in prefs only affects Project.compositor, not compose_internal
+//! # GPU transforms (WIP for full parity)
 //!
-//! **To enable GPU compositing:**
-//! 1. compose_internal runs in main thread (has GL context)
-//! 2. Pass Project.compositor to compose_internal via ComputeContext
-//! 3. Remove CPU transform in compose_internal, let GPU handle it
+//! The API carries inverse 3×3 matrices `[f32; 9]` per layer ([`IDENTITY_TRANSFORM`] when flat).
 //!
-//! For now, CPU compositor + CPU transforms work fine. GPU is viewport-only.
+//! **Present today:** matrices flow through `blend` / [`CompositorType::blend_with_dim`]; the Gpu
+//! shader reads `u_top_transform` (see [`super::gpu_compositor::GpuCompositor`]).
+//!
+//! **Still asymmetric:** the Cpu path ignores the matrix bundle — transforms are baked into pixels
+//! earlier in compose. Skipping Cpu transform there while feeding raw mats only to Gpu is future work.
 
 use crate::entities::frame::{Frame, FrameStatus, PixelBuffer};
 
-// === GPU Compositor Toggle ===
-// To enable GPU compositor: uncomment the line below
-// To disable GPU compositor: comment the line below
 use super::gpu_compositor::GpuCompositor;
 
 /// Supported blend modes for layer compositing.
@@ -63,8 +60,10 @@ impl Clone for CompositorType {
         // This is expected during Project serialization (compositor is #[serde(skip)])
         // but should NOT happen in normal code - use RefCell or Arc instead
         if matches!(self, CompositorType::Gpu(_)) {
-            log::warn!("CompositorType::clone() called on GPU variant - downgrading to CPU. \
-                        This may indicate a bug if not during serialization.");
+            log::warn!(
+                "CompositorType::clone() called on GPU variant - downgrading to CPU. \
+                        This may indicate a bug if not during serialization."
+            );
         }
         CompositorType::Cpu(CpuCompositor)
     }
@@ -72,7 +71,7 @@ impl Clone for CompositorType {
 
 /// Identity transform matrix (no transformation).
 /// Column-major 3x3 for OpenGL: `[m00, m10, 0, m01, m11, 0, tx, ty, 1]`
-/// 
+///
 /// Used when layer has no transform (position=0, rotation=0, scale=1).
 /// See `transform::build_inverse_matrix_3x3()` for non-identity transforms.
 pub const IDENTITY_TRANSFORM: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
@@ -143,13 +142,7 @@ pub struct CpuCompositor;
 
 impl CpuCompositor {
     /// Blend two F32 buffers with opacity (RGBA format)
-    fn blend_f32(
-        bottom: &[f32],
-        top: &[f32],
-        opacity: f32,
-        mode: &BlendMode,
-        result: &mut [f32],
-    ) {
+    fn blend_f32(bottom: &[f32], top: &[f32], opacity: f32, mode: &BlendMode, result: &mut [f32]) {
         debug_assert_eq!(bottom.len(), top.len());
         debug_assert_eq!(bottom.len(), result.len());
 
@@ -158,8 +151,10 @@ impl CpuCompositor {
             let inv_alpha = 1.0 - top_alpha;
 
             result[i] = bottom[i] * inv_alpha + apply_blend(bottom[i], top[i], mode) * top_alpha;
-            result[i + 1] = bottom[i + 1] * inv_alpha + apply_blend(bottom[i + 1], top[i + 1], mode) * top_alpha;
-            result[i + 2] = bottom[i + 2] * inv_alpha + apply_blend(bottom[i + 2], top[i + 2], mode) * top_alpha;
+            result[i + 1] = bottom[i + 1] * inv_alpha
+                + apply_blend(bottom[i + 1], top[i + 1], mode) * top_alpha;
+            result[i + 2] = bottom[i + 2] * inv_alpha
+                + apply_blend(bottom[i + 2], top[i + 2], mode) * top_alpha;
             result[i + 3] = bottom[i + 3] * inv_alpha + top_alpha;
         }
     }
@@ -203,9 +198,9 @@ impl CpuCompositor {
 
     /// Blend frames bottom-to-top with opacity.
     /// Blend frames using CPU.
-    /// 
+    ///
     /// Each frame: (pixels, opacity, blend_mode, inverse_transform_matrix)
-    /// 
+    ///
     /// **Note:** Transform matrix is IGNORED by CPU compositor.
     /// For CPU path, transforms are applied beforehand via `transform::transform_frame()`
     /// in `compose_internal`. The matrix is passed for API compatibility with GPU compositor.
@@ -219,11 +214,11 @@ impl CpuCompositor {
     }
 
     /// Blend frames onto a fixed-size canvas (width, height).
-    /// 
+    ///
     /// **CPU path:** Transform matrix `[f32; 9]` is ignored here.
     /// Transforms are pre-applied in `compose_internal` via `transform::transform_frame()`.
     /// This is less efficient than GPU (transforms pixels twice) but works in worker threads.
-    /// 
+    ///
     /// **TODO for GPU compositing:**
     /// When GPU compositor is used, transforms should NOT be pre-applied.
     /// Instead, pass original frames + matrices, let GPU shader handle transforms.
@@ -265,7 +260,8 @@ impl CpuCompositor {
         // Start with first frame cropped to canvas
         let mut iter = frames.iter();
         let (base_frame, _, _, _) = iter.next().unwrap(); // safe: frames non-empty
-        let base_cropped = base_frame.crop_copy(width, height, crate::entities::frame::CropAlign::LeftTop);
+        let base_cropped =
+            base_frame.crop_copy(width, height, crate::entities::frame::CropAlign::LeftTop);
 
         let canvas_pixels = width * height * 4;
 
@@ -282,12 +278,12 @@ impl CpuCompositor {
         let mut curr = match base_cropped.into_pixel_buffer() {
             PixelBuffer::F32(v) => Buf::F32(v),
             PixelBuffer::F16(v) => Buf::F16(v),
-            PixelBuffer::U8(v)  => Buf::U8(v),
+            PixelBuffer::U8(v) => Buf::U8(v),
         };
         let mut out = match &curr {
             Buf::F32(_) => Buf::F32(vec![0.0f32; canvas_pixels]),
             Buf::F16(_) => Buf::F16(vec![half::f16::ZERO; canvas_pixels]),
-            Buf::U8(_)  => Buf::U8(vec![0u8; canvas_pixels]),
+            Buf::U8(_) => Buf::U8(vec![0u8; canvas_pixels]),
         };
 
         // Blend each subsequent layer on top
@@ -348,7 +344,7 @@ impl CpuCompositor {
         let result = match curr {
             Buf::F32(v) => Frame::from_f32_buffer_with_status(v, width, height, min_status),
             Buf::F16(v) => Frame::from_f16_buffer_with_status(v, width, height, min_status),
-            Buf::U8(v)  => Frame::from_u8_buffer_with_status(v, width, height, min_status),
+            Buf::U8(v) => Frame::from_u8_buffer_with_status(v, width, height, min_status),
         };
 
         Some(result)

@@ -101,13 +101,13 @@ pub fn screen_to_normalized(screen_pos: Pos2, panel_rect: Rect) -> Option<Vec2> 
     ))
 }
 
-use playa_engine::entities::Project;
-use playa_engine::core::event_bus::EventBus;
-use playa_engine::core::player::Player;
 use crate::widgets::timeline::{
     TimelineConfig, TimelineState, render_canvas, render_outline, render_toolbar,
 };
 use crate::widgets::viewport::shaders::Shaders;
+use playa_engine::core::event_bus::EventBus;
+use playa_engine::core::player::Player;
+use playa_engine::entities::Project;
 
 /// Render timeline panel inside a dock tab. Returns true if shader changed.
 pub fn render_timeline_panel(
@@ -155,7 +155,15 @@ pub fn render_timeline_panel(
                 // incorrect height and egui will add unwanted vertical scrollbar.
 
                 // Toolbar with transport, zoom, snap, lock, loop, and view mode selector
-                render_toolbar(ui, timeline_state, player.loop_enabled(), show_tooltips, layout_names, current_layout, |evt| event_bus.emit_boxed(evt));
+                render_toolbar(
+                    ui,
+                    timeline_state,
+                    player.loop_enabled(),
+                    show_tooltips,
+                    layout_names,
+                    current_layout,
+                    |evt| event_bus.emit_boxed(evt),
+                );
                 ui.add_space(4.0);
 
                 // Now calculate remaining height for panels
@@ -170,7 +178,7 @@ pub fn render_timeline_panel(
                             .resizable(true)
                             .min_width(100.0)
                             .default_width(saved_width)
-                            .frame(egui::Frame::NONE)  // Remove default frame to align with canvas
+                            .frame(egui::Frame::NONE) // Remove default frame to align with canvas
                             .show_inside(ui, |ui| {
                                 // Lock panel to exact height to prevent vertical scrollbar.
                                 // set_height() alone is not enough - egui can still add scrollbar
@@ -202,66 +210,67 @@ pub fn render_timeline_panel(
                         if (new_width - timeline_state.outline_width).abs() > 1.0
                             && new_width >= 150.0
                             && new_width != 100.0
-                            && new_width >= timeline_state.outline_width * 0.5 // Don't save if collapsed to <50% of saved width
+                            && new_width >= timeline_state.outline_width * 0.5
+                        // Don't save if collapsed to <50% of saved width
                         {
                             timeline_state.outline_width = new_width.max(400.0); // Ensure minimum 400px
                         }
 
                         egui::CentralPanel::default()
-                            .frame(egui::Frame::NONE)  // Remove default frame to align with outline
+                            .frame(egui::Frame::NONE) // Remove default frame to align with outline
                             .show_inside(ui, |ui| {
-                            // Same as outline: lock to exact height to prevent unwanted vertical scroll
-                            ui.set_height(splitter_height);
-                            ui.set_max_height(splitter_height);
-                            timeline_actions = render_canvas(
-                                ui,
-                                comp_uuid,
-                                comp,
-                                project,
-                                &config,
-                                timeline_state,
-                                timeline_state.view_mode,
-                                timeline_hover_highlight,
-                                |evt| event_bus.emit_boxed(evt),
-                            );
-                        });
+                                // Same as outline: lock to exact height to prevent unwanted vertical scroll
+                                ui.set_height(splitter_height);
+                                ui.set_max_height(splitter_height);
+                                timeline_actions = render_canvas(
+                                    ui,
+                                    comp_uuid,
+                                    comp,
+                                    project,
+                                    &config,
+                                    timeline_state,
+                                    timeline_state.view_mode,
+                                    timeline_hover_highlight,
+                                    |evt| event_bus.emit_boxed(evt),
+                                );
+                            });
                     }
                     crate::widgets::timeline::TimelineViewMode::CanvasOnly => {
                         egui::CentralPanel::default()
                             .frame(egui::Frame::NONE)
                             .show_inside(ui, |ui| {
-                            ui.set_height(splitter_height);
-                            ui.set_max_height(splitter_height);
-                            timeline_actions = render_canvas(
-                                ui,
-                                comp_uuid,
-                                comp,
-                                project,
-                                &config,
-                                timeline_state,
-                                timeline_state.view_mode,
-                                timeline_hover_highlight,
-                                |evt| event_bus.emit_boxed(evt),
-                            );
-                        });
+                                ui.set_height(splitter_height);
+                                ui.set_max_height(splitter_height);
+                                timeline_actions = render_canvas(
+                                    ui,
+                                    comp_uuid,
+                                    comp,
+                                    project,
+                                    &config,
+                                    timeline_state,
+                                    timeline_state.view_mode,
+                                    timeline_hover_highlight,
+                                    |evt| event_bus.emit_boxed(evt),
+                                );
+                            });
                     }
                     crate::widgets::timeline::TimelineViewMode::OutlineOnly => {
                         egui::CentralPanel::default()
                             .frame(egui::Frame::NONE)
                             .show_inside(ui, |ui| {
-                            ui.set_height(splitter_height);
-                            ui.set_max_height(splitter_height);
-                            render_outline(
-                                ui,
-                                comp_uuid,
-                                comp,
-                                &config,
-                                timeline_state,
-                                timeline_state.view_mode,
-                                outline_top_offset,
-                                |evt| event_bus.emit_boxed(evt),
-                            );
-                        });
+                                ui.set_height(splitter_height);
+                                ui.set_max_height(splitter_height);
+                                render_outline(
+                                    ui,
+                                    comp_uuid,
+                                    comp,
+                                    &config,
+                                    timeline_state,
+                                    timeline_state.view_mode,
+                                    outline_top_offset,
+                                    |evt| event_bus.emit_boxed(evt),
+                                );
+                            });
                     }
                 }
             }

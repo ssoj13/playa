@@ -10,8 +10,11 @@
 //! - `TIMING`: in/out/trim/speed (timed entities)
 //! - `TRANSFORM`: position/rotation/scale/pivot (spatial entities)
 
+use super::attrs::{
+    AttrDef, AttrSchema, AttrType, FLAG_DAG, FLAG_DISPLAY, FLAG_INTERNAL, FLAG_KEYABLE,
+    FLAG_READONLY,
+};
 use std::sync::LazyLock;
-use super::attrs::{AttrDef, AttrSchema, AttrType, FLAG_DAG, FLAG_DISPLAY, FLAG_INTERNAL, FLAG_KEYABLE, FLAG_READONLY};
 
 // ============================================================================
 // Flag Shorthand Combos
@@ -46,7 +49,13 @@ const TIMING: &[AttrDef] = &[
     AttrDef::with_order("trim_in", AttrType::Int, DAG_DISP, 20.2),
     AttrDef::with_order("trim_out", AttrType::Int, DAG_DISP, 20.3),
     AttrDef::with_order("src_len", AttrType::Int, DAG, 20.4),
-    AttrDef::with_ui_order("speed", AttrType::Float, DAG_DISP_KEY, &["0.1", "4", "0.1"], 20.5),
+    AttrDef::with_ui_order(
+        "speed",
+        AttrType::Float,
+        DAG_DISP_KEY,
+        &["0.1", "4", "0.1"],
+        20.5,
+    ),
 ];
 
 /// Transform attributes: position/rotation/scale/pivot (used by spatial entities)
@@ -58,9 +67,7 @@ const TRANSFORM: &[AttrDef] = &[
 ];
 
 /// Node editor position (UI only, non-DAG)
-const NODE_POS: &[AttrDef] = &[
-    AttrDef::with_order("node_pos", AttrType::Vec3, 0, 70.0),
-];
+const NODE_POS: &[AttrDef] = &[AttrDef::with_order("node_pos", AttrType::Vec3, 0, 70.0)];
 
 /// Resolution attributes (readonly - derived from source)
 const RESOLUTION_RO: &[AttrDef] = &[
@@ -69,9 +76,13 @@ const RESOLUTION_RO: &[AttrDef] = &[
 ];
 
 /// Opacity for compositing (keyable)
-const OPACITY: &[AttrDef] = &[
-    AttrDef::with_ui_order("opacity", AttrType::Float, DAG_DISP_KEY, &["0", "1", "0.01"], 50.1),
-];
+const OPACITY: &[AttrDef] = &[AttrDef::with_ui_order(
+    "opacity",
+    AttrType::Float,
+    DAG_DISP_KEY,
+    &["0", "1", "0.01"],
+    50.1,
+)];
 
 // ============================================================================
 // FileNode Schema
@@ -90,7 +101,10 @@ const FILE_SPECIFIC: &[AttrDef] = &[
 ];
 
 pub static FILE_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::from_slices("FileNode", &[IDENTITY, FILE_SPECIFIC, RESOLUTION_RO, TIMING])
+    AttrSchema::from_slices(
+        "FileNode",
+        &[IDENTITY, FILE_SPECIFIC, RESOLUTION_RO, TIMING],
+    )
 });
 
 // ============================================================================
@@ -108,7 +122,10 @@ const COMP_SPECIFIC: &[AttrDef] = &[
 ];
 
 pub static COMP_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::from_slices("CompNode", &[IDENTITY, RESOLUTION_RO, COMP_SPECIFIC, TIMING, NODE_POS])
+    AttrSchema::from_slices(
+        "CompNode",
+        &[IDENTITY, RESOLUTION_RO, COMP_SPECIFIC, TIMING, NODE_POS],
+    )
 });
 
 // ============================================================================
@@ -119,16 +136,40 @@ pub static COMP_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
 const LAYER_SPECIFIC: &[AttrDef] = &[
     AttrDef::with_order("source_uuid", AttrType::Uuid, INT_DAG, 80.0), // DAG - affects source lookup
     // Compositing
-    AttrDef::with_ui_order("blend_mode", AttrType::String, DAG_DISP,
-        &["normal", "screen", "add", "subtract", "multiply", "divide", "difference", "overlay"], 30.3),
+    AttrDef::with_ui_order(
+        "blend_mode",
+        AttrType::String,
+        DAG_DISP,
+        &[
+            "normal",
+            "screen",
+            "add",
+            "subtract",
+            "multiply",
+            "divide",
+            "difference",
+            "overlay",
+        ],
+        30.3,
+    ),
     AttrDef::with_order("visible", AttrType::Bool, DAG_DISP, 30.0),
-    AttrDef::with_order("renderable", AttrType::Bool, DAG_DISP, 30.4),  // false for camera/light/null/audio
+    AttrDef::with_order("renderable", AttrType::Bool, DAG_DISP, 30.4), // false for camera/light/null/audio
     AttrDef::with_order("mute", AttrType::Bool, DAG_DISP, 30.2),
     AttrDef::with_order("solo", AttrType::Bool, DAG_DISP, 30.1),
 ];
 
 pub static LAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::from_slices("Layer", &[IDENTITY, LAYER_SPECIFIC, TIMING, OPACITY, TRANSFORM, NODE_POS])
+    AttrSchema::from_slices(
+        "Layer",
+        &[
+            IDENTITY,
+            LAYER_SPECIFIC,
+            TIMING,
+            OPACITY,
+            TRANSFORM,
+            NODE_POS,
+        ],
+    )
 });
 
 // ============================================================================
@@ -137,17 +178,21 @@ pub static LAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
 
 /// Project-specific attributes (UI state)
 const PROJECT_SPECIFIC: &[AttrDef] = &[
-    AttrDef::with_order("order", AttrType::List, INT, 90.0),      // UI: media pool order (Uuid list)
-    AttrDef::with_order("selection", AttrType::List, INT, 90.1),  // UI: selected items (Uuid list)
-    AttrDef::with_order("active", AttrType::Uuid, INT, 90.2),     // UI: active comp (Uuid)
-    AttrDef::with_ui_order("tool", AttrType::String, 0,    // Viewport tool
-        &["select", "move", "rotate", "scale"], 90.3),
-    AttrDef::with_order("prefs", AttrType::Map, INT, 90.4),       // UI: project preferences (gizmo, etc)
+    AttrDef::with_order("order", AttrType::List, INT, 90.0), // UI: media pool order (Uuid list)
+    AttrDef::with_order("selection", AttrType::List, INT, 90.1), // UI: selected items (Uuid list)
+    AttrDef::with_order("active", AttrType::Uuid, INT, 90.2), // UI: active comp (Uuid)
+    AttrDef::with_ui_order(
+        "tool",
+        AttrType::String,
+        0, // Viewport tool
+        &["select", "move", "rotate", "scale"],
+        90.3,
+    ),
+    AttrDef::with_order("prefs", AttrType::Map, INT, 90.4), // UI: project preferences (gizmo, etc)
 ];
 
-pub static PROJECT_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::from_slices("Project", &[IDENTITY, PROJECT_SPECIFIC])
-});
+pub static PROJECT_SCHEMA: LazyLock<AttrSchema> =
+    LazyLock::new(|| AttrSchema::from_slices("Project", &[IDENTITY, PROJECT_SPECIFIC]));
 
 // ============================================================================
 // Player Schema
@@ -162,9 +207,8 @@ const PLAYER_SPECIFIC: &[AttrDef] = &[
     AttrDef::with_order("play_direction", AttrType::Float, 0, 90.4),
 ];
 
-pub static PLAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
-    AttrSchema::new("Player", PLAYER_SPECIFIC)
-});
+pub static PLAYER_SCHEMA: LazyLock<AttrSchema> =
+    LazyLock::new(|| AttrSchema::new("Player", PLAYER_SPECIFIC));
 
 // ============================================================================
 // CameraNode Schema
@@ -173,21 +217,44 @@ pub static PLAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
 /// Camera-specific attributes (lens, DOF)
 const CAMERA_SPECIFIC: &[AttrDef] = &[
     // Projection type
-    AttrDef::with_ui_order("projection_type", AttrType::String, DAG_DISP,
-        &["perspective", "orthographic"], 60.0),
+    AttrDef::with_ui_order(
+        "projection_type",
+        AttrType::String,
+        DAG_DISP,
+        &["perspective", "orthographic"],
+        60.0,
+    ),
     // Look-at target (alternative to rotation)
     AttrDef::with_order("point_of_interest", AttrType::Vec3, DAG_DISP_KEY, 60.1),
     AttrDef::with_order("use_poi", AttrType::Bool, DAG_DISP, 60.2),
     // Lens (perspective mode)
-    AttrDef::with_ui_order("fov", AttrType::Float, DAG_DISP_KEY, &["1", "180", "0.1"], 61.0),
+    AttrDef::with_ui_order(
+        "fov",
+        AttrType::Float,
+        DAG_DISP_KEY,
+        &["1", "180", "0.1"],
+        61.0,
+    ),
     AttrDef::with_order("near_clip", AttrType::Float, DAG_DISP, 61.1),
     AttrDef::with_order("far_clip", AttrType::Float, DAG_DISP, 61.2),
     // Ortho zoom (orthographic mode)
-    AttrDef::with_ui_order("ortho_scale", AttrType::Float, DAG_DISP_KEY, &["0.01", "10", "0.01"], 62.0),
+    AttrDef::with_ui_order(
+        "ortho_scale",
+        AttrType::Float,
+        DAG_DISP_KEY,
+        &["0.01", "10", "0.01"],
+        62.0,
+    ),
     // Depth of field (future)
     AttrDef::with_order("dof_enabled", AttrType::Bool, DAG_DISP, 63.0),
     AttrDef::with_order("focus_distance", AttrType::Float, DAG_DISP_KEY, 63.1),
-    AttrDef::with_ui_order("aperture", AttrType::Float, DAG_DISP_KEY, &["0.5", "32", "0.1"], 63.2),
+    AttrDef::with_ui_order(
+        "aperture",
+        AttrType::Float,
+        DAG_DISP_KEY,
+        &["0.5", "32", "0.1"],
+        63.2,
+    ),
 ];
 
 pub static CAMERA_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
@@ -217,10 +284,28 @@ const TEXT_SPECIFIC: &[AttrDef] = &[
     // Text content
     AttrDef::with_order("text", AttrType::String, DAG_DISP, 60.0),
     AttrDef::with_order("font", AttrType::String, DAG_DISP, 60.1),
-    AttrDef::with_ui_order("font_size", AttrType::Float, DAG_DISP_KEY, &["1", "500", "1"], 60.2),
+    AttrDef::with_ui_order(
+        "font_size",
+        AttrType::Float,
+        DAG_DISP_KEY,
+        &["1", "500", "1"],
+        60.2,
+    ),
     AttrDef::with_order("color", AttrType::Vec4, DAG_DISP_KEY, 60.3),
-    AttrDef::with_ui_order("alignment", AttrType::String, DAG_DISP, &["left", "center", "right"], 60.4),
-    AttrDef::with_ui_order("line_height", AttrType::Float, DAG_DISP, &["0.5", "3", "0.1"], 60.5),
+    AttrDef::with_ui_order(
+        "alignment",
+        AttrType::String,
+        DAG_DISP,
+        &["left", "center", "right"],
+        60.4,
+    ),
+    AttrDef::with_ui_order(
+        "line_height",
+        AttrType::Float,
+        DAG_DISP,
+        &["0.5", "3", "0.1"],
+        60.5,
+    ),
     // Background
     AttrDef::with_order("bg_color", AttrType::Vec4, DAG_DISP, 60.6),
 ];

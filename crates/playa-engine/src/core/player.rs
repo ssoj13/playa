@@ -35,15 +35,17 @@
 //! This prevents multi-selection accumulation when adding/switching clips.
 
 use crate::entities::attr_schemas::PLAYER_SCHEMA;
-use crate::entities::{Attrs, AttrValue, Node, Project};
 use crate::entities::frame::Frame;
+use crate::entities::{AttrValue, Attrs, Node, Project};
 use log::{info, trace};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use uuid::Uuid;
 
 /// FPS presets for jog/shuttle control
-const FPS_PRESETS: &[f32] = &[1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0];
+const FPS_PRESETS: &[f32] = &[
+    1.0, 2.0, 4.0, 8.0, 12.0, 24.0, 30.0, 60.0, 120.0, 240.0, 480.0, 960.0,
+];
 
 /// Frame step size for Shift+Arrow and Shift+PageUp/PageDown
 pub const FRAME_JUMP_STEP: i32 = 25;
@@ -91,7 +93,7 @@ impl Player {
             last_frame_time: None,
         }
     }
-    
+
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
         self.attrs.attach_schema(&*PLAYER_SCHEMA);
@@ -117,7 +119,9 @@ impl Player {
 
     /// Get previous comp history (most recent last)
     pub fn previous_comp_history(&self) -> Vec<Uuid> {
-        self.attrs.get_uuid_list("previous_comp_history").unwrap_or_default()
+        self.attrs
+            .get_uuid_list("previous_comp_history")
+            .unwrap_or_default()
     }
 
     /// Pop the last previous comp (for U key navigation back)
@@ -196,7 +200,9 @@ impl Player {
 
     /// Get selected sequence index
     pub fn selected_seq_idx(&self) -> Option<usize> {
-        self.attrs.get_i32("selected_seq_idx").map(|v| v.max(0) as usize)
+        self.attrs
+            .get_i32("selected_seq_idx")
+            .map(|v| v.max(0) as usize)
     }
 
     /// Set selected sequence index
@@ -212,10 +218,12 @@ impl Player {
     /// Get total frames of active node (work area frame count)
     pub fn total_frames(&self, project: &Project) -> i32 {
         self.active_comp()
-            .and_then(|uuid| project.with_node(uuid, |n| {
-                let (start, end) = n.play_range(true);
-                (end - start + 1).max(0)
-            }))
+            .and_then(|uuid| {
+                project.with_node(uuid, |n| {
+                    let (start, end) = n.play_range(true);
+                    (end - start + 1).max(0)
+                })
+            })
             .unwrap_or(0)
     }
 
@@ -323,8 +331,6 @@ impl Player {
         project.set_selection(vec![uuid]);
     }
 
-
-
     /// Update playback state.
     /// Returns Some(new_frame) if frame changed, None otherwise.
     /// Caller should emit SetFrameEvent for unified frame change handling.
@@ -377,7 +383,7 @@ impl Player {
         // Track new frame and stop flag
         let mut should_stop = false;
         let mut new_frame: Option<i32> = None;
-        
+
         if let Some(uuid) = self.active_comp() {
             project.modify_comp(uuid, |comp| {
                 let mut current = comp.frame();
@@ -603,7 +609,6 @@ impl Player {
             trace!("Play FPS increased to {}", new_fps);
         }
     }
-
 
     /// Reset settings
     pub fn reset_settings(&mut self) {

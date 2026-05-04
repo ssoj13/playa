@@ -5,11 +5,12 @@
 //! primitives co-located with UI code.
 
 mod timeline;
+pub mod timeline_events;
 mod timeline_helpers;
 mod timeline_ui;
-pub mod timeline_events;
 
 pub use timeline::{
-    ClipboardLayer, GlobalDragState, TimelineActions, TimelineConfig, TimelineState, TimelineViewMode,
+    ClipboardLayer, GlobalDragState, TimelineActions, TimelineConfig, TimelineState,
+    TimelineViewMode,
 };
 pub use timeline_ui::{render_canvas, render_outline, render_toolbar};

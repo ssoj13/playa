@@ -18,7 +18,7 @@
 //!
 //! Pipeline: screen pixel → NDC → ray through inv_VP → intersect layer plane → object space
 
-use glam::{Mat4, Vec2, Vec3, Vec4, Quat, EulerRot};
+use glam::{EulerRot, Mat4, Quat, Vec2, Vec3, Vec4};
 use half::f16 as F16;
 use rayon::prelude::*;
 
@@ -29,7 +29,12 @@ use super::space;
 ///
 /// Returns true if position==pivot, rotation=0, scale=1 — no transform needed.
 #[inline]
-pub fn is_identity(position: [f32; 3], rotation: [f32; 3], scale: [f32; 3], pivot: [f32; 3]) -> bool {
+pub fn is_identity(
+    position: [f32; 3],
+    rotation: [f32; 3],
+    scale: [f32; 3],
+    pivot: [f32; 3],
+) -> bool {
     position[0] == pivot[0]
         && position[1] == pivot[1]
         && position[2] == pivot[2]
@@ -136,14 +141,14 @@ fn layer_plane_normal(rotation: [f32; 3]) -> Vec3 {
 }
 
 /// Build inverse transform matrix for sampling.
-/// 
+///
 /// Forward transform order:
 /// ```text
 /// comp = position + R * S * (object - pivot)
 /// ```
-/// 
+///
 /// Returns inverse Mat4 for reverse-mapping: comp → object.
-/// 
+///
 /// # Arguments
 /// - `position` — layer position in comp space (XYZ)
 /// - `rotation` — rotation in radians [rx, ry, rz], clockwise-positive
@@ -158,9 +163,21 @@ pub fn build_inverse_transform(
     let pos = Vec3::from(position);
     let pvt = Vec3::from(pivot);
     let inv_scale = Vec3::new(
-        if scale[0].abs() > f32::EPSILON { 1.0 / scale[0] } else { 0.0 },
-        if scale[1].abs() > f32::EPSILON { 1.0 / scale[1] } else { 0.0 },
-        if scale[2].abs() > f32::EPSILON { 1.0 / scale[2] } else { 0.0 },
+        if scale[0].abs() > f32::EPSILON {
+            1.0 / scale[0]
+        } else {
+            0.0
+        },
+        if scale[1].abs() > f32::EPSILON {
+            1.0 / scale[1]
+        } else {
+            0.0
+        },
+        if scale[2].abs() > f32::EPSILON {
+            1.0 / scale[2]
+        } else {
+            0.0
+        },
     );
 
     // Inverse rotation: reverse order (XYZ is inverse of ZYX).
@@ -168,8 +185,8 @@ pub fn build_inverse_transform(
     // Forward rotation in our convention = negative in glam.
     // Inverse of forward = positive in glam = just pass our values as-is!
     let inv_rot = Quat::from_euler(
-        EulerRot::XYZ,  // reverse of ZYX
-        rotation[0],    // NOT negated: our CW+ -> glam CCW+ for inverse
+        EulerRot::XYZ, // reverse of ZYX
+        rotation[0],   // NOT negated: our CW+ -> glam CCW+ for inverse
         rotation[1],
         rotation[2],
     );
@@ -224,10 +241,10 @@ pub fn build_model_matrix(
 }
 
 /// Build full inverse MVP matrix for camera-aware transform.
-/// 
+///
 /// Combines model (layer), view (camera), and projection matrices.
 /// Returns inverse for reverse-mapping: screen pixel -> object space.
-/// 
+///
 /// # Arguments
 /// - `model` — layer model matrix from `build_model_matrix()`
 /// - `view_projection` — camera view-projection matrix (or identity for 2D)
@@ -237,10 +254,10 @@ pub fn build_inverse_mvp(model: Mat4, view_projection: Mat4) -> Mat4 {
 }
 
 /// Build inverse transform as column-major 3x3 matrix for OpenGL/GPU (2D only).
-/// 
+///
 /// Same as `build_inverse_transform` but returns `[f32; 9]` in column-major
 /// order suitable for `glUniformMatrix3fv`. Only uses Z rotation.
-/// 
+///
 /// The matrix maps comp-space pixels (Y-up) to source image pixels (Y-down).
 pub fn build_inverse_matrix_3x3(
     position: [f32; 3],
@@ -251,19 +268,27 @@ pub fn build_inverse_matrix_3x3(
 ) -> [f32; 9] {
     // Use 2D path for backwards compatibility
     use glam::Affine2;
-    
+
     let pos = Vec2::new(position[0], position[1]);
     let pvt = Vec2::new(pivot[0], pivot[1]);
     let inv_scale = Vec2::new(
-        if scale[0].abs() > f32::EPSILON { 1.0 / scale[0] } else { 0.0 },
-        if scale[1].abs() > f32::EPSILON { 1.0 / scale[1] } else { 0.0 },
+        if scale[0].abs() > f32::EPSILON {
+            1.0 / scale[0]
+        } else {
+            0.0
+        },
+        if scale[1].abs() > f32::EPSILON {
+            1.0 / scale[1]
+        } else {
+            0.0
+        },
     );
 
     let inv = Affine2::from_translation(pvt)
         * Affine2::from_angle(rotation_z)
         * Affine2::from_scale(inv_scale)
         * Affine2::from_translation(-pos);
-        
+
     let src_half = Vec2::new(src_size.0 as f32 * 0.5, src_size.1 as f32 * 0.5);
 
     // object -> src (image space, Y-down): x' = x + w/2, y' = h/2 - y
@@ -276,9 +301,9 @@ pub fn build_inverse_matrix_3x3(
     let t = total.translation;
 
     [
-        m.x_axis.x, m.x_axis.y, 0.0,  // column 0
-        m.y_axis.x, m.y_axis.y, 0.0,  // column 1
-        t.x,        t.y,        1.0,  // column 2
+        m.x_axis.x, m.x_axis.y, 0.0, // column 0
+        m.y_axis.x, m.y_axis.y, 0.0, // column 1
+        t.x, t.y, 1.0, // column 2
     ]
 }
 
@@ -287,7 +312,14 @@ pub fn build_inverse_matrix_3x3(
 /// `decode` converts a single stored element to f32 (e.g. identity, `.to_f32()`, `/ 255.0`).
 /// Returns `[R, G, B, A]` normalized to the decoded range, or `[0,0,0,0]` if outside bounds.
 #[inline]
-fn sample_bilinear<T: Copy>(buffer: &[T], width: usize, height: usize, x: f32, y: f32, decode: impl Fn(T) -> f32) -> [f32; 4] {
+fn sample_bilinear<T: Copy>(
+    buffer: &[T],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    decode: impl Fn(T) -> f32,
+) -> [f32; 4] {
     if x < 0.0 || y < 0.0 || x >= width as f32 || y >= height as f32 {
         return [0.0, 0.0, 0.0, 0.0];
     }
@@ -321,11 +353,11 @@ fn sample_bilinear<T: Copy>(buffer: &[T], width: usize, height: usize, x: f32, y
 }
 
 /// Transform frame with 3D affine matrix (no camera).
-/// 
+///
 /// Applies position, rotation, scale around pivot point using parallel
 /// pixel processing (rayon). Output format matches input format.
 /// Uses orthographic projection (no perspective).
-/// 
+///
 /// # Arguments
 /// - `src` — Source frame (U8/F16/F32)
 /// - `canvas` — Output dimensions `(width, height)`
@@ -333,7 +365,7 @@ fn sample_bilinear<T: Copy>(buffer: &[T], width: usize, height: usize, x: f32, y
 /// - `rotation` — `[rx, ry, rz]` rotation in radians (clockwise-positive)
 /// - `scale` — `[sx, sy, sz]` scale factors
 /// - `pivot` — `[px, py, pz]` offset from layer center
-/// 
+///
 /// # Example
 /// ```ignore
 /// let transformed = transform_frame(
@@ -416,7 +448,7 @@ pub fn transform_frame_with_camera(
                 // Both ortho and perspective need ray-plane intersection when layer is rotated.
                 // For tilted layers, ortho rays are parallel but not perpendicular to layer plane.
                 let layer_is_tilted = (plane_normal - Vec3::Z).length_squared() > 1e-6;
-                
+
                 if is_ortho && !layer_is_tilted {
                     // Flat layer in ortho: simple affine transform (fast path)
                     let ndc = Vec3::new(frame_pt.x / half_w, frame_pt.y / half_h, 0.0);
@@ -434,19 +466,19 @@ pub fn transform_frame_with_camera(
             None => {
                 // No camera: 2D ortho view with potential X/Y rotation
                 let layer_is_tilted = (plane_normal - Vec3::Z).length_squared() > 1e-6;
-                
+
                 if layer_is_tilted {
                     // Cast ray parallel to Z axis, intersect with tilted layer plane
                     let ray_origin = Vec3::new(frame_pt.x, frame_pt.y, 10000.0);
                     let ray_dir = Vec3::NEG_Z;
-                    
+
                     let denom = ray_dir.dot(plane_normal);
                     if denom.abs() < 1e-6 {
                         return None; // Ray parallel to plane (layer edge-on)
                     }
                     let t = (plane_point - ray_origin).dot(plane_normal) / denom;
                     let world_pt = ray_origin + ray_dir * t;
-                    
+
                     let obj_pt3 = inv_model.transform_point3(world_pt);
                     Some(Vec2::new(obj_pt3.x, obj_pt3.y))
                 } else {
@@ -501,7 +533,7 @@ pub fn transform_frame_with_camera(
                             [0.0, 0.0, 0.0, 0.0]
                         };
                         let idx = x * 4;
-                        row[idx]     = F16::from_f32(color[0]);
+                        row[idx] = F16::from_f32(color[0]);
                         row[idx + 1] = F16::from_f32(color[1]);
                         row[idx + 2] = F16::from_f32(color[2]);
                         row[idx + 3] = F16::from_f32(color[3]);
@@ -526,7 +558,7 @@ pub fn transform_frame_with_camera(
                             [0.0, 0.0, 0.0, 0.0]
                         };
                         let idx = x * 4;
-                        row[idx]     = (color[0] * 255.0).clamp(0.0, 255.0) as u8;
+                        row[idx] = (color[0] * 255.0).clamp(0.0, 255.0) as u8;
                         row[idx + 1] = (color[1] * 255.0).clamp(0.0, 255.0) as u8;
                         row[idx + 2] = (color[2] * 255.0).clamp(0.0, 255.0) as u8;
                         row[idx + 3] = (color[3] * 255.0).clamp(0.0, 255.0) as u8;
@@ -539,9 +571,12 @@ pub fn transform_frame_with_camera(
     match (src_buffer.as_ref(), src_format) {
         (PixelBuffer::F32(buf), PixelFormat::RgbaF32) => remap!(f32, buf, |v| v),
         (PixelBuffer::F16(buf), PixelFormat::RgbaF16) => remap!(f16, buf, |v: F16| v.to_f32()),
-        (PixelBuffer::U8(buf),  PixelFormat::Rgba8)   => remap!(u8,  buf, |v: u8| v as f32 / 255.0),
+        (PixelBuffer::U8(buf), PixelFormat::Rgba8) => remap!(u8, buf, |v: u8| v as f32 / 255.0),
         _ => {
-            log::warn!("transform_frame: unsupported format {:?}, returning copy", src_format);
+            log::warn!(
+                "transform_frame: unsupported format {:?}, returning copy",
+                src_format
+            );
             src.clone()
         }
     }
@@ -550,23 +585,53 @@ pub fn transform_frame_with_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_identity_check() {
-        assert!(is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([10.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([0.0, 0.0, 0.0], [0.1, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.1], [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 1.0, 1.0], [0.0, 0.0, 0.0]));
-        assert!(!is_identity([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [5.0, 0.0, 0.0]));
+        assert!(is_identity(
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0]
+        ));
+        assert!(!is_identity(
+            [10.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0]
+        ));
+        assert!(!is_identity(
+            [0.0, 0.0, 0.0],
+            [0.1, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0]
+        ));
+        assert!(!is_identity(
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.1],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0]
+        ));
+        assert!(!is_identity(
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [2.0, 1.0, 1.0],
+            [0.0, 0.0, 0.0]
+        ));
+        assert!(!is_identity(
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [5.0, 0.0, 0.0]
+        ));
     }
-    
+
     #[test]
     fn test_transform_identity() {
         // Create 4x4 red frame
         let buf = vec![1.0f32, 0.0, 0.0, 1.0].repeat(16);
         let frame = Frame::from_f32_buffer(buf, 4, 4);
-        
+
         // Apply identity transform
         let result = transform_frame(
             &frame,
@@ -576,7 +641,7 @@ mod tests {
             [1.0, 1.0, 1.0],
             [0.0, 0.0, 0.0],
         );
-        
+
         assert_eq!(result.width(), 4);
         assert_eq!(result.height(), 4);
     }

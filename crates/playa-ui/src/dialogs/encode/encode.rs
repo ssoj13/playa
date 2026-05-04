@@ -18,7 +18,7 @@ use std::sync::mpsc::Sender;
 
 use playa_engine::entities::Comp;
 use playa_engine::entities::frame::{CropAlign, FrameConversion, PixelFormat, TonemapMode};
-use playa_ffmpeg as ffmpeg;
+use playa_io::ffmpeg;
 
 /// Export mode - video or image sequence
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -45,11 +45,11 @@ pub struct EncodeDialogSettings {
     // Per-codec settings (all preserved when switching codecs)
     #[serde(default)]
     pub codec_settings: CodecSettings,
-    
+
     // Export mode (Video or Sequence)
     #[serde(default)]
     pub export_mode: ExportMode,
-    
+
     // Image sequence settings
     #[serde(default)]
     pub sequence_settings: SequenceSettings,
@@ -176,27 +176,63 @@ pub trait H26xSettingsMut {
 }
 
 impl H26xSettingsMut for H264Settings {
-    fn encoder_impl_mut(&mut self) -> &mut EncoderImpl { &mut self.encoder_impl }
-    fn quality_mode_mut(&mut self) -> &mut QualityMode { &mut self.quality_mode }
-    fn quality_value_mut(&mut self) -> &mut u32 { &mut self.quality_value }
-    fn preset_mut(&mut self) -> &mut String { &mut self.preset }
-    fn profile_mut(&mut self) -> &mut String { &mut self.profile }
-    fn encoder_impl(&self) -> EncoderImpl { self.encoder_impl }
-    fn quality_mode(&self) -> QualityMode { self.quality_mode }
-    fn preset(&self) -> &str { &self.preset }
-    fn profile(&self) -> &str { &self.profile }
+    fn encoder_impl_mut(&mut self) -> &mut EncoderImpl {
+        &mut self.encoder_impl
+    }
+    fn quality_mode_mut(&mut self) -> &mut QualityMode {
+        &mut self.quality_mode
+    }
+    fn quality_value_mut(&mut self) -> &mut u32 {
+        &mut self.quality_value
+    }
+    fn preset_mut(&mut self) -> &mut String {
+        &mut self.preset
+    }
+    fn profile_mut(&mut self) -> &mut String {
+        &mut self.profile
+    }
+    fn encoder_impl(&self) -> EncoderImpl {
+        self.encoder_impl
+    }
+    fn quality_mode(&self) -> QualityMode {
+        self.quality_mode
+    }
+    fn preset(&self) -> &str {
+        &self.preset
+    }
+    fn profile(&self) -> &str {
+        &self.profile
+    }
 }
 
 impl H26xSettingsMut for H265Settings {
-    fn encoder_impl_mut(&mut self) -> &mut EncoderImpl { &mut self.encoder_impl }
-    fn quality_mode_mut(&mut self) -> &mut QualityMode { &mut self.quality_mode }
-    fn quality_value_mut(&mut self) -> &mut u32 { &mut self.quality_value }
-    fn preset_mut(&mut self) -> &mut String { &mut self.preset }
-    fn profile_mut(&mut self) -> &mut String { &mut self.profile }
-    fn encoder_impl(&self) -> EncoderImpl { self.encoder_impl }
-    fn quality_mode(&self) -> QualityMode { self.quality_mode }
-    fn preset(&self) -> &str { &self.preset }
-    fn profile(&self) -> &str { &self.profile }
+    fn encoder_impl_mut(&mut self) -> &mut EncoderImpl {
+        &mut self.encoder_impl
+    }
+    fn quality_mode_mut(&mut self) -> &mut QualityMode {
+        &mut self.quality_mode
+    }
+    fn quality_value_mut(&mut self) -> &mut u32 {
+        &mut self.quality_value
+    }
+    fn preset_mut(&mut self) -> &mut String {
+        &mut self.preset
+    }
+    fn profile_mut(&mut self) -> &mut String {
+        &mut self.profile
+    }
+    fn encoder_impl(&self) -> EncoderImpl {
+        self.encoder_impl
+    }
+    fn quality_mode(&self) -> QualityMode {
+        self.quality_mode
+    }
+    fn preset(&self) -> &str {
+        &self.preset
+    }
+    fn profile(&self) -> &str {
+        &self.profile
+    }
 }
 
 /// ProRes profile variants
@@ -541,15 +577,20 @@ impl std::fmt::Display for ChannelMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OutputBitDepth {
     #[default]
-    U8,    // 8-bit unsigned
-    U16,   // 16-bit unsigned
-    F16,   // 16-bit float (half)
-    F32,   // 32-bit float
+    U8, // 8-bit unsigned
+    U16, // 16-bit unsigned
+    F16, // 16-bit float (half)
+    F32, // 32-bit float
 }
 
 impl OutputBitDepth {
     pub fn all() -> &'static [OutputBitDepth] {
-        &[OutputBitDepth::U8, OutputBitDepth::U16, OutputBitDepth::F16, OutputBitDepth::F32]
+        &[
+            OutputBitDepth::U8,
+            OutputBitDepth::U16,
+            OutputBitDepth::F16,
+            OutputBitDepth::F32,
+        ]
     }
 }
 
@@ -569,7 +610,7 @@ impl std::fmt::Display for OutputBitDepth {
 pub struct FormatCapabilities {
     pub supported_depths: &'static [OutputBitDepth],
     pub supports_alpha: bool,
-    pub is_hdr: bool,  // Can store values > 1.0 without tonemapping
+    pub is_hdr: bool, // Can store values > 1.0 without tonemapping
 }
 
 impl SequenceFormat {
@@ -603,26 +644,26 @@ impl SequenceFormat {
             },
         }
     }
-    
+
     /// Check if bit depth is supported by this format
     pub fn supports_depth(&self, depth: OutputBitDepth) -> bool {
         self.capabilities().supported_depths.contains(&depth)
     }
-    
+
     /// Get default bit depth for this format
     pub fn default_depth(&self) -> OutputBitDepth {
         self.capabilities().supported_depths[0]
     }
-    
+
     /// Validate and fix settings for this format
     pub fn validate_settings(&self, channels: &mut ChannelMode, depth: &mut OutputBitDepth) {
         let caps = self.capabilities();
-        
+
         // Fix channels if alpha not supported
         if !caps.supports_alpha && *channels == ChannelMode::Rgba {
             *channels = ChannelMode::Rgb;
         }
-        
+
         // Fix bit depth if not supported
         if !caps.supported_depths.contains(depth) {
             *depth = caps.supported_depths[0];
@@ -876,7 +917,7 @@ impl std::fmt::Display for TiffCompression {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TiffBitDepth {
     #[default]
-    Eight,   // 8-bit
+    Eight, // 8-bit
     Sixteen, // 16-bit
 }
 
@@ -951,7 +992,7 @@ impl Default for SequenceSettings {
         Self {
             format: SequenceFormat::Exr,
             channels: ChannelMode::Rgba,
-            bit_depth: OutputBitDepth::F16,  // Default for EXR
+            bit_depth: OutputBitDepth::F16, // Default for EXR
             apply_tonemap: false,
             tonemap_mode: TonemapMode::default(),
             format_settings: SequenceFormatSettings::default(),
@@ -962,7 +1003,8 @@ impl Default for SequenceSettings {
 impl SequenceSettings {
     /// Validate settings against format capabilities and fix if needed
     pub fn validate(&mut self) {
-        self.format.validate_settings(&mut self.channels, &mut self.bit_depth);
+        self.format
+            .validate_settings(&mut self.channels, &mut self.bit_depth);
     }
 }
 
@@ -1001,13 +1043,13 @@ pub fn parse_padding_pattern(filename: &str) -> (String, PaddingPattern, String)
     if let Some(pos) = filename.find('%') {
         let rest = &filename[pos + 1..];
         let mut chars = rest.chars().peekable();
-        
+
         // Skip leading zero
         let has_zero = chars.peek() == Some(&'0');
         if has_zero {
             chars.next();
         }
-        
+
         // Parse width
         let mut width_str = String::new();
         while let Some(&c) = chars.peek() {
@@ -1018,7 +1060,7 @@ pub fn parse_padding_pattern(filename: &str) -> (String, PaddingPattern, String)
                 break;
             }
         }
-        
+
         // Check for 'd'
         if chars.next() == Some('d') {
             let width = width_str.parse::<usize>().unwrap_or(1);
@@ -1028,7 +1070,7 @@ pub fn parse_padding_pattern(filename: &str) -> (String, PaddingPattern, String)
             return (prefix, PaddingPattern::Printf { width }, suffix);
         }
     }
-    
+
     // Try hash-style: ####
     if let Some(start) = filename.find('#') {
         let mut count = 0;
@@ -1045,21 +1087,25 @@ pub fn parse_padding_pattern(filename: &str) -> (String, PaddingPattern, String)
             return (prefix, PaddingPattern::Hashes { count }, suffix);
         }
     }
-    
+
     // Try @-style
     if let Some(pos) = filename.find('@') {
         let prefix = filename[..pos].to_string();
         let suffix = filename[pos + 1..].to_string();
         return (prefix, PaddingPattern::At, suffix);
     }
-    
+
     // No pattern - insert before extension
     if let Some(dot_pos) = filename.rfind('.') {
         let prefix = format!("{}.", &filename[..dot_pos]);
         let suffix = filename[dot_pos..].to_string();
         (prefix, PaddingPattern::None, suffix)
     } else {
-        (format!("{}.", filename), PaddingPattern::None, String::new())
+        (
+            format!("{}.", filename),
+            PaddingPattern::None,
+            String::new(),
+        )
     }
 }
 
@@ -1251,9 +1297,9 @@ fn get_encoder_name(
 fn fps_to_rational(fps: f32) -> (i32, i32) {
     const NTSC_RATES: &[(f32, i32, i32)] = &[
         (23.976, 24000, 1001),
-        (29.97,  30000, 1001),
+        (29.97, 30000, 1001),
         (47.952, 48000, 1001),
-        (59.94,  60000, 1001),
+        (59.94, 60000, 1001),
         (119.88, 120000, 1001),
     ];
     for &(target, num, den) in NTSC_RATES {
@@ -1300,11 +1346,14 @@ pub fn encode_sequence_from_comp(
     );
 
     // Stage 1: Get target dimensions from first frame
-    if progress_tx.send(EncodeProgress {
-        current_frame: 0,
-        total_frames,
-        stage: EncodeStage::Validating,
-    }).is_err() {
+    if progress_tx
+        .send(EncodeProgress {
+            current_frame: 0,
+            total_frames,
+            stage: EncodeStage::Validating,
+        })
+        .is_err()
+    {
         return Err(EncodeError::Cancelled); // UI closed
     }
 
@@ -1326,11 +1375,14 @@ pub fn encode_sequence_from_comp(
     }
 
     // Stage 2: Create encoder
-    if progress_tx.send(EncodeProgress {
-        current_frame: 0,
-        total_frames,
-        stage: EncodeStage::Opening,
-    }).is_err() {
+    if progress_tx
+        .send(EncodeProgress {
+            current_frame: 0,
+            total_frames,
+            stage: EncodeStage::Opening,
+        })
+        .is_err()
+    {
         return Err(EncodeError::Cancelled);
     }
 
@@ -1425,7 +1477,9 @@ pub fn encode_sequence_from_comp(
 
     encoder.set_format(pixel_format);
     let (fps_num, fps_den) = fps_to_rational(settings.fps);
-    encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(fps_num, fps_den)));
+    encoder.set_frame_rate(Some(ffmpeg::util::rational::Rational::new(
+        fps_num, fps_den,
+    )));
     encoder.set_time_base(ffmpeg::util::rational::Rational::new(fps_den, fps_num));
 
     // Set GOP size (keyframe interval) for seekability
@@ -1622,11 +1676,14 @@ pub fn encode_sequence_from_comp(
     }
 
     // Stage 3: Encoding loop
-    if progress_tx.send(EncodeProgress {
-        current_frame: 0,
-        total_frames,
-        stage: EncodeStage::Encoding,
-    }).is_err() {
+    if progress_tx
+        .send(EncodeProgress {
+            current_frame: 0,
+            total_frames,
+            stage: EncodeStage::Encoding,
+        })
+        .is_err()
+    {
         return Err(EncodeError::Cancelled);
     }
 
@@ -1862,11 +1919,14 @@ pub fn encode_sequence_from_comp(
 
         // Update progress
         let current_frame = frame_idx - play_range.0 + 1;
-        if progress_tx.send(EncodeProgress {
-            current_frame,
-            total_frames,
-            stage: EncodeStage::Encoding,
-        }).is_err() {
+        if progress_tx
+            .send(EncodeProgress {
+                current_frame,
+                total_frames,
+                stage: EncodeStage::Encoding,
+            })
+            .is_err()
+        {
             return Err(EncodeError::Cancelled);
         }
 
@@ -1876,11 +1936,14 @@ pub fn encode_sequence_from_comp(
     }
 
     // Stage 4: Flush encoder
-    if progress_tx.send(EncodeProgress {
-        current_frame: total_frames,
-        total_frames,
-        stage: EncodeStage::Flushing,
-    }).is_err() {
+    if progress_tx
+        .send(EncodeProgress {
+            current_frame: total_frames,
+            total_frames,
+            stage: EncodeStage::Flushing,
+        })
+        .is_err()
+    {
         return Err(EncodeError::Cancelled);
     }
 
@@ -1964,7 +2027,7 @@ mod tests {
     #[test]
     fn test_encode_placeholder_frames() {
         // Initialize FFmpeg
-        playa_ffmpeg::init().expect("Failed to init FFmpeg");
+        playa_io::init_ffmpeg().expect("Failed to init FFmpeg");
 
         // Try to find ANY working video encoder
         println!("Testing available video encoders:");
@@ -2067,10 +2130,14 @@ mod tests {
             settings.fps,
         );
         // Keep predictable dimensions for encoded video
-        comp.attrs
-            .set(playa_engine::entities::keys::A_WIDTH, playa_engine::entities::AttrValue::UInt(64));
-        comp.attrs
-            .set(playa_engine::entities::keys::A_HEIGHT, playa_engine::entities::AttrValue::UInt(64));
+        comp.attrs.set(
+            playa_engine::entities::keys::A_WIDTH,
+            playa_engine::entities::AttrValue::UInt(64),
+        );
+        comp.attrs.set(
+            playa_engine::entities::keys::A_HEIGHT,
+            playa_engine::entities::AttrValue::UInt(64),
+        );
         let manager = Arc::new(CacheManager::new(0.75, 2.0));
         let project = playa_engine::entities::project::Project::new(manager);
 
@@ -2233,8 +2300,14 @@ fn pixel_buf_to_rgba8(buffer: &playa_engine::entities::frame::PixelBuffer) -> Ve
     use playa_engine::entities::frame::PixelBuffer;
     match buffer {
         PixelBuffer::U8(data) => data.clone(),
-        PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 255.0) as u8).collect(),
-        PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8).collect(),
+        PixelBuffer::F16(data) => data
+            .iter()
+            .map(|v| (v.to_f32().clamp(0.0, 1.0) * 255.0) as u8)
+            .collect(),
+        PixelBuffer::F32(data) => data
+            .iter()
+            .map(|&v| (v.clamp(0.0, 1.0) * 255.0) as u8)
+            .collect(),
     }
 }
 
@@ -2247,10 +2320,9 @@ fn write_exr_frame(
     bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
     use playa_engine::entities::frame::PixelBuffer;
-    use vfx_core::AttrValue as CoreAttrValue;
-    use vfx_io::{
-        ChannelKind, ChannelSampleType, ChannelSamples, ImageChannel, ImageLayer, LayeredImage,
-        Metadata,
+    use playa_io::exr_layered::{
+        AttrValue, ChannelKind, ChannelSampleType, ChannelSamples, ImageChannel, ImageLayer,
+        LayeredImage, Metadata, write_exr_layers,
     };
 
     let buffer = frame.buffer();
@@ -2300,9 +2372,9 @@ fn write_exr_frame(
         ChannelKind::Alpha,
     ];
 
-    let mut vfx_channels = Vec::with_capacity(n_out);
+    let mut exr_channels = Vec::with_capacity(n_out);
     for c in 0..n_out {
-        vfx_channels.push(ImageChannel {
+        exr_channels.push(ImageChannel {
             name: names[c].to_string(),
             kind: kinds[c],
             sample_type,
@@ -2320,12 +2392,12 @@ fn write_exr_frame(
         name: String::new(),
         width: width as u32,
         height: height as u32,
-        channels: vfx_channels,
+        channels: exr_channels,
         ..Default::default()
     };
     layer.spec.attributes.insert(
         "compression".to_string(),
-        CoreAttrValue::String(settings.compression.to_oiio_string(settings.dwa_quality)),
+        AttrValue::String(settings.compression.to_oiio_string(settings.dwa_quality)),
     );
 
     let layered = LayeredImage {
@@ -2335,8 +2407,14 @@ fn write_exr_frame(
 
     // Free convenience function — internally builds an ExrWriter with default
     // options. Per-layer compression comes from layer.spec.attributes (above).
-    vfx_io::exr::write_layers(path, &layered)
-        .map_err(|e| EncodeError::EncodeFrameFailed(format!("EXR write failed: {}", e)))
+    write_exr_layers(path, &layered).map_err(|e| {
+        EncodeError::EncodeFrameFailed(match e {
+            playa_io::IoError::Exr(s) => format!("EXR write failed: {s}"),
+            playa_io::IoError::Image(s) => format!("EXR write failed (image): {s}"),
+            playa_io::IoError::LoadError(s) => format!("EXR write failed (load): {s}"),
+            playa_io::IoError::UnsupportedFormat(s) => format!("EXR write failed (format): {s}"),
+        })
+    })
 }
 
 /// Pass-through EXR transcode: read the source EXR for `frame_idx` via vfx-io
@@ -2387,14 +2465,28 @@ fn write_exr_pass_through(
     // B44 / HTJ2K survive transcode without quality loss. Custom header
     // attrs (chromaticities, timecode, owner, …) preserved automatically
     // because the source Header is reused verbatim.
-    let layered = vfx_io::exr::read_layers_passthrough(&src).map_err(|e| {
+    let layered = playa_io::exr_layered::read_exr_layers_passthrough(&src).map_err(|e| {
         EncodeError::EncodeFrameFailed(format!(
             "EXR pass-through read failed for {:?}: {}",
-            src, e
+            src,
+            match e {
+                playa_io::IoError::Exr(s) => s,
+                playa_io::IoError::Image(s) => s,
+                playa_io::IoError::LoadError(s) => s,
+                playa_io::IoError::UnsupportedFormat(s) => s,
+            }
         ))
     })?;
-    vfx_io::exr::write_layers_passthrough(dest_path, &layered).map_err(|e| {
-        EncodeError::EncodeFrameFailed(format!("EXR pass-through write failed: {}", e))
+    playa_io::exr_layered::write_exr_layers_passthrough(dest_path, &layered).map_err(|e| {
+        EncodeError::EncodeFrameFailed(format!(
+            "EXR pass-through write failed: {}",
+            match e {
+                playa_io::IoError::Exr(s) => s,
+                playa_io::IoError::Image(s) => s,
+                playa_io::IoError::LoadError(s) => s,
+                playa_io::IoError::UnsupportedFormat(s) => s,
+            }
+        ))
     })?;
 
     Ok(true)
@@ -2408,38 +2500,55 @@ fn write_png_frame(
     channels: ChannelMode,
     bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
-    use playa_engine::entities::frame::PixelBuffer;
-    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
     use image::ImageEncoder;
-    
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use playa_engine::entities::frame::PixelBuffer;
+
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
-    
-    let file = File::create(path)
-        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create PNG file: {}", e)))?;
+
+    let file = File::create(path).map_err(|e| {
+        EncodeError::OutputCreateFailed(format!("Failed to create PNG file: {}", e))
+    })?;
     let writer = BufWriter::new(file);
-    
+
     let compression = match settings.compression {
         0 => CompressionType::Fast,
         1..=3 => CompressionType::Fast,
         4..=6 => CompressionType::Default,
         _ => CompressionType::Best,
     };
-    
+
     let encoder = PngEncoder::new_with_quality(writer, compression, FilterType::Adaptive);
-    
+
     // PNG supports U8 and U16
     match bit_depth {
         OutputBitDepth::U8 => {
             let rgba_data = pixel_buf_to_rgba8(buffer.as_ref());
             match channels {
                 ChannelMode::Rgba => {
-                    encoder.write_image(&rgba_data, width as u32, height as u32, image::ExtendedColorType::Rgba8)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
+                    encoder
+                        .write_image(
+                            &rgba_data,
+                            width as u32,
+                            height as u32,
+                            image::ExtendedColorType::Rgba8,
+                        )
+                        .map_err(|e| {
+                            EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e))
+                        })?;
                 }
                 ChannelMode::Rgb => {
-                    encoder.write_image(&strip_alpha(&rgba_data), width as u32, height as u32, image::ExtendedColorType::Rgb8)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e)))?;
+                    encoder
+                        .write_image(
+                            &strip_alpha(&rgba_data),
+                            width as u32,
+                            height as u32,
+                            image::ExtendedColorType::Rgb8,
+                        )
+                        .map_err(|e| {
+                            EncodeError::EncodeFrameFailed(format!("PNG encode failed: {}", e))
+                        })?;
                 }
             }
         }
@@ -2447,23 +2556,45 @@ fn write_png_frame(
             // Convert to U16 for PNG16
             let rgba16_data: Vec<u16> = match buffer.as_ref() {
                 PixelBuffer::U8(data) => data.iter().map(|&v| (v as u16) * 257).collect(),
-                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16).collect(),
-                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16).collect(),
+                PixelBuffer::F16(data) => data
+                    .iter()
+                    .map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16)
+                    .collect(),
+                PixelBuffer::F32(data) => data
+                    .iter()
+                    .map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16)
+                    .collect(),
             };
-            
+
             match channels {
                 ChannelMode::Rgba => {
-                    encoder.write_image(bytemuck::cast_slice(&rgba16_data), width as u32, height as u32, image::ExtendedColorType::Rgba16)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e)))?;
+                    encoder
+                        .write_image(
+                            bytemuck::cast_slice(&rgba16_data),
+                            width as u32,
+                            height as u32,
+                            image::ExtendedColorType::Rgba16,
+                        )
+                        .map_err(|e| {
+                            EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e))
+                        })?;
                 }
                 ChannelMode::Rgb => {
-                    encoder.write_image(bytemuck::cast_slice(&strip_alpha(&rgba16_data)), width as u32, height as u32, image::ExtendedColorType::Rgb16)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e)))?;
+                    encoder
+                        .write_image(
+                            bytemuck::cast_slice(&strip_alpha(&rgba16_data)),
+                            width as u32,
+                            height as u32,
+                            image::ExtendedColorType::Rgb16,
+                        )
+                        .map_err(|e| {
+                            EncodeError::EncodeFrameFailed(format!("PNG16 encode failed: {}", e))
+                        })?;
                 }
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -2473,32 +2604,41 @@ fn write_jpeg_frame(
     path: &std::path::Path,
     settings: &JpegSequenceSettings,
 ) -> Result<(), EncodeError> {
-    use playa_engine::entities::frame::PixelBuffer;
-    use image::codecs::jpeg::JpegEncoder;
     use image::ImageEncoder;
-    
+    use image::codecs::jpeg::JpegEncoder;
+    use playa_engine::entities::frame::PixelBuffer;
+
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
-    
+
     // Get U8 data
     let rgba_data = match buffer.as_ref() {
         PixelBuffer::U8(data) => data.clone(),
-        _ => return Err(EncodeError::EncodeFrameFailed(
-            "JPEG requires U8 data. Apply tonemapping for HDR sources.".into()
-        )),
+        _ => {
+            return Err(EncodeError::EncodeFrameFailed(
+                "JPEG requires U8 data. Apply tonemapping for HDR sources.".into(),
+            ));
+        }
     };
-    
+
     // Convert RGBA to RGB (JPEG doesn't support alpha)
     let rgb_data = strip_alpha(&rgba_data);
-    
-    let file = File::create(path)
-        .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create JPEG file: {}", e)))?;
+
+    let file = File::create(path).map_err(|e| {
+        EncodeError::OutputCreateFailed(format!("Failed to create JPEG file: {}", e))
+    })?;
     let writer = BufWriter::new(file);
-    
+
     let encoder = JpegEncoder::new_with_quality(writer, settings.quality);
-    encoder.write_image(&rgb_data, width as u32, height as u32, image::ExtendedColorType::Rgb8)
+    encoder
+        .write_image(
+            &rgb_data,
+            width as u32,
+            height as u32,
+            image::ExtendedColorType::Rgb8,
+        )
         .map_err(|e| EncodeError::EncodeFrameFailed(format!("JPEG encode failed: {}", e)))?;
-    
+
     Ok(())
 }
 
@@ -2510,30 +2650,41 @@ fn write_tiff_frame(
     channels: ChannelMode,
     bit_depth: OutputBitDepth,
 ) -> Result<(), EncodeError> {
-    use playa_engine::entities::frame::PixelBuffer;
     use image::{ImageBuffer, Rgb, Rgba};
-    
+    use playa_engine::entities::frame::PixelBuffer;
+
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
-    
+
     // TIFF supports U8 and U16
     match bit_depth {
         OutputBitDepth::U8 => {
             let rgba_data = pixel_buf_to_rgba8(buffer.as_ref());
             match channels {
                 ChannelMode::Rgba => {
-                    let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-                        ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e)))?;
+                    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(
+                        width as u32,
+                        height as u32,
+                        rgba_data,
+                    )
+                    .ok_or_else(|| {
+                        EncodeError::EncodeFrameFailed("Failed to create TIFF buffer".into())
+                    })?;
+                    img.save(path).map_err(|e| {
+                        EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e))
+                    })?;
                 }
                 ChannelMode::Rgb => {
                     let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
                         ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&rgba_data))
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e)))?;
+                            .ok_or_else(|| {
+                                EncodeError::EncodeFrameFailed(
+                                    "Failed to create TIFF buffer".into(),
+                                )
+                            })?;
+                    img.save(path).map_err(|e| {
+                        EncodeError::EncodeFrameFailed(format!("TIFF save failed: {}", e))
+                    })?;
                 }
             }
         }
@@ -2541,29 +2692,46 @@ fn write_tiff_frame(
             // Convert to U16 for TIFF16
             let rgba16_data: Vec<u16> = match buffer.as_ref() {
                 PixelBuffer::U8(data) => data.iter().map(|&v| (v as u16) * 257).collect(),
-                PixelBuffer::F16(data) => data.iter().map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16).collect(),
-                PixelBuffer::F32(data) => data.iter().map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16).collect(),
+                PixelBuffer::F16(data) => data
+                    .iter()
+                    .map(|v| (v.to_f32().clamp(0.0, 1.0) * 65535.0) as u16)
+                    .collect(),
+                PixelBuffer::F32(data) => data
+                    .iter()
+                    .map(|&v| (v.clamp(0.0, 1.0) * 65535.0) as u16)
+                    .collect(),
             };
-            
+
             match channels {
                 ChannelMode::Rgba => {
                     let img: ImageBuffer<Rgba<u16>, Vec<u16>> =
                         ImageBuffer::from_raw(width as u32, height as u32, rgba16_data)
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF16 buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e)))?;
+                            .ok_or_else(|| {
+                                EncodeError::EncodeFrameFailed(
+                                    "Failed to create TIFF16 buffer".into(),
+                                )
+                            })?;
+                    img.save(path).map_err(|e| {
+                        EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e))
+                    })?;
                 }
                 ChannelMode::Rgb => {
-                    let img: ImageBuffer<Rgb<u16>, Vec<u16>> =
-                        ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&rgba16_data))
-                            .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TIFF16 buffer".into()))?;
-                    img.save(path)
-                        .map_err(|e| EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e)))?;
+                    let img: ImageBuffer<Rgb<u16>, Vec<u16>> = ImageBuffer::from_raw(
+                        width as u32,
+                        height as u32,
+                        strip_alpha(&rgba16_data),
+                    )
+                    .ok_or_else(|| {
+                        EncodeError::EncodeFrameFailed("Failed to create TIFF16 buffer".into())
+                    })?;
+                    img.save(path).map_err(|e| {
+                        EncodeError::EncodeFrameFailed(format!("TIFF16 save failed: {}", e))
+                    })?;
                 }
             }
         }
     }
-    
+
     let _ = settings.compression; // TODO: image crate doesn't expose TIFF compression settings easily
     Ok(())
 }
@@ -2575,36 +2743,41 @@ fn write_tga_frame(
     _settings: &TgaSequenceSettings,
     channels: ChannelMode,
 ) -> Result<(), EncodeError> {
-    use playa_engine::entities::frame::PixelBuffer;
     use image::{ImageBuffer, Rgb, Rgba};
-    
+    use playa_engine::entities::frame::PixelBuffer;
+
     let buffer = frame.buffer();
     let (width, height) = frame.resolution();
-    
+
     let rgba_data = match buffer.as_ref() {
         PixelBuffer::U8(data) => data.clone(),
-        _ => return Err(EncodeError::EncodeFrameFailed(
-            "TGA requires U8 data. Apply tonemapping for HDR sources.".into()
-        )),
+        _ => {
+            return Err(EncodeError::EncodeFrameFailed(
+                "TGA requires U8 data. Apply tonemapping for HDR sources.".into(),
+            ));
+        }
     };
-    
+
     match channels {
         ChannelMode::Rgba => {
             let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-                ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
-                    .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into()))?;
+                ImageBuffer::from_raw(width as u32, height as u32, rgba_data).ok_or_else(|| {
+                    EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into())
+                })?;
             img.save(path)
                 .map_err(|e| EncodeError::EncodeFrameFailed(format!("TGA save failed: {}", e)))?;
         }
         ChannelMode::Rgb => {
             let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
                 ImageBuffer::from_raw(width as u32, height as u32, strip_alpha(&rgba_data))
-                    .ok_or_else(|| EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into()))?;
+                    .ok_or_else(|| {
+                        EncodeError::EncodeFrameFailed("Failed to create TGA buffer".into())
+                    })?;
             img.save(path)
                 .map_err(|e| EncodeError::EncodeFrameFailed(format!("TGA save failed: {}", e)))?;
         }
     }
-    
+
     // TODO: RLE compression when image crate supports it
     Ok(())
 }
@@ -2626,84 +2799,96 @@ pub fn encode_image_sequence(
         "========== encode_image_sequence() ENTERED at {:?} ==========",
         start_time
     );
-    
+
     // Get play range from Comp
     let play_range = comp.play_range(true);
     let total_frames = (play_range.1.saturating_sub(play_range.0) + 1) as i32;
-    
+
     info!(
         "Image sequence export: format={:?}, channels={:?}, frames={}",
         settings.format, settings.channels, total_frames
     );
-    
+
     // Parse output pattern
     let filename = output_path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("frame.####.exr");
     let base_dir = output_path.parent().unwrap_or(std::path::Path::new("."));
-    
+
     // Ensure output directory exists
     if !base_dir.exists() {
-        std::fs::create_dir_all(base_dir)
-            .map_err(|e| EncodeError::OutputCreateFailed(format!("Failed to create output directory: {}", e)))?;
+        std::fs::create_dir_all(base_dir).map_err(|e| {
+            EncodeError::OutputCreateFailed(format!("Failed to create output directory: {}", e))
+        })?;
     }
-    
+
     let (prefix, pattern, suffix) = parse_padding_pattern(filename);
-    info!("Pattern parsed: prefix='{}', pattern={:?}, suffix='{}'", prefix, pattern, suffix);
-    
+    info!(
+        "Pattern parsed: prefix='{}', pattern={:?}, suffix='{}'",
+        prefix, pattern, suffix
+    );
+
     // Stage 1: Validating
-    if progress_tx.send(EncodeProgress {
-        current_frame: 0,
-        total_frames,
-        stage: EncodeStage::Validating,
-    }).is_err() {
+    if progress_tx
+        .send(EncodeProgress {
+            current_frame: 0,
+            total_frames,
+            stage: EncodeStage::Validating,
+        })
+        .is_err()
+    {
         return Err(EncodeError::Cancelled);
     }
-    
+
     // Check for cancellation
     if cancel_flag.load(Ordering::Relaxed) {
         return Err(EncodeError::Cancelled);
     }
-    
+
     // Stage 2: Encoding loop
-    if progress_tx.send(EncodeProgress {
-        current_frame: 0,
-        total_frames,
-        stage: EncodeStage::Encoding,
-    }).is_err() {
+    if progress_tx
+        .send(EncodeProgress {
+            current_frame: 0,
+            total_frames,
+            stage: EncodeStage::Encoding,
+        })
+        .is_err()
+    {
         return Err(EncodeError::Cancelled);
     }
-    
+
     for frame_idx in play_range.0..=play_range.1 {
         // Check for cancellation
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(EncodeError::Cancelled);
         }
-        
+
         let current_frame = (frame_idx - play_range.0 + 1) as i32;
-        
+
         // Get frame from comp
         let frame = comp.get_frame(frame_idx, project, true).ok_or_else(|| {
             EncodeError::EncodeFrameFailed(format!("Frame {} not available", frame_idx))
         })?;
-        
+
         // Apply tonemapping if needed (HDR -> LDR for non-EXR formats)
-        let frame_to_write = if settings.apply_tonemap || (!settings.format.is_hdr() && frame.pixel_format() != PixelFormat::Rgba8) {
-            frame.tonemap(settings.tonemap_mode).map_err(|e| {
-                EncodeError::EncodeFrameFailed(format!("Tonemapping failed: {}", e))
-            })?
+        let frame_to_write = if settings.apply_tonemap
+            || (!settings.format.is_hdr() && frame.pixel_format() != PixelFormat::Rgba8)
+        {
+            frame
+                .tonemap(settings.tonemap_mode)
+                .map_err(|e| EncodeError::EncodeFrameFailed(format!("Tonemapping failed: {}", e)))?
         } else {
             frame.clone()
         };
-        
+
         // Build output path for this frame
         let frame_path = build_frame_path(base_dir, &prefix, &pattern, &suffix, frame_idx);
-        
+
         if frame_idx % 10 == 0 {
             info!("Writing frame {} -> {}", frame_idx, frame_path.display());
         }
-        
+
         // Write frame based on format
         match settings.format {
             SequenceFormat::Exr => {
@@ -2727,36 +2912,56 @@ pub fn encode_image_sequence(
                 }
             }
             SequenceFormat::Png => {
-                write_png_frame(&frame_to_write, &frame_path, &settings.format_settings.png, settings.channels, settings.bit_depth)?;
+                write_png_frame(
+                    &frame_to_write,
+                    &frame_path,
+                    &settings.format_settings.png,
+                    settings.channels,
+                    settings.bit_depth,
+                )?;
             }
             SequenceFormat::Jpeg => {
                 write_jpeg_frame(&frame_to_write, &frame_path, &settings.format_settings.jpeg)?;
             }
             SequenceFormat::Tiff => {
-                write_tiff_frame(&frame_to_write, &frame_path, &settings.format_settings.tiff, settings.channels, settings.bit_depth)?;
+                write_tiff_frame(
+                    &frame_to_write,
+                    &frame_path,
+                    &settings.format_settings.tiff,
+                    settings.channels,
+                    settings.bit_depth,
+                )?;
             }
             SequenceFormat::Tga => {
-                write_tga_frame(&frame_to_write, &frame_path, &settings.format_settings.tga, settings.channels)?;
+                write_tga_frame(
+                    &frame_to_write,
+                    &frame_path,
+                    &settings.format_settings.tga,
+                    settings.channels,
+                )?;
             }
         }
-        
+
         // Update progress
-        if progress_tx.send(EncodeProgress {
-            current_frame,
-            total_frames,
-            stage: EncodeStage::Encoding,
-        }).is_err() {
+        if progress_tx
+            .send(EncodeProgress {
+                current_frame,
+                total_frames,
+                stage: EncodeStage::Encoding,
+            })
+            .is_err()
+        {
             return Err(EncodeError::Cancelled);
         }
     }
-    
+
     // Stage 3: Complete
     let _ = progress_tx.send(EncodeProgress {
         current_frame: total_frames,
         total_frames,
         stage: EncodeStage::Complete,
     });
-    
+
     let elapsed = start_time.elapsed();
     info!(
         "Image sequence export complete: {} frames in {:.2}s ({:.1} fps)",
@@ -2764,7 +2969,7 @@ pub fn encode_image_sequence(
         elapsed.as_secs_f64(),
         total_frames as f64 / elapsed.as_secs_f64()
     );
-    
+
     Ok(())
 }
 

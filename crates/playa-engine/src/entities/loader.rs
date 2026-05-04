@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use playa_io::{decode_raster, header_attrs, AttrKv, RawPixelBuffer, RawPixelFormat};
+use playa_io::{AttrKv, RawPixelBuffer, RawPixelFormat, decode_raster, header_attrs};
 
 use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
 use crate::entities::{AttrValue, Attrs};
@@ -51,9 +51,7 @@ fn pf_from_raw(f: RawPixelFormat) -> PixelFormat {
 
 impl Loader {
     pub fn header(path: &Path) -> Result<Attrs, FrameError> {
-        header_attrs(path)
-            .map(attrs_from_io)
-            .map_err(Into::into)
+        header_attrs(path).map(attrs_from_io).map_err(Into::into)
     }
 
     pub fn load(path: &Path) -> Result<Frame, FrameError> {

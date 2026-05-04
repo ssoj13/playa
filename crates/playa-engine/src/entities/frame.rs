@@ -33,8 +33,8 @@ use std::sync::{Arc, Mutex};
 use half::f16 as F16;
 
 // Import utilities
-use crate::entities::Attrs;
 use super::keys::{A_HEIGHT, A_WIDTH};
+use crate::entities::Attrs;
 
 /// Pixel buffer format - stores different precision levels
 #[derive(Debug, Clone)]
@@ -87,22 +87,22 @@ pub enum FrameStatus {
     Loading,     // Async file loading in progress (FileNode)
     Composing,   // Async composition in progress (CompNode)
     Expired,     // Was Loaded, now stale - pixels valid but need recompute
-    Loaded,      // Cached: File mode = image loaded into buffer, Layer mode = composed result cached
-    Error,       // Loading failed
+    Loaded, // Cached: File mode = image loaded into buffer, Layer mode = composed result cached
+    Error,  // Loading failed
 }
 
 impl FrameStatus {
-    /// Get UI color for this status (for load indicator, 50% transparent)
-    pub fn color(&self) -> egui::Color32 {
-        use egui::Color32;
+    /// RGBA for timeline/overlays (same values as legacy `egui::Color32` styling).
+    #[inline]
+    pub fn indicator_rgba_unmul(self) -> [u8; 4] {
         match self {
-            FrameStatus::Placeholder => Color32::from_rgba_unmultiplied(40, 40, 45, 128),
-            FrameStatus::Header => Color32::from_rgba_unmultiplied(60, 100, 180, 128),
-            FrameStatus::Loading => Color32::from_rgba_unmultiplied(220, 160, 60, 128),   // orange - file loading
-            FrameStatus::Composing => Color32::from_rgba_unmultiplied(180, 100, 220, 128), // purple - compositing
-            FrameStatus::Expired => Color32::from_rgba_unmultiplied(160, 140, 80, 128),   // tan - stale, needs refresh
-            FrameStatus::Loaded => Color32::from_rgba_unmultiplied(80, 200, 120, 128),
-            FrameStatus::Error => Color32::from_rgba_unmultiplied(200, 60, 60, 128),
+            FrameStatus::Placeholder => [40, 40, 45, 128],
+            FrameStatus::Header => [60, 100, 180, 128],
+            FrameStatus::Loading => [220, 160, 60, 128],
+            FrameStatus::Composing => [180, 100, 220, 128],
+            FrameStatus::Expired => [160, 140, 80, 128],
+            FrameStatus::Loaded => [80, 200, 120, 128],
+            FrameStatus::Error => [200, 60, 60, 128],
         }
     }
 }
@@ -592,7 +592,10 @@ impl Frame {
                     PixelBuffer::F32(vec) => vec.len() * 4,
                 };
 
-                data.buffer = Arc::new(PixelBuffer::U8(make_placeholder_u8(data.width, data.height)));
+                data.buffer = Arc::new(PixelBuffer::U8(make_placeholder_u8(
+                    data.width,
+                    data.height,
+                )));
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 
@@ -620,7 +623,10 @@ impl Frame {
             (FrameStatus::Error, FrameStatus::Header) => {
                 let mut data = self.data.lock().unwrap();
 
-                data.buffer = Arc::new(PixelBuffer::U8(make_placeholder_u8(data.width, data.height)));
+                data.buffer = Arc::new(PixelBuffer::U8(make_placeholder_u8(
+                    data.width,
+                    data.height,
+                )));
                 data.pixel_format = PixelFormat::Rgba8;
                 data.status = FrameStatus::Header;
 

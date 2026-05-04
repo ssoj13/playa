@@ -60,22 +60,27 @@ use uuid::Uuid;
 
 use super::attr_schemas::{COMP_SCHEMA, LAYER_SCHEMA};
 use super::attrs::{AttrValue, Attrs};
-use super::effects::Effect;
 use super::compositor::{BlendMode, CpuCompositor};
-use super::transform;
+use super::effects::Effect;
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
+use super::gpu_blend_bridge::GpuBlendReport;
 use super::keys::*;
 use super::node::{ComputeContext, Node};
+use super::transform;
 
 // Thread-local compositor and cycle detection
 //
 // ## Why thread_local is CORRECT here (not an architecture smell)
 //
-// **THREAD_COMPOSITOR** - per-thread CPU compositor:
-// - Worker threads don't have OpenGL context (GPU requires main thread)
-// - Each thread needs its own mutable compositor instance
-// - Can't share RefCell<Compositor> across threads (not Send)
-// - thread_local = per-thread singleton, exactly what we need
+// **THREAD_COMPOSITOR** — per-thread `CpuCompositor` used whenever the final raster mix happens on
+// the worker without involving the GPU bridge:
+// - Project prefs keep CPU blending (`ComputeContext.gpu_blend_bridge == None`).
+// - Encode synchronous path / nested preload computes also omit the bridge explicitly.
+// - When prefs select GPU blending, `GpuBlendBridge` forwards the finalized stack to
+//   `project.compositor` on the UI thread; **this TLS is skipped** on that success path.
+// - **Partial GPU bridge outage:** worker CPU uses this TLS with the original `Vec` when
+//   `GpuBlendReport::NotQueued` is returned — no preemptive clone before delegating to the UI.
+// - Each CPU-only thread keeps its own `CpuCompositor` (not Send across threads).
 //
 // **COMPOSE_STACK** - per-thread cycle detection:
 // - Tracks call path during recursive composition
@@ -90,10 +95,9 @@ use super::node::{ComputeContext, Node};
 //
 // See compositor.rs module docs for GPU transform integration plan.
 thread_local! {
-    /// Per-thread CPU compositor for blending layers.
-    /// Workers use this; main thread could use GPU via Project.compositor.
+    /// Per-thread CPU fallback compositor when GPU blending isn't delegated to the main thread.
     static THREAD_COMPOSITOR: RefCell<CpuCompositor> = const { RefCell::new(CpuCompositor) };
-    
+
     /// Per-thread cycle detection stack.
     /// Prevents infinite recursion when comp A contains comp B contains comp A.
     static COMPOSE_STACK: RefCell<HashSet<Uuid>> = RefCell::new(HashSet::new());
@@ -121,13 +125,19 @@ pub struct Layer {
 
 impl Layer {
     /// Create new layer instance referencing a source node.
-    pub fn new(source_uuid: Uuid, name: &str, start: i32, duration: i32, dim: (usize, usize)) -> Self {
+    pub fn new(
+        source_uuid: Uuid,
+        name: &str,
+        start: i32,
+        duration: i32,
+        dim: (usize, usize),
+    ) -> Self {
         let mut attrs = Attrs::with_schema(&*LAYER_SCHEMA);
-        
+
         // Identity
         attrs.set_uuid(A_UUID, Uuid::new_v4());
         attrs.set_uuid("source_uuid", source_uuid);
-        
+
         attrs.set(A_NAME, AttrValue::Str(name.to_string()));
         // Timing (unified: in, out, trim_in, trim_out, src_len, speed)
         attrs.set(A_IN, AttrValue::Int(start));
@@ -149,60 +159,76 @@ impl Layer {
         attrs.set(A_ROTATION, AttrValue::Vec3([0.0, 0.0, 0.0]));
         attrs.set(A_SCALE, AttrValue::Vec3([1.0, 1.0, 1.0]));
         attrs.set(A_PIVOT, AttrValue::Vec3([0.0, 0.0, 0.0]));
-        
+
         // Clear dirty after construction - these are initial values, not changes
         attrs.clear_dirty();
-        
-        Self { attrs, effects: Vec::new() }
+
+        Self {
+            attrs,
+            effects: Vec::new(),
+        }
     }
-    
+
     /// Get layer instance UUID
     pub fn uuid(&self) -> Uuid {
         self.attrs.get_uuid(A_UUID).unwrap_or_else(Uuid::nil)
     }
-    
+
     /// Get source node UUID
     pub fn source_uuid(&self) -> Uuid {
         self.attrs.get_uuid("source_uuid").unwrap_or_else(Uuid::nil)
     }
-    
+
     /// Create layer from existing attrs (for duplication/paste).
     /// Sets new uuid, keeps source_uuid from attrs.
     pub fn from_attrs(source_uuid: Uuid, mut attrs: Attrs) -> Self {
         attrs.set_uuid(A_UUID, Uuid::new_v4());
         attrs.set_uuid("source_uuid", source_uuid);
-        Self { attrs, effects: Vec::new() }
+        Self {
+            attrs,
+            effects: Vec::new(),
+        }
     }
-    
+
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
         self.attrs.attach_schema(&*LAYER_SCHEMA);
     }
-    
+
     /// Layer start frame in parent timeline
     pub fn start(&self) -> i32 {
         self.attrs.get_i32(A_IN).unwrap_or(0)
     }
-    
+
     /// Layer end frame in parent timeline (computed from src_len and speed)
     pub fn end(&self) -> i32 {
         let start = self.start();
         let src_len = self.attrs.get_i32("src_len").unwrap_or(1);
-        let speed = self.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        let speed = self
+            .attrs
+            .get_float(A_SPEED)
+            .unwrap_or(1.0)
+            .abs()
+            .max(0.001);
         start + ((src_len as f32 / speed) as i32) - 1
     }
-    
+
     /// Work area (trimmed range) in absolute frames.
     /// Layer trim_in/trim_out are OFFSETS in SOURCE frames, scaled by speed for parent timeline.
     pub fn work_area(&self) -> (i32, i32) {
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);   // offset in source frames
+        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0); // offset in source frames
         let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0); // offset in source frames
-        let speed = self.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
-        let trim_in_scaled = (trim_in as f32 / speed) as i32;  // convert to parent timeline frames
+        let speed = self
+            .attrs
+            .get_float(A_SPEED)
+            .unwrap_or(1.0)
+            .abs()
+            .max(0.001);
+        let trim_in_scaled = (trim_in as f32 / speed) as i32; // convert to parent timeline frames
         let trim_out_scaled = (trim_out as f32 / speed) as i32;
         (self.start() + trim_in_scaled, self.end() - trim_out_scaled)
     }
-    
+
     /// Convert parent timeline frame to source local frame.
     /// Accounts for layer start position and speed.
     ///
@@ -212,21 +238,27 @@ impl Layer {
     /// so local_frame = trim_in - exactly the first visible source frame.
     pub fn parent_to_local(&self, parent_frame: i32) -> i32 {
         let start = self.start(); // = "in" (full bar start)
-        let speed = self.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        let speed = self
+            .attrs
+            .get_float(A_SPEED)
+            .unwrap_or(1.0)
+            .abs()
+            .max(0.001);
         let offset = parent_frame - start;
         (offset as f32 * speed) as i32
     }
-    
+
     pub fn is_visible(&self) -> bool {
         self.attrs.get_bool(A_VISIBLE).unwrap_or(true)
     }
-    
+
     pub fn opacity(&self) -> f32 {
         self.attrs.get_float(A_OPACITY).unwrap_or(1.0)
     }
-    
+
     pub fn blend_mode(&self) -> BlendMode {
-        self.attrs.get_str(A_BLEND_MODE)
+        self.attrs
+            .get_str(A_BLEND_MODE)
             .map(|s| match s {
                 "screen" => BlendMode::Screen,
                 "add" => BlendMode::Add,
@@ -263,7 +295,7 @@ impl CompNode {
     pub fn new(name: &str, start: i32, end: i32, fps: f32) -> Self {
         let mut attrs = Attrs::with_schema(&*COMP_SCHEMA);
         let uuid = Uuid::new_v4();
-        
+
         attrs.set_uuid(A_UUID, uuid);
         attrs.set(A_NAME, AttrValue::Str(name.to_string()));
         attrs.set(A_IN, AttrValue::Int(start));
@@ -275,10 +307,10 @@ impl CompNode {
         attrs.set(A_FRAME, AttrValue::Int(start));
         attrs.set(A_WIDTH, AttrValue::UInt(1920));
         attrs.set(A_HEIGHT, AttrValue::UInt(1080));
-        
+
         // Clear dirty after construction - these are initial values, not changes
         attrs.clear_dirty();
-        
+
         Self {
             attrs,
             layers: Vec::new(),
@@ -287,13 +319,13 @@ impl CompNode {
             hovered_layer: None,
         }
     }
-    
+
     /// Create with specified UUID
     pub fn with_uuid(mut self, uuid: Uuid) -> Self {
         self.attrs.set_uuid(A_UUID, uuid);
         self
     }
-    
+
     /// Attach schema after deserialization (comp + all layers)
     pub fn attach_schema(&mut self) {
         self.attrs.attach_schema(&*COMP_SCHEMA);
@@ -301,11 +333,11 @@ impl CompNode {
             layer.attach_schema();
         }
     }
-    
+
     // --- Getters ---
     // Timing methods (_in, _out, fps, dim, frame_count, frame, work_area)
     // are provided by Node trait with defaults from config.rs
-    
+
     /// Get comp name
     pub fn name(&self) -> &str {
         self.attrs.get_str(A_NAME).unwrap_or("Untitled")
@@ -332,33 +364,40 @@ impl CompNode {
     /// trim_in is OFFSET from _in: trim_in = desired_start - _in
     pub fn set_comp_play_start(&mut self, start: i32) {
         let trim_in = (start - self._in()).max(0); // offset from _in
-        self.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int(trim_in));
+        self.attrs
+            .set(A_TRIM_IN, super::attrs::AttrValue::Int(trim_in));
     }
 
     /// Set play end by adjusting trim_out offset.
     /// trim_out is OFFSET from _out: trim_out = _out - desired_end
     pub fn set_comp_play_end(&mut self, end: i32) {
         let trim_out = (self._out() - end).max(0); // offset from _out
-        self.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int(trim_out));
+        self.attrs
+            .set(A_TRIM_OUT, super::attrs::AttrValue::Int(trim_out));
     }
 
     /// Called when comp becomes active
     pub fn on_activate(&mut self) {
         self.rebound();
     }
-    
+
     /// Calculate actual bounds from all visible layers.
     /// Uses dynamic src_len from media for accurate layer timing.
-    pub fn bounds(&self, use_trim: bool, selection_only: bool, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
+    pub fn bounds(
+        &self,
+        use_trim: bool,
+        selection_only: bool,
+        media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> (i32, i32) {
         if self.layers.is_empty() {
             return (0, 100);
         }
-        
+
         let use_selection = selection_only && !self.layer_selection.is_empty();
-        
+
         let mut min_start = i32::MAX;
         let mut max_end = i32::MIN;
-        
+
         for layer in &self.layers {
             if !layer.is_visible() {
                 continue;
@@ -374,19 +413,19 @@ impl CompNode {
             min_start = min_start.min(start);
             max_end = max_end.max(end);
         }
-        
+
         if min_start == i32::MAX || max_end == i32::MIN {
             (0, 100)
         } else {
             (min_start, max_end)
         }
     }
-    
+
     /// Get dimensions of the first visible layer (by work_area start).
     /// Used to determine comp output size.
     pub fn get_first_size(&self) -> Option<(usize, usize)> {
         let mut earliest: Option<(i32, &Layer)> = None;
-        
+
         for layer in &self.layers {
             if !layer.is_visible() {
                 continue;
@@ -396,14 +435,14 @@ impl CompNode {
                 earliest = Some((start, layer));
             }
         }
-        
+
         earliest.map(|(_, layer)| {
             let w = layer.attrs.get_u32(A_WIDTH).unwrap_or(64) as usize;
             let h = layer.attrs.get_u32(A_HEIGHT).unwrap_or(64) as usize;
             (w.max(1), h.max(1))
         })
     }
-    
+
     /// Calculate bounds using stored src_len (for internal use without media access).
     fn bounds_internal(&self, use_trim: bool) -> (i32, i32) {
         if self.layers.is_empty() {
@@ -412,12 +451,22 @@ impl CompNode {
         let mut min_start = i32::MAX;
         let mut max_end = i32::MIN;
         for layer in &self.layers {
-            if !layer.is_visible() { continue; }
-            let (start, end) = if use_trim { layer.work_area() } else { (layer.start(), layer.end()) };
+            if !layer.is_visible() {
+                continue;
+            }
+            let (start, end) = if use_trim {
+                layer.work_area()
+            } else {
+                (layer.start(), layer.end())
+            };
             min_start = min_start.min(start);
             max_end = max_end.max(end);
         }
-        if min_start == i32::MAX { (0, 100) } else { (min_start, max_end) }
+        if min_start == i32::MAX {
+            (0, 100)
+        } else {
+            (min_start, max_end)
+        }
     }
 
     /// Recalculate comp bounds and dimensions based on layer extents.
@@ -425,47 +474,56 @@ impl CompNode {
     pub fn rebound(&mut self) {
         let old_bounds = (self._in(), self._out());
         let old_work = self.work_area();
-        
+
         let (new_start, new_end) = self.bounds_internal(true);
-        
+
         self.attrs.set(A_IN, AttrValue::Int(new_start));
         self.attrs.set(A_OUT, AttrValue::Int(new_end));
-        
+
         // Update dimensions from first visible layer
         if let Some((w, h)) = self.get_first_size() {
             self.attrs.set(A_WIDTH, AttrValue::UInt(w as u32));
             self.attrs.set(A_HEIGHT, AttrValue::UInt(h as u32));
         }
-        
+
         // Keep work area in sync only if it used to match full bounds
         // trim_in/trim_out are OFFSETS from _in/_out, not absolute values
         if old_work == old_bounds {
             self.attrs.set(A_TRIM_IN, AttrValue::Int(0));
             self.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         }
-        
+
         trace!(
             "rebound: comp={}, old=[{}..{}], new=[{}..{}]",
-            self.name(), old_bounds.0, old_bounds.1, new_start, new_end
+            self.name(),
+            old_bounds.0,
+            old_bounds.1,
+            new_start,
+            new_end
         );
     }
 
     /// Get frame at given index.
     /// - `blocking=false`: cache lookup only (for viewport)
     /// - `blocking=true`: compute if not in cache (for encode)
-    pub fn get_frame(&self, frame_idx: i32, project: &super::project::Project, blocking: bool) -> Option<Frame> {
+    pub fn get_frame(
+        &self,
+        frame_idx: i32,
+        project: &super::project::Project,
+        blocking: bool,
+    ) -> Option<Frame> {
         let cache = project.global_cache.as_ref()?;
-        
+
         // Try cache first
         if let Some(frame) = cache.get(self.uuid(), frame_idx) {
             return Some(frame);
         }
-        
+
         // Cache miss
         if !blocking {
             return None;
         }
-        
+
         // Blocking mode: compute now
         let media = project.media.read().expect("media lock");
         let ctx = super::node::ComputeContext {
@@ -475,12 +533,13 @@ impl CompNode {
             media_arc: None,
             workers: None,
             epoch: 0,
+            gpu_blend_bridge: None,
         };
         self.compute(frame_idx, &ctx)
     }
 
     // --- Layer management ---
-    
+
     /// Add layer at specified position (None = append)
     pub fn add_layer(&mut self, layer: Layer, position: Option<usize>) {
         if let Some(idx) = position {
@@ -491,7 +550,7 @@ impl CompNode {
         self.mark_dirty();
         self.rebound();
     }
-    
+
     /// Remove layer by UUID
     pub fn remove_layer(&mut self, layer_uuid: Uuid) -> Option<Layer> {
         if let Some(idx) = self.layers.iter().position(|l| l.uuid() == layer_uuid) {
@@ -503,22 +562,25 @@ impl CompNode {
             None
         }
     }
-    
+
     /// Get layer by UUID
     pub fn get_layer(&self, layer_uuid: Uuid) -> Option<&Layer> {
         self.layers.iter().find(|l| l.uuid() == layer_uuid)
     }
-    
+
     /// Get mutable layer by UUID
     pub fn get_layer_mut(&mut self, layer_uuid: Uuid) -> Option<&mut Layer> {
         self.layers.iter_mut().find(|l| l.uuid() == layer_uuid)
     }
-    
+
     /// Find layers by source UUID
     pub fn layers_by_source(&self, source_uuid: Uuid) -> Vec<&Layer> {
-        self.layers.iter().filter(|l| l.source_uuid() == source_uuid).collect()
+        self.layers
+            .iter()
+            .filter(|l| l.source_uuid() == source_uuid)
+            .collect()
     }
-    
+
     /// Get the active camera for current frame.
     ///
     /// Returns the topmost visible camera layer that covers the given frame.
@@ -561,7 +623,10 @@ impl CompNode {
             if let Some(source) = media.get(&layer.source_uuid()) {
                 if let Some(camera) = source.as_camera() {
                     // Position/rotation come from Layer attrs, not CameraNode
-                    let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, -1000.0]);
+                    let pos = layer
+                        .attrs
+                        .get_vec3(A_POSITION)
+                        .unwrap_or([0.0, 0.0, -1000.0]);
                     let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
                     return Some((camera, pos, rot));
                 }
@@ -570,31 +635,41 @@ impl CompNode {
 
         None
     }
-    
+
     /// Check if composition has any 3D content (Z != 0 or XY rotation).
-    /// 
+    ///
     /// Used to determine if camera projection should be applied.
     /// Returns true if any visible layer has non-zero Z position or XY rotation.
-    pub fn has_3d_content(&self, frame_idx: i32, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> bool {
+    pub fn has_3d_content(
+        &self,
+        frame_idx: i32,
+        media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> bool {
         for layer in &self.layers {
             if !layer.is_visible() {
                 continue;
             }
-            
+
             let (play_start, play_end) = self.get_layer_work_area(layer, media);
             if frame_idx < play_start || frame_idx > play_end {
                 continue;
             }
-            
-            let pos = layer.attrs.get_vec3(super::keys::A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
-            let rot = layer.attrs.get_vec3(super::keys::A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
-            
+
+            let pos = layer
+                .attrs
+                .get_vec3(super::keys::A_POSITION)
+                .unwrap_or([0.0, 0.0, 0.0]);
+            let rot = layer
+                .attrs
+                .get_vec3(super::keys::A_ROTATION)
+                .unwrap_or([0.0, 0.0, 0.0]);
+
             // Check for 3D: Z position or X/Y rotation
             if pos[2].abs() > 0.001 || rot[0].abs() > 0.001 || rot[1].abs() > 0.001 {
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -612,7 +687,10 @@ impl CompNode {
 
     /// Get children as (layer_uuid, source_uuid) pairs - for node editor
     pub fn get_children_sources(&self) -> Vec<(Uuid, Uuid)> {
-        self.layers.iter().map(|l| (l.uuid(), l.source_uuid())).collect()
+        self.layers
+            .iter()
+            .map(|l| (l.uuid(), l.source_uuid()))
+            .collect()
     }
 
     /// Set FPS
@@ -642,7 +720,8 @@ impl CompNode {
 
     /// Get layer "in" frame (full bar start, ignores trims)
     pub fn child_in(&self, layer_uuid: Uuid) -> Option<i32> {
-        self.get_layer(layer_uuid).and_then(|l| l.attrs.get_i32(A_IN))
+        self.get_layer(layer_uuid)
+            .and_then(|l| l.attrs.get_i32(A_IN))
     }
 
     /// Get layer visual start (play_start = in + trim_in/speed)
@@ -670,24 +749,47 @@ impl CompNode {
     /// Get effective src_len for a layer by looking up its source node.
     /// For comp sources: returns source.play_frame_count() (dynamic)
     /// For other sources: returns source.play_frame_count() or stored fallback
-    pub fn get_layer_src_len(&self, layer: &Layer, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> i32 {
-        media.get(&layer.source_uuid())
+    pub fn get_layer_src_len(
+        &self,
+        layer: &Layer,
+        media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> i32 {
+        media
+            .get(&layer.source_uuid())
             .map(|source| source.play_frame_count())
             .unwrap_or_else(|| layer.attrs.get_i32(super::keys::A_SRC_LEN).unwrap_or(1))
     }
 
     /// Get layer end frame using source's actual duration.
     /// More accurate than layer.end() which uses stored src_len.
-    pub fn get_layer_end(&self, layer: &Layer, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> i32 {
+    pub fn get_layer_end(
+        &self,
+        layer: &Layer,
+        media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> i32 {
         let src_len = self.get_layer_src_len(layer, media);
-        let speed = layer.attrs.get_float(super::keys::A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        let speed = layer
+            .attrs
+            .get_float(super::keys::A_SPEED)
+            .unwrap_or(1.0)
+            .abs()
+            .max(0.001);
         layer.start() + ((src_len as f32 / speed) as i32) - 1
     }
 
     /// Get layer work area using source's actual duration.
-    pub fn get_layer_work_area(&self, layer: &Layer, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
+    pub fn get_layer_work_area(
+        &self,
+        layer: &Layer,
+        media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> (i32, i32) {
         let src_len = self.get_layer_src_len(layer, media);
-        let speed = layer.attrs.get_float(super::keys::A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        let speed = layer
+            .attrs
+            .get_float(super::keys::A_SPEED)
+            .unwrap_or(1.0)
+            .abs()
+            .max(0.001);
         let trim_in = layer.attrs.get_i32(super::keys::A_TRIM_IN).unwrap_or(0);
         let trim_out = layer.attrs.get_i32(super::keys::A_TRIM_OUT).unwrap_or(0);
         let layer_start = layer.start();
@@ -698,7 +800,11 @@ impl CompNode {
     }
 
     /// Set multiple attributes on a layer
-    pub fn set_child_attrs(&mut self, layer_uuid: Uuid, attrs: Vec<(&str, super::attrs::AttrValue)>) {
+    pub fn set_child_attrs(
+        &mut self,
+        layer_uuid: Uuid,
+        attrs: Vec<(&str, super::attrs::AttrValue)>,
+    ) {
         if let Some(layer) = self.get_layer_mut(layer_uuid) {
             for (key, value) in attrs {
                 layer.attrs.set(key, value);
@@ -716,15 +822,25 @@ impl CompNode {
         for uuid in layer_uuids {
             if let Some(layer) = self.get_layer_mut(*uuid) {
                 let current_in = layer.attrs.get_i32(A_IN).unwrap_or(0);
-                layer.attrs.set(A_IN, super::attrs::AttrValue::Int(current_in + delta));
-                log::trace!("move_layers: moved layer {} from {} to {}", uuid, current_in, current_in + delta);
+                layer
+                    .attrs
+                    .set(A_IN, super::attrs::AttrValue::Int(current_in + delta));
+                log::trace!(
+                    "move_layers: moved layer {} from {} to {}",
+                    uuid,
+                    current_in,
+                    current_in + delta
+                );
             } else {
                 log::warn!("move_layers: layer {} not found!", uuid);
             }
         }
         self.mark_dirty();
         self.rebound();
-        log::trace!("move_layers: comp marked dirty, is_dirty={}", self.is_dirty(None));
+        log::trace!(
+            "move_layers: comp marked dirty, is_dirty={}",
+            self.is_dirty(None)
+        );
     }
 
     /// Trim layers (adjust trim_in/trim_out)
@@ -736,7 +852,12 @@ impl CompNode {
         for uuid in layer_uuids {
             if let Some(layer) = self.get_layer_mut(*uuid) {
                 // Convert timeline delta to source frames
-                let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+                let speed = layer
+                    .attrs
+                    .get_float(A_SPEED)
+                    .unwrap_or(1.0)
+                    .abs()
+                    .max(0.001);
                 let delta_source = (delta as f32 * speed).round() as i32;
 
                 match edge {
@@ -744,13 +865,19 @@ impl CompNode {
                         // Positive delta_source increases trim_in (visible start moves right)
                         // Negative trim_in = extend before source start (hold first frame)
                         let current = layer.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
-                        layer.attrs.set(A_TRIM_IN, super::attrs::AttrValue::Int(current + delta_source));
+                        layer.attrs.set(
+                            A_TRIM_IN,
+                            super::attrs::AttrValue::Int(current + delta_source),
+                        );
                     }
                     "out" | "end" => {
                         // Negative delta means user dragged left -> MORE trim_out
                         // Negative trim_out = extend after source end (hold last frame)
                         let current = layer.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
-                        layer.attrs.set(A_TRIM_OUT, super::attrs::AttrValue::Int(current - delta_source));
+                        layer.attrs.set(
+                            A_TRIM_OUT,
+                            super::attrs::AttrValue::Int(current - delta_source),
+                        );
                     }
                     _ => {}
                 }
@@ -812,12 +939,18 @@ impl CompNode {
 
     /// Get layer attrs by UUID
     pub fn layers_attrs_get(&self, uuid: &Uuid) -> Option<&Attrs> {
-        self.layers.iter().find(|l| l.uuid() == *uuid).map(|l| &l.attrs)
+        self.layers
+            .iter()
+            .find(|l| l.uuid() == *uuid)
+            .map(|l| &l.attrs)
     }
 
     /// Get mutable layer attrs by UUID
     pub fn layers_attrs_get_mut(&mut self, uuid: &Uuid) -> Option<&mut Attrs> {
-        self.layers.iter_mut().find(|l| l.uuid() == *uuid).map(|l| &mut l.attrs)
+        self.layers
+            .iter_mut()
+            .find(|l| l.uuid() == *uuid)
+            .map(|l| &mut l.attrs)
     }
 
     /// Get all layer edges (start, end) sorted by frame.
@@ -838,13 +971,18 @@ impl CompNode {
     }
 
     /// Compute visual row for each layer (greedy non-overlapping layout)
-    pub fn compute_layer_rows(&self, child_order: &[usize]) -> std::collections::HashMap<usize, usize> {
+    pub fn compute_layer_rows(
+        &self,
+        child_order: &[usize],
+    ) -> std::collections::HashMap<usize, usize> {
         use std::collections::HashMap;
         let mut layer_rows: HashMap<usize, usize> = HashMap::new();
         let mut occupied_rows: HashMap<usize, Vec<(i32, i32)>> = HashMap::new();
 
         for &idx in child_order {
-            let Some(layer) = self.layers.get(idx) else { continue };
+            let Some(layer) = self.layers.get(idx) else {
+                continue;
+            };
             let start = layer.attrs.full_bar_start();
             let end = layer.attrs.full_bar_end();
 
@@ -882,7 +1020,10 @@ impl CompNode {
             return true;
         }
         if !hier {
-            return self.layers.iter().any(|l| l.source_uuid() == potential_child);
+            return self
+                .layers
+                .iter()
+                .any(|l| l.source_uuid() == potential_child);
         }
         // DFS check for cycles
         let mut stack = vec![potential_child];
@@ -905,20 +1046,23 @@ impl CompNode {
 
     /// Get frame cache statuses from global cache.
     /// Returns status for each frame in the comp's range.
-    pub fn cache_frame_statuses(&self, global_cache: Option<&std::sync::Arc<crate::core::global_cache::GlobalFrameCache>>) -> Option<Vec<FrameStatus>> {
+    pub fn cache_frame_statuses(
+        &self,
+        global_cache: Option<&std::sync::Arc<crate::core::global_cache::GlobalFrameCache>>,
+    ) -> Option<Vec<FrameStatus>> {
         let duration = self.frame_count();
         if duration <= 0 {
             return None;
         }
-        
+
         let Some(cache) = global_cache else {
             return Some(vec![FrameStatus::Placeholder; duration as usize]);
         };
-        
+
         let comp_uuid = self.uuid();
         let comp_start = self._in();
         let mut statuses = Vec::with_capacity(duration as usize);
-        
+
         for frame_offset in 0..duration {
             let frame_idx = comp_start + frame_offset;
             let status = cache
@@ -926,13 +1070,15 @@ impl CompNode {
                 .unwrap_or(FrameStatus::Placeholder);
             statuses.push(status);
         }
-        
+
         Some(statuses)
     }
 
     /// Move single layer to new start position
     pub fn move_child(&mut self, layer_idx: usize, new_start: i32) -> anyhow::Result<()> {
-        let layer = self.layers.get_mut(layer_idx)
+        let layer = self
+            .layers
+            .get_mut(layer_idx)
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         layer.attrs.set(A_IN, AttrValue::Int(new_start));
         self.mark_dirty();
@@ -942,10 +1088,17 @@ impl CompNode {
 
     /// Set layer play start (adjusts trim_in)
     pub fn set_child_start(&mut self, layer_idx: usize, new_play_start: i32) -> anyhow::Result<()> {
-        let layer = self.layers.get_mut(layer_idx)
+        let layer = self
+            .layers
+            .get_mut(layer_idx)
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         let layer_in = layer.attrs.get_i32(A_IN).unwrap_or(0);
-        let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        let speed = layer
+            .attrs
+            .get_float(A_SPEED)
+            .unwrap_or(1.0)
+            .abs()
+            .max(0.001);
         // trim_in in source frames (negative = extend before source start)
         let new_trim_in = ((new_play_start - layer_in) as f32 * speed) as i32;
         layer.attrs.set(A_TRIM_IN, AttrValue::Int(new_trim_in));
@@ -956,10 +1109,17 @@ impl CompNode {
 
     /// Set layer play end (adjusts trim_out)
     pub fn set_child_end(&mut self, layer_idx: usize, new_play_end: i32) -> anyhow::Result<()> {
-        let layer = self.layers.get_mut(layer_idx)
+        let layer = self
+            .layers
+            .get_mut(layer_idx)
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         let layer_end = layer.end();
-        let speed = layer.attrs.get_float(A_SPEED).unwrap_or(1.0).abs().max(0.001);
+        let speed = layer
+            .attrs
+            .get_float(A_SPEED)
+            .unwrap_or(1.0)
+            .abs()
+            .max(0.001);
         // trim_out in source frames (negative = extend after source end)
         let new_trim_out = ((layer_end - new_play_end) as f32 * speed) as i32;
         layer.attrs.set(A_TRIM_OUT, AttrValue::Int(new_trim_out));
@@ -970,10 +1130,10 @@ impl CompNode {
 
     // --- Internal compose ---
     // placeholder_frame() provided by Node trait
-    
+
     fn compose_internal(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
         let my_uuid = self.uuid();
-        
+
         // Cycle detection
         let is_cycle = COMPOSE_STACK.with(|stack| {
             let mut s = stack.borrow_mut();
@@ -988,16 +1148,19 @@ impl CompNode {
         if is_cycle {
             return Some(self.placeholder_frame());
         }
-        
+
         // New API: (frame, opacity, blend_mode, inverse_transform_matrix)
         let mut source_frames: Vec<(Frame, f32, BlendMode, [f32; 9])> = Vec::new();
         let identity_matrix = super::compositor::IDENTITY_TRANSFORM;
         let mut target_format = PixelFormat::Rgba8;
         let mut all_loaded = true;
-        
+
         // Check if any layer has solo enabled
-        let has_solo = self.layers.iter().any(|l| l.attrs.get_bool(A_SOLO).unwrap_or(false));
-        
+        let has_solo = self
+            .layers
+            .iter()
+            .any(|l| l.attrs.get_bool(A_SOLO).unwrap_or(false));
+
         // Collect visible renderable layers with their Z positions for sorting.
         // Each entry: (layer_index, z_position) - index used for stable sort fallback.
         //
@@ -1019,21 +1182,21 @@ impl CompNode {
         // compositor. GPU compositor with depth buffer would solve this.
         //
         let mut renderable_layers: Vec<(usize, f32)> = Vec::new();
-        
+
         for (idx, layer) in self.layers.iter().enumerate() {
             // Use dynamic src_len from source node (not stored attr)
             let (play_start, play_end) = self.get_layer_work_area(layer, ctx.media);
-            
+
             // Skip if outside work area
             if frame_idx < play_start || frame_idx > play_end {
                 continue;
             }
-            
+
             // Skip invisible
             if !layer.is_visible() {
                 continue;
             }
-            
+
             // Solo mode: skip non-solo layers when any layer is solo'd
             if has_solo && !layer.attrs.get_bool(A_SOLO).unwrap_or(false) {
                 continue;
@@ -1048,7 +1211,7 @@ impl CompNode {
             let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
             renderable_layers.push((idx, pos[2]));
         }
-        
+
         // Sort by Z position for painter's algorithm (back-to-front).
         // Camera at +Z looks toward -Z, so:
         //   - Lower Z = farther from camera = render first (behind)
@@ -1065,42 +1228,42 @@ impl CompNode {
                 Some(ord) => ord,
             }
         });
-        
+
         // Get active camera for this frame (if any)
         // Camera provides view-projection matrix for 3D perspective/ortho rendering
         // Position/rotation come from Layer attrs, not CameraNode
-        let view_projection: Option<glam::Mat4> = self
-            .active_camera(frame_idx, ctx.media)
-            .map(|(cam, pos, rot)| {
-                let dim = self.dim();
-                let aspect = dim.0 as f32 / dim.1 as f32;
-                let comp_height = dim.1 as f32;
-                cam.view_projection_matrix(pos, rot, aspect, comp_height)
-            });
-        
+        let view_projection: Option<glam::Mat4> =
+            self.active_camera(frame_idx, ctx.media)
+                .map(|(cam, pos, rot)| {
+                    let dim = self.dim();
+                    let aspect = dim.0 as f32 / dim.1 as f32;
+                    let comp_height = dim.1 as f32;
+                    cam.view_projection_matrix(pos, rot, aspect, comp_height)
+                });
+
         // Render layers in sorted order
         for (layer_idx, _z) in renderable_layers {
             let layer = &self.layers[layer_idx];
-            
+
             // Get source node (already validated above)
             let source = ctx.media.get(&layer.source_uuid());
             let Some(source_node) = source else {
                 continue;
             };
-            
+
             // Convert to source frame with hold first/last for extended layers
             let local_frame = layer.parent_to_local(frame_idx);
             let source_in = source_node.attrs().get_i32(A_IN).unwrap_or(0);
             let source_out = source_node.attrs().get_i32(A_OUT).unwrap_or(0);
             // Clamp to source range: hold first frame if before, hold last if after
             let source_frame = (source_in + local_frame).clamp(source_in, source_out);
-            
+
             // Recursively compute source frame
             if let Some(mut frame) = source_node.compute(source_frame, ctx) {
                 if frame.status() != FrameStatus::Loaded {
                     all_loaded = false;
                 }
-                
+
                 // Apply layer effects in order (blur, color correction, etc.)
                 // Effects are processed before transform so they work in layer-local space.
                 //
@@ -1110,34 +1273,45 @@ impl CompNode {
                 // - Transform changes reuse cached effected frame
                 // - Effect changes invalidate only that layer's effect cache
                 if !layer.effects.is_empty() {
-                    if let Some(fx_frame) = super::effects::apply_all(frame.clone(), &layer.effects) {
+                    if let Some(fx_frame) = super::effects::apply_all(frame.clone(), &layer.effects)
+                    {
                         frame = fx_frame;
                     }
                 }
-                
+
                 // Get layer transform attributes
                 let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
                 let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
                 let scl = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
                 let pvt = layer.attrs.get_vec3(A_PIVOT).unwrap_or([0.0, 0.0, 0.0]);
                 // Convert rotation to radians (XYZ Euler angles)
-                let rot_rad = [rot[0].to_radians(), rot[1].to_radians(), rot[2].to_radians()];
+                let rot_rad = [
+                    rot[0].to_radians(),
+                    rot[1].to_radians(),
+                    rot[2].to_radians(),
+                ];
                 let src_size = (frame.width(), frame.height());
-                
+
                 // Apply CPU transform with optional camera projection.
                 // Camera enables perspective/ortho 3D; without camera uses 2D ortho.
                 // Always transform if source size != comp size (frame space centering).
                 let canvas = self.dim();
                 let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt)
                     || view_projection.is_some()
-                    || src_size != canvas;  // Source != output = needs centering
+                    || src_size != canvas; // Source != output = needs centering
 
                 if needs_transform {
                     frame = transform::transform_frame_with_camera(
-                        &frame, canvas, pos, rot_rad, scl, pvt, view_projection
+                        &frame,
+                        canvas,
+                        pos,
+                        rot_rad,
+                        scl,
+                        pvt,
+                        view_projection,
                     );
                 }
-                
+
                 // Build inverse transform matrix for GPU compositor (WIP - not used yet)
                 // Matrix is passed through API but CPU compositor ignores it.
                 // GPU path still uses Z-only rotation until shader is updated.
@@ -1146,48 +1320,81 @@ impl CompNode {
                 } else {
                     transform::build_inverse_matrix_3x3(pos, rot_rad[2], scl, pvt, src_size)
                 };
-                
+
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
 
                 source_frames.push((frame, opacity, blend, inv_matrix));
-                
+
                 // Track highest precision
-                target_format = match (target_format, source_frames.last().unwrap().0.pixel_format()) {
+                target_format = match (
+                    target_format,
+                    source_frames.last().unwrap().0.pixel_format(),
+                ) {
                     (PixelFormat::RgbaF32, _) | (_, PixelFormat::RgbaF32) => PixelFormat::RgbaF32,
                     (PixelFormat::RgbaF16, _) | (_, PixelFormat::RgbaF16) => PixelFormat::RgbaF16,
                     _ => PixelFormat::Rgba8,
                 };
             }
         }
-        
+
         // Use first visible layer's dimensions, fallback to comp dims
         let dim = self.get_first_size().unwrap_or_else(|| self.dim());
-        
+
         // Promote frames to target format
         for (frame, _, _, _) in source_frames.iter_mut() {
             *frame = promote_frame(frame, target_format);
         }
-        
+
         // Add black base with identity transform
         let base = create_base_frame(dim, target_format);
         source_frames.insert(0, (base, 1.0, BlendMode::Normal, identity_matrix));
-        
+
         trace!(
             "CompNode::compose {} frames, dim={}x{}, all_loaded={}",
-            source_frames.len(), dim.0, dim.1, all_loaded
+            source_frames.len(),
+            dim.0,
+            dim.1,
+            all_loaded
         );
-        
-        // Blend with CPU compositor
-        let result = THREAD_COMPOSITOR.with(|comp| {
-            comp.borrow_mut().blend_with_dim(source_frames, dim)
-        });
+
+        // Final raster mix — either thread-local CPU or delegate to PlayaApp/UI if a bridge exists.
+        //
+        // **`GpuBlendReport` vs legacy clone:** when the enqueue channel stops accepting jobs,
+        // ownership of `source_frames` never crossed threads, so Cpu blending reuses buffers without an
+        // extra `Vec`. After a successful send, Ui-side `CompositorType::blend_with_dim` owns frames;
+        // `Completed(None)` means there is nothing to blend back here (parity with GpuCompositor internals).
+        let result = if let Some(bridge) = ctx.gpu_blend_bridge {
+            match bridge.delegate_blend_blocking(source_frames, dim) {
+                GpuBlendReport::Completed(Some(frame)) => Some(frame),
+                GpuBlendReport::Completed(None) => {
+                    trace!(
+                        "Compositor::blend_with_dim returned None on Ui thread — stack already freed there"
+                    );
+                    None
+                }
+                GpuBlendReport::NotQueued(frames) => {
+                    log::warn!(
+                        "GPU blend bridge queue closed — blending stacked frames with worker CpuCompositor"
+                    );
+                    THREAD_COMPOSITOR.with(|comp| comp.borrow_mut().blend_with_dim(frames, dim))
+                }
+                GpuBlendReport::ReplyDisconnected => {
+                    log::error!(
+                        "GPU blend bridge dropped reply endpoint — cannot recover raster stack"
+                    );
+                    None
+                }
+            }
+        } else {
+            THREAD_COMPOSITOR.with(|comp| comp.borrow_mut().blend_with_dim(source_frames, dim))
+        };
 
         // Cleanup compose stack
         COMPOSE_STACK.with(|stack| {
             stack.borrow_mut().remove(&my_uuid);
         });
-        
+
         // Mark incomplete if not all source frames loaded yet
         result.inspect(|frame| {
             if !all_loaded {
@@ -1201,39 +1408,40 @@ impl Node for CompNode {
     fn uuid(&self) -> Uuid {
         self.attrs.get_uuid(A_UUID).unwrap_or_else(Uuid::nil)
     }
-    
+
     fn name(&self) -> &str {
         self.attrs.get_str(A_NAME).unwrap_or("Untitled")
     }
-    
+
     fn node_type(&self) -> &'static str {
         "Comp"
     }
-    
+
     fn attrs(&self) -> &Attrs {
         &self.attrs
     }
-    
+
     fn attrs_mut(&mut self) -> &mut Attrs {
         &mut self.attrs
     }
-    
+
     fn inputs(&self) -> Vec<Uuid> {
         self.layers.iter().map(|l| l.source_uuid()).collect()
     }
-    
+
     fn compute(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
         let (work_start, work_end) = self.work_area();
         if frame_idx < work_start || frame_idx > work_end {
             return None;
         }
-        
+
         // Check dirty: self, layers, or sources (recursive via is_dirty(Some(ctx)))
         let is_dirty = self.is_dirty(Some(ctx));
         // Check cache - if has Loaded frame and no dirty, return cached
         // If cached frame is Loading, recompute to check if sources are now Loaded
         let cached_frame = ctx.cache.get(self.uuid(), frame_idx);
-        let cache_is_loading = cached_frame.as_ref()
+        let cache_is_loading = cached_frame
+            .as_ref()
             .map(|f| f.status() != FrameStatus::Loaded)
             .unwrap_or(false);
 
@@ -1243,18 +1451,20 @@ impl Node for CompNode {
         if is_dirty {
             trace!(
                 "compute() dirty: comp={}, frame={}, dirty={}, cache_loading={}",
-                self.name(), frame_idx, is_dirty, cache_is_loading
+                self.name(),
+                frame_idx,
+                is_dirty,
+                cache_is_loading
             );
         }
 
-        if !needs_recompute
-            && let Some(frame) = cached_frame {
-                return Some(frame);
-            }
-        
+        if !needs_recompute && let Some(frame) = cached_frame {
+            return Some(frame);
+        }
+
         // Compose
         let composed = self.compose_internal(frame_idx, ctx)?;
-        
+
         // Cache result (even if Loading - will be replaced when sources finish)
         ctx.cache.insert(self.uuid(), frame_idx, composed.clone());
 
@@ -1264,10 +1474,10 @@ impl Node for CompNode {
         for layer in &self.layers {
             layer.attrs.clear_dirty();
         }
-        
+
         Some(composed)
     }
-    
+
     fn is_dirty(&self, ctx: Option<&ComputeContext>) -> bool {
         // Check self and layers
         let self_dirty = self.attrs.is_dirty() || self.layers.iter().any(|l| l.attrs.is_dirty());
@@ -1288,28 +1498,33 @@ impl Node for CompNode {
 
         false
     }
-    
+
     fn mark_dirty(&self) {
         self.attrs.mark_dirty()
     }
-    
+
     fn clear_dirty(&self) {
         self.attrs.clear_dirty();
         for layer in &self.layers {
             layer.attrs.clear_dirty();
         }
     }
-    
+
     fn play_range(&self, use_work_area: bool) -> (i32, i32) {
         CompNode::play_range(self, use_work_area)
     }
-    
-    fn bounds(&self, use_trim: bool, selection_only: bool, media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
+
+    fn bounds(
+        &self,
+        use_trim: bool,
+        selection_only: bool,
+        media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> (i32, i32) {
         CompNode::bounds(self, use_trim, selection_only, media)
     }
-    
+
     // frame_count() and dim() use trait defaults from Node
-    
+
     fn preload(&self, center: i32, radius: i32, ctx: &ComputeContext) {
         use super::frame::FrameStatus;
 
@@ -1329,7 +1544,11 @@ impl Node for CompNode {
 
         trace!(
             "CompNode::preload: comp={}, center={}, work_area=[{}..{}], layers={}",
-            self.name(), center, play_start, play_end, self.layers.len()
+            self.name(),
+            center,
+            play_start,
+            play_end,
+            self.layers.len()
         );
 
         // Helper to enqueue compute for a frame
@@ -1348,37 +1567,49 @@ impl Node for CompNode {
             let media = std::sync::Arc::clone(media_arc);
             let epoch = ctx.epoch;
 
-            workers.execute_with_epoch(epoch, Box::new(move || {
-                // Check status in worker thread (not UI)
-                if let Some(status) = cache.get_status(uuid, frame_idx)
-                    && matches!(status, FrameStatus::Loaded | FrameStatus::Loading) {
+            workers.execute_with_epoch(
+                epoch,
+                Box::new(move || {
+                    // Check status in worker thread (not UI)
+                    if let Some(status) = cache.get_status(uuid, frame_idx)
+                        && matches!(status, FrameStatus::Loaded | FrameStatus::Loading)
+                    {
                         return;
                     }
-                
-                // CRITICAL: Take snapshot and release lock immediately!
-                // Without this, workers hold read lock during compute (50-500ms),
-                // blocking UI thread from acquiring write lock → jank.
-                //
-                // Snapshot clones HashMap structure + Arc refcounts (microseconds).
-                // Actual NodeKind data is NOT copied - Arc provides shared ownership.
-                let media_snapshot: std::collections::HashMap<uuid::Uuid, std::sync::Arc<super::node_kind::NodeKind>> = {
-                    let guard = media.read().expect("media lock");
-                    guard.clone() // Clone HashMap of Arcs, not the nodes themselves
-                }; // Lock released here - UI can proceed!
-                
-                let Some(node_arc) = media_snapshot.get(&uuid) else { return; };
-                let Some(comp) = node_arc.as_comp() else { return; };
-                
-                let compute_ctx = ComputeContext {
-                    cache: cache.as_ref(),
-                    cache_arc: None, // Not needed for nested compute
-                    media: &media_snapshot,
-                    media_arc: None,
-                    workers: None,
-                    epoch,
-                };
-                comp.compute(frame_idx, &compute_ctx);
-            }));
+
+                    // CRITICAL: Take snapshot and release lock immediately!
+                    // Without this, workers hold read lock during compute (50-500ms),
+                    // blocking UI thread from acquiring write lock → jank.
+                    //
+                    // Snapshot clones HashMap structure + Arc refcounts (microseconds).
+                    // Actual NodeKind data is NOT copied - Arc provides shared ownership.
+                    let media_snapshot: std::collections::HashMap<
+                        uuid::Uuid,
+                        std::sync::Arc<super::node_kind::NodeKind>,
+                    > = {
+                        let guard = media.read().expect("media lock");
+                        guard.clone() // Clone HashMap of Arcs, not the nodes themselves
+                    }; // Lock released here - UI can proceed!
+
+                    let Some(node_arc) = media_snapshot.get(&uuid) else {
+                        return;
+                    };
+                    let Some(comp) = node_arc.as_comp() else {
+                        return;
+                    };
+
+                    let compute_ctx = ComputeContext {
+                        cache: cache.as_ref(),
+                        cache_arc: None, // Not needed for nested compute
+                        media: &media_snapshot,
+                        media_arc: None,
+                        workers: None,
+                        epoch,
+                        gpu_blend_bridge: None,
+                    };
+                    comp.compute(frame_idx, &compute_ctx);
+                }),
+            );
         };
 
         // Spiral from center up to radius
@@ -1408,61 +1639,86 @@ impl CompNode {
     pub fn set_event_emitter(&mut self, _emitter: crate::core::event_bus::CompEventEmitter) {
         // No-op: events are handled through Project-level event bus
     }
-    
+
     /// Stub: emit attrs changed event (legacy API)
     pub fn emit_attrs_changed(&self) {
         // No-op: dirty flags handle this now
         self.mark_dirty();
     }
-    
+
     /// Signal background preload for frames around current position.
     ///
     /// Triggers preload for all source FileNodes in layers.
-    /// Uses Node::preload() trait method which implements spiral/forward strategies.
+    /// Uses [`Node::preload`](crate::entities::node::Node) (spiral/forward strategies inside each node).
+    ///
+    /// - **`gpu_blend_bridge`**: when the project prefers the Gpu backend for
+    ///   [`CompositorType`](super::compositor::CompositorType) and the host exposes a bridge, pass `Some(&bridge)`
+    ///   so warmup compositor hits the same offload path as interactive playback.
+    ///
+    ///   Worker-local nested preload closures still inject `gpu_blend_bridge: None` into their inner
+    ///   [`ComputeContext`](super::node::ComputeContext) — **this parameter does not recurse Gpu hand-off**.
     pub fn signal_preload(
         &self,
         workers: &crate::core::workers::Workers,
         project: &crate::entities::Project,
+        gpu_blend_bridge: Option<&super::gpu_blend_bridge::GpuBlendBridge>,
         radius: i32,
     ) {
+        use super::compositor::CompositorType;
         use super::node::ComputeContext;
-        
+
         // Nothing to preload for empty comp
         if self.layers.is_empty() {
             return;
         }
-        
+
         // Get cache and epoch
         let global_cache = match &project.global_cache {
             Some(cache) => cache,
             None => return,
         };
-        
-        let epoch = project.cache_manager()
+
+        let epoch = project
+            .cache_manager()
             .map(|m| m.current_epoch())
             .unwrap_or(0);
-        
+
         let center = self.frame();
-        
+
         let (play_start, play_end) = self.work_area();
         if play_end < play_start {
             return;
         }
-        
+
         trace!(
             "signal_preload: comp={}, center={}, work_area=[{}..{}], layers={}",
-            self.name(), center, play_start, play_end, self.layers.len()
+            self.name(),
+            center,
+            play_start,
+            play_end,
+            self.layers.len()
         );
-        
+
+        let bridge_for_ctx = match *project
+            .compositor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            CompositorType::Gpu(_) => gpu_blend_bridge,
+            CompositorType::Cpu(_) => None,
+        };
+
         // Build ComputeContext and delegate to preload()
         let media = project.media.read().expect("media lock");
         let ctx = ComputeContext {
             cache: global_cache.as_ref(),
-            cache_arc: Some(std::sync::Arc::clone(global_cache) as std::sync::Arc<dyn super::traits::FrameCache + Send + Sync>),
+            cache_arc: Some(std::sync::Arc::clone(global_cache)
+                as std::sync::Arc<dyn super::traits::FrameCache + Send + Sync>),
             media: &media,
             media_arc: Some(std::sync::Arc::clone(&project.media)),
             workers: Some(workers),
             epoch,
+            gpu_blend_bridge: bridge_for_ctx,
         };
 
         self.preload(center, radius, &ctx);
@@ -1476,10 +1732,11 @@ fn promote_frame(frame: &Frame, target: PixelFormat) -> Frame {
         (PixelFormat::Rgba8, PixelFormat::Rgba8)
         | (PixelFormat::RgbaF16, PixelFormat::RgbaF16)
         | (PixelFormat::RgbaF32, PixelFormat::RgbaF32) => frame.clone(),
-        
+
         (PixelFormat::Rgba8, PixelFormat::RgbaF16) => {
             if let PixelBuffer::U8(buf) = &*frame.buffer() {
-                let out: Vec<f16> = buf.iter()
+                let out: Vec<f16> = buf
+                    .iter()
                     .map(|&b| f16::from_f32(b as f32 / 255.0))
                     .collect();
                 Frame::from_f16_buffer(out, frame.width(), frame.height())
@@ -1487,18 +1744,16 @@ fn promote_frame(frame: &Frame, target: PixelFormat) -> Frame {
                 frame.clone()
             }
         }
-        
+
         (PixelFormat::Rgba8, PixelFormat::RgbaF32) => {
             if let PixelBuffer::U8(buf) = &*frame.buffer() {
-                let out: Vec<f32> = buf.iter()
-                    .map(|&b| b as f32 / 255.0)
-                    .collect();
+                let out: Vec<f32> = buf.iter().map(|&b| b as f32 / 255.0).collect();
                 Frame::from_f32_buffer(out, frame.width(), frame.height())
             } else {
                 frame.clone()
             }
         }
-        
+
         (PixelFormat::RgbaF16, PixelFormat::RgbaF32) => {
             if let PixelBuffer::F16(buf) = &*frame.buffer() {
                 let out: Vec<f32> = buf.iter().map(|f| f.to_f32()).collect();
@@ -1507,7 +1762,7 @@ fn promote_frame(frame: &Frame, target: PixelFormat) -> Frame {
                 frame.clone()
             }
         }
-        
+
         _ => frame.clone(),
     }
 }
@@ -1551,7 +1806,7 @@ mod tests {
         assert_eq!(node.fps(), 24.0);
         assert!(node.layers.is_empty());
     }
-    
+
     #[test]
     fn test_layer_creation() {
         let source_uuid = Uuid::new_v4();
@@ -1560,22 +1815,22 @@ mod tests {
         assert_eq!(layer.start(), 10);
         assert_eq!(layer.end(), 59); // 10 + 50 - 1
     }
-    
+
     #[test]
     fn test_add_remove_layer() {
         let mut node = CompNode::new("Test", 0, 100, 24.0);
         let source_uuid = Uuid::new_v4();
         let layer = Layer::new(source_uuid, "Layer 1", 0, 50, (1920, 1080));
         let layer_uuid = layer.uuid();
-        
+
         node.add_layer(layer, None);
         assert_eq!(node.layers.len(), 1);
-        
+
         let removed = node.remove_layer(layer_uuid);
         assert!(removed.is_some());
         assert!(node.layers.is_empty());
     }
-    
+
     #[test]
     fn test_node_trait() {
         let node = CompNode::new("Test", 0, 100, 24.0);

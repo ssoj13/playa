@@ -2,9 +2,7 @@ use eframe::egui;
 use egui_ltreeview::TreeView;
 use std::collections::HashMap;
 
-use super::prefs_events::{
-    CompositorBackend, CompositorBackendChangedEvent, SetGizmoPrefsEvent,
-};
+use super::prefs_events::{CompositorBackend, CompositorBackendChangedEvent, SetGizmoPrefsEvent};
 
 /// Settings categories
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -89,13 +87,13 @@ pub struct AppSettings {
     pub show_tooltips: bool,      // Show tooltips on toolbar controls (2s delay)
     pub dark_mode: bool,
     pub font_size: f32,
-    pub timeline_layer_height: f32,       // Layer row height in timeline (default 32.0)
-    pub timeline_name_column_width: f32,  // Name column width in outline (default 150.0)
+    pub timeline_layer_height: f32, // Layer row height in timeline (default 32.0)
+    pub timeline_name_column_width: f32, // Name column width in outline (default 150.0)
     pub timeline_outline_top_offset: f32, // Fine-tune outline vertical alignment with canvas
     pub timeline_snap_enabled: bool,
     pub timeline_lock_work_area: bool,
     pub viewport_hover_highlight: bool,
-    pub tools_selection_highlight: bool,  // Show highlight for selected layer in Move/Rotate/Scale modes
+    pub tools_selection_highlight: bool, // Show highlight for selected layer in Move/Rotate/Scale modes
     pub timeline_hover_highlight: bool,
     pub hover_stroke_width: f32,
     pub hover_corner_length: f32,
@@ -107,8 +105,8 @@ pub struct AppSettings {
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
 
     // Cache & Memory
-    pub cache_memory_percent: f32,      // 25-95% of available (default 75%)
-    pub reserve_system_memory_gb: f32,  // Reserve for system (default 2.0 GB)
+    pub cache_memory_percent: f32, // 25-95% of available (default 75%)
+    pub reserve_system_memory_gb: f32, // Reserve for system (default 2.0 GB)
     pub cache_strategy: playa_engine::entities::CacheStrategy, // Caching strategy (LastOnly or All)
 
     // Compositor backend (CPU or GPU)
@@ -186,7 +184,10 @@ fn render_webserver_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.horizontal(|ui| {
         ui.label("Port:");
         let mut port = settings.api_server_port.unwrap_or(9876) as i32;
-        if ui.add(egui::DragValue::new(&mut port).range(1024..=65535)).changed() {
+        if ui
+            .add(egui::DragValue::new(&mut port).range(1024..=65535))
+            .changed()
+        {
             settings.api_server_port = Some(port as u16);
         }
     });
@@ -275,17 +276,37 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add_space(16.0);
 
     ui.checkbox(&mut settings.dark_mode, "Dark Mode");
-    ui.checkbox(&mut settings.show_tooltips, "Show Tooltips (2s delay on toolbar controls)");
-    ui.checkbox(&mut settings.viewport_hover_highlight, "Viewport hover highlight (Select mode)");
-    ui.checkbox(&mut settings.tools_selection_highlight, "Tools selection highlight (Move/Rotate/Scale)");
-    ui.checkbox(&mut settings.timeline_hover_highlight, "Timeline hover highlight");
+    ui.checkbox(
+        &mut settings.show_tooltips,
+        "Show Tooltips (2s delay on toolbar controls)",
+    );
+    ui.checkbox(
+        &mut settings.viewport_hover_highlight,
+        "Viewport hover highlight (Select mode)",
+    );
+    ui.checkbox(
+        &mut settings.tools_selection_highlight,
+        "Tools selection highlight (Move/Rotate/Scale)",
+    );
+    ui.checkbox(
+        &mut settings.timeline_hover_highlight,
+        "Timeline hover highlight",
+    );
     ui.horizontal(|ui| {
         ui.label("Hover stroke:");
-        ui.add(egui::Slider::new(&mut settings.hover_stroke_width, 1.0..=5.0).suffix("px").step_by(0.5));
+        ui.add(
+            egui::Slider::new(&mut settings.hover_stroke_width, 1.0..=5.0)
+                .suffix("px")
+                .step_by(0.5),
+        );
     });
     ui.horizontal(|ui| {
         ui.label("Hover corner:");
-        ui.add(egui::Slider::new(&mut settings.hover_corner_length, 5.0..=50.0).suffix("px").step_by(1.0));
+        ui.add(
+            egui::Slider::new(&mut settings.hover_corner_length, 5.0..=50.0)
+                .suffix("px")
+                .step_by(1.0),
+        );
     });
     ui.horizontal(|ui| {
         ui.label("Hover opacity:");
@@ -321,10 +342,7 @@ fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
                 settings.preload_radius = 100;
             }
         } else {
-            ui.add(
-                egui::Slider::new(&mut settings.preload_radius, 10..=500)
-                    .step_by(10.0),
-            );
+            ui.add(egui::Slider::new(&mut settings.preload_radius, 10..=500).step_by(10.0));
             if ui.small_button("All").clicked() {
                 settings.preload_radius = -1;
             }
@@ -366,8 +384,16 @@ fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.label("Cache Strategy:");
     ui.horizontal(|ui| {
         use playa_engine::entities::CacheStrategy;
-        ui.radio_value(&mut settings.cache_strategy, CacheStrategy::All, "All Frames");
-        ui.radio_value(&mut settings.cache_strategy, CacheStrategy::LastOnly, "Last Only");
+        ui.radio_value(
+            &mut settings.cache_strategy,
+            CacheStrategy::All,
+            "All Frames",
+        );
+        ui.radio_value(
+            &mut settings.cache_strategy,
+            CacheStrategy::LastOnly,
+            "Last Only",
+        );
     });
     ui.label("All Frames: Maximum performance, more memory usage.");
     ui.label("Last Only: Minimal memory, only last accessed frame per comp.");
@@ -416,14 +442,20 @@ fn render_gizmo_settings(
     ui.horizontal(|ui| {
         ui.label("Inactive alpha");
         changed |= ui
-            .add(egui::Slider::new(&mut next.pref_manip_inactive_alpha, 0.0..=1.0))
+            .add(egui::Slider::new(
+                &mut next.pref_manip_inactive_alpha,
+                0.0..=1.0,
+            ))
             .changed();
     });
 
     ui.horizontal(|ui| {
         ui.label("Highlight alpha");
         changed |= ui
-            .add(egui::Slider::new(&mut next.pref_manip_highlight_alpha, 0.0..=1.0))
+            .add(egui::Slider::new(
+                &mut next.pref_manip_highlight_alpha,
+                0.0..=1.0,
+            ))
             .changed();
     });
 
@@ -445,16 +477,25 @@ fn render_compositing_settings(
     let prev_backend = settings.compositor_backend;
     ui.horizontal(|ui| {
         ui.label("Compositor:");
-        ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Cpu, "CPU");
-        ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Gpu, "GPU");
+        ui.radio_value(
+            &mut settings.compositor_backend,
+            CompositorBackend::Cpu,
+            "CPU",
+        );
+        ui.radio_value(
+            &mut settings.compositor_backend,
+            CompositorBackend::Gpu,
+            "GPU",
+        );
     });
     // Emit event if changed
     if settings.compositor_backend != prev_backend
-        && let Some(bus) = event_bus {
-            bus.emit(CompositorBackendChangedEvent {
-                backend: settings.compositor_backend,
-            });
-        }
+        && let Some(bus) = event_bus
+    {
+        bus.emit(CompositorBackendChangedEvent {
+            backend: settings.compositor_backend,
+        });
+    }
     ui.label("GPU compositor uses OpenGL for 10-50x faster multi-layer blending.");
     ui.label("Requires OpenGL 3.0+. Falls back to CPU on errors.");
 
@@ -535,9 +576,15 @@ pub fn render_settings_window(
                                 SettingsCategory::General => render_general_settings(ui, settings),
                                 SettingsCategory::UI => render_ui_settings(ui, settings),
                                 SettingsCategory::Cache => render_cache_settings(ui, settings),
-                                SettingsCategory::Gizmo => render_gizmo_settings(ui, project, event_bus),
-                                SettingsCategory::Compositing => render_compositing_settings(ui, settings, event_bus),
-                                SettingsCategory::WebServer => render_webserver_settings(ui, settings),
+                                SettingsCategory::Gizmo => {
+                                    render_gizmo_settings(ui, project, event_bus)
+                                }
+                                SettingsCategory::Compositing => {
+                                    render_compositing_settings(ui, settings, event_bus)
+                                }
+                                SettingsCategory::WebServer => {
+                                    render_webserver_settings(ui, settings)
+                                }
                             }
                         });
                     });

@@ -14,7 +14,10 @@ pub fn flip_y_vec2(v: egui::Vec2) -> egui::Vec2 {
 }
 
 /// Convert screen-space pos to centered viewport space (+Y up).
-pub fn screen_to_viewport_centered(screen_pos: egui::Vec2, viewport_size: egui::Vec2) -> egui::Vec2 {
+pub fn screen_to_viewport_centered(
+    screen_pos: egui::Vec2,
+    viewport_size: egui::Vec2,
+) -> egui::Vec2 {
     let local = screen_pos - viewport_size * 0.5;
     flip_y_vec2(local)
 }

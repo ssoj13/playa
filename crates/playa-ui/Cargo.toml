@@ -12,24 +12,24 @@ path = "src/lib.rs"
 [dependencies]
 playa-engine = { path = "../playa-engine" }
 playa-events = { path = "../playa-events" }
-bytemuck = "1.25"
-eframe = { version = "0.33", features = ["persistence"] }
+playa-io = { path = "../playa-io", default-features = false }
+bytemuck = { workspace = true }
+eframe = { workspace = true }
 egui_dnd = "0.14"
-egui_dock = { version = "0.18", features = ["serde"] }
+egui_dock = { workspace = true }
 egui_extras = "0.33"
-egui_glow = "0.33"
+egui_glow = { workspace = true }
 egui_ltreeview = { version = "0.6.1", features = ["persistence"] }
 egui-snarl = { version = "0.9", features = ["serde"] }
-glam = "0.32"
-half = "2.7"
-image = { version = "0.25", features = ["png", "jpeg", "tiff", "tga", "hdr"] }
-log = "0.4"
-playa-ffmpeg = { version = "8.0.3", features = ["static"] }
+glam = { workspace = true }
+half = { workspace = true }
+image = { workspace = true }
+log = { workspace = true }
 rfd = "0.17"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 transform-gizmo-egui = "0.8"
-uuid = { version = "1.22", features = ["v4", "serde"] }
-vfx-core = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main" }
-vfx-exr = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["htj2k"] }
-vfx-io = { git = "ssh://git@github.com/ssoj13/vfx-rs.git", branch = "main", features = ["exr", "htj2k"] }
+uuid = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+playa-io = { path = "../playa-io", features = ["exr", "ffmpeg"] }

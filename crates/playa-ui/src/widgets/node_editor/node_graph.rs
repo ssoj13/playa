@@ -61,8 +61,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use playa_engine::core::event_bus::BoxedEvent;
-use playa_engine::entities::{AttrValue, Comp, Project};
 use playa_engine::entities::node::Node;
+use playa_engine::entities::{AttrValue, Comp, Project};
 // Note: get_selected_nodes could be used for fit-selected in future
 use playa_engine::entities::Attrs;
 
@@ -85,13 +85,22 @@ struct CompNodeViewer<'a> {
 
 impl<'a> CompNodeViewer<'a> {
     /// Get node by UUID. Returns Arc for cheap cloning.
-    fn get_node(&self, source_uuid: Uuid) -> Option<std::sync::Arc<playa_engine::entities::NodeKind>> {
+    fn get_node(
+        &self,
+        source_uuid: Uuid,
+    ) -> Option<std::sync::Arc<playa_engine::entities::NodeKind>> {
         self.project.media.read().ok()?.get(&source_uuid).cloned()
     }
-    
+
     /// Get comp by UUID. Clones CompNode (metadata only, frames stay in cache).
     fn get_comp(&self, source_uuid: Uuid) -> Option<Comp> {
-        self.project.media.read().ok()?.get(&source_uuid).and_then(|n| n.as_comp()).cloned()
+        self.project
+            .media
+            .read()
+            .ok()?
+            .get(&source_uuid)
+            .and_then(|n| n.as_comp())
+            .cloned()
     }
 }
 
@@ -114,22 +123,12 @@ impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
             .unwrap_or(0)
     }
 
-    fn show_input(
-        &mut self,
-        pin: &InPin,
-        ui: &mut Ui,
-        _snarl: &mut Snarl<CompNode>,
-    ) -> PinInfo {
+    fn show_input(&mut self, pin: &InPin, ui: &mut Ui, _snarl: &mut Snarl<CompNode>) -> PinInfo {
         ui.label(format!("L{}", pin.id.input));
         PinInfo::circle().with_fill(Color32::from_rgb(100, 180, 255))
     }
 
-    fn show_output(
-        &mut self,
-        _pin: &OutPin,
-        ui: &mut Ui,
-        _snarl: &mut Snarl<CompNode>,
-    ) -> PinInfo {
+    fn show_output(&mut self, _pin: &OutPin, ui: &mut Ui, _snarl: &mut Snarl<CompNode>) -> PinInfo {
         ui.label("Out");
         PinInfo::circle().with_fill(Color32::from_rgb(180, 180, 180))
     }
@@ -190,7 +189,9 @@ const VERTICAL_SPACING: f32 = 70.0;
 /// Persistent state for node editor panel.
 ///
 /// Helper for serde default
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// # Serialization
 ///
@@ -299,7 +300,8 @@ impl NodeEditorState {
         let media = project.media.read().expect("media lock");
 
         // Get comp name for logging (if available)
-        let comp_name = media.get(&root_uuid)
+        let comp_name = media
+            .get(&root_uuid)
             .map(|n| n.name().to_string())
             .unwrap_or_else(|| "Unknown".to_string());
 
@@ -309,7 +311,10 @@ impl NodeEditorState {
             root_uuid,
             media.len()
         );
-        log::trace!("NodeEditor: comp is in media? {}", media.contains_key(&root_uuid));
+        log::trace!(
+            "NodeEditor: comp is in media? {}",
+            media.contains_key(&root_uuid)
+        );
 
         // Phase 1: Collect all nodes recursively with their depth and children count
         let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
@@ -408,7 +413,9 @@ impl NodeEditorState {
         }
 
         // Find root - use the comp_uuid from state
-        let Some(comp_uuid) = self.comp_uuid else { return };
+        let Some(comp_uuid) = self.comp_uuid else {
+            return;
+        };
         let media = project.media.read().expect("media lock");
 
         // Collect tree info
@@ -460,15 +467,17 @@ impl NodeEditorState {
         // Layer positions - via events
         for (&instance_uuid, &pos) in &new_positions {
             if instance_uuid != comp_uuid {
-                dispatch(Box::new(playa_engine::entities::comp_events::SetLayerAttrsEvent {
-                    comp_uuid,
-                    layer_uuids: vec![instance_uuid],
-                    attrs: vec![(
-                        "node_pos".to_string(),
-                        serde_json::to_value(AttrValue::Vec3([pos.x, pos.y, 0.0]))
-                            .unwrap_or(serde_json::Value::Null),
-                    )],
-                }));
+                dispatch(Box::new(
+                    playa_engine::entities::comp_events::SetLayerAttrsEvent {
+                        comp_uuid,
+                        layer_uuids: vec![instance_uuid],
+                        attrs: vec![(
+                            "node_pos".to_string(),
+                            serde_json::to_value(AttrValue::Vec3([pos.x, pos.y, 0.0]))
+                                .unwrap_or(serde_json::Value::Null),
+                        )],
+                    },
+                ));
             }
         }
 
@@ -486,20 +495,22 @@ struct NodeInfo {
 
 fn load_node_pos(project: &Project, comp_uuid: Uuid, instance_uuid: Uuid, default: Pos2) -> Pos2 {
     // Load node position from comp attrs (root) or layer attrs (children)
-    let maybe_pos = project.with_comp(comp_uuid, |comp| {
-        let maybe_attr = if instance_uuid == comp.uuid() {
-            comp.attrs.get("node_pos")
-        } else {
-            comp.layers_attrs_get(&instance_uuid)
-                .and_then(|a| a.get("node_pos"))
-        };
-        if let Some(AttrValue::Vec3([x, y, _])) = maybe_attr {
-            Some(Pos2::new(*x, *y))
-        } else {
-            None
-        }
-    }).flatten();
-    
+    let maybe_pos = project
+        .with_comp(comp_uuid, |comp| {
+            let maybe_attr = if instance_uuid == comp.uuid() {
+                comp.attrs.get("node_pos")
+            } else {
+                comp.layers_attrs_get(&instance_uuid)
+                    .and_then(|a| a.get("node_pos"))
+            };
+            if let Some(AttrValue::Vec3([x, y, _])) = maybe_attr {
+                Some(Pos2::new(*x, *y))
+            } else {
+                None
+            }
+        })
+        .flatten();
+
     maybe_pos.unwrap_or(default)
 }
 
@@ -608,7 +619,7 @@ fn collect_tree_recursive(
 /// 4. Renders via egui-snarl with default styling
 ///
 /// Currently read-only. Future: dispatch LayerAddedEvent etc on graph edits.
-/// 
+///
 /// IMPORTANT: Takes comp_uuid instead of &Comp to avoid deadlock.
 /// This function calls modify_comp() internally which needs write lock,
 /// so caller must NOT hold a read lock (e.g., from with_comp).
@@ -636,10 +647,13 @@ pub fn render_node_editor(
     if state.fit_all_requested || state.fit_selected_requested {
         state.fit_all_requested = false;
         state.fit_selected_requested = false;
-        
+
         // Increment counter to force viewport reset (egui-snarl will auto-center on all nodes)
         state.viewport_reset_counter += 1;
-        log::trace!("[NODE_EDITOR] fit viewport requested, reset_counter={}", state.viewport_reset_counter);
+        log::trace!(
+            "[NODE_EDITOR] fit viewport requested, reset_counter={}",
+            state.viewport_reset_counter
+        );
     }
 
     // Handle layout request
@@ -707,9 +721,7 @@ pub fn render_node_editor(
 
     // Use counter in id to force viewport reset when fit is requested
     let snarl_id = format!("comp_node_editor_{}", state.viewport_reset_counter);
-    state
-        .snarl
-        .show(&mut viewer, &style, &snarl_id, ui);
+    state.snarl.show(&mut viewer, &style, &snarl_id, ui);
 
     // Persist moved nodes via event bus (comp root uses direct attr update)
     if let Some(comp_uuid) = state.comp_uuid {
@@ -736,15 +748,17 @@ pub fn render_node_editor(
         if !moved_layers.is_empty() {
             // Per-layer positions; send separate events to keep per-node values
             for (layer_uuid, pos) in moved_layers {
-                dispatch(Box::new(playa_engine::entities::comp_events::SetLayerAttrsEvent {
-                    comp_uuid,
-                    layer_uuids: vec![layer_uuid],
-                    attrs: vec![(
-                        "node_pos".to_string(),
-                        serde_json::to_value(AttrValue::Vec3([pos.x, pos.y, 0.0]))
-                            .unwrap_or(serde_json::Value::Null),
-                    )],
-                }));
+                dispatch(Box::new(
+                    playa_engine::entities::comp_events::SetLayerAttrsEvent {
+                        comp_uuid,
+                        layer_uuids: vec![layer_uuid],
+                        attrs: vec![(
+                            "node_pos".to_string(),
+                            serde_json::to_value(AttrValue::Vec3([pos.x, pos.y, 0.0]))
+                                .unwrap_or(serde_json::Value::Null),
+                        )],
+                    },
+                ));
             }
         }
     }

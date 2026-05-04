@@ -7,10 +7,10 @@
 //! - Screenshot capture (take_screenshot, capture_raw_frame)
 
 use super::PlayaApp;
+use crate::server::ApiCommand;
 use playa_engine::core::player_events::*;
 use playa_engine::entities::frame::{PixelBuffer, TonemapMode};
 use playa_engine::entities::node::Node;
-use crate::server::ApiCommand;
 
 use eframe::egui;
 use image::{ImageBuffer, Rgba};
@@ -49,15 +49,16 @@ impl PlayaApp {
         {
             let mut comp = self.api_state.comp.write().unwrap();
             *comp = self.player.active_comp().and_then(|uuid| {
-                self.project.with_comp(uuid, |c| crate::server::CompSnapshot {
-                    uuid,
-                    name: c.name().to_string(),
-                    width: c.dim().0 as u32,
-                    height: c.dim().1 as u32,
-                    duration: c.frame_count(),
-                    in_frame: c._in(),
-                    out_frame: c._out(),
-                })
+                self.project
+                    .with_comp(uuid, |c| crate::server::CompSnapshot {
+                        uuid,
+                        name: c.name().to_string(),
+                        width: c.dim().0 as u32,
+                        height: c.dim().1 as u32,
+                        duration: c.frame_count(),
+                        in_frame: c._in(),
+                        out_frame: c._out(),
+                    })
             });
         }
 
@@ -106,7 +107,8 @@ impl PlayaApp {
                 ApiCommand::SetFps(fps) => {
                     self.player.set_fps_base(fps);
                     if let Some(comp_uuid) = self.player.active_comp() {
-                        self.project.modify_comp(comp_uuid, |comp| comp.set_fps(fps));
+                        self.project
+                            .modify_comp(comp_uuid, |comp| comp.set_fps(fps));
                     }
                 }
                 ApiCommand::ToggleLoop => {
@@ -115,7 +117,10 @@ impl PlayaApp {
                 ApiCommand::LoadSequence(path) => {
                     let _ = self.load_sequences(vec![std::path::PathBuf::from(path)]);
                 }
-                ApiCommand::EmitEvent { event_type, payload } => {
+                ApiCommand::EmitEvent {
+                    event_type,
+                    payload,
+                } => {
                     // Dispatch common events by name
                     match event_type.as_str() {
                         "TogglePlayPause" => self.event_bus.emit(TogglePlayPauseEvent),
@@ -130,7 +135,10 @@ impl PlayaApp {
                         }
                     }
                 }
-                ApiCommand::Screenshot { viewport_only, response } => {
+                ApiCommand::Screenshot {
+                    viewport_only,
+                    response,
+                } => {
                     self.take_screenshot(viewport_only, response);
                 }
                 ApiCommand::Exit => {
@@ -151,9 +159,17 @@ impl PlayaApp {
     /// viewport_only=true: full window via glReadPixels (includes UI)
     /// viewport_only=false: raw frame data only (no UI)
     /// Both go through paint callback for unified async handling.
-    pub fn take_screenshot(&mut self, viewport_only: bool, response: crossbeam_channel::Sender<Result<Vec<u8>, String>>) {
+    pub fn take_screenshot(
+        &mut self,
+        viewport_only: bool,
+        response: crossbeam_channel::Sender<Result<Vec<u8>, String>>,
+    ) {
         self.pending_screenshots.push((viewport_only, response));
-        log::trace!("Screenshot request queued ({} waiting), viewport_only={}", self.pending_screenshots.len(), viewport_only);
+        log::trace!(
+            "Screenshot request queued ({} waiting), viewport_only={}",
+            self.pending_screenshots.len(),
+            viewport_only
+        );
     }
 
     /// Capture raw frame data (no GL, immediate).
@@ -170,7 +186,8 @@ impl PlayaApp {
         let rgba_data: Vec<u8> = match buffer.as_ref() {
             PixelBuffer::U8(data) => data.clone(),
             PixelBuffer::F16(_) | PixelBuffer::F32(_) => {
-                let tonemapped = frame.tonemap(TonemapMode::ACES)
+                let tonemapped = frame
+                    .tonemap(TonemapMode::ACES)
                     .map_err(|e| format!("Tonemap failed: {}", e))?;
                 match tonemapped.buffer().as_ref() {
                     PixelBuffer::U8(data) => data.clone(),
@@ -179,7 +196,7 @@ impl PlayaApp {
             }
         };
 
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = 
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
             ImageBuffer::from_raw(width as u32, height as u32, rgba_data)
                 .ok_or_else(|| "Failed to create image buffer".to_string())?;
 
@@ -188,14 +205,21 @@ impl PlayaApp {
         let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
         let mut cursor = std::io::Cursor::new(&mut jpeg_bytes);
         let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90);
-        encoder.encode(
-            rgb_img.as_raw(),
-            rgb_img.width(),
-            rgb_img.height(),
-            image::ExtendedColorType::Rgb8
-        ).map_err(|e| format!("JPEG encoding failed: {}", e))?;
+        encoder
+            .encode(
+                rgb_img.as_raw(),
+                rgb_img.width(),
+                rgb_img.height(),
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|e| format!("JPEG encoding failed: {}", e))?;
 
-        log::info!("Raw frame screenshot: {}x{}, {} bytes", width, height, jpeg_bytes.len());
+        log::info!(
+            "Raw frame screenshot: {}x{}, {} bytes",
+            width,
+            height,
+            jpeg_bytes.len()
+        );
         Ok(jpeg_bytes)
     }
 }

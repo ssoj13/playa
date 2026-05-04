@@ -4,11 +4,11 @@
 //! are bridged to the EventBus; renderers read `TimelineConfig`/`TimelineState`
 //! to draw rows/bars and handle interactions.
 
-use playa_engine::entities::Attrs;
 use eframe::egui::{self, Pos2};
+use playa_engine::entities::Attrs;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Clipboard entry for copied layers
 /// Stores source UUID and a clone of the layer attributes
@@ -58,8 +58,8 @@ impl TimelineConfig {
 /// Timeline state (persistent between frames)
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TimelineState {
-    pub zoom: f32,                     // Zoom multiplier (1.0 = default, range 0.1..4.0)
-    pub pan_offset: f32,               // Horizontal scroll offset in frames
+    pub zoom: f32,       // Zoom multiplier (1.0 = default, range 0.1..4.0)
+    pub pan_offset: f32, // Horizontal scroll offset in frames
     #[serde(skip)]
     pub drag_state: Option<GlobalDragState>, // Active drag operation (centralized for all drag types)
     pub snap_enabled: bool,
@@ -75,7 +75,7 @@ pub struct TimelineState {
     pub clipboard: Vec<ClipboardLayer>, // Copied layers for Ctrl-C/Ctrl-V
     #[serde(skip)]
     pub(super) geom_cache: HashMap<usize, LayerGeom>, // Cached layer geometry for interactions
-    
+
     // === Layout rename dialog state ===
     /// Whether the layout rename dialog is currently open.
     /// Triggered by clicking the rename button (pencil icon) in toolbar.
@@ -101,7 +101,10 @@ impl std::fmt::Debug for TimelineState {
             .field("view_mode", &self.view_mode)
             .field("last_canvas_width", &self.last_canvas_width)
             .field("outline_width", &self.outline_width)
-            .field("hatch_texture", &self.hatch_texture.as_ref().map(|_| "TextureHandle"))
+            .field(
+                "hatch_texture",
+                &self.hatch_texture.as_ref().map(|_| "TextureHandle"),
+            )
             .field("clipboard", &format!("{} layers", self.clipboard.len()))
             .field("geom_cache", &format!("{} entries", self.geom_cache.len()))
             .field("rename_dialog_open", &self.rename_dialog_open)
@@ -268,8 +271,7 @@ impl LayerGeom {
 
         let visible_bar_rect = if play_start <= play_end {
             let visible_bar_x_start = frame_to_screen_x(play_start as f32, timeline_rect.min.x);
-            let visible_bar_x_end =
-                frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x);
+            let visible_bar_x_end = frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x);
             Some(Rect::from_min_max(
                 Pos2::new(visible_bar_x_start, child_y + 4.0),
                 Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),

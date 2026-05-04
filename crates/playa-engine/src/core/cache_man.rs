@@ -6,8 +6,8 @@
 //! **Used by**: App (global singleton), Comp (per-comp cache tracking)
 
 use log::{info, trace};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use sysinfo::System;
 
 /// Preload strategy for frame loading
@@ -219,5 +219,4 @@ mod tests {
         let (usage, _) = manager.mem();
         assert_eq!(usage, 512 * 1024);
     }
-
 }

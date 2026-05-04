@@ -5,10 +5,16 @@ const EXR_BACKEND: &str = "vfx-exr (pure Rust, all compressions)";
 
 // Build version with backend info
 const VERSION_INFO: &str = const_format::concatcp!(
-    env!("CARGO_PKG_VERSION"), "\n",
-    "EXR:    ", EXR_BACKEND, "\n",
+    env!("CARGO_PKG_VERSION"),
+    "\n",
+    "EXR:    ",
+    EXR_BACKEND,
+    "\n",
     "Video:  playa-ffmpeg 8.0 (static)\n",
-    "Target: ", std::env::consts::ARCH, "-", std::env::consts::OS
+    "Target: ",
+    std::env::consts::ARCH,
+    "-",
+    std::env::consts::OS
 );
 
 /// Image sequence player

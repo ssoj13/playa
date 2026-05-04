@@ -21,13 +21,14 @@ impl eframe::App for PlayaApp {
     /// Flow:
     /// 1. Handle API exit request
     /// 2. Start API server (lazy init)
-    /// 3. Update compositor backend
-    /// 4. Apply theme and font settings
-    /// 5. Process player updates and events
-    /// 6. Handle dropped files
-    /// 7. Render UI (dock panels, dialogs)
-    /// 8. Handle keyboard input
-    /// 9. Handle screenshots
+    /// 3. Update compositor backend (sync GL + `CompositorType`)
+    /// 4. Drain `GpuBlendBridge` (`PlayaApp::drain_gpu_blend_queue`) so Gpu workers unblock
+    /// 5. Apply theme and font settings
+    /// 6. Process player updates and events
+    /// 7. Handle dropped files
+    /// 8. Render UI (dock panels, dialogs)
+    /// 9. Handle keyboard input
+    /// 10. Handle screenshots
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Reset node editor flags each frame - will be set if tab is rendered
         // Handle exit request from REST API
@@ -45,6 +46,8 @@ impl eframe::App for PlayaApp {
         if let Some(gl) = frame.gl() {
             self.update_compositor_backend(gl);
         }
+        // Must follow compositor sync: workers blocked on GpuBlendBridge need the freshest GL+FBO state.
+        self.drain_gpu_blend_queue(ctx);
 
         // NOTE: Events processed after player.update() to catch events from player too
         // NOTE: Dirty checking is handled automatically by CompNode::compute()
@@ -116,7 +119,8 @@ impl eframe::App for PlayaApp {
 
         if (mem_fraction - self.applied_mem_fraction).abs() > f64::EPSILON {
             // Update cache manager with new limits (now lock-free via atomic)
-            self.cache_manager.set_memory_limit(mem_fraction, reserve_gb);
+            self.cache_manager
+                .set_memory_limit(mem_fraction, reserve_gb);
             self.applied_mem_fraction = mem_fraction;
         }
 
@@ -137,7 +141,8 @@ impl eframe::App for PlayaApp {
         self.handle_api_commands();
 
         // Sync preload delay from settings and check debounced preloader
-        self.debounced_preloader.set_delay(self.settings.preload_delay_ms);
+        self.debounced_preloader
+            .set_delay(self.settings.preload_delay_ms);
         if let Some(_comp_uuid) = self.debounced_preloader.tick() {
             // Delayed preload triggered - load full radius around playhead
             self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
@@ -274,9 +279,7 @@ impl eframe::App for PlayaApp {
             storage.set_string(eframe::APP_KEY, json);
             trace!(
                 "App state saved: FPS={}, Loop={}, Shader={}",
-                self.settings.fps_base,
-                self.settings.loop_enabled,
-                self.settings.current_shader
+                self.settings.fps_base, self.settings.loop_enabled, self.settings.current_shader
             );
         }
     }
@@ -336,7 +339,11 @@ impl PlayaApp {
 
         // Check current backend type first (cheap)
         let current_is_cpu = matches!(
-            *self.project.compositor.lock().unwrap_or_else(|e| e.into_inner()),
+            *self
+                .project
+                .compositor
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
             CompositorType::Cpu(_)
         );
         let desired_is_cpu = matches!(

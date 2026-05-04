@@ -15,16 +15,16 @@ mod tabs;
 pub use tabs::DockTabs;
 
 use crate::config;
+use playa_engine::core::DebouncedPreloader;
 use playa_engine::core::cache_man::CacheManager;
 use playa_engine::core::event_bus::{CompEventEmitter, EventBus};
 use playa_engine::core::player::Player;
 use playa_engine::core::workers::Workers;
-use playa_engine::core::DebouncedPreloader;
-use playa_ui::dialogs::encode::EncodeDialog;
-use playa_ui::dialogs::prefs::{AppSettings, HotkeyHandler};
-use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa_engine::entities;
-use playa_engine::entities::{Frame, Project};
+use playa_engine::entities::{Frame, GpuBlendBridge, GpuBlendRequest, Project, gpu_blend_arc_pair};
+use playa_ui::dialogs::encode::EncodeDialog;
+use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
+use playa_ui::dialogs::prefs::{AppSettings, HotkeyHandler};
 use playa_ui::widgets::ae::AttributesState;
 use playa_ui::widgets::node_editor::NodeEditorState;
 use playa_ui::widgets::status::StatusBar;
@@ -32,7 +32,18 @@ use playa_ui::widgets::viewport::{Shaders, ViewportRenderer, ViewportState};
 
 use egui_dock::DockState;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::mpsc::Receiver;
 use uuid::Uuid;
+
+/// Deserialization hook: `serde` skips `gpu_blend_rx` but still needs [`Default`] for placeholders.
+///
+/// Leaving `None` forces [`PlayaApp::ensure_gpu_blend_initialized`] to recreate the pair so workers
+/// can enqueue [`GpuBlendRequest`](playa_engine::entities::GpuBlendRequest)s again after loading
+/// persisted state.
+fn gpu_blend_rx_default() -> Mutex<Option<Receiver<GpuBlendRequest>>> {
+    Mutex::new(None)
+}
 
 /// Dock tab identifiers for the main UI layout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -171,6 +182,17 @@ pub struct PlayaApp {
     /// Whether ctx.options_mut(max_passes) has been applied (one-time init)
     #[serde(skip)]
     pub options_initialized: bool,
+    /// Send-side handle cloned into [`playa_engine::entities::ComputeContext`] when Gpu blending is enabled.
+    ///
+    /// Held as [`Option`] so deserialization can omit both bridge + receiver; [`Self::ensure_gpu_blend_initialized`]
+    /// restores a fresh pair via [`gpu_blend_arc_pair`](playa_engine::entities::gpu_blend_arc_pair) when needed.
+    #[serde(skip)]
+    pub gpu_blend_bridge: Option<Arc<GpuBlendBridge>>,
+    /// Main-thread ingest queue for [`GpuBlendBridge::drain_into_compositor`].
+    ///
+    /// Wrapped in [`Mutex`] so `update()` can temporarily borrow alongside `project.compositor`.
+    #[serde(skip, default = "gpu_blend_rx_default")]
+    pub gpu_blend_rx: Mutex<Option<Receiver<GpuBlendRequest>>>,
 }
 
 impl Default for PlayaApp {
@@ -190,6 +212,8 @@ impl Default for PlayaApp {
         let event_bus = EventBus::new();
         let comp_event_emitter = CompEventEmitter::from_emitter(event_bus.emitter());
 
+        let (gpu_blend_bridge, gpu_blend_rx) = gpu_blend_arc_pair();
+
         Self {
             frame: None,
             player,
@@ -205,7 +229,8 @@ impl Default for PlayaApp {
             settings: AppSettings::default(),
             project: {
                 let settings = AppSettings::default();
-                let mut project = Project::new_with_strategy(Arc::clone(&cache_manager), settings.cache_strategy);
+                let mut project =
+                    Project::new_with_strategy(Arc::clone(&cache_manager), settings.cache_strategy);
                 // Set event emitter for auto-emit of AttrsChangedEvent on comp modifications
                 project.set_event_emitter(event_bus.emitter());
                 project
@@ -251,11 +276,82 @@ impl Default for PlayaApp {
             last_applied_dark_mode: None,
             last_applied_font_size: 0.0,
             options_initialized: false,
+            gpu_blend_bridge: Some(gpu_blend_bridge),
+            gpu_blend_rx: Mutex::new(Some(gpu_blend_rx)),
         }
     }
 }
 
 impl PlayaApp {
+    /// Recreates a fresh [`GpuBlendBridge`](playa_engine::entities::GpuBlendBridge)/[`Receiver`] pair when serde skipped runtime wiring.
+    ///
+    /// Persisted layouts omit channel state; deserialization therefore leaves handles empty unless we
+    /// rebuild them **before** worker threads enqueue [`GpuBlendRequest`](playa_engine::entities::GpuBlendRequest)s again.
+    /// Otherwise callers observe repeated [`GpuBlendReport::NotQueued`](playa_engine::entities::GpuBlendReport::NotQueued) fallbacks (`comp_node`).
+    ///
+    /// [`Receiver`]: std::sync::mpsc::Receiver
+    pub fn ensure_gpu_blend_initialized(&mut self) {
+        if self.gpu_blend_bridge.is_some()
+            && self
+                .gpu_blend_rx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_some()
+        {
+            return;
+        }
+        let (b, rx) = gpu_blend_arc_pair();
+        self.gpu_blend_bridge = Some(b);
+        *self
+            .gpu_blend_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(rx);
+    }
+
+    /// Returns `Some` only when the project selects the Gpu backend ([`CompositorType`](playa_engine::entities::CompositorType)).
+    ///
+    /// Cpu compositor ⇒ `None`, which keeps preload-time [`ComputeContext`](playa_engine::entities::ComputeContext)
+    /// off the Gpu offload path (matches encode/worker-safe defaults elsewhere).
+    pub(crate) fn gpu_blend_bridge_ref_for_preload(&self) -> Option<&GpuBlendBridge> {
+        use entities::CompositorType;
+        let is_gpu = matches!(
+            *self
+                .project
+                .compositor
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+            CompositorType::Gpu(_)
+        );
+        if !is_gpu {
+            return None;
+        }
+        self.gpu_blend_bridge.as_deref()
+    }
+
+    /// Batches [`GpuBlendBridge::drain_into_compositor`](playa_engine::entities::GpuBlendBridge::drain_into_compositor)
+    /// **after** `update_compositor_backend` so Gpu resources match the refreshed GL reference.
+    ///
+    /// Returning `usize > 0` triggers `request_repaint` because workers flushed pixels asynchronously
+    /// and egui otherwise idles until the next input tick.
+    pub(crate) fn drain_gpu_blend_queue(&mut self, ctx: &eframe::egui::Context) {
+        let rx_guard = self
+            .gpu_blend_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(rx) = rx_guard.as_ref() else {
+            return;
+        };
+        let mut comp = self
+            .project
+            .compositor
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let n = GpuBlendBridge::drain_into_compositor(rx, &mut comp);
+        if n > 0 {
+            ctx.request_repaint();
+        }
+    }
+
     /// Default dock state with standard layout.
     pub fn default_dock_state() -> DockState<DockTab> {
         // Default layout with saved proportions (Project/Attributes split at 33%)
@@ -263,9 +359,13 @@ impl PlayaApp {
     }
 
     /// Build dock state with configurable panels.
-    pub fn build_dock_state(show_project: bool, show_attributes: bool, split_pos: f32) -> DockState<DockTab> {
+    pub fn build_dock_state(
+        show_project: bool,
+        show_attributes: bool,
+        split_pos: f32,
+    ) -> DockState<DockTab> {
         use egui_dock::NodeIndex;
-        
+
         let mut dock_state = DockState::new(vec![DockTab::Viewport]);
 
         // Always split viewport and timeline vertically (timeline at bottom ~23%)
@@ -279,9 +379,11 @@ impl PlayaApp {
         if show_project || show_attributes {
             if show_project && show_attributes {
                 // Both: create right panel with Project, then split it to add Attributes below
-                let [_viewport, right_panel] = dock_state
-                    .main_surface_mut()
-                    .split_right(viewport, 0.77, vec![DockTab::Project]);
+                let [_viewport, right_panel] = dock_state.main_surface_mut().split_right(
+                    viewport,
+                    0.77,
+                    vec![DockTab::Project],
+                );
 
                 // Split right panel vertically: Project stays on top, Attributes below
                 // Use saved split position
@@ -292,14 +394,18 @@ impl PlayaApp {
                 );
             } else if show_project {
                 // Only Project
-                let _ = dock_state
-                    .main_surface_mut()
-                    .split_right(viewport, 0.77, vec![DockTab::Project]);
+                let _ = dock_state.main_surface_mut().split_right(
+                    viewport,
+                    0.77,
+                    vec![DockTab::Project],
+                );
             } else {
                 // Only Attributes
-                let _ = dock_state
-                    .main_surface_mut()
-                    .split_right(viewport, 0.77, vec![DockTab::Attributes]);
+                let _ = dock_state.main_surface_mut().split_right(
+                    viewport,
+                    0.77,
+                    vec![DockTab::Attributes],
+                );
             }
         }
 

@@ -6,7 +6,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-
 use log::info;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -36,7 +35,7 @@ impl FileNode {
     pub fn new(file_mask: String, start: i32, end: i32, fps: f32) -> Self {
         let mut attrs = Attrs::with_schema(&*FILE_SCHEMA);
         let uuid = Uuid::new_v4();
-        
+
         attrs.set_uuid(A_UUID, uuid);
         attrs.set(A_NAME, AttrValue::Str(file_mask.clone()));
         attrs.set(A_FILE_MASK, AttrValue::Str(file_mask));
@@ -51,40 +50,40 @@ impl FileNode {
         attrs.set(A_FRAME, AttrValue::Int(start));
         attrs.set(A_WIDTH, AttrValue::UInt(64));
         attrs.set(A_HEIGHT, AttrValue::UInt(64));
-        
+
         Self { attrs }
     }
-    
+
     /// Create with specified UUID (for deserialization)
     pub fn with_uuid(mut self, uuid: Uuid) -> Self {
         self.attrs.set_uuid(A_UUID, uuid);
         self
     }
-    
+
     /// Attach schema after deserialization
     pub fn attach_schema(&mut self) {
         self.attrs.attach_schema(&*FILE_SCHEMA);
     }
-    
+
     // --- Getters ---
-    
+
     pub fn file_mask(&self) -> Option<String> {
         self.attrs.get_str(A_FILE_MASK).map(|s| s.to_string())
     }
-    
+
     pub fn file_start(&self) -> Option<i32> {
         self.attrs.get_i32(A_FILE_START)
     }
-    
+
     pub fn file_end(&self) -> Option<i32> {
         self.attrs.get_i32(A_FILE_END)
     }
-    
+
     // Timing methods (_in, _out, fps, dim, frame_count, frame, work_area)
     // are provided by Node trait with defaults from config.rs
-    
+
     // --- Internal ---
-    
+
     /// Resolve a per-frame source path from the file mask. Public so the
     /// encode pass-through path can read source EXRs directly without going
     /// through the compositor.
@@ -106,9 +105,9 @@ impl FileNode {
             Some(PathBuf::from(mask))
         }
     }
-    
+
     // placeholder_frame() provided by Node trait
-    
+
     fn frame_from_path(&self, path: PathBuf) -> Frame {
         let (w, h) = self.dim();
         let frame = Frame::new_unloaded(path);
@@ -121,27 +120,27 @@ impl Node for FileNode {
     fn uuid(&self) -> Uuid {
         self.attrs.get_uuid(A_UUID).unwrap_or_else(Uuid::nil)
     }
-    
+
     fn name(&self) -> &str {
         self.attrs.get_str(A_NAME).unwrap_or("Untitled")
     }
-    
+
     fn node_type(&self) -> &'static str {
         "File"
     }
-    
+
     fn attrs(&self) -> &Attrs {
         &self.attrs
     }
-    
+
     fn attrs_mut(&mut self) -> &mut Attrs {
         &mut self.attrs
     }
-    
+
     fn inputs(&self) -> Vec<Uuid> {
         vec![] // FileNode has no inputs
     }
-    
+
     fn compute(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
         let duration = self.frame_count();
         if duration <= 0 {
@@ -203,36 +202,41 @@ impl Node for FileNode {
 
         Some(frame)
     }
-    
+
     fn is_dirty(&self, _ctx: Option<&ComputeContext>) -> bool {
         // FileNode has no sources, so ctx is ignored
         self.attrs.is_dirty()
     }
-    
+
     fn mark_dirty(&self) {
         self.attrs.mark_dirty()
     }
-    
+
     fn clear_dirty(&self) {
         self.attrs.clear_dirty()
     }
-    
+
     // preload() uses default no-op - FileNode frames are loaded lazily during CompNode::compute()
-    
+
     // --- Override timeline methods ---
-    
+
     fn play_range(&self, _use_work_area: bool) -> (i32, i32) {
         self.work_area()
     }
-    
-    fn bounds(&self, _use_trim: bool, _selection_only: bool, _media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>) -> (i32, i32) {
+
+    fn bounds(
+        &self,
+        _use_trim: bool,
+        _selection_only: bool,
+        _media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
+    ) -> (i32, i32) {
         self.work_area()
     }
-    
+
     fn frame_count(&self) -> i32 {
         (self._out() - self._in() + 1).max(0)
     }
-    
+
     fn dim(&self) -> (usize, usize) {
         let w = self.attrs.get_u32(A_WIDTH).unwrap_or(64) as usize;
         let h = self.attrs.get_u32(A_HEIGHT).unwrap_or(64) as usize;
@@ -243,8 +247,8 @@ impl Node for FileNode {
 // --- Sequence Detection ---
 
 use super::loader::Loader;
-use playa_io::VideoMetadata;
 use crate::entities::frame::FrameError;
+use playa_io::VideoMetadata;
 
 impl FileNode {
     /// Detect image/video sequences from paths and create FileNodes.
@@ -397,7 +401,8 @@ fn create_video_node(path: &Path) -> Result<FileNode, FrameError> {
     node.attrs.set(A_WIDTH, AttrValue::UInt(meta.width));
     node.attrs.set(A_HEIGHT, AttrValue::UInt(meta.height));
     node.attrs.set("padding", AttrValue::UInt(0));
-    node.attrs.set("frames", AttrValue::UInt(meta.frame_count as u32));
+    node.attrs
+        .set("frames", AttrValue::UInt(meta.frame_count as u32));
     node.attrs.set(A_FPS, AttrValue::Float(meta.fps as f32));
     node.attrs.set(
         "format",
@@ -424,13 +429,13 @@ fn glob_paths(pattern: &str) -> Result<Vec<PathBuf>, FrameError> {
     // Normalize path separators for cross-platform glob compatibility
     let pattern = pattern.replace('\\', "/");
     info!("glob_paths: pattern = {}", pattern);
-    
+
     // Use case-insensitive matching for Windows compatibility (TGA vs tga)
     let options = glob::MatchOptions {
         case_sensitive: false,
         ..Default::default()
     };
-    
+
     let mut paths = Vec::new();
     for entry in glob::glob_with(&pattern, options)
         .map_err(|e| FrameError::Image(format!("Glob error for pattern {}: {}", pattern, e)))?
@@ -490,11 +495,10 @@ fn split_sequence_path(path: &Path) -> Result<Option<(String, usize, String, usi
     Ok(Some((full_prefix, number, ext, padding)))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_file_node_creation() {
         let node = FileNode::new("test.*.exr".to_string(), 1, 100, 24.0);
@@ -504,14 +508,14 @@ mod tests {
         assert_eq!(node.fps(), 24.0);
         assert_eq!(node.frame_count(), 100);
     }
-    
+
     #[test]
     fn test_file_node_trait() {
         let node = FileNode::new("test.*.exr".to_string(), 1, 100, 24.0);
         assert_eq!(node.node_type(), "File");
         assert!(node.inputs().is_empty());
     }
-    
+
     #[test]
     fn test_cliven_sequence() {
         let test_path = std::path::Path::new(r"D:\_demo\Srcs\Cliven\cliven.0001.TGA");
@@ -519,27 +523,31 @@ mod tests {
             println!("Skipping test - path not found");
             return;
         }
-        
+
         // Test split_sequence_path
         let result = split_sequence_path(test_path).unwrap();
         println!("split_sequence_path result: {:?}", result);
         assert!(result.is_some(), "Should detect as sequence");
-        
+
         let (prefix, number, ext, padding) = result.unwrap();
         println!("prefix: {}", prefix);
         println!("number: {}", number);
         println!("ext: {}", ext);
         println!("padding: {}", padding);
-        
+
         // Test glob pattern
         let pattern = format!("{}*.{}", prefix, ext);
         println!("glob pattern: {}", pattern);
-        
+
         let paths = glob_paths(&pattern).unwrap();
         println!("glob found {} files", paths.len());
-        assert!(paths.len() > 1, "Should find multiple files, got {}", paths.len());
+        assert!(
+            paths.len() > 1,
+            "Should find multiple files, got {}",
+            paths.len()
+        );
     }
-    
+
     #[test]
     fn test_cliven_detect_from_paths() {
         let test_path = std::path::PathBuf::from(r"D:\_demo\Srcs\Cliven\cliven.0001.TGA");
@@ -547,16 +555,25 @@ mod tests {
             println!("Skipping test - path not found");
             return;
         }
-        
+
         let nodes = FileNode::detect_from_paths(vec![test_path]).unwrap();
         println!("detect_from_paths returned {} nodes", nodes.len());
-        
+
         for node in &nodes {
-            println!("Node: mask={:?} start={:?} end={:?} frames={}", 
-                node.file_mask(), node.file_start(), node.file_end(), node.frame_count());
+            println!(
+                "Node: mask={:?} start={:?} end={:?} frames={}",
+                node.file_mask(),
+                node.file_start(),
+                node.file_end(),
+                node.frame_count()
+            );
         }
-        
+
         assert_eq!(nodes.len(), 1, "Should have exactly 1 sequence node");
-        assert!(nodes[0].frame_count() > 1, "Sequence should have more than 1 frame, got {}", nodes[0].frame_count());
+        assert!(
+            nodes[0].frame_count() > 1,
+            "Sequence should have more than 1 frame, got {}",
+            nodes[0].frame_count()
+        );
     }
 }

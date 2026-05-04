@@ -18,7 +18,8 @@ impl PlayaApp {
         let show_attributes = self.show_attributes_editor;
 
         // Get current visibility state
-        let current_tabs: Vec<DockTab> = self.dock_state
+        let current_tabs: Vec<DockTab> = self
+            .dock_state
             .iter_all_tabs()
             .map(|(_, tab)| tab.clone())
             .collect();
@@ -189,16 +190,16 @@ impl PlayaApp {
             log::warn!("Cannot rename layout: '{}' already exists", new_name);
             return;
         }
-        
+
         // Remove old and insert with new name
         if let Some(layout) = self.settings.layouts.remove(old_name) {
             self.settings.layouts.insert(new_name.to_string(), layout);
-            
+
             // Update current_layout if it was the renamed one
             if self.settings.current_layout == old_name {
                 self.settings.current_layout = new_name.to_string();
             }
-            
+
             log::info!("Renamed layout: '{}' -> '{}'", old_name, new_name);
         }
     }

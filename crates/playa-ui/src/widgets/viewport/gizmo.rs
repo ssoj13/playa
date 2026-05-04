@@ -15,22 +15,20 @@
 
 use eframe::egui;
 use transform_gizmo_egui::{
-    Gizmo, GizmoConfig, GizmoMode, GizmoOrientation, GizmoVisuals, GizmoExt,
-    math::Transform,
-    mint, EnumSet,
+    EnumSet, Gizmo, GizmoConfig, GizmoExt, GizmoMode, GizmoOrientation, GizmoVisuals,
+    math::Transform, mint,
 };
 use uuid::Uuid;
 
-use super::tool::ToolMode;
 use super::ViewportState;
+use super::tool::ToolMode;
 use playa_engine::core::event_bus::BoxedEvent;
 use playa_engine::core::player::Player;
-use playa_engine::entities::comp_events::SetLayerTransformsEvent;
-use playa_engine::entities::node::Node;  // for dim()
 use playa_engine::entities::Project;
+use playa_engine::entities::comp_events::SetLayerTransformsEvent;
 use playa_engine::entities::keys::{A_POSITION, A_ROTATION, A_SCALE};
+use playa_engine::entities::node::Node; // for dim()
 use playa_engine::entities::space;
-
 
 /// Gizmo state - lives in PlayaApp, not saved.
 pub struct GizmoState {
@@ -80,8 +78,7 @@ impl GizmoState {
         }
 
         // Collect layer transforms
-        let (transforms, layer_data) =
-            self.collect_transforms(tool, project, comp_uuid, &selected);
+        let (transforms, layer_data) = self.collect_transforms(tool, project, comp_uuid, &selected);
         if transforms.is_empty() {
             return (false, Vec::new());
         }
@@ -95,10 +92,10 @@ impl GizmoState {
 
         // Configure gizmo
         let gizmo_prefs = project.gizmo_prefs();
-        
+
         // Shift enables snapping
         let snapping = ui.input(|i| i.modifiers.shift);
-        
+
         self.gizmo.update_config(GizmoConfig {
             view_matrix: view,
             projection_matrix: proj,
@@ -106,9 +103,9 @@ impl GizmoState {
             modes: gizmo_modes,
             orientation: GizmoOrientation::Local,
             snapping,
-            snap_angle: 5.0_f32.to_radians(),    // 5 degrees
-            snap_distance: 10.0,                  // 10 units
-            snap_scale: 0.1,                      // 0.1 step
+            snap_angle: 5.0_f32.to_radians(), // 5 degrees
+            snap_distance: 10.0,              // 10 units
+            snap_scale: 0.1,                  // 0.1 step
             visuals: GizmoVisuals {
                 gizmo_size: gizmo_prefs.pref_manip_size,
                 stroke_width: gizmo_prefs.pref_manip_stroke_width,
@@ -143,8 +140,7 @@ impl GizmoState {
         let mut layer_data = Vec::new();
 
         for &layer_uuid in selected {
-            if let Some((pos, rot, scale)) = get_layer_transform(project, comp_uuid, layer_uuid)
-            {
+            if let Some((pos, rot, scale)) = get_layer_transform(project, comp_uuid, layer_uuid) {
                 transforms.push(layer_to_gizmo_transform(tool, pos, rot, scale));
                 layer_data.push((layer_uuid, pos, rot, scale));
             }
@@ -163,8 +159,7 @@ impl GizmoState {
         let mut updates = Vec::new();
 
         for (i, new_t) in new_transforms.iter().enumerate() {
-            let Some((layer_uuid, old_pos, old_rot, old_scale)) = layer_data.get(i)
-            else {
+            let Some((layer_uuid, old_pos, old_rot, old_scale)) = layer_data.get(i) else {
                 continue;
             };
             let (gizmo_pos, gizmo_rot, gizmo_scale) = gizmo_to_layer_transform(new_t);
@@ -203,28 +198,26 @@ impl GizmoState {
 
 fn tool_to_gizmo_modes(tool: ToolMode) -> Option<EnumSet<GizmoMode>> {
     match tool {
-            ToolMode::Select => None,
-            ToolMode::Move => Some(
-                EnumSet::from(GizmoMode::TranslateX)
-                    | GizmoMode::TranslateY
-                    | GizmoMode::TranslateZ
-                    | GizmoMode::TranslateXY
-                    | GizmoMode::TranslateXZ
-                    | GizmoMode::TranslateYZ
-                    | GizmoMode::TranslateView
-            ),
-            ToolMode::Rotate => Some(
-                EnumSet::from(GizmoMode::RotateX)
-                    | GizmoMode::RotateY
-                    | GizmoMode::RotateZ
-            ),
-            ToolMode::Scale => Some(
-                EnumSet::from(GizmoMode::ScaleX)
-                    | GizmoMode::ScaleY
-                    | GizmoMode::ScaleZ
-                    | GizmoMode::ScaleUniform
-            ),
+        ToolMode::Select => None,
+        ToolMode::Move => Some(
+            EnumSet::from(GizmoMode::TranslateX)
+                | GizmoMode::TranslateY
+                | GizmoMode::TranslateZ
+                | GizmoMode::TranslateXY
+                | GizmoMode::TranslateXZ
+                | GizmoMode::TranslateYZ
+                | GizmoMode::TranslateView,
+        ),
+        ToolMode::Rotate => {
+            Some(EnumSet::from(GizmoMode::RotateX) | GizmoMode::RotateY | GizmoMode::RotateZ)
         }
+        ToolMode::Scale => Some(
+            EnumSet::from(GizmoMode::ScaleX)
+                | GizmoMode::ScaleY
+                | GizmoMode::ScaleZ
+                | GizmoMode::ScaleUniform,
+        ),
+    }
 }
 
 // ============================================================================
@@ -256,19 +249,21 @@ fn get_camera_matrices(
 ) -> Option<(glam::Mat4, glam::Mat4)> {
     let media = project.media.read().ok()?;
 
-    project.with_comp(comp_uuid, |comp| {
-        let (camera, pos, rot) = comp.active_camera(frame_idx, &media)?;
+    project
+        .with_comp(comp_uuid, |comp| {
+            let (camera, pos, rot) = comp.active_camera(frame_idx, &media)?;
 
-        // Use COMP aspect for gizmo projection (same as compositor).
-        // Gizmo must match how compositor rendered the scene, not viewport stretch.
-        let (comp_w, comp_h) = comp.dim();
-        let aspect = comp_w as f32 / comp_h as f32;
+            // Use COMP aspect for gizmo projection (same as compositor).
+            // Gizmo must match how compositor rendered the scene, not viewport stretch.
+            let (comp_w, comp_h) = comp.dim();
+            let aspect = comp_w as f32 / comp_h as f32;
 
-        let view = camera.view_matrix(pos, rot);
-        let proj = camera.projection_matrix(aspect, comp_h as f32);
+            let view = camera.view_matrix(pos, rot);
+            let proj = camera.projection_matrix(aspect, comp_h as f32);
 
-        Some((view, proj))
-    }).flatten()
+            Some((view, proj))
+        })
+        .flatten()
 }
 
 /// Build view and projection matrices for gizmo.
@@ -381,7 +376,11 @@ fn build_gizmo_matrices(
         let view = DMat4::from_scale_rotation_translation(
             DVec3::splat(viewport_state.zoom as f64),
             glam::DQuat::IDENTITY,
-            DVec3::new(viewport_state.pan.x as f64, viewport_state.pan.y as f64, 0.0),
+            DVec3::new(
+                viewport_state.pan.x as f64,
+                viewport_state.pan.y as f64,
+                0.0,
+            ),
         );
 
         // Projection: orthographic
@@ -396,10 +395,30 @@ fn build_gizmo_matrices(
 fn to_row_matrix(m: glam::DMat4) -> mint::RowMatrix4<f64> {
     let cols = m.to_cols_array_2d();
     mint::RowMatrix4 {
-        x: mint::Vector4 { x: cols[0][0], y: cols[1][0], z: cols[2][0], w: cols[3][0] },
-        y: mint::Vector4 { x: cols[0][1], y: cols[1][1], z: cols[2][1], w: cols[3][1] },
-        z: mint::Vector4 { x: cols[0][2], y: cols[1][2], z: cols[2][2], w: cols[3][2] },
-        w: mint::Vector4 { x: cols[0][3], y: cols[1][3], z: cols[2][3], w: cols[3][3] },
+        x: mint::Vector4 {
+            x: cols[0][0],
+            y: cols[1][0],
+            z: cols[2][0],
+            w: cols[3][0],
+        },
+        y: mint::Vector4 {
+            x: cols[0][1],
+            y: cols[1][1],
+            z: cols[2][1],
+            w: cols[3][1],
+        },
+        z: mint::Vector4 {
+            x: cols[0][2],
+            y: cols[1][2],
+            z: cols[2][2],
+            w: cols[3][2],
+        },
+        w: mint::Vector4 {
+            x: cols[0][3],
+            y: cols[1][3],
+            z: cols[2][3],
+            w: cols[3][3],
+        },
     }
 }
 
@@ -468,7 +487,11 @@ fn gizmo_to_layer_transform(t: &Transform) -> ([f32; 3], [f32; 3], [f32; 3]) {
 
     // Convert CCW+ radians back to CW+ degrees using from_math_rot
     (
-        [translation.x as f32, translation.y as f32, translation.z as f32],
+        [
+            translation.x as f32,
+            translation.y as f32,
+            translation.z as f32,
+        ],
         [
             space::from_math_rot(rot_x as f32),
             space::from_math_rot(rot_y as f32),
@@ -483,14 +506,16 @@ fn get_layer_transform(
     comp_uuid: Uuid,
     layer_uuid: Uuid,
 ) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
-    project.with_comp(comp_uuid, |comp| {
-        comp.get_layer(layer_uuid).map(|layer| {
-            let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
-            let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
-            let scale = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
-            (pos, rot, scale)
+    project
+        .with_comp(comp_uuid, |comp| {
+            comp.get_layer(layer_uuid).map(|layer| {
+                let pos = layer.attrs.get_vec3(A_POSITION).unwrap_or([0.0, 0.0, 0.0]);
+                let rot = layer.attrs.get_vec3(A_ROTATION).unwrap_or([0.0, 0.0, 0.0]);
+                let scale = layer.attrs.get_vec3(A_SCALE).unwrap_or([1.0, 1.0, 1.0]);
+                (pos, rot, scale)
+            })
         })
-    }).flatten()
+        .flatten()
 }
 
 #[inline]

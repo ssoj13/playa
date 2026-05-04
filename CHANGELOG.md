@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — `dev` branch
 
+### GPU compositing — worker → UI bridge (`playa-engine`, `playa-app`)
+
+Workers have no bound OpenGL context; when project prefs select the **Gpu** compositor, the **final**
+`CompositorType::blend_with_dim` for `CompNode` must run where GL is current.
+
+- **`GpuBlendBridge` / `GpuBlendReport`:** `GpuBlendBridge::delegate_blend_blocking` enqueues the
+  stacked layer `Vec`; the host drains with `GpuBlendBridge::drain_into_compositor`.
+  **`NotQueued`** returns the untouched `Vec` if the Ui receiver dropped — worker falls back to the
+  thread-local `CpuCompositor` **without** preemptive cloning. **`ReplyDisconnected`** and
+  **`Completed(None)`** are terminal outcomes for that hand-off (details in module rustdocs).
+- **`CompNode::compose_internal`:** Gpu offload when `ComputeContext.gpu_blend_bridge` is `Some`;
+  blocking **`get_frame`** keeps `gpu_blend_bridge: None`; nested preload contexts omit the bridge.
+- **`PlayaApp`:** serde skips runtime handles — **`ensure_gpu_blend_initialized`** rebuilds sender/receiver after load;
+  **`drain_gpu_blend_queue`** runs every frame **after** **`update_compositor_backend`**.
+- **`CompNode::signal_preload`:** passes a bridge ref only when `project.compositor` is Gpu-backed.
+- **Rustdocs:** updated `crates/playa-engine/src/entities/compositor.rs` and `gpu_compositor.rs` headers
+  so they match the bridged Gpu path (removed stale “viewport-only / compose never Gpu” wording);
+  `gpu_blend_bridge.rs` explains ownership; **`gpu_compositor.rs`** drops obsolete integration / compile-toggle scaffolding from the header.
+
+Verify: **`python bootstrap.py build`** (project bootstrap).
+
 ### EXR Phase 1 — extended compression UI (commit `71ce94a`)
 
 - `ExrCompression` extended from 4 to **12 variants** matching the full vfx-exr set:

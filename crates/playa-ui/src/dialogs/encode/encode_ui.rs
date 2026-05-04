@@ -12,12 +12,12 @@ use eframe::egui;
 use log::info;
 
 use crate::dialogs::encode::{
-    CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderSettings,
-    ProResProfile, VideoCodec, SequenceSettings, SequenceFormat, ChannelMode,
-    ExrCompression, TiffCompression, ExportMode, OutputBitDepth,
+    ChannelMode, CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage,
+    EncoderSettings, ExportMode, ExrCompression, OutputBitDepth, ProResProfile, SequenceFormat,
+    SequenceSettings, TiffCompression, VideoCodec,
 };
-use playa_engine::entities::{Comp, Project};
 use crate::widgets::status::progress_bar::ProgressBar;
+use playa_engine::entities::{Comp, Project};
 
 /// Encoding dialog state
 pub struct EncodeDialog {
@@ -180,7 +180,8 @@ impl EncodeDialog {
         );
         log::trace!("  Tonemap: {:?}", settings.tonemap_mode);
         log::trace!("  ExportMode: {:?}", settings.export_mode);
-        log::trace!("  Sequence: format={:?}, channels={:?}, depth={:?}", 
+        log::trace!(
+            "  Sequence: format={:?}, channels={:?}, depth={:?}",
             settings.sequence_settings.format,
             settings.sequence_settings.channels,
             settings.sequence_settings.bit_depth
@@ -241,7 +242,8 @@ impl EncodeDialog {
         );
         log::trace!("  Tonemap: {:?}", self.tonemap_mode);
         log::trace!("  ExportMode: {:?}", self.export_mode);
-        log::trace!("  Sequence: format={:?}, channels={:?}, depth={:?}", 
+        log::trace!(
+            "  Sequence: format={:?}, channels={:?}, depth={:?}",
             self.sequence_settings.format,
             self.sequence_settings.channels,
             self.sequence_settings.bit_depth
@@ -431,7 +433,7 @@ impl EncodeDialog {
                             // Restore video extension
                             self.output_path.set_extension(self.container.extension());
                         }
-                        
+
                         // Sequence mode button
                         let seq_btn = egui::Button::new("Sequence")
                             .selected(self.export_mode == ExportMode::Sequence)
@@ -502,7 +504,7 @@ impl EncodeDialog {
                     }
                     ExportMode::Sequence => {
                         let caps = self.sequence_settings.format.capabilities();
-                        
+
                         // === Common settings (above format buttons) ===
                         ui.add_enabled_ui(!self.is_encoding, |ui| {
                             // Channels (RGB/RGBA)
@@ -524,7 +526,7 @@ impl EncodeDialog {
                                     ui.label("(no alpha)").on_hover_text("This format doesn't support alpha channel");
                                 }
                             });
-                            
+
                             // Bit Depth
                             ui.horizontal(|ui| {
                                 ui.label("Bit Depth:");
@@ -541,7 +543,7 @@ impl EncodeDialog {
                                     });
                                 }
                             });
-                            
+
                             // Tonemapping
                             ui.horizontal(|ui| {
                                 let needs_tonemap_hint = !caps.is_hdr;
@@ -574,9 +576,9 @@ impl EncodeDialog {
                                 }
                             });
                         });
-                        
+
                         ui.add_space(8.0);
-                        
+
                         // === Format buttons ===
                         ui.horizontal(|ui| {
                             ui.add_enabled_ui(!self.is_encoding, |ui| {
@@ -725,7 +727,10 @@ impl EncodeDialog {
             ExportMode::Video => {
                 // Video encoding
                 let settings = self.build_encoder_settings();
-                info!("Codec: {:?}, Container: {:?}", settings.codec, settings.container);
+                info!(
+                    "Codec: {:?}, Container: {:?}",
+                    settings.codec, settings.container
+                );
                 info!("Settings: {:?}", settings);
 
                 use crate::dialogs::encode::encode_comp;
@@ -746,7 +751,10 @@ impl EncodeDialog {
                 // Image sequence export
                 let settings = self.sequence_settings.clone();
                 let output_path = self.output_path.clone();
-                info!("Format: {:?}, Channels: {:?}", settings.format, settings.channels);
+                info!(
+                    "Format: {:?}, Channels: {:?}",
+                    settings.format, settings.channels
+                );
                 info!("Output: {}", output_path.display());
 
                 use crate::dialogs::encode::encode_image_sequence;
@@ -839,14 +847,24 @@ impl EncodeDialog {
 
     fn render_h264_settings(&mut self, ui: &mut egui::Ui) {
         let profiles: &[&str] = &["baseline", "main", "high", "high10", "high422", "high444"];
-        render_h26x_settings(ui, &mut self.codec_settings.h264, "h264",
-            "18=best, 23=default, 28=fast", profiles);
+        render_h26x_settings(
+            ui,
+            &mut self.codec_settings.h264,
+            "h264",
+            "18=best, 23=default, 28=fast",
+            profiles,
+        );
     }
 
     fn render_h265_settings(&mut self, ui: &mut egui::Ui) {
         let profiles: &[&str] = &["main", "main10"];
-        render_h26x_settings(ui, &mut self.codec_settings.h265, "h265",
-            "28=default (higher than H.264)", profiles);
+        render_h26x_settings(
+            ui,
+            &mut self.codec_settings.h265,
+            "h265",
+            "28=default (higher than H.264)",
+            profiles,
+        );
     }
 
     /// Render ProRes settings
@@ -1096,10 +1114,13 @@ impl EncodeDialog {
             SequenceFormat::Png => {
                 ui.horizontal(|ui| {
                     ui.label("Compression:");
-                    ui.add(egui::Slider::new(
-                        &mut self.sequence_settings.format_settings.png.compression,
-                        0..=9,
-                    ).text("level"));
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.sequence_settings.format_settings.png.compression,
+                            0..=9,
+                        )
+                        .text("level"),
+                    );
                 });
                 ui.add_space(4.0);
                 ui.label("PNG: Lossless, good for compositing");
@@ -1107,10 +1128,13 @@ impl EncodeDialog {
             SequenceFormat::Jpeg => {
                 ui.horizontal(|ui| {
                     ui.label("Quality:");
-                    ui.add(egui::Slider::new(
-                        &mut self.sequence_settings.format_settings.jpeg.quality,
-                        1..=100,
-                    ).text("%"));
+                    ui.add(
+                        egui::Slider::new(
+                            &mut self.sequence_settings.format_settings.jpeg.quality,
+                            1..=100,
+                        )
+                        .text("%"),
+                    );
                 });
                 ui.add_space(4.0);
                 ui.label("JPEG: Lossy, small files, no alpha");
@@ -1119,7 +1143,13 @@ impl EncodeDialog {
                 ui.horizontal(|ui| {
                     ui.label("Compression:");
                     egui::ComboBox::from_id_salt("tiff_compression")
-                        .selected_text(self.sequence_settings.format_settings.tiff.compression.to_string())
+                        .selected_text(
+                            self.sequence_settings
+                                .format_settings
+                                .tiff
+                                .compression
+                                .to_string(),
+                        )
                         .show_ui(ui, |ui| {
                             for comp in TiffCompression::all() {
                                 ui.selectable_value(
@@ -1172,7 +1202,9 @@ impl EncodeDialog {
                         .map(|s| s.eq_ignore_ascii_case("exr"))
                         .unwrap_or(false)
                     {
-                        let start = fnode.attrs.get_i32(playa_engine::entities::keys::A_FILE_START)
+                        let start = fnode
+                            .attrs
+                            .get_i32(playa_engine::entities::keys::A_FILE_START)
                             .unwrap_or(0);
                         if let Some(p) = fnode.resolve_frame_path(start) {
                             first_path = Some(p);
@@ -1204,7 +1236,11 @@ impl EncodeDialog {
                 let compressions = src.layer_compressions();
                 ui.indent("exr_source_layers", |ui| {
                     for (i, (name, comp)) in names.iter().zip(compressions.iter()).enumerate() {
-                        let marker = if i == src.display_layer_idx { "▶" } else { " " };
+                        let marker = if i == src.display_layer_idx {
+                            "▶"
+                        } else {
+                            " "
+                        };
                         ui.label(format!("{} {}  —  {}", marker, name, comp));
                     }
                 });
@@ -1230,9 +1266,10 @@ impl Drop for EncodeDialog {
         }
         // Also join the active thread if any
         if let Some(handle) = self.encode_thread.take()
-            && let Err(e) = handle.join() {
-                info!("Encode thread panicked during dialog close: {:?}", e);
-            }
+            && let Err(e) = handle.join()
+        {
+            info!("Encode thread panicked during dialog close: {:?}", e);
+        }
     }
 }
 
@@ -1252,7 +1289,11 @@ fn render_h26x_settings(
     ui.label("Encoder:");
     ui.horizontal(|ui| {
         for impl_type in EncoderImpl::all() {
-            ui.radio_value(settings.encoder_impl_mut(), *impl_type, impl_type.to_string());
+            ui.radio_value(
+                settings.encoder_impl_mut(),
+                *impl_type,
+                impl_type.to_string(),
+            );
         }
     });
 
@@ -1285,8 +1326,16 @@ fn render_h26x_settings(
             ],
             // libx264 / libx265 (identical preset ladder)
             EncoderImpl::Software | EncoderImpl::Auto => &[
-                "ultrafast", "superfast", "veryfast", "faster", "fast",
-                "medium", "slow", "slower", "veryslow", "placebo",
+                "ultrafast",
+                "superfast",
+                "veryfast",
+                "faster",
+                "fast",
+                "medium",
+                "slow",
+                "slower",
+                "veryslow",
+                "placebo",
             ],
         };
         let preset_id = format!("{}_preset", id_prefix);

@@ -1,6 +1,6 @@
 //! Timeline UI helpers: tools, math and drawing utilities.
-use playa_engine::entities::{Comp, Node};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
+use playa_engine::entities::{Comp, Node};
 
 use super::{GlobalDragState, TimelineConfig, TimelineState};
 use playa_engine::entities::keys::{A_IN, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
@@ -41,20 +41,16 @@ impl LayerTool {
         drag_start_pos: Pos2,
     ) -> GlobalDragState {
         match self {
-            LayerTool::AdjustPlayStart => {
-                GlobalDragState::AdjustPlayStart {
-                    layer_idx,
-                    initial_play_start: attrs.layer_start(),
-                    drag_start_x: drag_start_pos.x,
-                }
-            }
-            LayerTool::AdjustPlayEnd => {
-                GlobalDragState::AdjustPlayEnd {
-                    layer_idx,
-                    initial_play_end: attrs.layer_end(),
-                    drag_start_x: drag_start_pos.x,
-                }
-            }
+            LayerTool::AdjustPlayStart => GlobalDragState::AdjustPlayStart {
+                layer_idx,
+                initial_play_start: attrs.layer_start(),
+                drag_start_x: drag_start_pos.x,
+            },
+            LayerTool::AdjustPlayEnd => GlobalDragState::AdjustPlayEnd {
+                layer_idx,
+                initial_play_end: attrs.layer_end(),
+                drag_start_x: drag_start_pos.x,
+            },
             LayerTool::Move => {
                 let initial_start = attrs.get_i32_or_zero(A_IN);
                 GlobalDragState::MovingLayer {
@@ -71,7 +67,10 @@ impl LayerTool {
                 let speed = attrs.get_float_or(A_SPEED, 1.0);
                 log::trace!(
                     "[SLIDE START] in={}, trim_in={}, trim_out={}, speed={}",
-                    initial_in, initial_trim_in, initial_trim_out, speed
+                    initial_in,
+                    initial_trim_in,
+                    initial_trim_out,
+                    speed
                 );
                 GlobalDragState::SlidingLayer {
                     layer_idx,
@@ -200,31 +199,39 @@ pub(super) fn draw_frame_ruler(
         }
 
         let effective_ppf = config.pixels_per_frame * state.zoom;
-        
+
         // Linear formula: keep labels ~60px apart, tick marks ~15px apart
         let target_label_px = 60.0;
         let target_tick_px = 15.0;
-        
+
         // Raw step values
         let raw_label_step = (target_label_px / effective_ppf).ceil() as usize;
         let raw_tick_step = (target_tick_px / effective_ppf).ceil() as usize;
-        
+
         // Round to nice numbers (1, 2, 5, 10, 20, 50, 100, ...)
         fn round_to_nice(n: usize) -> usize {
-            if n <= 1 { return 1; }
+            if n <= 1 {
+                return 1;
+            }
             let pow = 10_usize.pow((n as f32).log10().floor() as u32);
             let norm = n / pow;
-            let nice = if norm < 2 { 1 } else if norm < 5 { 2 } else { 5 };
+            let nice = if norm < 2 {
+                1
+            } else if norm < 5 {
+                2
+            } else {
+                5
+            };
             nice * pow
         }
-        
+
         let label_step = round_to_nice(raw_label_step).max(1) as i32;
         let frame_step = round_to_nice(raw_tick_step).max(1).min(label_step as usize) as i32;
 
         // Use rect.width() for visible range - allow negative frames
         let visible_start = state.pan_offset.floor() as i32;
         let visible_end = (state.pan_offset + (rect.width() / effective_ppf)).ceil() as i32;
-        
+
         // Align start_frame to frame_step grid (works with negatives)
         let start_frame = if visible_start >= 0 {
             (visible_start / frame_step) * frame_step
@@ -256,80 +263,90 @@ pub(super) fn draw_frame_ruler(
 
         // Draw bookmark markers (small triangles pointing down)
         if let Some(bookmarks) = comp.attrs.get_map("bookmarks") {
-        for (slot, value) in bookmarks {
-            let bm_frame = match value {
-                playa_engine::entities::AttrValue::Int(f) => *f,
-                _ => continue,
-            };
-            let x = frame_to_screen_x(bm_frame as f32, rect.min.x, config, state);
-            if x >= rect.min.x && x <= rect.max.x {
-                let marker_size = 6.0;
-                let top_y = rect.min.y + 1.0;
-                // Triangle pointing down
-                let points = [
-                    Pos2::new(x - marker_size * 0.5, top_y),
-                    Pos2::new(x + marker_size * 0.5, top_y),
-                    Pos2::new(x, top_y + marker_size),
-                ];
-                painter.add(egui::Shape::convex_polygon(
-                    points.to_vec(),
-                    Color32::from_rgb(100, 200, 255),
-                    (1.0, Color32::from_rgb(60, 140, 200)),
-                ));
-                // Slot number
-                painter.text(
-                    Pos2::new(x, top_y + marker_size + 1.0),
-                    egui::Align2::CENTER_TOP,
-                    format!("{}", slot),
-                    egui::FontId::monospace(7.0),
-                    Color32::from_rgb(100, 200, 255),
-                );
+            for (slot, value) in bookmarks {
+                let bm_frame = match value {
+                    playa_engine::entities::AttrValue::Int(f) => *f,
+                    _ => continue,
+                };
+                let x = frame_to_screen_x(bm_frame as f32, rect.min.x, config, state);
+                if x >= rect.min.x && x <= rect.max.x {
+                    let marker_size = 6.0;
+                    let top_y = rect.min.y + 1.0;
+                    // Triangle pointing down
+                    let points = [
+                        Pos2::new(x - marker_size * 0.5, top_y),
+                        Pos2::new(x + marker_size * 0.5, top_y),
+                        Pos2::new(x, top_y + marker_size),
+                    ];
+                    painter.add(egui::Shape::convex_polygon(
+                        points.to_vec(),
+                        Color32::from_rgb(100, 200, 255),
+                        (1.0, Color32::from_rgb(60, 140, 200)),
+                    ));
+                    // Slot number
+                    painter.text(
+                        Pos2::new(x, top_y + marker_size + 1.0),
+                        egui::Align2::CENTER_TOP,
+                        format!("{}", slot),
+                        egui::FontId::monospace(7.0),
+                        Color32::from_rgb(100, 200, 255),
+                    );
+                }
             }
-        }
         } // if let Some(bookmarks)
 
         let is_middle_down = ui
             .ctx()
             .input(|i| i.pointer.button_down(egui::PointerButton::Middle));
 
-        if !is_middle_down && (ruler_response.clicked() || ruler_response.dragged())
-            && let Some(pos) = ruler_response.interact_pointer_pos() {
-                let modifiers = ui.input(|i| i.modifiers);
-                
-                // Ctrl+click: find nearest bookmark within 10px and clear it
-                if modifiers.ctrl && ruler_response.clicked() {
-                    if let Some(bookmarks) = comp.attrs.get_map("bookmarks") {
-                        const THRESHOLD: f32 = 10.0;
-                        // Collect (distance, slot) pairs for bookmarks within threshold
-                        let mut candidates: Vec<(f32, u8)> = bookmarks
-                            .iter()
-                            .filter_map(|(slot_str, value)| {
-                                let bm_frame = match value {
-                                    playa_engine::entities::AttrValue::Int(f) => *f,
-                                    _ => return None,
-                                };
-                                let slot: u8 = slot_str.parse().ok()?;
-                                let marker_x = frame_to_screen_x(bm_frame as f32, rect.min.x, config, state);
-                                let dist = (pos.x - marker_x).abs();
-                                if dist <= THRESHOLD { Some((dist, slot)) } else { None }
-                            })
-                            .collect();
-                        
-                        // Sort by distance, pick nearest
-                        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-                        if let Some((_, slot)) = candidates.first() {
-                            action = Some(RulerAction::ClearBookmark {
-                                comp_uuid: comp.uuid(),
-                                slot: *slot,
-                            });
-                        }
+        if !is_middle_down
+            && (ruler_response.clicked() || ruler_response.dragged())
+            && let Some(pos) = ruler_response.interact_pointer_pos()
+        {
+            let modifiers = ui.input(|i| i.modifiers);
+
+            // Ctrl+click: find nearest bookmark within 10px and clear it
+            if modifiers.ctrl && ruler_response.clicked() {
+                if let Some(bookmarks) = comp.attrs.get_map("bookmarks") {
+                    const THRESHOLD: f32 = 10.0;
+                    // Collect (distance, slot) pairs for bookmarks within threshold
+                    let mut candidates: Vec<(f32, u8)> = bookmarks
+                        .iter()
+                        .filter_map(|(slot_str, value)| {
+                            let bm_frame = match value {
+                                playa_engine::entities::AttrValue::Int(f) => *f,
+                                _ => return None,
+                            };
+                            let slot: u8 = slot_str.parse().ok()?;
+                            let marker_x =
+                                frame_to_screen_x(bm_frame as f32, rect.min.x, config, state);
+                            let dist = (pos.x - marker_x).abs();
+                            if dist <= THRESHOLD {
+                                Some((dist, slot))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    // Sort by distance, pick nearest
+                    candidates
+                        .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                    if let Some((_, slot)) = candidates.first() {
+                        action = Some(RulerAction::ClearBookmark {
+                            comp_uuid: comp.uuid(),
+                            slot: *slot,
+                        });
                     }
-                } else {
-                    // Normal click/drag: scrub
-                    let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
-                    action = Some(RulerAction::Scrub(frame.min(total_frames.saturating_sub(1))));
                 }
+            } else {
+                // Normal click/drag: scrub
+                let frame = screen_x_to_frame(pos.x, rect.min.x, config, state).round() as i32;
+                action = Some(RulerAction::Scrub(
+                    frame.min(total_frames.saturating_sub(1)),
+                ));
             }
+        }
     }
 
     (action, rect)

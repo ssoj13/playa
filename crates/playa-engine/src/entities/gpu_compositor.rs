@@ -1,194 +1,27 @@
-//! GPU-accelerated compositor using OpenGL framebuffer objects.
+//! GPU-accelerated compositor using OpenGL framebuffer objects + GLSL blends.
 //!
-//! Provides 10-50x faster compositing compared to CPU implementation
-//! for multi-layer blending operations.
+//! Typical speedups vs [`super::compositor::CpuCompositor`] vary with resolution, layer depth, and
+//! driver quality — measure on hardware instead of trusting fixed millisecond guesses.
 //!
-//! # Architecture
+//! # Thread / context rules
 //!
-//! - Uses FBO (Framebuffer Objects) for offscreen rendering
-//! - Blends layers using GLSL fragment shaders
-//! - Supports all blend modes: Normal, Screen, Add, Subtract, Multiply, Divide, Difference
-//! - Automatic fallback to CPU on errors
-//! - Texture cache for performance optimization
+//! Any call touching [`glow::Context`] must run on the thread that created the [`GpuCompositor`]. Worker
+//! threads therefore **never** invoke this directly for final comps: [`crate::entities::comp_node::CompNode`]
+//! pushes stacks through [`super::gpu_blend_bridge::GpuBlendBridge`]; the shell app (`playa-app`)
+//! drains that queue from the UI loop after GL + `CompositorType` are updated — see sibling
+//! `gpu_blend_bridge.rs`.
 //!
-//! # Status: Fully implemented ✅
+//! # Implementation notes
 //!
-//! - ✅ All 7 blend modes working through OpenGL FBO + shaders
-//! - ✅ Support for F32, F16, U8 pixel formats
-//! - ✅ Automatic CPU fallback on errors
-//! - ✅ Resource cleanup via Drop
-//! - ✅ Compiles successfully
+//! - FBO offscreen passes + GLSL for [`super::compositor::BlendMode`].
+//! - F32/F16/U8 upload paths; internal RAII frees GL textures after each pass completes.
+//! - `GpuCompositor::blend` clones once for the Gpu attempt, then falls back to `CpuCompositor::blend`
+//!   (`compositor.rs`, crate-private helper) using the surviving `Vec` when Gpu uploads/shaders abort.
 //!
-//! # Integration Guide (Next Steps)
+//! # Shader transforms
 //!
-//! The GPU compositor is fully implemented but needs UI integration to be user-accessible.
-//! Estimated time: ~45 minutes.
-//!
-//! ## Step 1: Add Settings UI (15 min)
-//!
-//! **File:** `src/dialogs/prefs/prefs.rs`
-//!
-//! ### A. Add field to `AppSettings`:
-//! ```rust,ignore
-//! pub struct AppSettings {
-//!     // ... existing fields ...
-//!     pub compositor_backend: CompositorBackend,
-//! }
-//!
-//! #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-//! pub enum CompositorBackend {
-//!     Cpu,
-//!     Gpu,
-//! }
-//!
-//! impl Default for CompositorBackend {
-//!     fn default() -> Self {
-//!         CompositorBackend::Cpu // Default to CPU
-//!     }
-//! }
-//! ```
-//!
-//! ### B. Update `Default` for `AppSettings`:
-//! ```rust,ignore
-//! impl Default for AppSettings {
-//!     fn default() -> Self {
-//!         Self {
-//!             // ... existing fields ...
-//!             compositor_backend: CompositorBackend::default(),
-//!         }
-//!     }
-//! }
-//! ```
-//!
-//! ### C. Add UI in `render_ui_settings()`:
-//! ```rust,ignore
-//! fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
-//!     // ... existing code ...
-//!
-//!     ui.add_space(16.0);
-//!     ui.heading("Compositing");
-//!     ui.add_space(8.0);
-//!
-//!     ui.horizontal(|ui| {
-//!         ui.label("Backend:");
-//!         ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Cpu, "CPU");
-//!         ui.radio_value(&mut settings.compositor_backend, CompositorBackend::Gpu, "GPU");
-//!     });
-//!     ui.label("GPU compositor uses OpenGL for 10-50x faster multi-layer blending.");
-//!     ui.label("Requires OpenGL 3.0+. Falls back to CPU on errors.");
-//! }
-//! ```
-//!
-//! ## Step 2: Get GL Context and Create GPU Compositor (20 min)
-//!
-//! **File:** `src/main.rs`
-//!
-//! ### A. Add method to `PlayaApp`:
-//! ```rust,ignore
-//! impl PlayaApp {
-//!     /// Update compositor backend based on settings
-//!     fn update_compositor_backend(&mut self, gl: &Arc<glow::Context>) {
-//!         use crate::entities::compositor::{CompositorType, CpuCompositor};
-//!         use crate::entities::gpu_compositor::GpuCompositor;
-//!
-//!         let desired_backend = match self.settings.compositor_backend {
-//!             dialogs::prefs::CompositorBackend::Cpu => {
-//!                 CompositorType::Cpu(CpuCompositor)
-//!             }
-//!             dialogs::prefs::CompositorBackend::Gpu => {
-//!                 CompositorType::Gpu(GpuCompositor::new(gl.clone()))
-//!             }
-//!         };
-//!
-//!         // Check if compositor type changed
-//!         let current_is_cpu = matches!(
-//!             *self.player.project.compositor.borrow(),
-//!             CompositorType::Cpu(_)
-//!         );
-//!         let desired_is_cpu = matches!(desired_backend, CompositorType::Cpu(_));
-//!
-//!         if current_is_cpu != desired_is_cpu {
-//!             log::info!(
-//!                 "Switching compositor to: {:?}",
-//!                 self.settings.compositor_backend
-//!             );
-//!             self.player.project.set_compositor(desired_backend);
-//!         }
-//!     }
-//! }
-//! ```
-//!
-//! ### B. Call in `update()`:
-//! ```rust,ignore
-//! impl eframe::App for PlayaApp {
-//!     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-//!         // Get GL context and update compositor
-//!         if let Some(gl) = frame.gl() {
-//!             self.update_compositor_backend(gl);
-//!         }
-//!
-//!         // ... rest of code ...
-//!     }
-//! }
-//! ```
-//!
-//! ## Step 3: Testing (10 min)
-//!
-//! 1. Launch application
-//! 2. Open **Settings** (Ctrl+,)
-//! 3. Switch **Compositor Backend** to **GPU**
-//! 4. Load multi-layer composition
-//! 5. Verify compositing works
-//! 6. Check logs: should see `Switching compositor to: Gpu`
-//!
-//! **Expected result:**
-//! - Compositing runs on GPU
-//! - Automatic CPU fallback on errors (warning in logs)
-//!
-//! # Performance Gains
-//!
-//! Expected performance improvements:
-//! - **4K comp (3840x2160)**: CPU ~50ms → GPU ~2-5ms (**10-25x faster**)
-//! - **2K comp (1920x1080)**: CPU ~15ms → GPU ~1-2ms (**7-15x faster**)
-//! - **HD comp (1280x720)**: CPU ~8ms → GPU ~0.5-1ms (**8-16x faster**)
-//!
-//! # Enable/Disable (Compile-Time Toggle)
-//!
-//! **File:** `src/entities/compositor.rs` (line 13)
-//!
-//! To **enable** GPU compositor:
-//! ```rust,ignore
-//! use super::gpu_compositor::GpuCompositor;  // ✅ Enabled
-//! ```
-//!
-//! To **disable** GPU compositor:
-//! ```text
-//! // use super::gpu_compositor::GpuCompositor;  // ❌ Disabled
-//! ```
-//!
-//! Commenting out this line completely disables GPU compositor at compile-time:
-//! - `CompositorType::Gpu` enum variant becomes unavailable
-//! - Project falls back to CPU-only compositing
-//! - `gpu_compositor.rs` is not compiled
-//!
-//! # Optional: Performance Statistics
-//!
-//! Add compositing time to status bar:
-//!
-//! **File:** `src/entities/comp.rs`
-//! ```rust,ignore
-//! pub fn compose(&self, frame_idx: i32, project: &super::Project) -> Option<Frame> {
-//!     // ... existing code ...
-//!
-//!     let start = std::time::Instant::now();
-//!     let result = project.compositor.borrow_mut().blend_with_dim(source_frames, dim);
-//!     let elapsed = start.elapsed();
-//!
-//!     trace!("Compositor took: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
-//!
-//!     result
-//! }
-//! ```
+//! Per-layer `u_top_transform` uniforms exist; Cpu compositor still ignores matrix inputs because
+//! compose pre-warps pixels — see [`super::compositor`] module docs for the split.
 
 use super::compositor::BlendMode;
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
@@ -205,7 +38,10 @@ struct TextureGuard {
 
 impl TextureGuard {
     fn new(gl: Arc<glow::Context>) -> Self {
-        Self { gl, textures: Vec::new() }
+        Self {
+            gl,
+            textures: Vec::new(),
+        }
     }
 
     fn push(&mut self, texture: glow::Texture) {
@@ -216,7 +52,9 @@ impl TextureGuard {
     fn delete(&mut self, texture: glow::Texture) {
         if let Some(pos) = self.textures.iter().position(|t| *t == texture) {
             self.textures.remove(pos);
-            unsafe { self.gl.delete_texture(texture); }
+            unsafe {
+                self.gl.delete_texture(texture);
+            }
         }
     }
 }
@@ -225,7 +63,9 @@ impl Drop for TextureGuard {
     fn drop(&mut self) {
         // Clean up all remaining textures
         for texture in self.textures.drain(..) {
-            unsafe { self.gl.delete_texture(texture); }
+            unsafe {
+                self.gl.delete_texture(texture);
+            }
         }
     }
 }
@@ -282,7 +122,11 @@ impl GpuCompositor {
     /// Initialize OpenGL resources (shaders, FBO, VAO)
     fn ensure_initialized(&mut self) -> Result<(), String> {
         // All four must be Some; if any is missing we have partial state from a prior failed init
-        if self.blend_program.is_some() && self.vao.is_some() && self.vbo.is_some() && self.fbo.is_some() {
+        if self.blend_program.is_some()
+            && self.vao.is_some()
+            && self.vbo.is_some()
+            && self.fbo.is_some()
+        {
             return Ok(());
         }
 
@@ -330,7 +174,14 @@ impl GpuCompositor {
             gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
             gl.enable_vertex_attrib_array(0);
             // Texcoord attribute (location 1)
-            gl.vertex_attrib_pointer_f32(1, 2, glow::FLOAT, false, stride, 2 * std::mem::size_of::<f32>() as i32);
+            gl.vertex_attrib_pointer_f32(
+                1,
+                2,
+                glow::FLOAT,
+                false,
+                stride,
+                2 * std::mem::size_of::<f32>() as i32,
+            );
             gl.enable_vertex_attrib_array(1);
 
             self.vao = Some(vao);
@@ -496,10 +347,26 @@ void main() {
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
 
             // Texture parameters
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
 
             // Upload pixel data based on format
             match (&*frame.buffer(), frame.pixel_format()) {
@@ -578,7 +445,9 @@ void main() {
                         glow::FLOAT,
                         glow::PixelPackData::Slice(Some(bytemuck::cast_slice_mut(&mut data))),
                     );
-                    Ok(Frame::from_f32_buffer_with_status(data, width, height, status))
+                    Ok(Frame::from_f32_buffer_with_status(
+                        data, width, height, status,
+                    ))
                 }
                 PixelFormat::RgbaF16 => {
                     let mut u16_data = vec![0u16; width * height * 4];
@@ -589,8 +458,11 @@ void main() {
                         glow::HALF_FLOAT,
                         glow::PixelPackData::Slice(Some(bytemuck::cast_slice_mut(&mut u16_data))),
                     );
-                    let f16_data: Vec<half::f16> = u16_data.iter().map(|&u| half::f16::from_bits(u)).collect();
-                    Ok(Frame::from_f16_buffer_with_status(f16_data, width, height, status))
+                    let f16_data: Vec<half::f16> =
+                        u16_data.iter().map(|&u| half::f16::from_bits(u)).collect();
+                    Ok(Frame::from_f16_buffer_with_status(
+                        f16_data, width, height, status,
+                    ))
                 }
                 PixelFormat::Rgba8 => {
                     let mut data = vec![0u8; width * height * 4];
@@ -601,7 +473,9 @@ void main() {
                         glow::UNSIGNED_BYTE,
                         glow::PixelPackData::Slice(Some(&mut data)),
                     );
-                    Ok(Frame::from_u8_buffer_with_status(data, width, height, status))
+                    Ok(Frame::from_u8_buffer_with_status(
+                        data, width, height, status,
+                    ))
                 }
             }
         }
@@ -718,10 +592,26 @@ void main() {
                 .map_err(|e| format!("Failed to create texture: {}", e))?;
             gl.bind_texture(glow::TEXTURE_2D, Some(texture));
 
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE as i32);
-            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE as i32);
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::LINEAR as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
 
             match format {
                 PixelFormat::RgbaF32 => {
@@ -770,7 +660,10 @@ void main() {
     }
 
     /// Blend frames using GPU with fallback to CPU on error
-    pub(crate) fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
+    pub(crate) fn blend(
+        &mut self,
+        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
+    ) -> Option<Frame> {
         // Try GPU blend first
         match self.blend_impl(frames.clone()) {
             Ok(result) => Some(result),
@@ -784,7 +677,10 @@ void main() {
     }
 
     /// Internal GPU blend implementation (can fail)
-    fn blend_impl(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Result<Frame, String> {
+    fn blend_impl(
+        &mut self,
+        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
+    ) -> Result<Frame, String> {
         use crate::entities::frame::FrameStatus;
 
         if frames.is_empty() {
@@ -836,7 +732,7 @@ void main() {
             let top_texture = guard.textures[i];
             let (top_frame, opacity, mode, transform) = &frames[i];
             let top_size = (top_frame.width(), top_frame.height());
-            
+
             // blend_textures creates new texture, add to guard
             let new_result = self.blend_textures(
                 result_texture,
@@ -859,13 +755,17 @@ void main() {
         }
 
         // Download result from GPU with min_status from inputs
-        let result_frame = self.download_texture_to_frame(result_texture, width, height, format, min_status)?;
+        let result_frame =
+            self.download_texture_to_frame(result_texture, width, height, format, min_status)?;
 
         // Guard will clean up all textures on drop (including result_texture)
         // This happens automatically - no manual cleanup needed
         drop(guard);
 
-        trace!("GPU blend completed successfully with status: {:?}", min_status);
+        trace!(
+            "GPU blend completed successfully with status: {:?}",
+            min_status
+        );
         Ok(result_frame)
     }
 

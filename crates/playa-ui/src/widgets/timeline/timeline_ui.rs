@@ -26,28 +26,36 @@
 //! `timeline.rs` and helper routines in `timeline_helpers.rs`. Data flow:
 //! egui input → dispatch(BoxedEvent) → EventBus → Project/Comp mutations.
 
+use super::TimelineViewMode;
+use super::timeline_events::{
+    TimelineFitAllEvent, TimelineLockWorkAreaChangedEvent, TimelinePanChangedEvent,
+    TimelineSnapChangedEvent, TimelineZoomChangedEvent,
+};
 use super::timeline_helpers::{
-    detect_layer_tool_with_geom, draw_drop_preview, draw_frame_ruler,
-    frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame, RulerAction,
+    RulerAction, detect_layer_tool_with_geom, draw_drop_preview, draw_frame_ruler,
+    frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
 };
 use super::{GlobalDragState, TimelineConfig, TimelineState};
-use playa_engine::entities::{Comp, Node, frame::FrameStatus};
-use playa_engine::core::event_bus::BoxedEvent;
-use playa_engine::core::player_events::{JumpToStartEvent, JumpToEndEvent, TogglePlayPauseEvent, StopEvent, SetFrameEvent, SetLoopEvent};
-use super::TimelineViewMode;
 use crate::widgets::project::project_events::{ProjectActiveChangedEvent, SelectionFocusEvent};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
+use egui_dnd::dnd;
+use playa_engine::core::event_bus::BoxedEvent;
+use playa_engine::core::player_events::{
+    JumpToEndEvent, JumpToStartEvent, SetFrameEvent, SetLoopEvent, StopEvent, TogglePlayPauseEvent,
+};
 use playa_engine::entities::comp_events::{
     AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
     MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,
     SlideLayerEvent,
 };
-use super::timeline_events::{
-    TimelineFitAllEvent, TimelineLockWorkAreaChangedEvent, TimelinePanChangedEvent,
-    TimelineSnapChangedEvent, TimelineZoomChangedEvent,
-};
-use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
-use egui_dnd::dnd;
+use playa_engine::entities::{Comp, Node, frame::FrameStatus};
 use uuid::Uuid;
+
+#[inline]
+fn frame_status_paint_rgba(status: FrameStatus) -> Color32 {
+    let [r, g, b, a] = status.indicator_rgba_unmul();
+    Color32::from_rgba_unmultiplied(r, g, b, a)
+}
 
 fn compute_layer_selection(
     current: &[Uuid],
@@ -59,7 +67,10 @@ fn compute_layer_selection(
 ) -> (Vec<Uuid>, Option<Uuid>) {
     if modifiers.shift {
         let anchor_uuid = anchor.unwrap_or(clicked_uuid);
-        let anchor_idx = all_children.iter().position(|u| *u == anchor_uuid).unwrap_or(clicked_idx);
+        let anchor_idx = all_children
+            .iter()
+            .position(|u| *u == anchor_uuid)
+            .unwrap_or(clicked_idx);
         let (lo, hi) = if anchor_idx <= clicked_idx {
             (anchor_idx, clicked_idx)
         } else {
@@ -113,18 +124,24 @@ pub fn render_toolbar(
         // Zoom controls - fixed max width to leave room for buttons/checkboxes
         ui.label("Zoom:");
         ui.spacing_mut().slider_width = 500.0;
-        let zoom_response = ui.add(
-            egui::Slider::new(&mut state.zoom, 0.1..=20.0)
-                .fixed_decimals(2),
-        );
+        let zoom_response =
+            ui.add(egui::Slider::new(&mut state.zoom, 0.1..=20.0).fixed_decimals(2));
         if zoom_response.changed() {
             dispatch(Box::new(TimelineZoomChangedEvent(state.zoom)));
         }
-        if ui.button("Reset").on_hover_text("Reset Zoom to 1.0").clicked() {
+        if ui
+            .button("Reset")
+            .on_hover_text("Reset Zoom to 1.0")
+            .clicked()
+        {
             state.zoom = 1.0;
             dispatch(Box::new(TimelineZoomChangedEvent(1.0)));
         }
-        if ui.button("Fit").on_hover_text("Fit all clips to view").clicked() {
+        if ui
+            .button("Fit")
+            .on_hover_text("Fit all clips to view")
+            .clicked()
+        {
             dispatch(Box::new(TimelineFitAllEvent(state.last_canvas_width)));
         }
 
@@ -140,7 +157,9 @@ pub fn render_toolbar(
         // Lock checkbox with optional tooltip (2s delay)
         let lock_response = ui.checkbox(&mut state.lock_work_area, "Lock");
         if lock_response.changed() {
-            dispatch(Box::new(TimelineLockWorkAreaChangedEvent(state.lock_work_area)));
+            dispatch(Box::new(TimelineLockWorkAreaChangedEvent(
+                state.lock_work_area,
+            )));
         }
         if show_tooltips {
             lock_response.on_hover_text_at_pointer("Lock work area markers (B/N keys)");
@@ -164,7 +183,10 @@ pub fn render_toolbar(
             ("Outliner", TimelineViewMode::OutlineOnly),
             ("Layers", TimelineViewMode::CanvasOnly),
         ] {
-            if ui.selectable_label(state.view_mode == mode, label).clicked() {
+            if ui
+                .selectable_label(state.view_mode == mode, label)
+                .clicked()
+            {
                 state.view_mode = mode;
             }
         }
@@ -175,9 +197,15 @@ pub fn render_toolbar(
         // Allows switching between named UI layouts stored in AppSettings.
         // Layouts persist dock panel sizes, timeline zoom/pan, and viewport state.
         // Events dispatched here are handled by main.rs layout event handlers.
-        use playa_engine::core::layout_events::{LayoutSelectedEvent, LayoutCreatedEvent, LayoutDeletedEvent};
-        
-        let display_name = if current_layout.is_empty() { "(none)" } else { current_layout };
+        use playa_engine::core::layout_events::{
+            LayoutCreatedEvent, LayoutDeletedEvent, LayoutSelectedEvent,
+        };
+
+        let display_name = if current_layout.is_empty() {
+            "(none)"
+        } else {
+            current_layout
+        };
         egui::ComboBox::from_id_salt("layout_selector")
             .selected_text(display_name)
             .width(100.0)
@@ -195,16 +223,18 @@ pub fn render_toolbar(
         }
 
         // Delete layout button (only enabled if a layout is selected)
-        if ui.add_enabled(!current_layout.is_empty(), egui::Button::new("−"))
+        if ui
+            .add_enabled(!current_layout.is_empty(), egui::Button::new("−"))
             .on_hover_text("Delete current layout")
-            .clicked() 
+            .clicked()
         {
             dispatch(Box::new(LayoutDeletedEvent(current_layout.to_string())));
         }
 
         // Rename layout button - opens inline rename dialog
         // Uses pencil icon, only enabled when a layout is selected
-        if ui.add_enabled(!current_layout.is_empty(), egui::Button::new("✎"))
+        if ui
+            .add_enabled(!current_layout.is_empty(), egui::Button::new("✎"))
             .on_hover_text("Rename current layout")
             .clicked()
         {
@@ -220,10 +250,10 @@ pub fn render_toolbar(
     // Dispatches LayoutRenamedEvent on confirmation.
     if state.rename_dialog_open {
         use playa_engine::core::layout_events::LayoutRenamedEvent;
-        
+
         let mut should_close = false;
         let mut should_rename = false;
-        
+
         egui::Window::new("Rename Layout")
             .collapsible(false)
             .resizable(false)
@@ -232,20 +262,22 @@ pub fn render_toolbar(
                 ui.horizontal(|ui| {
                     ui.label("Name:");
                     let response = ui.text_edit_singleline(&mut state.rename_dialog_name);
-                    
+
                     // Auto-focus the text field when dialog opens
-                    if response.gained_focus() || state.rename_dialog_name == state.rename_dialog_old_name {
+                    if response.gained_focus()
+                        || state.rename_dialog_name == state.rename_dialog_old_name
+                    {
                         response.request_focus();
                     }
-                    
+
                     // Enter key confirms rename
                     if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         should_rename = true;
                     }
                 });
-                
+
                 ui.add_space(8.0);
-                
+
                 ui.horizontal(|ui| {
                     if ui.button("OK").clicked() {
                         should_rename = true;
@@ -255,19 +287,19 @@ pub fn render_toolbar(
                     }
                 });
             });
-        
+
         // Handle dialog actions outside the closure to avoid borrow issues
         if should_rename {
             let new_name = state.rename_dialog_name.trim().to_string();
             let old_name = state.rename_dialog_old_name.clone();
-            
+
             // Only rename if name actually changed and is not empty
             if !new_name.is_empty() && new_name != old_name {
                 dispatch(Box::new(LayoutRenamedEvent(old_name, new_name)));
             }
             should_close = true;
         }
-        
+
         if should_close {
             state.rename_dialog_open = false;
             state.rename_dialog_name.clear();
@@ -278,10 +310,10 @@ pub fn render_toolbar(
 
 /// Render left outline: layer list only (no toolbar)
 /// Render left outline panel: layer list with controls (visibility, name, blend mode, opacity).
-/// 
+///
 /// # Parameters
 /// - `outline_top_offset`: Vertical offset to align with canvas (from AppSettings.timeline_outline_top_offset)
-/// 
+///
 /// Called from ui.rs in Split and OutlineOnly view modes.
 pub fn render_outline(
     ui: &mut Ui,
@@ -308,199 +340,200 @@ pub fn render_outline(
             // Zero out spacing to match canvas side
             ui.spacing_mut().item_spacing.y = 0.0;
             dnd(ui, "timeline_child_names_outline").show_vec(
-                    &mut child_order,
-                    |ui, child_idx, handle, _state| {
-                        let idx = *child_idx;
-                        let layer = &comp.layers[idx];
-                        let child_uuid = layer.uuid();
-                        let attrs = &layer.attrs;
+                &mut child_order,
+                |ui, child_idx, handle, _state| {
+                    let idx = *child_idx;
+                    let layer = &comp.layers[idx];
+                    let child_uuid = layer.uuid();
+                    let attrs = &layer.attrs;
 
-                        // In Split mode, use full available width (outline is in separate panel)
-                        let row_width = if matches!(view_mode, super::TimelineViewMode::Split) {
-                            ui.available_width()
+                    // In Split mode, use full available width (outline is in separate panel)
+                    let row_width = if matches!(view_mode, super::TimelineViewMode::Split) {
+                        ui.available_width()
+                    } else {
+                        config.name_column_width
+                    };
+                    let (row_rect, response) = ui.allocate_exact_size(
+                        Vec2::new(row_width, config.layer_height),
+                        Sense::click(),
+                    );
+                    let mut row_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(row_rect)
+                            .layout(egui::Layout::left_to_right(egui::Align::Center))
+                            .id_salt(egui::Id::new("outline_row").with(idx)),
+                    );
+                    row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+                    row_ui.set_min_height(config.layer_height);
+
+                    // Consume DnD handle without rendering (reorder via canvas DnD)
+                    let _ = handle;
+
+                    let mut visible = attrs.get_bool("visible").unwrap_or(true);
+                    let mut solo = attrs.get_bool("solo").unwrap_or(false);
+                    let mut opacity = attrs.get_float("opacity").unwrap_or(1.0);
+                    let prev_blend = attrs.get_str("blend_mode").unwrap_or("normal").to_string();
+                    let mut blend = prev_blend.clone();
+                    let mut speed = attrs.get_float("speed").unwrap_or(1.0);
+                    let mut dirty = false;
+
+                    // Visible checkbox (20px)
+                    row_ui.allocate_ui_with_layout(
+                        egui::Vec2::new(20.0, config.layer_height),
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            if ui.checkbox(&mut visible, "").changed() {
+                                dirty = true;
+                            }
+                        },
+                    );
+                    // Solo checkbox (20px) - yellow when active
+                    row_ui.allocate_ui_with_layout(
+                        egui::Vec2::new(20.0, config.layer_height),
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            let resp = ui.checkbox(&mut solo, "");
+                            if solo {
+                                ui.painter().rect_filled(
+                                    resp.rect.shrink(2.0),
+                                    2.0,
+                                    egui::Color32::from_rgb(200, 180, 50),
+                                );
+                            }
+                            if resp.changed() {
+                                dirty = true;
+                            }
+                        },
+                    );
+
+                    let child_name = attrs
+                        .get_str("name")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| child_uuid.to_string());
+                    // Name column with configurable width
+                    row_ui.allocate_ui_with_layout(
+                        egui::Vec2::new(config.name_column_width, config.layer_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(config.name_column_width);
+                            ui.add(egui::Label::new(child_name).truncate());
+                        },
+                    );
+
+                    // Fixed-width opacity slider for column alignment
+                    row_ui.allocate_ui_with_layout(
+                        egui::Vec2::new(60.0, config.layer_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut opacity, 0.0..=1.0)
+                                        .show_value(false)
+                                        .smallest_positive(0.01)
+                                        .text(""),
+                                )
+                                .changed()
+                            {
+                                dirty = true;
+                            }
+                        },
+                    );
+
+                    // Fixed-width blend mode combo (90px)
+                    row_ui.allocate_ui_with_layout(
+                        egui::Vec2::new(90.0, config.layer_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            egui::ComboBox::from_id_salt(
+                                egui::Id::new("blend_outline").with(child_uuid),
+                            )
+                            .width(80.0)
+                            .selected_text(blend.clone())
+                            .show_ui(ui, |ui| {
+                                for mode in [
+                                    "normal",
+                                    "screen",
+                                    "add",
+                                    "subtract",
+                                    "multiply",
+                                    "divide",
+                                    "difference",
+                                    "overlay",
+                                ] {
+                                    ui.selectable_value(&mut blend, mode.to_string(), mode);
+                                }
+                            });
+                        },
+                    );
+                    if blend != prev_blend {
+                        dirty = true;
+                    }
+
+                    // Fixed-width speed control for column alignment
+                    row_ui.allocate_ui_with_layout(
+                        egui::Vec2::new(50.0, config.layer_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            if ui
+                                .add(egui::DragValue::new(&mut speed).speed(0.1).range(0.1..=4.0))
+                                .changed()
+                            {
+                                dirty = true;
+                            }
+                        },
+                    );
+
+                    if dirty {
+                        // Apply to all selected layers if this layer is selected
+                        let targets = if comp.layer_selection.contains(&child_uuid) {
+                            comp.layer_selection.clone()
                         } else {
-                            config.name_column_width
+                            vec![child_uuid]
                         };
-                        let (row_rect, response) = ui.allocate_exact_size(
-                            Vec2::new(row_width, config.layer_height),
-                            Sense::click(),
+                        dispatch(Box::new(LayerAttributesChangedEvent {
+                            comp_uuid: comp_id,
+                            layer_uuids: targets,
+                            visible,
+                            solo,
+                            opacity,
+                            blend_mode: blend,
+                            speed,
+                        }));
+                    }
+
+                    if response.clicked() {
+                        let modifiers = ui.input(|i| i.modifiers);
+                        let clicked_uuid = child_uuid;
+                        let children_uuids = comp.layers_uuids_vec();
+                        let (selection, anchor) = compute_layer_selection(
+                            &comp.layer_selection,
+                            comp.layer_selection_anchor,
+                            clicked_uuid,
+                            idx,
+                            modifiers,
+                            &children_uuids,
                         );
-                        let mut row_ui = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(row_rect)
-                                .layout(egui::Layout::left_to_right(egui::Align::Center))
-                                .id_salt(egui::Id::new("outline_row").with(idx)),
-                        );
-                        row_ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                        row_ui.set_min_height(config.layer_height);
+                        dispatch(Box::new(CompSelectionChangedEvent {
+                            comp_uuid: comp_id,
+                            selection: selection.clone(),
+                            anchor,
+                        }));
+                        dispatch(Box::new(SelectionFocusEvent(selection)));
+                    }
 
-                        // Consume DnD handle without rendering (reorder via canvas DnD)
-                        let _ = handle;
-
-                        let mut visible = attrs.get_bool("visible").unwrap_or(true);
-                        let mut solo = attrs.get_bool("solo").unwrap_or(false);
-                        let mut opacity = attrs.get_float("opacity").unwrap_or(1.0);
-                        let prev_blend = attrs
-                            .get_str("blend_mode")
-                            .unwrap_or("normal")
-                            .to_string();
-                        let mut blend = prev_blend.clone();
-                        let mut speed = attrs.get_float("speed").unwrap_or(1.0);
-                        let mut dirty = false;
-
-                        // Visible checkbox (20px)
-                        row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(20.0, config.layer_height),
-                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                            |ui| {
-                                if ui.checkbox(&mut visible, "").changed() {
-                                    dirty = true;
-                                }
-                            },
-                        );
-                        // Solo checkbox (20px) - yellow when active
-                        row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(20.0, config.layer_height),
-                            egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                            |ui| {
-                                let resp = ui.checkbox(&mut solo, "");
-                                if solo {
-                                    ui.painter().rect_filled(
-                                        resp.rect.shrink(2.0),
-                                        2.0,
-                                        egui::Color32::from_rgb(200, 180, 50),
-                                    );
-                                }
-                                if resp.changed() {
-                                    dirty = true;
-                                }
-                            },
-                        );
-
-                        let child_name = attrs
-                            .get_str("name")
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| child_uuid.to_string());
-                        // Name column with configurable width
-                        row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(config.name_column_width, config.layer_height),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.set_min_width(config.name_column_width);
-                                ui.add(egui::Label::new(child_name).truncate());
-                            },
-                        );
-
-                        // Fixed-width opacity slider for column alignment
-                        row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(60.0, config.layer_height),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                if ui
-                                    .add(
-                                        egui::Slider::new(&mut opacity, 0.0..=1.0)
-                                            .show_value(false)
-                                            .smallest_positive(0.01)
-                                            .text(""),
-                                    )
-                                    .changed()
-                                {
-                                    dirty = true;
-                                }
-                            },
-                        );
-
-                        // Fixed-width blend mode combo (90px)
-                        row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(90.0, config.layer_height),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                egui::ComboBox::from_id_salt(egui::Id::new("blend_outline").with(child_uuid))
-                                    .width(80.0)
-                                    .selected_text(blend.clone())
-                                    .show_ui(ui, |ui| {
-                                        for mode in [
-                                            "normal", "screen", "add", "subtract",
-                                            "multiply", "divide", "difference", "overlay",
-                                        ] {
-                                            ui.selectable_value(&mut blend, mode.to_string(), mode);
-                                        }
-                                    });
-                            },
-                        );
-                        if blend != prev_blend {
-                            dirty = true;
-                        }
-
-                        // Fixed-width speed control for column alignment
-                        row_ui.allocate_ui_with_layout(
-                            egui::Vec2::new(50.0, config.layer_height),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut speed)
-                                            .speed(0.1)
-                                            .range(0.1..=4.0),
-                                    )
-                                    .changed()
-                                {
-                                    dirty = true;
-                                }
-                            },
-                        );
-
-                        if dirty {
-                            // Apply to all selected layers if this layer is selected
-                            let targets = if comp.layer_selection.contains(&child_uuid) {
-                                comp.layer_selection.clone()
-                            } else {
-                                vec![child_uuid]
-                            };
-                            dispatch(Box::new(LayerAttributesChangedEvent {
-                                comp_uuid: comp_id,
-                                layer_uuids: targets,
-                                visible,
-                                solo,
-                                opacity,
-                                blend_mode: blend,
-                                speed,
-                            }));
-                        }
-
-                        if response.clicked() {
-                            let modifiers = ui.input(|i| i.modifiers);
-                            let clicked_uuid = child_uuid;
-                            let children_uuids = comp.layers_uuids_vec();
-                            let (selection, anchor) = compute_layer_selection(
-                                &comp.layer_selection,
-                                comp.layer_selection_anchor,
-                                clicked_uuid,
-                                idx,
-                                modifiers,
-                                &children_uuids,
-                            );
-                            dispatch(Box::new(CompSelectionChangedEvent {
-                                comp_uuid: comp_id,
-                                selection: selection.clone(),
-                                anchor,
-                            }));
-                            dispatch(Box::new(SelectionFocusEvent(selection)));
-                        }
-
-                        // Double-click: dive into source comp
-                        if response.double_clicked() {
-                            // Convert parent frame to child comp frame
-                            let parent_frame = comp.frame();
-                            let local_frame = layer.parent_to_local(parent_frame);
-                            // Child comp's "in" will be added in the handler
-                            dispatch(Box::new(ProjectActiveChangedEvent::with_frame(
-                                layer.source_uuid(),
-                                local_frame,
-                            )));
-                        }
-                    },
-                )
+                    // Double-click: dive into source comp
+                    if response.double_clicked() {
+                        // Convert parent frame to child comp frame
+                        let parent_frame = comp.frame();
+                        let local_frame = layer.parent_to_local(parent_frame);
+                        // Child comp's "in" will be added in the handler
+                        dispatch(Box::new(ProjectActiveChangedEvent::with_frame(
+                            layer.source_uuid(),
+                            local_frame,
+                        )));
+                    }
+                },
+            )
         })
         .inner;
 
@@ -521,7 +554,10 @@ pub fn render_outline(
         );
         // Only left-click clears selection (not right-click for context menu)
         if empty_response.clicked_by(egui::PointerButton::Primary) {
-            log::trace!("Empty area clicked, clearing {} selected layers", comp.layer_selection.len());
+            log::trace!(
+                "Empty area clicked, clearing {} selected layers",
+                comp.layer_selection.len()
+            );
             dispatch(Box::new(CompSelectionChangedEvent {
                 comp_uuid: comp_id,
                 selection: vec![],
@@ -563,15 +599,19 @@ pub fn render_canvas(
 
     // Get media for dynamic src_len lookups throughout the function
     let media = project.media.read().expect("media lock");
-    
+
     // Calculate extended range to include all layer positions (even beyond comp bounds)
-    let (layers_min, layers_max) = comp.layers.iter().fold((comp_start, comp_end), |(min, max), layer| {
-        let start = layer.start();
-        let end = comp.get_layer_end(layer, &media);
-        (min.min(start), max.max(end))
-    });
+    let (layers_min, layers_max) =
+        comp.layers
+            .iter()
+            .fold((comp_start, comp_end), |(min, max), layer| {
+                let start = layer.start();
+                let end = comp.get_layer_end(layer, &media);
+                (min.min(start), max.max(end))
+            });
     // Large margin for smooth dragging - scales with visible area
-    let margin = (ui.available_width() / (config.pixels_per_frame * state.zoom)).ceil() as i32 + 100;
+    let margin =
+        (ui.available_width() / (config.pixels_per_frame * state.zoom)).ceil() as i32 + 100;
     let extended_min = layers_min.min(comp_start) - margin;
     let extended_max = layers_max.max(comp_end) + margin;
     let total_frames = (extended_max - extended_min + 1).max(100);
@@ -641,11 +681,13 @@ pub fn render_canvas(
                 dispatch(Box::new(SetFrameEvent(frame)));
             }
             Some(RulerAction::ClearBookmark { comp_uuid, slot }) => {
-                dispatch(Box::new(playa_engine::entities::comp_events::SetBookmarkEvent {
-                    comp_uuid,
-                    slot,
-                    frame: None, // None = clear bookmark
-                }));
+                dispatch(Box::new(
+                    playa_engine::entities::comp_events::SetBookmarkEvent {
+                        comp_uuid,
+                        slot,
+                        frame: None, // None = clear bookmark
+                    },
+                ));
             }
             None => {}
         }
@@ -655,36 +697,45 @@ pub fn render_canvas(
             && ui
                 .ctx()
                 .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
-                && state.drag_state.is_none()
-                && let Some(pos) = ui.ctx().pointer_hover_pos() {
-                    state.drag_state = Some(GlobalDragState::TimelinePan {
-                        drag_start_pos: pos,
-                        initial_pan_offset: state.pan_offset,
-                    });
-                }
+            && state.drag_state.is_none()
+            && let Some(pos) = ui.ctx().pointer_hover_pos()
+        {
+            state.drag_state = Some(GlobalDragState::TimelinePan {
+                drag_start_pos: pos,
+                initial_pan_offset: state.pan_offset,
+            });
+        }
     });
 
     // Status strip (if present) - draw inside horizontal layout to align with ruler
     if let Some(statuses) = &status_strip
-        && let Some(ruler) = ruler_rect {
-            ui.horizontal(|ui| {
-                // Add left spacer only in OutlineOnly mode (same as ruler)
-                if matches!(view_mode, super::TimelineViewMode::OutlineOnly) {
-                    ui.allocate_exact_size(
-                        Vec2::new(config.name_column_width, status_bar_height),
-                        Sense::hover(),
-                    );
-                }
-
-                // Allocate status strip with same width as ruler
-                let (status_rect, _) = ui.allocate_exact_size(
-                    Vec2::new(ruler.width(), status_bar_height),
+        && let Some(ruler) = ruler_rect
+    {
+        ui.horizontal(|ui| {
+            // Add left spacer only in OutlineOnly mode (same as ruler)
+            if matches!(view_mode, super::TimelineViewMode::OutlineOnly) {
+                ui.allocate_exact_size(
+                    Vec2::new(config.name_column_width, status_bar_height),
                     Sense::hover(),
                 );
-                // Pass ruler_rect to ensure alignment
-                draw_status_strip(ui, status_rect, statuses, comp_start, total_frames, ruler, config, state);
-            });
-        }
+            }
+
+            // Allocate status strip with same width as ruler
+            let (status_rect, _) =
+                ui.allocate_exact_size(Vec2::new(ruler.width(), status_bar_height), Sense::hover());
+            // Pass ruler_rect to ensure alignment
+            draw_status_strip(
+                ui,
+                status_rect,
+                statuses,
+                comp_start,
+                total_frames,
+                ruler,
+                config,
+                state,
+            );
+        });
+    }
 
     ui.add_space(4.0);
 
@@ -1294,7 +1345,7 @@ pub fn render_canvas(
                         // If click is within any layer row, select that layer;
                         // otherwise treat it as a frame scrub on empty space.
                         let mut clicked_layer: Option<usize> = None;
-                        
+
                         // Only check layer rows if click is within timeline_rect
                         if timeline_rect.contains(pos) {
                             for &original_idx in child_order_inner.iter() {
@@ -1369,10 +1420,7 @@ pub fn render_canvas(
         let painter = ui.painter();
         let x = frame_to_screen_x(comp.frame() as f32, ruler_rect.min.x, config, state);
         painter.line_segment(
-            [
-                Pos2::new(x, ruler_rect.min.y),
-                Pos2::new(x, tab_rect.max.y),
-            ],
+            [Pos2::new(x, ruler_rect.min.y), Pos2::new(x, tab_rect.max.y)],
             (1.0, Color32::from_rgb(255, 220, 100)),
         );
         let triangle_size = 8.0;
@@ -1391,9 +1439,10 @@ pub fn render_canvas(
 
     // Treat entire tab rect as timeline hover for hotkey routing
     if let Some(pointer) = ui.ctx().pointer_hover_pos()
-        && tab_rect.contains(pointer) {
-            timeline_hovered = true;
-        }
+        && tab_rect.contains(pointer)
+    {
+        timeline_hovered = true;
+    }
 
     // Handle zoom controls when timeline is hovered
     if timeline_hovered {
@@ -1421,32 +1470,53 @@ pub fn render_canvas(
             // Shift+0-9: set bookmark (via text input due to egui bug #3415)
             // Shift+digits produce symbols on US layout: !@#$%^&*()
             let shift_symbols = [
-                (')', 0u8), ('!', 1), ('@', 2), ('#', 3), ('$', 4),
-                ('%', 5), ('^', 6), ('&', 7), ('*', 8), ('(', 9),
+                (')', 0u8),
+                ('!', 1),
+                ('@', 2),
+                ('#', 3),
+                ('$', 4),
+                ('%', 5),
+                ('^', 6),
+                ('&', 7),
+                ('*', 8),
+                ('(', 9),
             ];
             for &(sym, slot) in &shift_symbols {
-                if i.events.iter().any(|e| matches!(e, egui::Event::Text(s) if s.chars().next() == Some(sym))) {
-                    dispatch(Box::new(playa_engine::entities::comp_events::SetBookmarkEvent {
-                        comp_uuid: comp_uuid,
-                        slot,
-                        frame: Some(current_frame),
-                    }));
+                if i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Text(s) if s.chars().next() == Some(sym)))
+                {
+                    dispatch(Box::new(
+                        playa_engine::entities::comp_events::SetBookmarkEvent {
+                            comp_uuid: comp_uuid,
+                            slot,
+                            frame: Some(current_frame),
+                        },
+                    ));
                 }
             }
-            
+
             // 0-9: jump to bookmark
             let digit_keys = [
-                (egui::Key::Num0, 0u8), (egui::Key::Num1, 1), (egui::Key::Num2, 2),
-                (egui::Key::Num3, 3), (egui::Key::Num4, 4), (egui::Key::Num5, 5),
-                (egui::Key::Num6, 6), (egui::Key::Num7, 7), (egui::Key::Num8, 8),
+                (egui::Key::Num0, 0u8),
+                (egui::Key::Num1, 1),
+                (egui::Key::Num2, 2),
+                (egui::Key::Num3, 3),
+                (egui::Key::Num4, 4),
+                (egui::Key::Num5, 5),
+                (egui::Key::Num6, 6),
+                (egui::Key::Num7, 7),
+                (egui::Key::Num8, 8),
                 (egui::Key::Num9, 9),
             ];
             for (key, slot) in digit_keys {
                 if i.key_pressed(key) && !i.modifiers.shift {
-                    dispatch(Box::new(playa_engine::entities::comp_events::JumpToBookmarkEvent {
-                        comp_uuid: comp_uuid,
-                        slot,
-                    }));
+                    dispatch(Box::new(
+                        playa_engine::entities::comp_events::JumpToBookmarkEvent {
+                            comp_uuid: comp_uuid,
+                            slot,
+                        },
+                    ));
                 }
             }
         });
@@ -1475,7 +1545,7 @@ fn draw_status_strip(
     let painter = ui.painter();
     // Use ruler's base_x to ensure alignment with ruler ticks and indicator
     let base_x = ruler_rect.min.x;
-    
+
     // Calculate visible frame range using the VISIBLE width (ruler_rect.width()),
     // matching how the ruler and indicator calculate visible range
     let effective_ppf = config.pixels_per_frame * state.zoom;
@@ -1519,7 +1589,7 @@ fn draw_status_strip(
                             Pos2::new(x_start, rect.min.y),
                             Pos2::new(x_end, rect.max.y),
                         );
-                        painter.rect_filled(run_rect, 0.0, prev_status.color());
+                        painter.rect_filled(run_rect, 0.0, frame_status_paint_rgba(prev_status));
                     }
                 }
                 // Start new run
@@ -1535,12 +1605,8 @@ fn draw_status_strip(
 
     // Draw the last run
     if let (Some(start_frame), Some(status)) = (run_start_frame, current_status) {
-        let x_start = super::timeline_helpers::frame_to_screen_x(
-            start_frame as f32,
-            base_x,
-            config,
-            state,
-        );
+        let x_start =
+            super::timeline_helpers::frame_to_screen_x(start_frame as f32, base_x, config, state);
         let x_end = super::timeline_helpers::frame_to_screen_x(
             visible_end_frame as f32,
             base_x,
@@ -1551,11 +1617,9 @@ fn draw_status_strip(
         let x_start = x_start.max(ruler_rect.min.x);
         let x_end = x_end.min(ruler_rect.max.x);
         if x_start < x_end {
-            let run_rect = Rect::from_min_max(
-                Pos2::new(x_start, rect.min.y),
-                Pos2::new(x_end, rect.max.y),
-            );
-            painter.rect_filled(run_rect, 0.0, status.color());
+            let run_rect =
+                Rect::from_min_max(Pos2::new(x_start, rect.min.y), Pos2::new(x_end, rect.max.y));
+            painter.rect_filled(run_rect, 0.0, frame_status_paint_rgba(status));
         }
     }
 }

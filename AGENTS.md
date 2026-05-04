@@ -24,10 +24,10 @@ playa/
 │   ├── playa-events/
 │   ├── playa-io/
 │   ├── playa-ui/
-│   ├── xtask/          # build automation (release/post/pre, lib_discovery)
+│   ├── xtask/          # build automation (changelog, tags, build/test wrapper, wipe, deploy)
 │   └── playa-py/       # Python bindings — separate workspace (`xtask`/maturin)
 ├── src/                # `main.rs`; `lib.rs` re-exports engine/ui/app for `playa::` API
-├── AGENTS.md, AGENTS_RU.md, README.md
+├── AGENTS.md, README.md
 ├── CHANGELOG.md, DEVELOP.md, TODO.md, … # developer docs at repo root
 ```
 

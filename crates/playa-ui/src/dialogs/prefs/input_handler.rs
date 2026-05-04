@@ -1,16 +1,16 @@
 //! Hotkey system - keyboard shortcuts management
 
 use crate::dialogs::prefs::prefs_events::HotkeyWindow;
-use playa_engine::core::event_bus::BoxedEvent;
-use playa_engine::core::player_events::*;
+use crate::dialogs::prefs::prefs_events::*;
+use crate::widgets::node_editor::node_events::*;
 use crate::widgets::project::project_events::*;
-use playa_engine::entities::comp_events::*;
 use crate::widgets::timeline::timeline_events::*;
 use crate::widgets::viewport::viewport_events::*;
-use playa_events::viewport_tool::{SetToolEvent, ToolMode};
-use crate::widgets::node_editor::node_events::*;
-use crate::dialogs::prefs::prefs_events::*;
 use eframe::egui;
+use playa_engine::core::event_bus::BoxedEvent;
+use playa_engine::core::player_events::*;
+use playa_engine::entities::comp_events::*;
+use playa_events::viewport_tool::{SetToolEvent, ToolMode};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -47,10 +47,11 @@ impl HotkeyHandler {
         }
         // Fallback: try Global
         if self.focused_window != HotkeyWindow::Global
-            && let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string())) {
-                log::trace!("Hotkey: (Global, {}) -> matched (fallback)", key);
-                return Some(factory());
-            }
+            && let Some(factory) = self.bindings.get(&(HotkeyWindow::Global, key.to_string()))
+        {
+            log::trace!("Hotkey: (Global, {}) -> matched (fallback)", key);
+            return Some(factory());
+        }
         log::trace!("Hotkey: ({:?}, {}) -> NO MATCH", self.focused_window, key);
         None
     }
@@ -64,9 +65,15 @@ impl HotkeyHandler {
         alt: bool,
     ) -> Option<BoxedEvent> {
         let mut key_combo = String::new();
-        if ctrl { key_combo.push_str("Ctrl+"); }
-        if shift { key_combo.push_str("Shift+"); }
-        if alt { key_combo.push_str("Alt+"); }
+        if ctrl {
+            key_combo.push_str("Ctrl+");
+        }
+        if shift {
+            key_combo.push_str("Shift+");
+        }
+        if alt {
+            key_combo.push_str("Alt+");
+        }
         key_combo.push_str(key);
         self.handle_key(&key_combo)
     }
@@ -77,7 +84,12 @@ impl HotkeyHandler {
     }
 
     /// Add hotkey binding with factory
-    fn bind<E: Clone + Send + Sync + 'static>(&mut self, window: HotkeyWindow, key: &str, event: E) {
+    fn bind<E: Clone + Send + Sync + 'static>(
+        &mut self,
+        window: HotkeyWindow,
+        key: &str,
+        event: E,
+    ) {
         let factory: EventFactory = Box::new(move || Box::new(event.clone()));
         self.bindings.insert((window, key.to_string()), factory);
     }
@@ -93,10 +105,10 @@ impl HotkeyHandler {
         self.bind(Global, "F4", ToggleEncodeDialogEvent);
         self.bind(Global, "F12", ToggleSettingsEvent);
         self.bind(Global, "Space", TogglePlayPauseEvent);
-        self.bind(Global, "Insert", TogglePlayPauseEvent);  // KP_Ins / Insert
+        self.bind(Global, "Insert", TogglePlayPauseEvent); // KP_Ins / Insert
         self.bind(Global, "ArrowUp", TogglePlayPauseEvent);
         self.bind(Global, "K", StopEvent);
-        self.bind(Global, "Slash", StopEvent);        // / = K (stop)
+        self.bind(Global, "Slash", StopEvent); // / = K (stop)
         // Num1/Num2 reserved for timeline bookmarks
         self.bind(Global, "Home", JumpToStartEvent);
         self.bind(Global, "End", JumpToEndEvent);
@@ -117,9 +129,9 @@ impl HotkeyHandler {
         self.bind(Global, "ArrowDown", StopEvent);
         // J/K/L style: < = J, / = K, > = L
         self.bind(Global, "J", JogBackwardEvent);
-        self.bind(Global, "Comma", DecreaseFPSBaseEvent);  // , = decrease base FPS
+        self.bind(Global, "Comma", DecreaseFPSBaseEvent); // , = decrease base FPS
         self.bind(Global, "L", JogForwardEvent);
-        self.bind(Global, "Period", IncreaseFPSBaseEvent);  // . = increase base FPS
+        self.bind(Global, "Period", IncreaseFPSBaseEvent); // . = increase base FPS
         self.bind(Global, "Semicolon", JumpToPrevEdgeEvent);
         self.bind(Global, "Quote", JumpToNextEdgeEvent);
         self.bind(Global, "Backtick", ToggleLoopEvent);
@@ -134,7 +146,7 @@ impl HotkeyHandler {
         self.bind(Global, "Ctrl+O", OpenProjectDialogEvent);
         self.bind(Global, "Z", ToggleFullscreenEvent);
         self.bind(Global, "U", ProjectPreviousCompEvent);
-        self.bind(Global, "Ctrl+Alt+Slash", ClearCacheEvent);  // Clear all cached frames
+        self.bind(Global, "Ctrl+Alt+Slash", ClearCacheEvent); // Clear all cached frames
         self.bind(Global, "F", FitViewportEvent);
         self.bind(Global, "A", Viewport100Event);
         self.bind(Global, "H", Viewport100Event);
@@ -146,21 +158,66 @@ impl HotkeyHandler {
 
         // Timeline-specific
         self.bind(Timeline, "Delete", RemoveSelectedLayerEvent);
-        self.bind(Timeline, "F", TimelineFitEvent::selected());  // Fit to selected (or all if none)
-        self.bind(Timeline, "A", TimelineFitWorkAreaEvent);        // Fit to work area (B/N range)
+        self.bind(Timeline, "F", TimelineFitEvent::selected()); // Fit to selected (or all if none)
+        self.bind(Timeline, "A", TimelineFitWorkAreaEvent); // Fit to work area (B/N range)
         self.bind(Timeline, "OpenBracket", AlignLayersStartEvent(Uuid::nil()));
         self.bind(Timeline, "CloseBracket", AlignLayersEndEvent(Uuid::nil()));
-        self.bind(Timeline, "Alt+OpenBracket", TrimLayersStartEvent(Uuid::nil()));
-        self.bind(Timeline, "Alt+CloseBracket", TrimLayersEndEvent(Uuid::nil()));
+        self.bind(
+            Timeline,
+            "Alt+OpenBracket",
+            TrimLayersStartEvent(Uuid::nil()),
+        );
+        self.bind(
+            Timeline,
+            "Alt+CloseBracket",
+            TrimLayersEndEvent(Uuid::nil()),
+        );
         // Layer clipboard operations
-        self.bind(Timeline, "Ctrl+D", DuplicateLayersEvent { comp_uuid: Uuid::nil() });
-        self.bind(Timeline, "Ctrl+C", CopyLayersEvent { comp_uuid: Uuid::nil() });
-        self.bind(Timeline, "Ctrl+V", PasteLayersEvent { comp_uuid: Uuid::nil(), target_frame: 0 });
+        self.bind(
+            Timeline,
+            "Ctrl+D",
+            DuplicateLayersEvent {
+                comp_uuid: Uuid::nil(),
+            },
+        );
+        self.bind(
+            Timeline,
+            "Ctrl+C",
+            CopyLayersEvent {
+                comp_uuid: Uuid::nil(),
+            },
+        );
+        self.bind(
+            Timeline,
+            "Ctrl+V",
+            PasteLayersEvent {
+                comp_uuid: Uuid::nil(),
+                target_frame: 0,
+            },
+        );
         // Selection operations
-        self.bind(Timeline, "Ctrl+A", SelectAllLayersEvent { comp_uuid: Uuid::nil() });
-        self.bind(Timeline, "F2", ClearLayerSelectionEvent { comp_uuid: Uuid::nil() }); // Overrides global F2 in timeline
+        self.bind(
+            Timeline,
+            "Ctrl+A",
+            SelectAllLayersEvent {
+                comp_uuid: Uuid::nil(),
+            },
+        );
+        self.bind(
+            Timeline,
+            "F2",
+            ClearLayerSelectionEvent {
+                comp_uuid: Uuid::nil(),
+            },
+        ); // Overrides global F2 in timeline
         // Trim operations
-        self.bind(Timeline, "Ctrl+R", ResetTrimsEvent { comp_uuid: Uuid::nil() });
+        self.bind(
+            Timeline,
+            "Ctrl+R",
+            ResetTrimsEvent {
+                comp_uuid: Uuid::nil(),
+            },
+        );
 
         // Project-specific
         self.bind(Project, "Delete", RemoveSelectedMediaEvent);
@@ -209,9 +266,15 @@ impl HotkeyHandler {
 
                     // Build combo string for debug
                     let mut combo = String::new();
-                    if modifiers.ctrl { combo.push_str("Ctrl+"); }
-                    if modifiers.shift { combo.push_str("Shift+"); }
-                    if modifiers.alt { combo.push_str("Alt+"); }
+                    if modifiers.ctrl {
+                        combo.push_str("Ctrl+");
+                    }
+                    if modifiers.shift {
+                        combo.push_str("Shift+");
+                    }
+                    if modifiers.alt {
+                        combo.push_str("Alt+");
+                    }
                     combo.push_str(&key_str);
 
                     if let Some(ev) = self.handle_key_with_modifiers(
@@ -220,17 +283,30 @@ impl HotkeyHandler {
                         modifiers.shift,
                         modifiers.alt,
                     ) {
-                        log::trace!("[HOTKEY] matched: {} (window={:?})", combo, self.focused_window);
+                        log::trace!(
+                            "[HOTKEY] matched: {} (window={:?})",
+                            combo,
+                            self.focused_window
+                        );
                         return Some(ev);
                     }
                     if !modifiers.any()
-                        && let Some(ev) = self.handle_key(&key_str) {
-                            log::trace!("[HOTKEY] matched (no mod): {} (window={:?})", key_str, self.focused_window);
-                            return Some(ev);
-                        }
+                        && let Some(ev) = self.handle_key(&key_str)
+                    {
+                        log::trace!(
+                            "[HOTKEY] matched (no mod): {} (window={:?})",
+                            key_str,
+                            self.focused_window
+                        );
+                        return Some(ev);
+                    }
                     // Debug: log F/A when NOT matched
                     if !modifiers.any() && (key_str == "F" || key_str == "A") {
-                        log::trace!("[HOTKEY] F/A NOT matched: key={} window={:?}", key_str, self.focused_window);
+                        log::trace!(
+                            "[HOTKEY] F/A NOT matched: key={} window={:?}",
+                            key_str,
+                            self.focused_window
+                        );
                     }
                 }
                 _ => {}

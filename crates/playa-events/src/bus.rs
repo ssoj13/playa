@@ -10,10 +10,10 @@
 //!
 //! This provides true pub/sub with egui-friendly deferred processing.
 
+use log::warn;
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
-use log::warn;
 
 /// Maximum events in queue before oldest are evicted
 const MAX_QUEUE_SIZE: usize = 1000;
@@ -124,7 +124,11 @@ impl EventBus {
         let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         if queue.len() >= MAX_QUEUE_SIZE {
             let evict_count = queue.len() / 2;
-            warn!("EventBus queue full ({} events), evicting oldest {}", queue.len(), evict_count);
+            warn!(
+                "EventBus queue full ({} events), evicting oldest {}",
+                queue.len(),
+                evict_count
+            );
             for _ in 0..evict_count {
                 queue.pop_front();
             }
@@ -153,7 +157,11 @@ impl EventBus {
         let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
         if queue.len() >= MAX_QUEUE_SIZE {
             let evict_count = queue.len() / 2;
-            warn!("EventBus queue full ({} events), evicting oldest {}", queue.len(), evict_count);
+            warn!(
+                "EventBus queue full ({} events), evicting oldest {}",
+                queue.len(),
+                evict_count
+            );
             for _ in 0..evict_count {
                 queue.pop_front();
             }
@@ -185,12 +193,18 @@ impl EventBus {
 
     /// Clear subscribers for type E
     pub fn unsubscribe_all<E: Event>(&self) {
-        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).remove(&TypeId::of::<E>());
+        self.subscribers
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&TypeId::of::<E>());
     }
 
     /// Clear all subscribers and queue
     pub fn clear(&self) {
-        self.subscribers.write().unwrap_or_else(|e| e.into_inner()).clear();
+        self.subscribers
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.queue.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
@@ -236,8 +250,14 @@ impl std::ops::Deref for EventEmitter {
 impl std::fmt::Debug for EventEmitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventEmitter")
-            .field("subscriber_types", &self.0.subscribers.read().map(|s| s.len()).unwrap_or(0))
-            .field("queue_len", &self.0.queue.lock().map(|q| q.len()).unwrap_or(0))
+            .field(
+                "subscriber_types",
+                &self.0.subscribers.read().map(|s| s.len()).unwrap_or(0),
+            )
+            .field(
+                "queue_len",
+                &self.0.queue.lock().map(|q| q.len()).unwrap_or(0),
+            )
             .finish()
     }
 }
@@ -256,7 +276,9 @@ impl CompEventEmitter {
 
     /// Create from EventEmitter
     pub fn from_emitter(emitter: EventEmitter) -> Self {
-        Self { inner: Some(emitter) }
+        Self {
+            inner: Some(emitter),
+        }
     }
 
     /// Emit event (no-op if dummy)
@@ -284,10 +306,14 @@ mod tests {
     use std::sync::atomic::{AtomicI32, Ordering};
 
     #[derive(Clone, Debug)]
-    struct TestEvent { value: i32 }
+    struct TestEvent {
+        value: i32,
+    }
 
     #[derive(Clone, Debug)]
-    struct OtherEvent { msg: String }
+    struct OtherEvent {
+        msg: String,
+    }
 
     #[test]
     fn test_subscribe_emit_immediate() {
@@ -313,7 +339,9 @@ mod tests {
 
         bus.emit(TestEvent { value: 1 });
         bus.emit(TestEvent { value: 2 });
-        bus.emit(OtherEvent { msg: "hello".into() });
+        bus.emit(OtherEvent {
+            msg: "hello".into(),
+        });
 
         let events = bus.poll();
         assert_eq!(events.len(), 3);

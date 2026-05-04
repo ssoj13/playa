@@ -7,11 +7,11 @@
 //! - Focus detection (determine_focused_window)
 
 use super::PlayaApp;
+use crate::main_events::{self, AppEventContext};
 use playa_engine::core::event_bus::downcast_event;
-use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa_engine::entities::comp_events::*;
 use playa_engine::entities::node::Node;
-use crate::main_events::{self, AppEventContext};
+use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa_ui::widgets::ae::EffectAction;
 use playa_ui::widgets::project::project_events::ClearCacheEvent;
 use playa_ui::widgets::viewport::ViewportRefreshEvent;
@@ -37,15 +37,20 @@ impl PlayaApp {
         // Poll all events from the bus
         let events = self.event_bus.poll();
         for event in events {
-
             // === Comp events (high priority, internal) ===
             if let Some(e) = downcast_event::<CurrentFrameChangedEvent>(&event) {
-                trace!("Comp {} frame changed: {} → {}", e.comp_uuid, e.old_frame, e.new_frame);
+                trace!(
+                    "Comp {} frame changed: {} → {}",
+                    e.comp_uuid, e.old_frame, e.new_frame
+                );
                 self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
                 continue;
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
-                trace!("Comp {} layers changed (range: {:?})", e.comp_uuid, e.affected_range);
+                trace!(
+                    "Comp {} layers changed (range: {:?})",
+                    e.comp_uuid, e.affected_range
+                );
                 // 1. Increment epoch to cancel all pending worker tasks
                 // Why: Old tasks may write stale data to cache, causing eviction loops
                 if let Some(manager) = self.project.cache_manager() {
@@ -87,28 +92,40 @@ impl PlayaApp {
                 continue;
             }
             // Layout events - reset/select/create/delete/update/rename UI layout
-            if downcast_event::<playa_engine::core::layout_events::ResetLayoutEvent>(&event).is_some() {
+            if downcast_event::<playa_engine::core::layout_events::ResetLayoutEvent>(&event)
+                .is_some()
+            {
                 self.reset_layout();
                 continue;
             }
             // Named layout events
-            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutSelectedEvent>(&event) {
+            if let Some(evt) =
+                downcast_event::<playa_engine::core::layout_events::LayoutSelectedEvent>(&event)
+            {
                 self.select_layout(&evt.0);
                 continue;
             }
-            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutCreatedEvent>(&event) {
+            if let Some(evt) =
+                downcast_event::<playa_engine::core::layout_events::LayoutCreatedEvent>(&event)
+            {
                 self.create_layout(evt.0.clone());
                 continue;
             }
-            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutDeletedEvent>(&event) {
+            if let Some(evt) =
+                downcast_event::<playa_engine::core::layout_events::LayoutDeletedEvent>(&event)
+            {
                 self.delete_layout(&evt.0);
                 continue;
             }
-            if downcast_event::<playa_engine::core::layout_events::LayoutUpdatedEvent>(&event).is_some() {
+            if downcast_event::<playa_engine::core::layout_events::LayoutUpdatedEvent>(&event)
+                .is_some()
+            {
                 self.update_current_layout();
                 continue;
             }
-            if let Some(evt) = downcast_event::<playa_engine::core::layout_events::LayoutRenamedEvent>(&event) {
+            if let Some(evt) =
+                downcast_event::<playa_engine::core::layout_events::LayoutRenamedEvent>(&event)
+            {
                 self.rename_layout(&evt.0, &evt.1);
                 continue;
             }
@@ -143,7 +160,9 @@ impl PlayaApp {
                     deferred_save_project = Some(path);
                 }
                 if let Some(paths) = result.load_sequences {
-                    deferred_load_sequences.get_or_insert_with(Vec::new).extend(paths);
+                    deferred_load_sequences
+                        .get_or_insert_with(Vec::new)
+                        .extend(paths);
                 }
                 if let Some(comp_data) = result.new_comp {
                     deferred_new_comp = Some(comp_data);
@@ -169,13 +188,13 @@ impl PlayaApp {
         }
 
         // === DERIVED EVENTS LOOP - DO NOT REMOVE! ===
-        // 
+        //
         // WHY THIS EXISTS:
         // When handle_app_event() processes MoveAndReorderLayerEvent (or similar), it calls
         // modify_comp() which emits AttrsChangedEvent. But since we're INSIDE the main
         // `for event in poll()` loop, this new event goes into the queue and would only
         // be processed on the NEXT frame - causing a 1-frame delay before cache invalidation.
-        // 
+        //
         // Without this loop: layer move -> render uses stale cache -> next frame clears cache
         // With this loop:    layer move -> derived events processed -> cache cleared -> fresh render
         //
@@ -189,7 +208,11 @@ impl PlayaApp {
             if derived.is_empty() {
                 break;
             }
-            trace!("[DERIVED] iteration={}, events={}", iteration, derived.len());
+            trace!(
+                "[DERIVED] iteration={}, events={}",
+                iteration,
+                derived.len()
+            );
             for event in derived {
                 if let Some(e) = downcast_event::<AttrsChangedEvent>(&event) {
                     trace!("[DERIVED] AttrsChangedEvent comp={}", e.0);
@@ -215,7 +238,9 @@ impl PlayaApp {
             let _ = self.load_sequences(paths);
         }
         if let Some((name, fps)) = deferred_new_comp {
-            let uuid = self.project.create_comp(&name, fps, self.comp_event_emitter.clone());
+            let uuid = self
+                .project
+                .create_comp(&name, fps, self.comp_event_emitter.clone());
             self.player.set_active_comp(Some(uuid), &mut self.project);
             self.node_editor_state.set_comp(uuid);
             info!("Created new comp: {}", uuid);
@@ -249,7 +274,10 @@ impl PlayaApp {
     ///
     /// Shared by the main event loop and the derived-events loop.
     fn handle_attrs_changed(&mut self, comp_uuid: uuid::Uuid) {
-        trace!("Comp {} attrs changed - triggering cascade invalidation", comp_uuid);
+        trace!(
+            "Comp {} attrs changed - triggering cascade invalidation",
+            comp_uuid
+        );
         // 1. Increment epoch to cancel pending worker tasks (stale data prevention)
         if let Some(manager) = self.project.cache_manager() {
             manager.increment_epoch();
@@ -306,7 +334,7 @@ impl PlayaApp {
         // Fallback to Global
         HotkeyWindow::Global
     }
-    
+
     /// Handle effect actions from the Attribute Editor effects UI.
     /// Modifies layer effects and triggers cache invalidation.
     pub fn handle_effect_actions(
@@ -316,9 +344,9 @@ impl PlayaApp {
         actions: Vec<EffectAction>,
     ) {
         use playa_engine::entities::effects::Effect;
-        
+
         let mut needs_invalidate = false;
-        
+
         for action in actions {
             match action {
                 EffectAction::Add(effect_type) => {
@@ -342,7 +370,9 @@ impl PlayaApp {
                 EffectAction::ToggleEnabled(effect_uuid) => {
                     self.project.modify_comp(comp_uuid, |comp| {
                         if let Some(layer) = comp.get_layer_mut(layer_uuid) {
-                            if let Some(effect) = layer.effects.iter_mut().find(|e| e.uuid == effect_uuid) {
+                            if let Some(effect) =
+                                layer.effects.iter_mut().find(|e| e.uuid == effect_uuid)
+                            {
                                 effect.enabled = !effect.enabled;
                             }
                         }
@@ -354,7 +384,9 @@ impl PlayaApp {
                     // UI-only state, no invalidation needed
                     self.project.modify_comp(comp_uuid, |comp| {
                         if let Some(layer) = comp.get_layer_mut(layer_uuid) {
-                            if let Some(effect) = layer.effects.iter_mut().find(|e| e.uuid == effect_uuid) {
+                            if let Some(effect) =
+                                layer.effects.iter_mut().find(|e| e.uuid == effect_uuid)
+                            {
                                 effect.collapsed = !effect.collapsed;
                             }
                         }
@@ -363,7 +395,9 @@ impl PlayaApp {
                 EffectAction::AttrChanged(effect_uuid, key, value) => {
                     self.project.modify_comp(comp_uuid, |comp| {
                         if let Some(layer) = comp.get_layer_mut(layer_uuid) {
-                            if let Some(effect) = layer.effects.iter_mut().find(|e| e.uuid == effect_uuid) {
+                            if let Some(effect) =
+                                layer.effects.iter_mut().find(|e| e.uuid == effect_uuid)
+                            {
                                 effect.attrs.set(&key, value);
                             }
                         }
@@ -374,7 +408,9 @@ impl PlayaApp {
                 EffectAction::MoveUp(effect_uuid) => {
                     self.project.modify_comp(comp_uuid, |comp| {
                         if let Some(layer) = comp.get_layer_mut(layer_uuid) {
-                            if let Some(idx) = layer.effects.iter().position(|e| e.uuid == effect_uuid) {
+                            if let Some(idx) =
+                                layer.effects.iter().position(|e| e.uuid == effect_uuid)
+                            {
                                 if idx > 0 {
                                     layer.effects.swap(idx, idx - 1);
                                 }
@@ -387,7 +423,9 @@ impl PlayaApp {
                 EffectAction::MoveDown(effect_uuid) => {
                     self.project.modify_comp(comp_uuid, |comp| {
                         if let Some(layer) = comp.get_layer_mut(layer_uuid) {
-                            if let Some(idx) = layer.effects.iter().position(|e| e.uuid == effect_uuid) {
+                            if let Some(idx) =
+                                layer.effects.iter().position(|e| e.uuid == effect_uuid)
+                            {
                                 if idx < layer.effects.len() - 1 {
                                     layer.effects.swap(idx, idx + 1);
                                 }
@@ -399,7 +437,7 @@ impl PlayaApp {
                 }
             }
         }
-        
+
         if needs_invalidate {
             // Invalidate comp cache and trigger refresh
             self.project.invalidate_with_dependents(comp_uuid, true);
@@ -420,16 +458,14 @@ impl PlayaApp {
         // Determine focused window and update hotkey handler
         let focused_window = self.determine_focused_window(ctx);
         self.focused_window = focused_window;
-        self.hotkey_handler
-            .set_focused_window(focused_window);
+        self.hotkey_handler.set_focused_window(focused_window);
 
         // Try hotkey handler first (for context-aware hotkeys)
         if let Some(event) = self.hotkey_handler.handle_input(&input) {
             use playa_engine::entities::comp_events::{
-                AlignLayersStartEvent, AlignLayersEndEvent, 
-                TrimLayersStartEvent, TrimLayersEndEvent, 
-                DuplicateLayersEvent, CopyLayersEvent, PasteLayersEvent, 
-                SelectAllLayersEvent, ClearLayerSelectionEvent, ResetTrimsEvent
+                AlignLayersEndEvent, AlignLayersStartEvent, ClearLayerSelectionEvent,
+                CopyLayersEvent, DuplicateLayersEvent, PasteLayersEvent, ResetTrimsEvent,
+                SelectAllLayersEvent, TrimLayersEndEvent, TrimLayersStartEvent,
             };
 
             // Fill comp_uuid for timeline-specific events
@@ -454,37 +490,55 @@ impl PlayaApp {
                 // Layer clipboard operations
                 if downcast_event::<DuplicateLayersEvent>(&event).is_some() {
                     log::trace!("Hotkey: Ctrl-D -> DuplicateLayersEvent");
-                    self.event_bus.emit(DuplicateLayersEvent { comp_uuid: active_comp_uuid });
+                    self.event_bus.emit(DuplicateLayersEvent {
+                        comp_uuid: active_comp_uuid,
+                    });
                     return;
                 }
                 if downcast_event::<CopyLayersEvent>(&event).is_some() {
                     log::trace!("Hotkey: Ctrl-C -> CopyLayersEvent");
-                    self.event_bus.emit(CopyLayersEvent { comp_uuid: active_comp_uuid });
+                    self.event_bus.emit(CopyLayersEvent {
+                        comp_uuid: active_comp_uuid,
+                    });
                     return;
                 }
                 if downcast_event::<PasteLayersEvent>(&event).is_some() {
                     // Get current playhead position for paste target
-                    let target_frame = self.project.with_comp(active_comp_uuid, |c| c.frame())
+                    let target_frame = self
+                        .project
+                        .with_comp(active_comp_uuid, |c| c.frame())
                         .unwrap_or(0);
-                    log::trace!("Hotkey: Ctrl-V -> PasteLayersEvent at frame {}", target_frame);
-                    self.event_bus.emit(PasteLayersEvent { comp_uuid: active_comp_uuid, target_frame });
+                    log::trace!(
+                        "Hotkey: Ctrl-V -> PasteLayersEvent at frame {}",
+                        target_frame
+                    );
+                    self.event_bus.emit(PasteLayersEvent {
+                        comp_uuid: active_comp_uuid,
+                        target_frame,
+                    });
                     return;
                 }
                 // Selection operations
                 if downcast_event::<SelectAllLayersEvent>(&event).is_some() {
                     log::trace!("Hotkey: Ctrl-A -> SelectAllLayersEvent");
-                    self.event_bus.emit(SelectAllLayersEvent { comp_uuid: active_comp_uuid });
+                    self.event_bus.emit(SelectAllLayersEvent {
+                        comp_uuid: active_comp_uuid,
+                    });
                     return;
                 }
                 if downcast_event::<ClearLayerSelectionEvent>(&event).is_some() {
                     log::trace!("Hotkey: F2 -> ClearLayerSelectionEvent");
-                    self.event_bus.emit(ClearLayerSelectionEvent { comp_uuid: active_comp_uuid });
+                    self.event_bus.emit(ClearLayerSelectionEvent {
+                        comp_uuid: active_comp_uuid,
+                    });
                     return;
                 }
                 // Trim operations
                 if downcast_event::<ResetTrimsEvent>(&event).is_some() {
                     log::trace!("Hotkey: Ctrl-R -> ResetTrimsEvent");
-                    self.event_bus.emit(ResetTrimsEvent { comp_uuid: active_comp_uuid });
+                    self.event_bus.emit(ResetTrimsEvent {
+                        comp_uuid: active_comp_uuid,
+                    });
                     return;
                 }
             }

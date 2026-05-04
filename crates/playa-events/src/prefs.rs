@@ -53,7 +53,9 @@ pub struct ToggleFrameNumbersEvent;
 pub struct SetGizmoPrefsEvent(pub GizmoPrefs);
 
 /// CPU vs GPU compositor backend (persisted via AppSettings).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default,
+)]
 pub enum CompositorBackend {
     #[default]
     Cpu,

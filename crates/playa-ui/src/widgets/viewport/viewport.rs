@@ -278,12 +278,12 @@ impl ViewportState {
     /// High-level scrubbing handler. Returns Some(frame_idx) when scrubbing
     /// requests a new frame, or None if nothing changed.
     /// Maps mouse X from image bounds directly to [play_start, play_end] frame range.
-    /// 
+    ///
     /// # Coordinate System
     /// - `panel_rect` is in screen coordinates (absolute)
     /// - `response.interact_pointer_pos()` returns screen coordinates
     /// - `get_image_screen_bounds()` returns local coordinates (relative to viewport panel)
-    /// 
+    ///
     /// We convert mouse_pos to local coords by subtracting panel_rect.min.
     pub fn handle_scrubbing(
         &mut self,
@@ -322,9 +322,12 @@ impl ViewportState {
             // Simple fit: mouse_x in [image_left, image_right] -> frame in [play_start, play_end]
             let frame = fit(
                 local_x,
-                image_bounds.min.x, image_bounds.max.x,
-                play_start as f32, play_end as f32,
-            ).round() as i32;
+                image_bounds.min.x,
+                image_bounds.max.x,
+                play_start as f32,
+                play_end as f32,
+            )
+            .round() as i32;
 
             // Clamp to valid range
             let frame_clamped = frame.clamp(play_start, play_end);

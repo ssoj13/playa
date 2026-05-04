@@ -14,8 +14,6 @@ pub mod timeline;
 pub mod viewport;
 pub mod viewport_tool;
 
-pub use bus::{
-    downcast_event, BoxedEvent, CompEventEmitter, Event, EventBus, EventEmitter,
-};
+pub use bus::{BoxedEvent, CompEventEmitter, Event, EventBus, EventEmitter, downcast_event};
 pub use prefs::{CompositorBackend, CompositorBackendChangedEvent, GizmoPrefs};
 pub use viewport_tool::{SetToolEvent, ToolMode};

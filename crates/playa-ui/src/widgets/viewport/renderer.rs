@@ -1,8 +1,8 @@
 use super::ViewportRenderState;
 use super::shaders::Shaders;
-use playa_engine::entities::frame::{PixelBuffer, PixelFormat};
 use eframe::glow::{self, HasContext};
 use log::{error, info, trace};
+use playa_engine::entities::frame::{PixelBuffer, PixelFormat};
 
 /// OpenGL renderer for viewport
 pub struct ViewportRenderer {

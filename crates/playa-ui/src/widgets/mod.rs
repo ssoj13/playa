@@ -4,8 +4,8 @@
 
 pub mod actions;
 pub mod ae;
-pub mod node_editor;
 pub mod file_dialogs;
+pub mod node_editor;
 pub mod project;
 pub mod status;
 pub mod timeline;

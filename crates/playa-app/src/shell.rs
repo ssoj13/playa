@@ -5,16 +5,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::main_events::{AppEventContext, EventResult, handle_app_event};
 use playa_engine::core::cache_man::CacheManager;
-use playa_ui::dialogs::prefs::AppSettings;
-use playa_engine::entities::Project;
 use playa_engine::core::event_bus::{CompEventEmitter, EventBus};
-use playa_engine::entities::CacheStrategy;
-use crate::main_events::{handle_app_event, AppEventContext, EventResult};
 use playa_engine::core::player::Player;
+use playa_engine::entities::CacheStrategy;
+use playa_engine::entities::Project;
+use playa_ui::dialogs::prefs::AppSettings;
+use playa_ui::widgets::node_editor::NodeEditorState;
 use playa_ui::widgets::timeline::TimelineState;
 use playa_ui::widgets::viewport::ViewportState;
-use playa_ui::widgets::node_editor::NodeEditorState;
 
 /// Common shell state shared by all standalone binaries
 pub struct Shell {
@@ -56,14 +56,14 @@ impl Shell {
     pub fn load_sequence(&mut self, path: &str) {
         use playa_engine::entities::FileNode;
         use playa_engine::entities::node::Node;
-        
+
         let path_buf = PathBuf::from(path);
         if !path_buf.exists() {
             self.error_msg = Some(format!("Test sequence not found: {}", path));
             log::warn!("Test sequence not found: {}", path);
             return;
         }
-        
+
         match FileNode::detect_from_paths(vec![path_buf]) {
             Ok(nodes) => {
                 if nodes.is_empty() {
@@ -71,7 +71,7 @@ impl Shell {
                     log::warn!("No valid sequences detected from: {}", path);
                     return;
                 }
-                
+
                 let mut first_uuid = None;
                 for node in nodes {
                     let uuid = node.uuid();
@@ -81,12 +81,12 @@ impl Shell {
                         first_uuid = Some(uuid);
                     }
                 }
-                
+
                 // Activate first loaded sequence
                 if let Some(uuid) = first_uuid {
                     self.player.set_active_comp(Some(uuid), &mut self.project);
                 }
-                
+
                 self.error_msg = None;
             }
             Err(e) => {
@@ -239,7 +239,9 @@ impl Shell {
 
         // New comp
         if let Some((name, fps)) = result.new_comp {
-            let uuid = self.project.create_comp(&name, fps, self.comp_emitter.clone());
+            let uuid = self
+                .project
+                .create_comp(&name, fps, self.comp_emitter.clone());
             self.player.set_active_comp(Some(uuid), &mut self.project);
             log::info!("Created comp: {}", name);
         }
@@ -247,9 +249,10 @@ impl Shell {
         // Quick save
         if result.quick_save
             && let Some(path) = self.project.last_save_path()
-                && let Err(e) = self.project.to_json(&path) {
-                    self.error_msg = Some(format!("Quick save failed: {}", e));
-                }
+            && let Err(e) = self.project.to_json(&path)
+        {
+            self.error_msg = Some(format!("Quick save failed: {}", e));
+        }
     }
 }
 
