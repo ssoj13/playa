@@ -710,8 +710,16 @@ COMMANDS = [
 
 # Xtask-forwarded commands (no special handling needed)
 XTASK_COMMANDS = [
-    "tag-dev", "tag-rel", "pr", "changelog", "wipe", "wipe-wf",
-    "post", "verify", "deploy", "pre",
+    # Must match Subcommand enums in crates/xtask/src/main.rs
+    "build",
+    "changelog",
+    "tag-dev",
+    "tag-rel",
+    "pr",
+    "deploy",
+    "wipe",
+    "wipe-wf",
+    "test",
 ]
 
 

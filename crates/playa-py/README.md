@@ -11,8 +11,8 @@ pip install playa
 Or build from source:
 
 ```bash
-cd playa
-./bootstrap.ps1 python
+cd playa   # workspace root containing bootstrap.py
+python bootstrap.py python
 ```
 
 ## Usage

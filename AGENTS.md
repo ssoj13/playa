@@ -27,7 +27,8 @@ playa/
 │   ├── xtask/          # build automation (release/post/pre, lib_discovery)
 │   └── playa-py/       # Python bindings — separate workspace (`xtask`/maturin)
 ├── src/                # `main.rs`; `lib.rs` re-exports engine/ui/app for `playa::` API
-└── md/                 # documentation (this file, DEVELOP, DIAGRAMS, TODO, WGPU)
+├── AGENTS.md, AGENTS_RU.md, README.md
+├── CHANGELOG.md, DEVELOP.md, TODO.md, … # developer docs at repo root
 ```
 
 ### `src/` — module map
@@ -151,7 +152,7 @@ project.modify_comp(uuid, |comp| {
     comp.set_child_attrs(layer, &values);   // attrs.set() → dirty=true
 });
 // modify_comp checks is_dirty() and emits AttrsChangedEvent
-// → handler in main_events.rs:
+// → handler in `crates/playa-app` (`main_events` module):
 //     1. cache_manager.increment_epoch()  — invalidates old worker tasks
 //     2. global_cache.clear_comp(uuid)    — drops frames from the cache
 //     3. preloader restarts loading
@@ -168,7 +169,7 @@ silently desyncs.
 
 ### 6. Work-stealing workers with epochs
 
-`Workers` (`src/core/workers.rs`) — a thread pool with **per-worker FIFO deques**
+`Workers` (`crates/playa-engine/src/core/workers.rs`) — a thread pool with **per-worker FIFO deques**
 plus a global `Injector`:
 
 ```text
@@ -467,24 +468,26 @@ egui_dock tree with configurable visibility for the Project/Attributes panels.
 ## Build pipeline
 
 `python bootstrap.py build` (default **release**; add `-d` / `--debug` for debug) sets
-`VCPKG_ROOT` / `VCPKGRS_TRIPLET`, merges the MSVC environment (vcv-rs or `vcvars64.bat`),
-then runs `cargo xtask build`. The thin `build.rs` does nothing — dependency management
-and DLL/so copying are delegated to xtask.
+`VCPKG_ROOT` / `VCPKGRS_TRIPLET`, merges the MSVC environment (`vcvars64.bat` or
+Developer PowerShell) on Windows, then runs **`cargo xtask build`**. The thin `build.rs`
+is intentionally minimal; native deps are wired through Cargo + **vcpkg** (details in **`DEVELOP.md`**).
 
 ```
-python bootstrap.py build             # release via xtask
-python bootstrap.py build -d          # debug
-cargo xtask build [--release|--debug]   # build + post-build copy
-cargo xtask post                        # copy native libs
-cargo xtask verify                      # check dependencies
-cargo xtask deploy [--install-dir P]    # install to system
-cargo xtask pre                         # Linux: patch OpenEXR headers (for GCC 11+)
-cargo xtask tag-dev/tag-rel/pr/changelog
+python bootstrap.py build               # release via xtask
+python bootstrap.py build -d           # debug
+python bootstrap.py test
+cargo xtask build [--release|--debug]
+cargo xtask test [--debug] [--nocapture]
+cargo xtask deploy [--install-dir P]   # install playa binary
+cargo xtask changelog
+cargo xtask tag-dev / tag-rel / pr
+cargo xtask wipe                       # prune select target artifacts
+cargo xtask wipe-wf                    # delete GitHub Actions runs (needs gh)
 ```
 
 **vcpkg for FFmpeg** — required. Triplets: `x64-windows-static-md-release`,
 `x64-linux-release`, `arm64-osx-release`, `x64-osx-release`. ENV: `VCPKG_ROOT`,
-`VCPKGRS_TRIPLET`, `PKG_CONFIG_PATH`. Details — in `md/DEVELOP.md`.
+`VCPKGRS_TRIPLET`, `PKG_CONFIG_PATH`. Details — in **`DEVELOP.md`**.
 
 **Release profile**: `strip = false`, `lto = false`, `codegen-units = 1`
 is commented out — optimized for link speed, not binary size.
@@ -535,7 +538,7 @@ Target: x86_64-windows
 - `Arc::clone(&x)` instead of `x.clone()` for explicitness.
 - Don't grow dependencies — Cargo.toml is already wide.
 - `serde(skip)` on runtime fields; **must** be restored after deserialization
-  (event_emitter, schemas, cache_manager) — see `runner.rs`.
+  (event_emitter, schemas, cache_manager) — see `crates/playa-app/src/runner.rs`.
 
 ### Tokio / Async
 
@@ -610,16 +613,11 @@ for heavy tasks.
 
 ## Structural diagrams
 
-See `md/DIAGRAMS.md` — Mermaid diagrams for the frame pipeline, events,
-cache, compositing, and the Node hierarchy.
-
-See `md/WGPU.md` — a report on a possible port to wasm32 + wgpu (blocked
-by FFmpeg, rouille, the OpenGL renderer, `sysinfo`).
-
-See `md/DEVELOP.md` — vcpkg, FFmpeg, and cross-platform build details.
+Text flowcharts and terminology for the frame pipeline, cache, compositing, and hierarchy
+live in sections above (**Data flow**, **LRU cache**, **Node graph**, etc.).
+**[`DEVELOP.md`](DEVELOP.md)** covers vcpkg, FFmpeg, and cross-platform builds.
 
 ---
 
-*Basis: rustdocs of every module in `src/**/*.rs`, verified against the
-current code (commit `75240d7`). If this disagrees with reality — the truth
-is in the code.*
+*Basis: rustdocs of modules across `crates/*/src/**/*.rs`. If this disagrees with reality —
+the truth is in the source.*

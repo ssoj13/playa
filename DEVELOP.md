@@ -1,6 +1,6 @@
 # Developer Guide
 
-This document covers building Playa from source, setting up development environment, and technical details for contributors.
+This document covers building Playa from source, setting up a development environment, and contributor-oriented technical notes.
 
 **For users**: See [README.md](README.md) for installation and usage.  
 **For architecture**: See [AGENTS.md](AGENTS.md) for component design and dataflow.
@@ -11,156 +11,127 @@ This document covers building Playa from source, setting up development environm
 
 1. [Quick Start](#quick-start)
 2. [Prerequisites](#prerequisites)
-3. [Build Options](#build-options)
+3. [Workspace & EXR Backend](#workspace--exr-backend)
 4. [FFmpeg Setup](#ffmpeg-setup)
-5. [xtask Commands](#xtask-commands)
+5. [Bootstrap and xtask](#bootstrap-and-xtask)
 6. [Platform-Specific Notes](#platform-specific-notes)
 7. [Architecture Overview](#architecture-overview)
 8. [Technical Stack](#technical-stack)
 9. [Contributing](#contributing)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Quick Start
 
-Bootstrap scripts handle all dependencies automatically:
+Unified entry point (**Python 3**, stdlib only):
 
 ```powershell
-# Windows (PowerShell)
-.\bootstrap.ps1 build              # Build with exrs (fast, pure Rust)
-.\bootstrap.ps1 build --openexr    # Build with OpenEXR (DWAA/DWAB support)
-.\bootstrap.ps1 test               # Run all tests
+python bootstrap.py build          # release (default via xtask)
+python bootstrap.py build -d      # debug
+python bootstrap.py test
 ```
+
+Equivalent without the script (once Rust + FFmpeg/vcpkg are configured below):
 
 ```bash
-# Linux/macOS
-./bootstrap.sh build
-./bootstrap.sh build --openexr
-./bootstrap.sh test
+cargo build -p playa --release
+# or:
+cargo xtask build
+cargo xtask test
 ```
-
-**What bootstrap does:**
-1. Checks Rust installation
-2. Sets up vcpkg environment variables automatically
-3. Installs dev tools via cargo-binstall (cargo-release, cargo-packager)
-4. Builds xtask helper binary
-5. Forwards to `cargo xtask` with correct configuration
 
 ---
 
 ## Prerequisites
 
 ### Required
-- **Rust 1.85+** (edition 2024)
+
+- **Rust** with **edition 2024** (toolchain pinned by upstream dependencies; prefer current stable ≥ **1.85**)
 - **Git**
 
-### Optional (for OpenEXR backend)
-- C++ compiler (MSVC on Windows, GCC/Clang on Linux/macOS)
-- CMake 3.16+
+### Video (strongly recommended)
 
-### For Video Support
-- vcpkg with FFmpeg libraries (see [FFmpeg Setup](#ffmpeg-setup))
+- **vcpkg** with **FFmpeg** static triplets as in [AGENTS.md](AGENTS.md) / [FFmpeg Setup](#ffmpeg-setup) below. Builds use **playa-ffmpeg** (linked against vcpkg artifacts).
 
 ---
 
-## Build Options
+## Workspace & EXR Backend
 
-### EXR Backends
+The repo is a **Cargo workspace** (see root `Cargo.toml`):
 
-| Backend | Command | Dependencies | DWAA/DWAB |
-|---------|---------|--------------|-----------|
-| **exrs** (default) | `cargo build --release` | None (pure Rust) | No |
-| **OpenEXR** | `cargo xtask build --release --openexr` | C++, CMake | Yes |
+| Path | Package | Role |
+|------|---------|------|
+| `.` | `playa` | Binary + thin library re-exports for `playa::…` consumers (e.g. Python bindings). |
+| `crates/playa-app` | `playa-app` | PlayaApp, `main_events`, runner, CLI glue, REST server, shell, config. |
+| `crates/playa-engine` | `playa-engine` | Core engine (`core`, `entities`, loaders, compositor helpers, …). |
+| `crates/playa-events` | `playa-events` | Typed UI / app events shared across crates. |
+| `crates/playa-io` | `playa-io` | FFmpeg init, decoding, EXR & media I/O façade (uses **vfx-exr**, **playa-ffmpeg**, **image**, …). |
+| `crates/playa-ui` | `playa-ui` | egui widgets, dialogs, viewport renderer integration. |
+| `crates/xtask` | `xtask` | Build/release helper CLI invoked as `cargo xtask …`. |
+| `crates/playa-py` | — | Separate workspace (`[workspace.exclude]`); build with **maturin** / `bootstrap.py python`. |
 
-### Default Build (exrs - Pure Rust)
-
-Fast build, no external dependencies:
-
-```bash
-git clone https://github.com/ssoj13/playa.git
-cd playa
-cargo build --release
-```
-
-Binary: `target/release/playa` (or `playa.exe` on Windows)
-
-**Limitation**: Cannot load DWAA/DWAB compressed EXR files.
-
-### OpenEXR Build (C++ Backend)
-
-Full EXR format support:
-
-```bash
-git clone https://github.com/ssoj13/playa.git
-cd playa
-cargo xtask build --release --openexr
-```
-
-**Note**: First build compiles C++ libraries (~5-10 minutes, then cached).
+**EXR**: default stack is **`vfx-exr`** — pure Rust, including **DWAA / DWAB / HTJ2K** (see `playa --version`). No separate “switch EXR backend” toggle in `cargo xtask build`.
 
 ---
 
 ## FFmpeg Setup
 
-Required for video playback and encoding. Install via vcpkg for best compatibility.
+Required for video playback and encoding. Install FFmpeg via **vcpkg** for best compatibility.
 
 ### Windows
 
 ```powershell
-# Install vcpkg
 git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
 C:\vcpkg\bootstrap-vcpkg.bat
 
-# Set environment variables (add permanently to system)
 setx VCPKG_ROOT "C:\vcpkg"
 setx VCPKGRS_TRIPLET "x64-windows-static-md-release"
 
-# Install FFmpeg with hardware acceleration
 C:\vcpkg\vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
 ```
 
-**Before building**, setup Visual Studio environment:
+Activate the MSVC environment before compiling (adjust edition if needed):
+
 ```cmd
 "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 ```
 
+`bootstrap.py` merges this environment automatically when MSVC is detected.
+
 ### Linux
 
 ```bash
-# Install vcpkg
 git clone https://github.com/microsoft/vcpkg.git /usr/local/share/vcpkg
 /usr/local/share/vcpkg/bootstrap-vcpkg.sh
 
-# Set environment variables
 export VCPKG_ROOT=/usr/local/share/vcpkg
 export VCPKGRS_TRIPLET=x64-linux-release
 export PKG_CONFIG_PATH=$VCPKG_ROOT/installed/$VCPKGRS_TRIPLET/lib/pkgconfig
 
-# Install FFmpeg
 vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]:x64-linux-release
 ```
 
 ### macOS
 
 ```bash
-# Install vcpkg
 git clone https://github.com/microsoft/vcpkg.git /usr/local/share/vcpkg
 /usr/local/share/vcpkg/bootstrap-vcpkg.sh
 
 export VCPKG_ROOT=/usr/local/share/vcpkg
 
-# M1/M2 Macs (Apple Silicon)
+# Apple Silicon
 export VCPKGRS_TRIPLET=arm64-osx-release
 export PKG_CONFIG_PATH=$VCPKG_ROOT/installed/arm64-osx-release/lib/pkgconfig
 vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:arm64-osx-release
 
-# Intel Macs
+# Intel
 export VCPKGRS_TRIPLET=x64-osx-release
 export PKG_CONFIG_PATH=$VCPKG_ROOT/installed/x64-osx-release/lib/pkgconfig
 vcpkg install ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale]:x64-osx-release
 ```
 
-**Note**: macOS hardware encoding (VideoToolbox) requires system FFmpeg with `--enable-videotoolbox`.
+**Note**: Hardware encoding paths (e.g. VideoToolbox on macOS) depend on FFmpeg feature flags chosen at vcpkg build time.
 
 ### Verify Installation
 
@@ -170,37 +141,34 @@ pkg-config --modversion libavcodec libavformat libavutil libswscale
 
 ---
 
-## xtask Commands
+## Bootstrap and xtask
 
-`xtask` is an idiomatic Rust build automation pattern - cross-platform, type-safe, no external tools needed.
+### bootstrap.py
 
-### Build & Development
+- Cross-platform (**Windows / Linux / macOS**): no `bootstrap.ps1` / `.sh` in-tree.
+- **build / test**: sets `VCPKG_ROOT`, `VCPKGRS_TRIPLET`, and on Windows merges the MSVC toolchain environment; builds the **`xtask`** binary once (`cargo build -p xtask`) when missing under `target/debug/`; forwards to **`cargo xtask`**.
+- **package / publish**: ensures optional tooling (**cargo-packager**, **cargo-release**) via **cargo-binstall** when needed.
+- **Extra Cargo features**: `python bootstrap.py build -f profiler` forwards `--features` to the underlying **`cargo`** invocation.
+- **`python`-related commands**: operate on `crates/playa-py/` (venv + **maturin**).
 
-```bash
-cargo xtask build [--release] [--openexr]  # Full build
-cargo xtask post [--release]               # Copy native libraries (OpenEXR only)
-cargo xtask verify [--release]             # Verify dependencies present
-cargo xtask deploy [--install-dir PATH]    # Install to system
-```
+See `bootstrap.py --help` / embedded `HELP_TEXT`.
 
-Default install locations:
-- Windows: `%LOCALAPPDATA%\Programs\playa`
-- Linux/macOS: `~/.local/bin/playa`
+### cargo xtask (package `crates/xtask`)
 
-### Release Management
+Invoked via **`.cargo/config.toml`**: `cargo xtask` → **`cargo run -p xtask --`**.
 
-```bash
-cargo xtask tag-dev [patch|minor|major]  # Create v0.1.x-dev tag
-cargo xtask tag-rel [patch|minor|major]  # Create v0.1.x release tag
-cargo xtask pr [version]                 # Create PR: dev -> main
-cargo xtask changelog                    # Preview unreleased changes
-```
+Subcommands (**current codebase**):
 
-### Platform-Specific
+| Command | Purpose |
+|---------|---------|
+| `build [--release \| --debug]` | `cargo build -p playa` in the chosen profile. |
+| `test [--debug] [--nocapture]` | Runs the workspace test suite. |
+| `deploy [--install-dir PATH]` | Copies `playa` into a conventional install prefix. |
+| `changelog` | Regenerates **`CHANGELOG.md`**. |
+| `tag-dev` / `tag-rel` / `pr` | Maintainer release automation (needs `git` / CI expectations). |
+| `wipe` / `wipe-wf` | Cleans select `target/` artifacts; workflow-run cleanup (**`wipe-wf`** uses **gh** CLI). |
 
-```bash
-cargo xtask pre   # Linux only: Patch OpenEXR headers for GCC 11+
-```
+Legacy helper sources under `crates/xtask/src/` (for example **`pre_build`** / **`post_build`**) remain for compatibility with older pipelines but are **not** exposed as `cargo xtask` subcommands anymore.
 
 ---
 
@@ -208,77 +176,40 @@ cargo xtask pre   # Linux only: Patch OpenEXR headers for GCC 11+
 
 ### Windows
 
-- Use PowerShell, not cmd.exe
-- Visual Studio 2022 Build Tools required for OpenEXR
-- Static linking produces single .exe with no DLLs (exrs backend)
+- Prefer **PowerShell** for running `bootstrap.py`; use **Developer PowerShell** or run `vcvars64.bat` so **link.exe** finds MSVC libs.
 
-### Linux
+### Linux / macOS
 
-**OpenEXR GCC 11+ Header Patching:**
-
-OpenEXR 3.0.5 headers are missing `#include <cstdint>`:
-```
-error: 'uint64_t' has not been declared
-```
-
-`cargo xtask pre` patches these headers automatically:
-- `ImfTiledMisc.h`
-- `ImfDeepTiledInputFile.h`
-- `ImfDeepTiledInputPart.h`
-
-**Native Libraries (OpenEXR build):**
-
-| Library | Purpose |
-|---------|---------|
-| OpenEXR Core (4 libs) | EXR reading/writing |
-| Imath | Math library |
-| Zlib | Compression |
-| OpenEXR-C | C API wrapper |
+- Match **`VCPKGRS_TRIPLET`** to your OS/architecture (see FFmpeg section).
 
 ### macOS
 
-**Code Signing & Notarization:**
+**Code signing (releases):** DMG artifacts are Developer-ID signed (`AGENTS.md` metadata).
 
-DMG releases are signed with Developer ID and notarized by Apple:
-- No Gatekeeper warnings
-- No "unidentified developer" dialogs
+For local **`target/release/playa`** builds blocked by Gatekeeper:
 
-For development builds, run from terminal or disable Gatekeeper temporarily.
-
-**Apple Silicon vs Intel:**
-- M1/M2: Use `arm64-osx-release` triplet
-- Intel: Use `x64-osx-release` triplet
+```bash
+xattr -cr target/release/playa
+```
 
 ---
 
 ## Architecture Overview
 
-See [AGENTS.md](AGENTS.md) for detailed architecture documentation.
+Authoritative diagrams and module maps live in **[AGENTS.md](AGENTS.md)**.
 
-### Module Structure
-
-```
-src/
-├── core/           # Engine (cache, events, player, workers)
-├── entities/       # Data models (comp, frame, project, nodes)
-├── widgets/        # UI components (viewport, timeline, project)
-├── dialogs/        # Modal windows (encode, prefs)
-├── server/         # REST API
-└── main_events.rs  # Central event handler
-```
-
-### Key Patterns
-
-1. **Event-Driven**: UI emits events → EventBus → handlers → state changes
-2. **Work-Stealing**: Background frame loading with epoch-based cancellation
-3. **LRU Cache**: Memory-managed frame cache with automatic eviction
-4. **Arc<NodeKind>**: Lock-free worker access to media nodes
-
-### Data Flow
+Summary:
 
 ```
-User Input → EventBus → Handler → State Change → Cache Invalidation → Worker Load → Render
+crates/playa-engine   ← core playback, caching, entities, loaders
+crates/playa-app    ← eframe shell, PlayaApp, main_events, REST
+crates/playa-ui     ← egui widgets / dialogs / viewport glue
+crates/playa-io     ← decode / FFmpeg / EXR façade
+crates/playa-events ← shared event types + EventBus types
+(playa-py)          ← separate workspace; consumes `libplaya`
 ```
+
+Thin root **`src/`** contains only **`main.rs`**, **`lib.rs`**, **`README.md`**.
 
 ---
 
@@ -286,14 +217,13 @@ User Input → EventBus → Handler → State Change → Cache Invalidation → 
 
 | Component | Technology |
 |-----------|------------|
-| UI Framework | egui 0.33 + eframe |
-| Graphics | OpenGL via glow |
-| EXR (default) | exrs via image 0.25 |
-| EXR (optional) | openexr 0.11 (C++ bindings) |
-| Video | FFmpeg via playa-ffmpeg |
-| Concurrency | crossbeam channels, work-stealing deques |
-| HTTP Server | rouille |
-| CLI | clap 4.5 |
+| UI Framework | egui ~0.33 + eframe |
+| Graphics | OpenGL (**glow**), viewport gpu compositing path optional |
+| EXR | **vfx-exr** (Rust, DWAA/DWAB/HTJ2K-capable stacks) via **playa-io** |
+| Still images | **image** 0.25 (PNG/JPEG/TIFF/…) |
+| Video | **FFmpeg** via **playa-ffmpeg** |
+| Concurrency | crossbeam, work-stealing worker pool (**playa-engine**) |
+| HTTP server | rouille |
 
 ---
 
@@ -302,56 +232,49 @@ User Input → EventBus → Handler → State Change → Cache Invalidation → 
 ### Commit Conventions
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):
-- `feat:` new feature
-- `fix:` bug fix
-- `docs:` documentation
-- `refactor:` code refactoring
-- `chore:` maintenance
+
+- `feat:` new feature  
+- `fix:` bug fix  
+- `docs:` documentation  
+- `refactor:` code refactoring  
+- `chore:` maintenance  
 
 ### Workflow
 
-1. Fork and clone
-2. Run bootstrap script
-3. Make changes
-4. Run tests: `.\bootstrap.ps1 test` / `./bootstrap.sh test`
-5. Submit PR
+1. Fork and clone  
+2. `python bootstrap.py build`  
+3. Make changes  
+4. `python bootstrap.py test` (or `cargo xtask test`)  
+5. `cargo fmt`, `cargo clippy` — before opening a PR  
+6. Submit PR  
 
 ### AI-Assisted Development
 
-This project uses Claude Code and Codex for development. See [AGENTS.md](AGENTS.md) for AI guidelines when working with this codebase.
+See **[AGENTS.md](AGENTS.md)** for conventions when editing this codebase.
 
 ---
 
 ## Troubleshooting
 
-### FFmpeg not found
+### FFmpeg / vcpkg not found
 
 ```
 error: failed to run custom build command for `playa-ffmpeg`
 ```
 
-Verify environment variables:
+Verify:
+
 ```powershell
 echo $env:VCPKG_ROOT
 echo $env:VCPKGRS_TRIPLET
 ```
 
-### OpenEXR headers missing cstdint
-
-Run: `cargo xtask pre` (Linux only)
+and **`PKG_CONFIG_PATH`** on Unix (see FFmpeg section).
 
 ### macOS Gatekeeper blocks app
 
-For development builds:
-```bash
-xattr -cr target/release/playa
-```
-
-### Out of memory during build
-
-OpenEXR C++ compilation is memory-intensive. Close other applications or use exrs backend.
+See [Platform-Specific Notes](#platform-specific-notes).
 
 ---
 
-*For architecture details, see [AGENTS.md](AGENTS.md).*  
-*For user documentation, see [README.md](README.md).*
+*Architecture: [AGENTS.md](AGENTS.md) · Users: [README.md](README.md)*

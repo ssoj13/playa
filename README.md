@@ -30,7 +30,7 @@ REST api, multithreaded composing with LRU cache and more.
 - **JKL shuttle** - Industry-standard transport with speed ramping
 
 ### Format Support
-- **EXR** - Via exrs (pure Rust) or OpenEXR C++ (DWAA/DWAB compression)
+- **EXR** — **`vfx-exr`** (pure Rust; DWAA/DWAB/HTJ2K-capable pipelines used by Playa)
 - **Images** - PNG, JPEG, TIFF, TGA, HDR
 - **Video** - MP4, MOV, AVI, MKV via FFmpeg
 - **Pixel formats** - 8-bit, 16-bit half-float, 32-bit float
@@ -75,10 +75,12 @@ See [DEVELOP.md](DEVELOP.md) for build instructions.
 
 ```powershell
 git clone https://github.com/ssoj13/playa.git && cd playa
-./bootstrap.ps1 build              # Windows (exrs backend)
-./bootstrap.ps1 build --openexr    # Windows (OpenEXR C++)
-./bootstrap.sh build               # Linux/macOS
+python bootstrap.py build              # Windows / Linux / macOS (via cargo xtask)
+python bootstrap.py build -d          # Debug profile
+python bootstrap.py test
 ```
+
+See **[DEVELOP.md](DEVELOP.md)** for vcpkg, FFmpeg, and environment variables (`VCPKG_ROOT`, `VCPKGRS_TRIPLET`).
 
 ---
 
@@ -97,8 +99,8 @@ playa -f sequence.exr --frame 50 -a -F    # Frame 50, autoplay, fullscreen
 
 **Version info** (`-V`):
 ```
-playa 0.1.138
-EXR:    openexr-rs 0.11 (C++, DWAA/DWAB)
+playa 0.1.142
+EXR:    vfx-exr (pure Rust, all compressions)
 Video:  playa-ffmpeg 8.0 (static)
 Target: x86_64-windows
 ```
@@ -269,7 +271,7 @@ For detailed architecture, see [AGENTS.md](AGENTS.md).
 
 ## About
 
-Built with Rust. Powered by exrs, openexr-rs, playa-ffmpeg, egui, and the Rust ecosystem.
+Built with Rust. Powered by **vfx-exr**, **playa-ffmpeg**, **egui**, and the Rust ecosystem.
 
 **Icon**: [Flaticon by Yasashii std](http://flaticon.com/packs/halloween-18020037)
 
