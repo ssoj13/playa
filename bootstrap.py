@@ -25,7 +25,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import platform
 import re
@@ -180,34 +179,20 @@ def setup_vcpkg() -> None:
 
 
 def setup_vs_env() -> None:
-    """Setup Visual Studio build environment (Windows only)."""
+    """Setup Visual Studio build environment (Windows only).
+
+    Used for non-xtask commands (``check`` / ``install`` / ``package`` /
+    ``python``) which fork cargo directly. The ``build`` and ``test`` paths
+    delegate to ``cargo xtask`` which activates the MSVC env itself via the
+    ``vcv-rs`` Rust library — so there's no duplicated vcv-rs CLI logic here.
+    """
     if not IS_WINDOWS:
         return
 
     step("Setting up build environment...")
 
-    # Try vcv-rs first (fast)
-    if which("vcv-rs"):
-        try:
-            code, output, _ = run(["vcv-rs", "-q", "-f", "json"], capture=True)
-            if code == 0:
-                data = json.loads(output)
-                for key, val in data.items():
-                    if isinstance(val, list):
-                        # Append existing env value for list vars (PATH, INCLUDE, LIB, etc.)
-                        existing = os.environ.get(key, "")
-                        merged = ";".join(val)
-                        if existing:
-                            merged += ";" + existing
-                        os.environ[key] = merged
-                    else:
-                        os.environ[key] = str(val)
-                ok("Visual Studio environment (vcv-rs)")
-                return
-        except Exception:
-            pass
-
-    # Fallback: vcvars64.bat
+    # vcvars64.bat is the only path here. Build/test go through xtask which
+    # uses vcv-rs as a library; no duplicate fast-path needed in this script.
     vswhere = Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
     if vswhere.exists():
         result = subprocess.run(
