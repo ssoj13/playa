@@ -1,0 +1,4 @@
+.vcpkg/
+target/
+Cargo.lock
+*.lock
