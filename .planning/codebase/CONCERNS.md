@@ -28,20 +28,9 @@ These are documented quirks where the obvious refactor would silently break the 
 
 ## 2. Build / dependency risk
 
-### 2.1 Patched private git dependency `vfx-rs` — high risk
-`Cargo.toml:76-79`:
-```
-[patch."ssh://git@github.com/ssoj13/vfx-rs.git"]
-vfx-exr  = { path = "../vfx-rs/crates/exr/vfx-exr" }
-vfx-io   = { path = "../vfx-rs/crates/oiio/vfx-io" }
-vfx-core = { path = "../vfx-rs/crates/foundation/vfx-core" }
-```
-- This is a **relative-path** override pointing at a sibling working copy that **does not ship with this repo**. A fresh clone of `playa` alone will not build — the user must also clone `ssoj13/vfx-rs` next to it.
-- The upstream is a private SSH repo (`ssh://git@github.com/...`); CI without the deploy key cannot resolve the unpatched dep either.
-- `Cargo.lock:5640` shows `vfx-exr 1.74.0`, `vfx-io 0.1.0`, `vfx-core 0.1.0`, all sourced from the local path. Bumping them requires manual coordination across two repos (no semver guard).
-- `CHANGELOG.md:51-61` notes the switch from submodule to remote git + patch override and the `[net] git-fetch-with-cli = true` workaround for libgit2 not seeing the system SSH agent on Windows. This is fragile.
+### 2.1 ~~Patched private git dependency `vfx-rs`~~ — RESOLVED
 
-**Mitigation path:** publish vfx-rs crates (even to a private registry) or vendor them as a submodule again; document the side-by-side checkout requirement in DEVELOP.md.
+The earlier `[patch."ssh://git@github.com/ssoj13/vfx-rs.git"]` block pointing at a non-existent sibling `../vfx-rs/` checkout has been removed. The `vfx-rs` repo is public and accessible over HTTPS, and `crates/playa-io/Cargo.toml` declares the deps directly via `https://github.com/ssoj13/vfx-rs.git`. A fresh `git clone playa.git && cargo build` resolves cleanly without a side-by-side `vfx-rs` checkout.
 
 ### 2.2 vcpkg / MSVC requirement (Windows)
 - `bootstrap.py` orchestrates `VCPKG_ROOT`, `VCPKGRS_TRIPLET=x64-windows-static-md-release`, then merges MSVC environment via `vcvars64.bat` before invoking `cargo xtask` (AGENTS.md L472-501).

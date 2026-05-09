@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — `dev` branch
 
+### Vendored `playa-ffmpeg` + automatic MSVC/vcpkg env via `xtask`
+
+`crates/playa-ffmpeg/` is now a workspace member instead of a `crates.io` dep
+— the FFmpeg Rust wrapper is under our control and can be patched in-tree
+when vcpkg ships a breaking FFmpeg point release. Default features no longer
+include `device` (avdevice) / `filter` (avfilter) — vcpkg's FFmpeg 8.1+
+`avfilter` build pulls in `vsrc_gfxcapture_winrt` (WinRT + C++ `<regex>`)
+which causes MSVC STL link mismatches on Windows. Forward-compat wildcard
+`_ =>` arms added to all `AVCodecID` / `AVPacketSideDataType` /
+`AVFrameSideDataType` / `AVColorPrimaries` / `AVColorTransferCharacteristic`
+match blocks so future FFmpeg 8.x point releases compile cleanly.
+
+`crates/xtask` now uses `vcv-rs` (git dep, `https://github.com/ssoj13/vcv-rs`)
+to discover the active Visual Studio install + Windows SDK + UCRT and prepend
+`INCLUDE` / `LIB` / `LIBPATH` / `PATH` for the forked `cargo build`. It also
+sets `VCPKG_ROOT` / `VCPKGRS_TRIPLET` / `PKG_CONFIG_PATH` automatically.
+A vanilla `cargo build` from a non-Developer-PowerShell shell will *not*
+have that env — always go through `cargo xtask build` (or `python bootstrap.py
+build`, which now delegates `--features` and profile flags straight to xtask).
+
+`vfx-rs` deps switched from `ssh://git@github.com/ssoj13/vfx-rs.git` to
+`https://github.com/ssoj13/vfx-rs.git`; the dead `[patch."ssh://..."]` block
+pointing at a non-existent local `../vfx-rs/` checkout was removed from the
+workspace `Cargo.toml`.
+
 ### GPU compositing — worker → UI bridge (`playa-engine`, `playa-app`)
 
 Workers have no bound OpenGL context; when project prefs select the **Gpu** compositor, the **final**

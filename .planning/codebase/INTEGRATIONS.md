@@ -118,22 +118,22 @@ No database, no remote storage. All state is local files.
 
 ## Native FFmpeg Linkage
 
-- Crate: `playa-ffmpeg = "8.0.3"` with feature `static` — statically linked, no system FFmpeg DLL/SO at runtime
-- Resolved via vcpkg: `libavutil.pc` discovery in `bootstrap.py:589`
-- Required vcpkg port: `ffmpeg[core,avcodec,avdevice,avfilter,avformat,swresample,swscale,nvcodec]`
+- Crate: `playa-ffmpeg` 8.0.3 (vendored under `crates/playa-ffmpeg/`) with feature `static` — statically linked, no system FFmpeg DLL/SO at runtime
+- Resolved via vcpkg through `playa-ffmpeg/build.rs` (`vcpkg::find_package("ffmpeg")`). Env (`VCPKG_ROOT` / `VCPKGRS_TRIPLET` / `PKG_CONFIG_PATH`) is set up automatically by `xtask::env_setup`
+- Required vcpkg port: `ffmpeg[core,avcodec,avformat,swresample,swscale,nvcodec]` — **without** `avdevice` and `avfilter` (vcpkg's FFmpeg 8.1+ avfilter pulls in `vsrc_gfxcapture_winrt` which causes MSVC STL link mismatches; see `crates/playa-ffmpeg/README.md`)
 - `pkgconf` (also via vcpkg) is required for cargo to find the .pc files
 
-## vfx-rs Sibling Repository
+## vfx-rs External Repository
 
-EXR support is supplied by a sibling git repo, **patched to local paths** (`Cargo.toml:76-79`):
+EXR support is supplied by a sibling git repo (`https://github.com/ssoj13/vfx-rs.git`, public, branch `main`), declared in `crates/playa-io/Cargo.toml:26-28`:
 
-| Sub-crate | Source path | Used for |
-|-----------|-------------|----------|
-| `vfx-exr` | `../vfx-rs/crates/exr/vfx-exr` | EXR decode/encode (DWAA/DWAB/HTJ2K capable) |
-| `vfx-io` | `../vfx-rs/crates/oiio/vfx-io` | OIIO-flavoured I/O surface |
-| `vfx-core` | `../vfx-rs/crates/foundation/vfx-core` | Foundation types |
+| Sub-crate | Used for |
+|-----------|----------|
+| `vfx-exr` | EXR decode/encode (DWAA/DWAB/HTJ2K capable) |
+| `vfx-io` | OIIO-flavoured I/O surface |
+| `vfx-core` | Foundation types |
 
-Without `../vfx-rs` checked out, the build fails (the `[patch]` block points at a non-existent path). Upstream remote: `ssh://git@github.com/ssoj13/vfx-rs.git`, branch `main`.
+These resolve directly via Cargo over HTTPS — no `[patch]` override, no sibling checkout required.
 
 ## Python FFI Boundary
 

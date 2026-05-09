@@ -52,6 +52,10 @@ enum Commands {
         /// Build in debug mode
         #[arg(long)]
         debug: bool,
+
+        /// Comma-separated cargo features to enable (e.g. "profiler")
+        #[arg(short = 'f', long)]
+        features: Option<String>,
     },
 
     /// 📋 Regenerate full CHANGELOG.md from git history
@@ -182,9 +186,9 @@ fn run() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Build { release: _, debug } => {
+        Commands::Build { release: _, debug, features } => {
             let is_release = !debug;
-            cmd_build(is_release)
+            cmd_build(is_release, features.as_deref())
         }
         Commands::Changelog => cmd_changelog(),
         Commands::TagDev { level, dry_run } => cmd_tag_dev(&level, dry_run),
@@ -200,12 +204,15 @@ fn run() -> Result<()> {
     }
 }
 
-/// Command: cargo xtask build [--release]
-fn cmd_build(release: bool) -> Result<()> {
+/// Command: cargo xtask build [--release] [--features ...]
+fn cmd_build(release: bool, features: Option<&str>) -> Result<()> {
     println!("========================================");
     println!("Building playa");
     println!("Profile: {}", if release { "release" } else { "debug" });
     println!("Backend: vfx-exr (pure Rust, all compressions)");
+    if let Some(f) = features {
+        println!("Features: {f}");
+    }
     println!("========================================");
     println!();
 
@@ -216,6 +223,10 @@ fn cmd_build(release: bool) -> Result<()> {
 
     if release {
         cmd.arg("--release");
+    }
+
+    if let Some(f) = features {
+        cmd.args(["--features", f]);
     }
 
     let status = cmd.status()?;
@@ -654,7 +665,7 @@ fn cmd_deploy(install_dir: Option<&str>) -> Result<()> {
 
     // Build in release mode first
     println!("Building release version...");
-    cmd_build(true)?;
+    cmd_build(true, None)?;
     println!();
 
     // Copy files

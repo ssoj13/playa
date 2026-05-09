@@ -1,0 +1,143 @@
+[package]
+name    = "playa-ffmpeg"
+version = "8.0.3"
+edition = "2024"
+build   = "build.rs"
+
+authors = ["Alex Joss <joss13@gmail.com>", "meh. <meh@schizofreni.co>", "Zhiming Wang <i@zhimingwang.org>"]
+license = "WTFPL"
+
+description   = "Safe FFmpeg wrapper with vcpkg integration for simplified cross-platform builds (FFmpeg 8.0, Rust 2024)"
+documentation = "https://docs.rs/playa-ffmpeg"
+homepage      = "https://github.com/ssoj13/playa-ffmpeg"
+repository    = "https://github.com/ssoj13/playa-ffmpeg"
+readme        = "README.md"
+keywords      = ["ffmpeg", "multimedia", "video", "audio", "vcpkg"]
+categories    = ["multimedia"]
+
+[features]
+# `device` (avdevice) and `filter` (avfilter) are intentionally NOT in the
+# default set. vcpkg's FFmpeg 8.1+ ships avfilter with vsrc_gfxcapture
+# (Windows.Graphics.Capture WinRT + C++ <regex>) which causes MSVC STL link
+# mismatches on Windows. avdevice depends on avformat anyway and isn't used
+# anywhere in playa. To enable them, install the corresponding vcpkg ports
+# (`vcpkg install ffmpeg[avdevice,avfilter,...]:<triplet>`) AND opt into the
+# features explicitly in your Cargo.toml.
+default = ["codec", "format", "software-resampling", "software-scaling", "nvenc"]
+
+# ffmpeg<xy> are obsolete features kept for backward compatibility purposes and
+# don't do anything anymore (equivalents are automatically specified through
+# compile-time detection in ffmpeg-sys-next). Deprecation plan: all these
+# features will be removed come 5.0.
+ffmpeg43 = []
+ffmpeg42 = []
+ffmpeg41 = []
+ffmpeg4 = []
+
+static = ["ffmpeg-sys-next/static"]
+non-exhaustive-enums = ["ffmpeg-sys-next/non-exhaustive-enums"]
+build  = ["static", "ffmpeg-sys-next/build"]
+
+# licensing
+build-license-gpl      = ["ffmpeg-sys-next/build-license-gpl"]
+build-license-nonfree  = ["ffmpeg-sys-next/build-license-nonfree"]
+build-license-version3 = ["ffmpeg-sys-next/build-license-version3"]
+
+# misc
+build-pic  = ["ffmpeg-sys-next/build-pic"]
+build-zlib = ["ffmpeg-sys-next/build-zlib"]
+
+# ssl
+build-lib-gnutls  = ["ffmpeg-sys-next/build-lib-gnutls"]
+build-lib-openssl = ["ffmpeg-sys-next/build-lib-openssl"]
+
+# filters
+build-lib-fontconfig = ["ffmpeg-sys-next/build-lib-fontconfig"]
+build-lib-frei0r     = ["ffmpeg-sys-next/build-lib-frei0r"]
+build-lib-ladspa     = ["ffmpeg-sys-next/build-lib-ladspa"]
+build-lib-ass        = ["ffmpeg-sys-next/build-lib-ass"]
+build-lib-freetype   = ["ffmpeg-sys-next/build-lib-freetype"]
+build-lib-freebidi   = ["ffmpeg-sys-next/build-lib-freebidi"]
+build-lib-opencv     = ["ffmpeg-sys-next/build-lib-opencv"]
+build-lib-vmaf       = ["ffmpeg-sys-next/build-lib-vmaf"]
+
+# encoders/decoders
+build-lib-aacplus          = ["ffmpeg-sys-next/build-lib-aacplus"]
+build-lib-celt             = ["ffmpeg-sys-next/build-lib-celt"]
+build-lib-dav1d            = ["ffmpeg-sys-next/build-lib-dav1d"]
+build-lib-dcadec           = ["ffmpeg-sys-next/build-lib-dcadec"]
+build-lib-faac             = ["ffmpeg-sys-next/build-lib-faac"]
+build-lib-fdk-aac          = ["ffmpeg-sys-next/build-lib-fdk-aac"]
+build-lib-gsm              = ["ffmpeg-sys-next/build-lib-gsm"]
+build-lib-ilbc             = ["ffmpeg-sys-next/build-lib-ilbc"]
+build-lib-kvazaar          = ["ffmpeg-sys-next/build-lib-kvazaar"]
+build-lib-mp3lame          = ["ffmpeg-sys-next/build-lib-mp3lame"]
+build-lib-opencore-amrnb   = ["ffmpeg-sys-next/build-lib-opencore-amrnb"]
+build-lib-opencore-amrwb   = ["ffmpeg-sys-next/build-lib-opencore-amrwb"]
+build-lib-openh264         = ["ffmpeg-sys-next/build-lib-openh264"]
+build-lib-openjpeg         = ["ffmpeg-sys-next/build-lib-openjpeg"]
+build-lib-opus             = ["ffmpeg-sys-next/build-lib-opus"]
+build-lib-schroedinger     = ["ffmpeg-sys-next/build-lib-schroedinger"]
+build-lib-shine            = ["ffmpeg-sys-next/build-lib-shine"]
+build-lib-snappy           = ["ffmpeg-sys-next/build-lib-snappy"]
+build-lib-speex            = ["ffmpeg-sys-next/build-lib-speex"]
+build-lib-stagefright-h264 = ["ffmpeg-sys-next/build-lib-stagefright-h264"]
+build-lib-theora           = ["ffmpeg-sys-next/build-lib-theora"]
+build-lib-twolame          = ["ffmpeg-sys-next/build-lib-twolame"]
+build-lib-utvideo          = ["ffmpeg-sys-next/build-lib-utvideo"]
+build-lib-vo-aacenc        = ["ffmpeg-sys-next/build-lib-vo-aacenc"]
+build-lib-vo-amrwbenc      = ["ffmpeg-sys-next/build-lib-vo-amrwbenc"]
+build-lib-vorbis           = ["ffmpeg-sys-next/build-lib-vorbis"]
+build-lib-vpx              = ["ffmpeg-sys-next/build-lib-vpx"]
+build-lib-wavpack          = ["ffmpeg-sys-next/build-lib-wavpack"]
+build-lib-webp             = ["ffmpeg-sys-next/build-lib-webp"]
+build-lib-x264             = ["ffmpeg-sys-next/build-lib-x264"]
+build-lib-x265             = ["ffmpeg-sys-next/build-lib-x265"]
+build-lib-avs              = ["ffmpeg-sys-next/build-lib-avs"]
+build-lib-xvid             = ["ffmpeg-sys-next/build-lib-xvid"]
+
+# protocols
+build-lib-smbclient = ["ffmpeg-sys-next/build-lib-smbclient"]
+build-lib-ssh       = ["ffmpeg-sys-next/build-lib-ssh"]
+
+# components
+codec               = ["ffmpeg-sys-next/avcodec"]
+device              = ["ffmpeg-sys-next/avdevice", "format"]
+filter              = ["ffmpeg-sys-next/avfilter"]
+format              = ["ffmpeg-sys-next/avformat", "codec"]
+resampling          = ["ffmpeg-sys-next/avresample"]
+postprocessing      = ["ffmpeg-sys-next/postproc"]
+software-resampling = ["ffmpeg-sys-next/swresample"]
+software-scaling    = ["ffmpeg-sys-next/swscale", "codec"]
+
+# platforms
+rpi = []
+
+# hardware encoding (NVENC included in default)
+nvenc = []
+vaapi = []
+videotoolbox = []
+qsv = []
+
+[dependencies]
+libc     = "0.2"
+bitflags = "2.9"
+
+[dependencies.image]
+version  = "0.25"
+optional = true
+
+[dependencies.ffmpeg-sys-next]
+version = "8.0.0"
+default-features = false
+
+[build-dependencies]
+vcpkg = "0.2"
+
+[dev-dependencies]
+image = "0.25"  # For examples that save frames to image files
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

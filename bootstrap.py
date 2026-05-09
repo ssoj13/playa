@@ -307,25 +307,24 @@ def ensure_xtask() -> bool:
 # ============================================================
 
 def run_build(args: argparse.Namespace) -> int:
-    """Build playa via xtask."""
+    """Build playa via xtask.
+
+    Always delegates to ``cargo xtask build`` so the MSVC + vcpkg environment
+    is set up by ``xtask::env_setup`` (single source of truth — no duplicate
+    env-detection logic in this script).
+    """
     header("BUILD")
 
+    cmd = ["cargo", "xtask", "build"]
+    if args.debug:
+        cmd.append("--debug")
+        step("Mode: debug")
+    else:
+        cmd.append("--release")
+        step("Mode: release")
     if args.features:
-        cmd = ["cargo", "build", "-p", "playa"]
-        if not args.debug:
-            cmd.append("--release")
-            step("Mode: release")
-        else:
-            step("Mode: debug")
         cmd.extend(["--features", args.features])
         step(f"Features: {args.features}")
-    else:
-        cmd = ["cargo", "xtask", "build"]
-        if args.debug:
-            step("Mode: debug")
-        else:
-            cmd.append("--release")
-            step("Mode: release")
 
     print()
     step("Building...")

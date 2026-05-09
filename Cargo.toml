@@ -4,6 +4,7 @@ members = [
     "crates/playa-app",
     "crates/playa-engine",
     "crates/playa-events",
+    "crates/playa-ffmpeg",
     "crates/playa-io",
     "crates/playa-ui",
     "crates/xtask",
@@ -27,7 +28,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.22", features = ["v4", "serde"] }
 wgpu = "27"
-playa-ffmpeg = { version = "8.0.3", features = ["static"] }
+playa-ffmpeg = { path = "crates/playa-ffmpeg", features = ["static"] }
 
 [package]
 name = "playa"

@@ -66,11 +66,11 @@ Defined under `[workspace.dependencies]` in root `Cargo.toml:15-30`.
 
 **Image / Codec I/O:**
 - `image` 0.25 — `default-features = false`, features `png, jpeg, tiff, tga, hdr` (`Cargo.toml:24`)
-- `playa-ffmpeg` 8.0.3 (workspace, `static` feature) — statically linked FFmpeg for video (`Cargo.toml:30`)
+- `playa-ffmpeg` 8.0.3 (vendored as workspace member at `crates/playa-ffmpeg/`, `static` feature) — statically linked FFmpeg for video. Default features intentionally exclude `device` (avdevice) and `filter` (avfilter); see `crates/playa-ffmpeg/Cargo.toml:18` and `crates/playa-ffmpeg/README.md`.
 - `vfx-exr` (git, branch `main`, feature `htj2k`) — pure-Rust EXR backend with DWAA/DWAB/HTJ2K
 - `vfx-io` (git, features `exr, htj2k`)
 - `vfx-core` (git)
-  All three from `ssh://git@github.com/ssoj13/vfx-rs.git`, declared in `crates/playa-io/Cargo.toml:26-28`.
+  All three from `https://github.com/ssoj13/vfx-rs.git` (public), declared in `crates/playa-io/Cargo.toml:26-28`.
 
 **Concurrency / Cache:**
 - `crossbeam` 0.8.4 (engine) — work-stealing primitives, atomics
@@ -113,22 +113,13 @@ Non-wasm targets force `playa-io` with `["exr", "ffmpeg"]` (see `Cargo.toml:64-6
 
 ## Patched Dependencies
 
-Root `Cargo.toml:76-79`:
-
-```toml
-[patch."ssh://git@github.com/ssoj13/vfx-rs.git"]
-vfx-exr  = { path = "../vfx-rs/crates/exr/vfx-exr" }
-vfx-io   = { path = "../vfx-rs/crates/oiio/vfx-io" }
-vfx-core = { path = "../vfx-rs/crates/foundation/vfx-core" }
-```
-
-Local checkout of `vfx-rs` is **required** at `../vfx-rs` (sibling to `playa/`); cargo will not build without it unless the patch block is removed.
+None. The earlier `[patch."ssh://git@github.com/ssoj13/vfx-rs.git"]` block pointing at a sibling `../vfx-rs/` checkout has been removed; `vfx-{exr,io,core}` now resolve directly from the public HTTPS git source declared in `crates/playa-io/Cargo.toml:26-28`.
 
 ## Build System
 
 | Layer | Tool |
 |-------|------|
-| Build driver | `bootstrap.py` (Python 3, stdlib only) — sets `VCPKG_ROOT`, `VCPKGRS_TRIPLET`, MSVC env, then calls `cargo xtask build` |
+| Build driver | `bootstrap.py` (Python 3, stdlib only) — thin wrapper that delegates `build`/`test` to `cargo xtask`. Env setup (MSVC + vcpkg) lives in `xtask::env_setup`, not here. |
 | Workspace orchestrator | `cargo xtask` (`crates/xtask`) — release/debug, deploy, changelog (git-cliff), tags, GitHub Actions cleanup |
 | `build.rs` | Trivial: only `cargo:rerun-if-changed=build.rs` (`build.rs`) |
 | Native deps | **vcpkg** (FFmpeg statically linked via `playa-ffmpeg`'s `static` feature) |

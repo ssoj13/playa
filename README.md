@@ -73,8 +73,6 @@ Names on the Releases page may include legacy `exrs` tags; current default engin
 
 ### Build from Source
 
-See [DEVELOP.md](DEVELOP.md) for build instructions.
-
 ```powershell
 git clone https://github.com/ssoj13/playa.git && cd playa
 python bootstrap.py build              # Windows / Linux / macOS (via cargo xtask)
@@ -82,7 +80,20 @@ python bootstrap.py build -d          # Debug profile
 python bootstrap.py test
 ```
 
-See **[DEVELOP.md](DEVELOP.md)** for vcpkg, FFmpeg, and environment variables (`VCPKG_ROOT`, `VCPKGRS_TRIPLET`).
+The build env (MSVC toolchain + vcpkg triplet + `PKG_CONFIG_PATH`) is set up
+automatically by `xtask::env_setup` — no need to launch a Developer PowerShell
+or `vcvars64.bat` first.
+
+FFmpeg is consumed from vcpkg (vendored Rust wrapper at `crates/playa-ffmpeg/`).
+Install on Windows:
+
+```powershell
+vcpkg install ffmpeg[core,avcodec,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
+```
+
+See **[crates/playa-ffmpeg/README.md](crates/playa-ffmpeg/README.md)** for
+Linux / macOS install commands and an explanation of why `avdevice` / `avfilter`
+are excluded.
 
 ---
 

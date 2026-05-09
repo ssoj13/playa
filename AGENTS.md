@@ -5,7 +5,7 @@ from module rustdocs and code tracing — not from rumors or the old README.
 
 > Version: **0.1.142** · Rust **edition 2024** · `target/release/playa[.exe]`
 > EXR backend: **vfx-exr** (pure Rust, all compressions including DWAA/DWAB/HTJ2K).
-> Video: **playa-ffmpeg 8.0** (statically linked FFmpeg).
+> Video: **playa-ffmpeg 8.0** (statically linked FFmpeg, vendored under `crates/playa-ffmpeg/`).
 
 ---
 
@@ -470,30 +470,35 @@ egui_dock tree with configurable visibility for the Project/Attributes panels.
 
 ## Build pipeline
 
-`python bootstrap.py build` (default **release**; add `-d` / `--debug` for debug) sets
-`VCPKG_ROOT` / `VCPKGRS_TRIPLET`, merges the MSVC environment (`vcvars64.bat` or
-Developer PowerShell) on Windows, then runs **`cargo xtask build`**, unless **`--features` /
-`-f`** is set — then it invokes **`cargo build -p playa`** with **`--features`**
-(see **`DEVELOP.md`**). The thin **`build.rs`** only reruns Cargo when changed; natives go through
-Cargo + **vcpkg**.
+**`cargo xtask build`** is the single entry point. It uses **`vcv-rs`** (a tiny library
+maintained alongside playa) to discover the active Visual Studio install + Windows SDK +
+UCRT and prepend `INCLUDE` / `LIB` / `LIBPATH` / `PATH`, then sets `VCPKG_ROOT` /
+`VCPKGRS_TRIPLET` / `PKG_CONFIG_PATH` for FFmpeg, and only then forks `cargo build -p playa`.
+A vanilla `cargo build` from a non-Developer-PowerShell shell will *not* set up that env —
+always go through `xtask` (or via `bootstrap.py` which delegates to it). The thin **`build.rs`**
+only reruns Cargo when changed; natives go through Cargo + **vcpkg**.
 
 ```
 python bootstrap.py build               # release via xtask
-python bootstrap.py build -d           # debug
+python bootstrap.py build -d            # debug
+python bootstrap.py build -f profiler   # cargo feature(s); forwarded to xtask --features
 python bootstrap.py test
-python bootstrap.py build -f profiler # example: `profiler` Cargo feature
-cargo xtask build [--release|--debug]
+cargo xtask build [--release|--debug] [--features ...]
 cargo xtask test [--debug] [--nocapture]
-cargo xtask deploy [--install-dir P]   # install playa binary
+cargo xtask deploy [--install-dir P]    # install playa binary
 cargo xtask changelog
 cargo xtask tag-dev / tag-rel / pr
-cargo xtask wipe                       # prune select target artifacts
-cargo xtask wipe-wf                    # delete GitHub Actions runs (needs gh)
+cargo xtask wipe                        # prune select target artifacts
+cargo xtask wipe-wf                     # delete GitHub Actions runs (needs gh)
 ```
 
 **vcpkg for FFmpeg** — required. Triplets: `x64-windows-static-md-release`,
 `x64-linux-release`, `arm64-osx-release`, `x64-osx-release`. ENV: `VCPKG_ROOT`,
-`VCPKGRS_TRIPLET`, `PKG_CONFIG_PATH`. Details — in **`DEVELOP.md`**.
+`VCPKGRS_TRIPLET`, `PKG_CONFIG_PATH` — auto-set by `xtask::env_setup`.
+**Install command**: `vcpkg install ffmpeg[core,avcodec,avformat,swresample,swscale,nvcodec]:<triplet>` —
+intentionally **without `avdevice` / `avfilter`** (vcpkg's FFmpeg 8.1+ avfilter pulls in
+`vsrc_gfxcapture_winrt` which requires a specific MSVC C++ STL version not available in
+every toolchain). Full instructions in **`crates/playa-ffmpeg/README.md`**.
 
 **Release profile**: `strip = false`, `lto = false`, `codegen-units = 1`
 is commented out — optimized for link speed, not binary size.
@@ -593,7 +598,10 @@ for heavy tasks.
 
 - **Windows 11**, PowerShell 7+ (`pwsh`). Not `bash`. Instead of `/dev/null` —
   `$null`; escape `\` or use forward `/` where accepted.
-- **vcpkg** in `C:\vcpkg`, ENV: `$env:VCPKG_ROOT`. MSVC toolchain must be active for Windows native links (**Developer PowerShell for VS** or `vcvars64.bat`).
+- **vcpkg** in `C:\vcpkg`, ENV: `$env:VCPKG_ROOT`. MSVC toolchain activation is **automatic**
+  via `xtask::env_setup` (uses `vcv-rs` to read VS install + Windows SDK from registry).
+  Developer PowerShell / `vcvars64.bat` are no longer required — but `cargo build` outside
+  `cargo xtask` will *not* see that env, so always use `xtask` or `bootstrap.py`.
 - **Sciter / Flutter** are not used (that belongs to RustDesk). Here the
   UI is a single stack — egui/eframe + glow OpenGL.
 
@@ -622,7 +630,7 @@ for heavy tasks.
 
 Text flowcharts and terminology for the frame pipeline, cache, compositing, and hierarchy
 live in sections above (**Data flow**, **LRU cache**, **Node graph**, etc.).
-**[`DEVELOP.md`](DEVELOP.md)** covers vcpkg, FFmpeg, and cross-platform builds.
+**[`crates/playa-ffmpeg/README.md`](crates/playa-ffmpeg/README.md)** covers vcpkg, FFmpeg install commands, and the avfilter caveat.
 
 ---
 
