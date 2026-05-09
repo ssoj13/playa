@@ -495,10 +495,21 @@ cargo xtask wipe-wf                     # delete GitHub Actions runs (needs gh)
 **vcpkg for FFmpeg** — required. Triplets: `x64-windows-static-md-release`,
 `x64-linux-release`, `arm64-osx-release`, `x64-osx-release`. ENV: `VCPKG_ROOT`,
 `VCPKGRS_TRIPLET`, `PKG_CONFIG_PATH` — auto-set by `xtask::env_setup`.
-**Install command**: `vcpkg install ffmpeg[core,avcodec,avformat,swresample,swscale,nvcodec]:<triplet>` —
-intentionally **without `avdevice` / `avfilter`** (vcpkg's FFmpeg 8.1+ avfilter pulls in
-`vsrc_gfxcapture_winrt` which requires a specific MSVC C++ STL version not available in
-every toolchain). Full instructions in **`crates/playa-ffmpeg/README.md`**.
+**FFmpeg is pinned via manifest mode**: `vcpkg.json` + `vcpkg-configuration.json`
+at the workspace root lock the port baseline to a specific microsoft/vcpkg revision.
+Install **once** from the project root:
+
+```
+vcpkg install --x-manifest-root . --x-install-root .vcpkg/installed --triplet <triplet>
+```
+
+`xtask::env_setup::try_manifest_mode_vcpkg` detects `.vcpkg/installed/<triplet>/lib/`
+and points `VCPKG_ROOT` at it so manifest-pinned libs are linked. If `.vcpkg/` isn't
+populated yet, xtask prints the install command and falls back to the global
+`VCPKG_ROOT`. **`avdevice` / `avfilter` are intentionally excluded** (vcpkg's
+FFmpeg 8.1+ avfilter pulls in `vsrc_gfxcapture_winrt` requiring a specific MSVC C++
+STL version not available in every toolchain). Full notes in
+**`crates/playa-ffmpeg/README.md`**.
 
 **Release profile**: `strip = false`, `lto = false`, `codegen-units = 1`
 is commented out — optimized for link speed, not binary size.

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — `dev` branch
 
+### Pinned vcpkg FFmpeg via manifest mode
+
+`vcpkg.json` + `vcpkg-configuration.json` at the workspace root lock
+microsoft/vcpkg to a specific baseline (currently
+`4bc07e3eb00c5a9539a5a7a83415150a9260f8db`, 2026-05-07). Install once with
+`vcpkg install --x-manifest-root . --x-install-root .vcpkg/installed
+--triplet <triplet>` — `xtask::env_setup::try_manifest_mode_vcpkg` then
+points `VCPKG_ROOT` at the local `.vcpkg/` so CI and local dev link
+bit-identical FFmpeg builds. Falls back to the global `VCPKG_ROOT` until
+manifest install is populated. `.vcpkg/` is in `.gitignore`.
+
 ### Vendored `playa-ffmpeg` + automatic MSVC/vcpkg env via `xtask`
 
 `crates/playa-ffmpeg/` is now a workspace member instead of a `crates.io` dep

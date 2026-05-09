@@ -85,11 +85,15 @@ automatically by `xtask::env_setup` — no need to launch a Developer PowerShell
 or `vcvars64.bat` first.
 
 FFmpeg is consumed from vcpkg (vendored Rust wrapper at `crates/playa-ffmpeg/`).
-Install on Windows:
+The workspace ships `vcpkg.json` + `vcpkg-configuration.json` pinning FFmpeg to
+a specific microsoft/vcpkg revision; install **once** from the project root:
 
 ```powershell
-vcpkg install ffmpeg[core,avcodec,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
+vcpkg install --x-manifest-root . --x-install-root .vcpkg/installed --triplet x64-windows-static-md-release
 ```
+
+`xtask::env_setup` auto-detects the local `.vcpkg/` install and pins
+`VCPKG_ROOT` at it, so the global vcpkg state stops mattering for playa.
 
 See **[crates/playa-ffmpeg/README.md](crates/playa-ffmpeg/README.md)** for
 Linux / macOS install commands and an explanation of why `avdevice` / `avfilter`

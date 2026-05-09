@@ -63,6 +63,23 @@ Set-Content -Path "$env:VCPKG_ROOT\triplets\community\x64-windows-static-md-rele
 vcpkg install ffmpeg[core,avcodec,avformat,swresample,swscale,nvcodec]:x64-windows-static-md-release
 ```
 
+#### Manifest-mode (pinned baseline) — recommended
+
+The playa workspace ships `vcpkg.json` + `vcpkg-configuration.json` that lock
+FFmpeg to a specific microsoft/vcpkg revision. Running the install through
+manifest mode guarantees CI and local dev get bit-identical port versions
+regardless of how stale or fresh the global vcpkg checkout is. Run **once**
+from the workspace root:
+
+```powershell
+vcpkg install --x-manifest-root . --x-install-root .vcpkg/installed --triplet x64-windows-static-md-release
+```
+
+`xtask::env_setup` auto-detects `.vcpkg/installed/<triplet>/` and points
+`VCPKG_ROOT` at it; the global vcpkg state becomes irrelevant for playa
+builds. To bump the baseline: replace the SHA in `vcpkg-configuration.json`,
+delete `.vcpkg/installed/<triplet>/`, and rerun the command above.
+
 **Windows (MSVC) - Debug + Release (default):**
 ```powershell
 vcpkg install ffmpeg[core,avcodec,avformat,swresample,swscale,nvcodec]:x64-windows-static-md

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "playa",
+  "version-string": "0.1.142",
+  "description": "Image sequence player — manifest-mode FFmpeg dependency pin",
+  "homepage": "https://github.com/ssoj13/playa",
+  "license": "MIT",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avformat",
+        "swresample",
+        "swscale",
+        "nvcodec"
+      ]
+    }
+  ]
+}

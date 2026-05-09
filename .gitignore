@@ -5,9 +5,14 @@ target/
 *.mp4
 *.mov
 *.json
+!vcpkg.json
+!vcpkg-configuration.json
 *.svg
 cdx.cmd
 temp_log.txt
+
+# Manifest-mode vcpkg install root (FFmpeg + deps, multi-GB; per-machine)
+.vcpkg/
 
 # IDE
 .vscode/

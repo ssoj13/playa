@@ -8,6 +8,9 @@ use anyhow::{Context, Result};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+/// Default Windows triplet (release-only, dynamic CRT, static FFmpeg libs).
+const WIN_DEFAULT_TRIPLET: &str = "x64-windows-static-md-release";
+
 #[cfg(windows)]
 use vcv_rs::Arch;
 #[cfg(windows)]
@@ -37,7 +40,13 @@ pub fn prepare_build_environment() -> Result<()> {
 }
 
 fn setup_vcpkg() {
-    const WIN_DEFAULT_TRIPLET: &str = "x64-windows-static-md-release";
+    // Manifest-mode pin (vcpkg.json + vcpkg-configuration.json at workspace root,
+    // FFmpeg installed locally under .vcpkg/installed/<triplet>/) takes precedence.
+    // Falls through to global VCPKG_ROOT discovery if manifest install isn't populated yet.
+    if try_manifest_mode_vcpkg() {
+        prepend_pkg_config_path();
+        return;
+    }
 
     let prev_root = std::env::var_os("VCPKG_ROOT");
 
@@ -71,6 +80,49 @@ fn setup_vcpkg() {
     }
 
     prepend_pkg_config_path();
+}
+
+/// If the workspace ships a `vcpkg.json` and `.vcpkg/installed/<triplet>/lib/` is
+/// populated, point `VCPKG_ROOT` at the local manifest-mode install root. This
+/// pins FFmpeg to the baseline declared in `vcpkg-configuration.json` so CI and
+/// local dev always link the same versions, regardless of the global vcpkg HEAD.
+fn try_manifest_mode_vcpkg() -> bool {
+    let Ok(cwd) = std::env::current_dir() else {
+        return false;
+    };
+    if !cwd.join("vcpkg.json").exists() || !cwd.join("Cargo.toml").exists() {
+        return false;
+    }
+
+    let triplet = std::env::var("VCPKGRS_TRIPLET").unwrap_or_else(|_| {
+        if cfg!(windows) { WIN_DEFAULT_TRIPLET.to_string() } else { String::new() }
+    });
+    if triplet.is_empty() {
+        return false;
+    }
+
+    let vcpkg_dir = cwd.join(".vcpkg");
+    let lib_dir = vcpkg_dir.join("installed").join(&triplet).join("lib");
+    if !lib_dir.exists() {
+        eprintln!(
+            "xtask: manifest-mode vcpkg install not populated at {}",
+            lib_dir.display()
+        );
+        eprintln!(
+            "xtask: run once to install pinned FFmpeg (~5–10 GB, ~20 min on first build):"
+        );
+        eprintln!(
+            "xtask:   vcpkg install --x-manifest-root . --x-install-root .vcpkg/installed --triplet {triplet}"
+        );
+        eprintln!("xtask: falling back to global VCPKG_ROOT for now.");
+        return false;
+    }
+
+    env_set("VCPKG_ROOT", vcpkg_dir.as_os_str());
+    env_set("VCPKGRS_TRIPLET", &triplet);
+    eprintln!("xtask: manifest-mode VCPKG_ROOT -> {}", vcpkg_dir.display());
+    eprintln!("xtask: triplet (manifest) -> {triplet}");
+    true
 }
 
 fn prepend_pkg_config_path() {
