@@ -3244,6 +3244,7 @@ dependencies = [
 [[package]]
 name = "murmur3"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 
 [[package]]
 name = "naga"
@@ -5630,6 +5631,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vfx-core"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "half",
  "rayon",
@@ -5639,6 +5641,7 @@ dependencies = [
 [[package]]
 name = "vfx-exr"
 version = "1.74.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "bit_field",
  "half",
@@ -5655,6 +5658,7 @@ dependencies = [
 [[package]]
 name = "vfx-icc"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "lcms2",
  "thiserror 2.0.17",
@@ -5664,6 +5668,7 @@ dependencies = [
 [[package]]
 name = "vfx-io"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "byteorder",
  "dashmap",
@@ -5688,6 +5693,7 @@ dependencies = [
 [[package]]
 name = "vfx-jph"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "image",
 ]
@@ -5695,6 +5701,7 @@ dependencies = [
 [[package]]
 name = "vfx-lut"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "quick-xml 0.39.2",
  "rayon",
@@ -5706,6 +5713,7 @@ dependencies = [
 [[package]]
 name = "vfx-math"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "glam 0.32.1",
  "vfx-core",
@@ -5715,6 +5723,7 @@ dependencies = [
 [[package]]
 name = "vfx-ocio"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "glam 0.32.1",
  "glob",
@@ -5735,6 +5744,7 @@ dependencies = [
 [[package]]
 name = "vfx-primaries"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "glam 0.32.1",
  "vfx-core",
@@ -5744,6 +5754,7 @@ dependencies = [
 [[package]]
 name = "vfx-transfer"
 version = "0.1.0"
+source = "git+https://github.com/ssoj13/vfx-rs.git?branch=main#0710c5f1516be0ddddcb5a09effd808b3f6d3b1d"
 dependencies = [
  "vfx-core",
 ]

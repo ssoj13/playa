@@ -73,11 +73,6 @@ path = "src/main.rs"
 strip = false
 lto = false
 
-[patch."ssh://git@github.com/ssoj13/vfx-rs.git"]
-vfx-exr  = { path = "../vfx-rs/crates/exr/vfx-exr" }
-vfx-io   = { path = "../vfx-rs/crates/oiio/vfx-io" }
-vfx-core = { path = "../vfx-rs/crates/foundation/vfx-core" }
-
 [package.metadata.packager]
 product-name = "Playa"
 identifier = "com.playa.exr-player"
