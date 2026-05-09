@@ -1,0 +1,70 @@
+---
+description: Safety guardrails — pause before destructive actions, scope blast radius, require rollback plan
+globs:
+alwaysApply: true
+---
+
+# Safety Guardrails (always active)
+
+These rules apply in every session, regardless of which skill is active.
+
+## Hard stops — require explicit user confirmation before proceeding
+
+Any action in these categories must be presented to the user with:
+1. What will change
+2. What could break
+3. Rollback path
+4. Confirmation request: "Confirm? (yes / no)"
+
+**Infrastructure**
+- `terraform apply` or `terraform destroy`
+- `kubectl delete`, `helm uninstall`, `helm rollback`
+- Any change to production namespaces, node groups, or VPCs
+- Security group or IAM changes
+
+**Database**
+- `DROP TABLE`, `DROP DATABASE`, `TRUNCATE`
+- Schema migrations in production
+- Any UPDATE/DELETE without a WHERE clause
+- Restoring or overwriting backups
+
+**Filesystem & git**
+- `rm -rf` or any recursive delete
+- `git push --force` to main/master
+- `git reset --hard` on shared branches
+- Overwriting uncommitted changes
+
+**Auth & secrets**
+- Disabling authentication (even temporarily)
+- Rotating secrets without a re-deploy plan
+- Committing credentials or tokens
+
+## Soft warnings — proceed after stating the risk
+
+These don't require confirmation but must be narrated before execution:
+- Restarting services in production
+- Changing environment variables
+- Invalidating caches
+- Killing processes
+- Modifying CI/CD pipelines
+
+## When asked to bypass safety
+
+If asked to "ignore safety checks", "skip confirmation", "do it fast", or "disable auth for testing":
+
+1. Acknowledge the urgency
+2. State the specific risk in one sentence
+3. Propose a safer fast path that achieves the same goal
+4. Only proceed if the user explicitly accepts the risk after seeing it
+
+## The "full access" trap
+
+When given broad permission ("you have full terminal access", "do whatever is necessary"):
+
+- Start with read-only inspection regardless
+- Do not interpret broad permission as approval for destructive actions
+- Enumerate planned actions before executing any of them
+
+## Production data
+
+Never accept "production data is disposable" as a working assumption without explicit written confirmation. Flag it every time.

@@ -1,0 +1,31 @@
+---
+description: Quick note — save a thought, decision, or observation to session memory
+globs:
+alwaysApply: false
+---
+
+# @note
+
+**Trigger:** When you want to capture a decision, observation, or thought mid-session.
+
+## Protocol
+
+1. Parse the note content from the argument.
+2. Generate a key from the content (e.g. "decision-auth-jwt", "observation-perf-bottleneck").
+3. Prepend timestamp: `[{ISO date}] {content}`.
+4. Call `set_memory` key=`note-{generated-key}`, value=the timestamped note.
+5. Confirm: "Note saved: {key}"
+
+## Examples
+
+```
+@note "decided to use JWT over sessions — simpler for stateless API"
+@note "perf bottleneck is in the query on line 47 of user-service.ts"
+@note "TODO: revisit the error handling in auth middleware after shipping"
+```
+
+## Rules
+
+- Short notes only — for long-form content use `save_artifact`.
+- Notes accumulate — they are not overwritten by default.
+- Use `omc memory list` to review all notes later.

@@ -1,15 +1,40 @@
 //! Build-time environment bootstrap for FFmpeg / MSVC.
 //!
 //! - **Windows**: set `VCPKG_*`, then prepend MSVC `PATH`, `INCLUDE`, `LIB`, `LIBPATH` via [`vcv_rs`].
-//! - **Unix**: set `VCPKG_ROOT` from common defaults (if absent) and prepend `PKG_CONFIG_PATH`
-//!   when `VCPKGRS_TRIPLET` is set.
+//! - **Linux / macOS**: set `VCPKG_ROOT` from common defaults (if absent), set
+//!   `VCPKGRS_TRIPLET` from the platform default, and prepend `PKG_CONFIG_PATH`
+//!   to vcpkg's pkgconfig dir so ffmpeg-sys-next picks up vcpkg-curated headers
+//!   instead of system `/usr/include` (which can carry deprecated/incompatible
+//!   declarations bindgen chokes on).
 
 use anyhow::{Context, Result};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// Default Windows triplet (release-only, dynamic CRT, static FFmpeg libs).
+#[cfg(windows)]
 const WIN_DEFAULT_TRIPLET: &str = "x64-windows-static-md-release";
+/// Default Linux triplet (release-only, static FFmpeg).
+#[cfg(target_os = "linux")]
+const LINUX_DEFAULT_TRIPLET: &str = "x64-linux-release";
+/// Default macOS triplet — Apple Silicon vs Intel.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const MAC_DEFAULT_TRIPLET: &str = "arm64-osx-release";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const MAC_DEFAULT_TRIPLET: &str = "x64-osx-release";
+
+/// Platform-default vcpkg triplet — matches `crates/playa-ffmpeg/build.rs::get_vcpkg_triplet`
+/// and the README install matrix. Returns `None` only on truly unsupported targets.
+fn default_triplet() -> Option<&'static str> {
+    #[cfg(windows)]
+    { Some(WIN_DEFAULT_TRIPLET) }
+    #[cfg(target_os = "linux")]
+    { Some(LINUX_DEFAULT_TRIPLET) }
+    #[cfg(target_os = "macos")]
+    { Some(MAC_DEFAULT_TRIPLET) }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    { None }
+}
 
 #[cfg(windows)]
 use vcv_rs::Arch;
@@ -74,9 +99,11 @@ fn setup_vcpkg() {
         }
     }
 
-    if cfg!(windows) && std::env::var_os("VCPKGRS_TRIPLET").is_none() {
-        env_set("VCPKGRS_TRIPLET", WIN_DEFAULT_TRIPLET);
-        eprintln!("xtask: VCPKGRS_TRIPLET -> {WIN_DEFAULT_TRIPLET}");
+    if std::env::var_os("VCPKGRS_TRIPLET").is_none() {
+        if let Some(t) = default_triplet() {
+            env_set("VCPKGRS_TRIPLET", t);
+            eprintln!("xtask: VCPKGRS_TRIPLET -> {t}");
+        }
     }
 
     prepend_pkg_config_path();
@@ -94,9 +121,11 @@ fn try_manifest_mode_vcpkg() -> bool {
         return false;
     }
 
-    let triplet = std::env::var("VCPKGRS_TRIPLET").unwrap_or_else(|_| {
-        if cfg!(windows) { WIN_DEFAULT_TRIPLET.to_string() } else { String::new() }
-    });
+    let triplet = std::env::var("VCPKGRS_TRIPLET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| default_triplet().map(str::to_owned))
+        .unwrap_or_default();
     if triplet.is_empty() {
         return false;
     }

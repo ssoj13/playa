@@ -1,0 +1,82 @@
+---
+description: QA cycle mode — test, diagnose, fix, repeat until passing or max cycles reached
+globs:
+alwaysApply: false
+---
+
+# @qa
+
+**Trigger:** After implementing a feature, before shipping, or when tests are failing.
+
+## Modes
+
+| Flag | Behavior |
+|------|----------|
+| `--tests` (default) | Run test suite and cycle until passing |
+| `--build` | Run build and cycle until it succeeds |
+| `--lint` | Run lint and cycle until clean |
+| `--typecheck` | Run type check and cycle until clean |
+| `--full` | Run all: typecheck → lint → build → tests |
+| `--report` | Report only, no fixes |
+
+Max cycles: 5. After 5 failed cycles, stop and report remaining issues.
+
+## Cycle Protocol
+
+### Per Cycle:
+
+1. **Run** — execute the relevant command(s) for the selected mode.
+
+2. **Check** — did it pass?
+   - YES → exit with success summary
+   - NO → continue to diagnose
+
+3. **Diagnose** — analyze the failure output:
+   - What failed and why (root cause, not just symptoms)
+   - Which files/lines are involved
+   - Is this a real failure or a test environment issue?
+
+4. **Fix** — apply the minimum fix to resolve the root cause:
+   - One root cause at a time
+   - Verify the fix makes sense before applying
+   - Never break passing tests to fix failing ones
+
+5. **Repeat** — go back to step 1 with updated iteration count.
+
+6. Call `update_mode_state` after each cycle with `phase="cycle-N"` and `iteration=N`.
+
+### Exit Conditions
+
+| Condition | Action |
+|-----------|--------|
+| All checks pass | Report: PASS, N cycles used |
+| Max cycles (5) reached | Report: FAIL, list remaining issues |
+| Unfixable issue (env/config) | Report: BLOCKED, describe blocker |
+
+## Final Report
+
+```markdown
+## QA Report: {scope}
+
+**Result:** PASS | FAIL | BLOCKED
+**Cycles used:** N/5
+**Mode:** {flags}
+
+### Issues fixed
+1. `file:line` — description of fix
+
+### Remaining issues (if FAIL)
+1. `file:line` — description, repro steps
+
+### Health score: XX/100
+(−25 per critical bug, −10 per major, −3 per minor)
+```
+
+Call `save_artifact` type=`specs`, slug=`qa-{scope-slug}`, content=the report.
+Call `set_memory` key=`last-qa`, value=the report.
+
+## Rules
+
+- Fix root causes, not symptoms.
+- Never disable or delete tests to make the suite pass.
+- In `--report` mode: list issues without fixing anything.

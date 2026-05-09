@@ -1,0 +1,73 @@
+---
+description: Tmux-based parallel agent coordination — spawn real worker processes across panes
+globs:
+alwaysApply: false
+---
+
+# @team
+
+**Trigger:** When a task is large enough to benefit from parallel execution with real background workers.
+
+## How it works
+
+- `omc team start` spawns a tmux session with N worker panes
+- Each worker pane runs the `omc team worker` process — polling for tasks
+- The coordinator (you, in Cursor) assigns tasks via MCP tools
+- Workers pick up tasks, execute them with `codex`, and write results back
+- Results are visible in real time via `omc team status` or `omc team attach`
+
+## Coordinator Protocol (in Cursor chat)
+
+1. **Start the team** (run in terminal first):
+   ```bash
+   omc team start --workers 3 --goal "implement the auth module"
+   ```
+
+2. Load the approved plan: `load_plan` with the latest approved plan ID.
+
+3. Break into parallel-safe tasks (different files, no shared state):
+   ```
+   assign_task session_id="team-XXX" title="Implement JWT middleware" description="..." assigned_to="worker-1"
+   assign_task session_id="team-XXX" title="Write auth routes" description="..." assigned_to="worker-2"
+   assign_task session_id="team-XXX" title="Add auth tests" description="..." assigned_to="worker-3"
+   ```
+
+4. Monitor: `get_team_status` session_id="team-XXX"
+   — or from terminal: `omc team status`
+
+5. When all tasks are `done`: run `@review` and `@qa` on the combined result.
+
+6. Call `save_checkpoint` with the final state.
+
+## Terminal commands
+
+```bash
+omc team start --workers 3 --goal "..."   # spawn tmux session + workers
+omc team status                           # show task progress
+omc team attach                           # attach to tmux session (see all panes)
+omc team logs worker-1                    # show worker-1 output
+omc team stop                             # kill all workers
+```
+
+## Task assignment rules
+
+- Each task must touch **different files** — workers run in parallel, conflicts = corruption
+- Tasks must have clear acceptance criteria in the description
+- Assign one worker per independent concern (auth, routes, tests, migrations, etc.)
+- Never assign two tasks that write to the same file to different workers
+
+## Worker behavior
+
+Each worker:
+1. Polls `.omc/team/` for tasks assigned to it
+2. Picks up the first `pending` task
+3. Marks it `in-progress`
+4. Executes with `codex --approval-mode auto-edit`
+5. Marks it `done` (with result summary) or `blocked` (with blocker reason)
+6. Returns to polling
+
+## Optimal task sizes
+
+- Too small (< 5 min): overhead not worth it, use `@ralph` instead
+- Ideal (15–45 min): one focused file or subsystem
+- Too large (> 1 hr): break into sub-tasks first with `@ralplan`

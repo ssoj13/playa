@@ -1,0 +1,54 @@
+---
+description: Full CI pipeline — typecheck, lint, build, test, security, report
+globs:
+alwaysApply: false
+---
+
+# @pipeline
+
+**Trigger:** Before shipping, after major changes, or as a pre-PR gate.
+
+## Stages (run in order, stop on critical failure)
+
+| Stage | Command hint | Fail condition |
+|-------|-------------|----------------|
+| 1. Typecheck | `tsc --noEmit` / `pyright` | Any type errors |
+| 2. Lint | `eslint` / `biome` / `ruff` | Errors (warnings OK) |
+| 3. Build | `npm run build` / `cargo build` | Non-zero exit |
+| 4. Tests | `npm test` / `pytest` | Any failures |
+| 5. Security scan | Run `@security-review` inline | Any CRITICAL findings |
+
+## Protocol
+
+1. Call `start_mode` mode=`autopilot` task=`pipeline` (reuse for tracking).
+2. Run each stage in sequence. For each stage:
+   - Execute the relevant command
+   - Check result
+   - Call `update_mode_state` with `phase=stage-N`
+   - If FAIL: attempt one auto-fix cycle (same as `@qa` cycle mode)
+   - If still FAIL after one cycle: mark stage as failed, continue to next (unless critical)
+3. Stop entirely if build fails (no point running tests against a broken build).
+4. Run `@security-review` as final stage — flag CRITICAL findings.
+5. Write pipeline report:
+   ```markdown
+   ## Pipeline Report
+
+   | Stage | Result | Cycles used |
+   |-------|--------|-------------|
+   | Typecheck | ✓ PASS | 0 |
+   | Lint | ✓ PASS | 1 (auto-fixed) |
+   | Build | ✓ PASS | 0 |
+   | Tests | ✗ FAIL | 1 |
+   | Security | ✓ PASS | — |
+
+   **Overall: PASS / FAIL**
+   Issues remaining: ...
+   ```
+6. Call `save_artifact` type=`specs`, slug=`pipeline-{date}`.
+7. Call `update_mode_state` status=`completed`.
+
+## Rules
+
+- Fix auto-fixable issues (lint, simple type errors) automatically.
+- Never modify tests to make them pass.
+- A pipeline PASS with security CRITICAL is still a FAIL.

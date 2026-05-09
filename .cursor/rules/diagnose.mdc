@@ -1,0 +1,85 @@
+---
+description: Systematic diagnosis — generate hypotheses before investigating, separate facts from inferences
+globs:
+alwaysApply: false
+---
+
+# @diagnose
+
+**Trigger:** Any bug, error, performance issue, or unexpected behavior where the cause is unknown.
+
+## The iron law
+
+**Root cause before fix.** Never propose a solution until you have identified the cause with evidence. A fix without a root cause is a guess wearing a lab coat.
+
+## Protocol
+
+### Phase 0 — Gather facts (read-only)
+
+Before forming any hypothesis, collect:
+- What is the exact symptom? (error message, metric, user report)
+- When did it start? (specific time, after deploy, after config change)
+- What is the scope? (all users / one region / one endpoint / one query)
+- What changed recently? (deploy, config, data volume, traffic pattern)
+
+State clearly what you **know** vs what you **infer** vs what you **don't know yet**.
+
+### Phase 1 — Generate hypotheses (before investigating any)
+
+Generate at least 5 possible causes before ruling any out. Do not start investigating until the list is complete.
+
+For each hypothesis:
+```
+H1: [cause] — likelihood: high/medium/low — evidence needed: [what would confirm or rule this out]
+H2: ...
+```
+
+Common failure domains to consider:
+- **App layer**: crash, exception, logic error, bad config, deploy mismatch
+- **Data layer**: DB connectivity, slow query, lock contention, N+1, schema mismatch, migration state
+- **Network**: DNS, timeout, connection pool exhaustion, firewall, load balancer, CDN edge
+- **Infra**: pod restart, OOMKilled, node pressure, readiness probe failure, selector mismatch
+- **Dependencies**: third-party API, queue backlog, auth service, feature flag state
+- **Client**: stale cache, client-side bug, session/auth issue, partial rollout
+- **Observability gap**: wrong metric, wrong threshold, aggregation masking narrow failures
+
+### Phase 2 — Rank and investigate
+
+Order hypotheses by: (likelihood × blast radius × ease of ruling out).
+
+Investigate the highest-value hypothesis first. For each:
+1. State what evidence would **confirm** it
+2. State what evidence would **rule it out**
+3. Collect the evidence (logs, metrics, traces, code)
+4. Update confidence
+
+### Phase 3 — Converge
+
+When one hypothesis has strong confirming evidence and others are ruled out:
+
+```markdown
+## Diagnosis
+
+**Confirmed cause:** [specific root cause]
+**Evidence:** [what confirmed it]
+**Ruled out:** [what was eliminated and why]
+
+**Blast radius:** [who/what is affected]
+**Rollback path:** [how to undo the fix if wrong]
+**Verification:** [how to confirm the fix worked]
+```
+
+Call `save_artifact` type=`specs`, slug=`diagnose-{issue-slug}`.
+Call `set_memory` key=`last-diagnosis`, value=the report.
+
+### Phase 4 — Fix
+
+Only after Phase 3 is complete. Hand off to `@ralph` with the diagnosis as context.
+
+## Rules
+
+- Never skip to Phase 4 without Phase 3 evidence.
+- "Check the logs" is not a hypothesis — it is a tactic. Form the hypothesis first.
+- Green dashboards do not mean no incident. Observability can lie (wrong metric, wrong threshold, aggregation masking partial failures, wrong user segment).
+- If evidence contradicts your leading hypothesis, update it — don't force-fit.
+- When only some logs/files are visible: state the partial view before drawing conclusions.

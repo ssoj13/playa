@@ -1,0 +1,49 @@
+---
+description: Generate and approve an implementation plan before writing code
+globs:
+alwaysApply: false
+---
+
+# @ralplan
+
+**Trigger:** After `@deep-interview` or when you have a clear task and need an approved plan.
+
+## Protocol
+
+1. Call `start_mode` with mode=`ralplan`.
+2. Load clarified scope: call `get_memory` with key=`clarified-scope` (if available).
+3. Generate a detailed implementation plan in this format:
+   ```markdown
+   ## Implementation Plan
+
+   ### Approach
+   [1-paragraph summary of the approach and why]
+
+   ### Steps
+   1. [ ] Step one
+   2. [ ] Step two
+   ...
+
+   ### Files to change
+   - `path/to/file.ts` — what changes and why
+   ...
+
+   ### Tradeoffs
+   - Option A vs Option B: chose A because...
+
+   ### Risks
+   - Risk: ... Mitigation: ...
+
+   ### Out of scope
+   - ...
+   ```
+4. Present the plan and ask: **"Approve this plan? (yes / revise: <feedback>)"**
+5. If revised: update the plan and re-present. Repeat until approved.
+6. On approval: call `save_plan` with title and the full plan markdown, approved=true.
+7. Call `update_mode_state` with status=`completed`.
+8. Recommend: "Run @ralph to execute the plan."
+
+## Rules
+
+- Do NOT write any implementation code during this phase.
+- Do save the approved plan via `save_plan` — @ralph will load it.

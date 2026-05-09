@@ -1,0 +1,42 @@
+---
+description: Test-driven development — red-green-refactor cycle
+globs:
+alwaysApply: false
+---
+
+# @tdd
+
+**Trigger:** When building a new function, module, or feature from scratch, or reproducing a bug.
+
+## Protocol
+
+### Red phase — write failing tests
+1. Read clarified scope from `get_memory` key=`clarified-scope` (if available).
+2. Write tests that define the contract:
+   - Happy path: normal inputs produce expected outputs
+   - Edge cases: empty, null, boundary values, large inputs
+   - Error cases: invalid inputs raise correct errors
+3. Run the tests. **All must fail (red).** If any pass, the test is wrong — fix it.
+4. Call `update_mode_state` mode=`tdd-like` phase=`red` (use deep-interview mode as proxy if tdd not registered).
+
+### Green phase — minimum implementation
+5. Write the minimum code to make all tests pass.
+6. Run tests. Iterate until green.
+7. No over-engineering — if tests pass with 5 lines, write 5 lines.
+
+### Refactor phase — clean without breaking
+8. Identify: duplication, poor naming, long functions, unclear logic.
+9. Refactor — do NOT change observable behavior.
+10. Run tests. Must still be green.
+
+### Commit
+11. Two commits:
+    - `test: add tests for {feature}`
+    - `feat: implement {feature}`
+
+## Rules
+
+- Tests before implementation — always, no exceptions.
+- Never delete or skip tests to make them pass.
+- Never modify tests in the green/refactor phase.
+- If a test seems impossible to pass: the design may be wrong — revisit the interface.

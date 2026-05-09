@@ -1,0 +1,70 @@
+---
+description: Codebase analysis — complexity, coupling, dead code, tech debt hotspots
+globs:
+alwaysApply: false
+---
+
+# @analyze
+
+**Trigger:** Before a large refactor, investigating performance, finding tech debt, or understanding a complex area.
+
+## Protocol
+
+1. **Read only** — no code changes.
+2. Identify the scope from the argument. For brownfield: scan the relevant files first.
+3. Analyze each dimension:
+
+   **Complexity hotspots**
+   - Functions > 40 lines
+   - Nesting depth > 4
+   - Files > 300 lines
+   - Long parameter lists (> 4 args)
+
+   **Coupling**
+   - What imports what — who depends on this module?
+   - Blast radius: if this file changes, what breaks?
+   - Circular dependencies
+
+   **Dead code**
+   - Unused exports
+   - Unreachable branches (`if (false)`, code after return)
+   - TODO/FIXME/HACK comments — count and locate
+
+   **Test gaps**
+   - Which functions/branches have no test coverage?
+   - Which error paths are untested?
+
+   **Dependencies**
+   - Outdated packages (compare versions)
+   - Packages imported but barely used
+
+4. Report:
+   ```markdown
+   ## Analysis: {scope}
+
+   ### Overview
+   [2-3 sentences]
+
+   ### Hotspots (top 5 by severity)
+   1. `file:line` — issue, why it matters, recommended action
+
+   ### Dependency map
+   [key relationships and blast radius]
+
+   ### Tech debt inventory
+   TODOs: N | Complexity flags: N | Dead code: N
+
+   ### Recommended actions
+   Priority 1 (do now): ...
+   Priority 2 (do soon): ...
+   Priority 3 (backlog): ...
+   ```
+
+5. Call `save_artifact` type=`specs`, slug=`analyze-{scope-slug}`.
+6. Call `set_memory` key=`analyze-{scope}`, value=the report.
+
+## Rules
+
+- Read-only. No code changes.
+- Rank findings by impact, not volume.
+- "Recommended actions" must be concrete and actionable, not vague ("consider refactoring").

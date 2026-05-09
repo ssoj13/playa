@@ -1,0 +1,53 @@
+---
+description: Maximum effort mode — full pipeline from exploration to shipped, verified PR
+globs:
+alwaysApply: false
+---
+
+# @ultrawork
+
+**Trigger:** When you want the complete workflow executed at maximum rigor with no shortcuts.
+
+This is `@explore + @deep-interview + @ralplan + @tdd/@ralph + @review + @security-review + @qa + @pipeline + @git-master prep-pr` run as a single coordinated sequence.
+
+## Protocol
+
+1. Call `start_mode` mode=`autopilot` task=`ultrawork: {task}`.
+2. Call `save_checkpoint` at the start so you can resume if interrupted.
+
+### Phase 1 — Understand (explore + deep-interview)
+3. Run `@explore` to map the relevant subsystem.
+4. Score ambiguity. If > 0.3: run `@deep-interview --standard`.
+5. Save clarified scope to memory.
+
+### Phase 2 — Plan (ralplan)
+6. Run `@ralplan`. Generate plan, present for approval.
+7. On approval: `save_plan` approved=true.
+
+### Phase 3 — Execute (tdd or ralph)
+8. If building new functionality: use `@tdd` (tests first).
+9. If modifying existing code: use `@ralph`.
+10. Call `update_mode_state` after each step.
+
+### Phase 4 — Verify (review + security + qa + pipeline)
+11. `@review` — full code review, PASS required to continue.
+12. `@security-review` — zero CRITICAL required to continue.
+13. `@qa --full` — all checks pass.
+14. `@pipeline` — full CI gate.
+
+### Phase 5 — Ship (git-master)
+15. `@git-master clean-commit` — conventional commit.
+16. `@git-master prep-pr` — full PR description.
+17. Call `save_checkpoint` with final summary.
+
+## Abort conditions
+- `@review` returns FAIL → fix issues before continuing (do not skip)
+- `@security-review` returns CRITICAL → fix before continuing (hard stop)
+- `@pipeline` FAIL after 2 cycles → surface to user, do not force-ship
+
+## Rules
+
+- No shortcuts. Every phase runs.
+- Each phase must pass before the next starts.
+- `save_checkpoint` after each phase so ultrawork is resumable.
+- This mode is slow by design — use it when quality matters most.

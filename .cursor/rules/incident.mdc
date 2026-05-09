@@ -1,0 +1,117 @@
+---
+description: Production incident response — structured triage with blast radius, rollback criteria, and verification
+globs:
+alwaysApply: false
+---
+
+# @incident
+
+**Trigger:** Live production issue — errors, outages, degradation, customer impact.
+
+## Posture
+
+- Read-only first. No changes until the cause is understood.
+- Separate confirmed facts from hypotheses. Always.
+- Green metrics do not mean no incident. Metrics lie via wrong thresholds, aggregation, wrong user segment, or synthetic blindspots.
+- Do not assume the most recent deploy is the cause — it is a hypothesis, not a fact.
+
+## Phase 1 — Impact triage (first 2 minutes)
+
+Answer these before anything else:
+
+```
+Impact scope:   all users / region / segment / endpoint / feature
+Symptom:        exact error, latency, behavior
+Start time:     when did it begin?
+Blast radius:   who and what is affected right now
+Is it worsening, stable, or recovering?
+```
+
+Call `start_mode` mode=`autopilot` task=`incident: {description}`.
+
+## Phase 2 — Evidence gathering (read-only)
+
+Collect in this order (fastest signal first):
+
+1. **Recent changes** — deploys, config changes, migrations, feature flag changes in the last 2 hours
+2. **Error logs** — actual error messages, stack traces, not just counts
+3. **Traces** — request path for a failing vs passing request
+4. **Infra health** — pod status, restart count, events, readiness probes, node pressure
+5. **Dependencies** — downstream service health, DB connectivity, queue depth, third-party status pages
+6. **Regional scope** — is it one region/AZ/CDN edge or global?
+
+After collecting: list confirmed facts vs unconfirmed hypotheses explicitly.
+
+## Phase 3 — Hypothesis tree
+
+Generate the full hypothesis tree before investigating any branch:
+
+```
+Category: App
+  H1: Deploy introduced regression — [evidence needed]
+  H2: Config drift between env — [evidence needed]
+  H3: Dependency timeout — [evidence needed]
+
+Category: Infra
+  H4: Pod selector mismatch / no ready endpoints — [evidence needed]
+  H5: Readiness probe rejecting healthy pods — [evidence needed]
+  H6: Network policy blocking traffic — [evidence needed]
+  H7: Ingress/ALB misconfiguration — [evidence needed]
+
+Category: Data
+  H8: DB connection pool exhausted — [evidence needed]
+  H9: Slow query causing cascading timeout — [evidence needed]
+  H10: Migration left partial state — [evidence needed]
+
+Category: Client/Observability
+  H11: Narrow user segment not covered by monitoring — [evidence needed]
+  H12: CDN caching stale error response — [evidence needed]
+  H13: Stale client session / auth token — [evidence needed]
+  H14: Feature flag targeting mismatch — [evidence needed]
+```
+
+Rank by: likelihood × impact × ease of ruling out.
+
+## Phase 4 — Safe remediation
+
+Only after root cause is confirmed with evidence.
+
+Before any fix:
+```
+Root cause:     [specific, evidence-backed]
+Fix:            [minimum change to resolve]
+Blast radius:   [what could break if this fix is wrong]
+Rollback:       [exact steps to undo]
+Verification:   [how we confirm it worked — specific metric/log/test]
+```
+
+Apply fix. Verify. Call `update_mode_state` phase=`verified` or phase=`rolled-back`.
+
+## Phase 5 — Incident record
+
+```markdown
+## Incident: {title}
+
+**Timeline**
+- {time}: symptom first observed
+- {time}: root cause identified
+- {time}: fix applied
+- {time}: verified resolved
+
+**Root cause:** [specific]
+**Fix applied:** [what changed]
+**Blast radius:** [who was affected, how many]
+**Rollback path:** [still valid after fix?]
+**Monitoring gap:** [did our alerts catch this? if not, why?]
+**Follow-up:** [what to prevent recurrence]
+```
+
+Call `save_artifact` type=`specs`, slug=`incident-{date}-{slug}`.
+
+## Hard rules
+
+- Never apply infrastructure changes (Terraform, kubectl delete, DB migration) without explicit confirmation and rollback plan.
+- Never disable auth during incident response. Find another debug path.
+- "The deploy caused it" requires evidence. Correlation is not causation.
+- If metrics look fine but users are affected: trust the users. Investigate the metrics.
+- Rollback is always on the table — but evaluate: is rollback safer than the fix, or does it risk additional state corruption?

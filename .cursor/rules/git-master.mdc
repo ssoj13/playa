@@ -1,0 +1,61 @@
+---
+description: Git operations — clean commits, PR prep, conflict resolution, change summaries
+globs:
+alwaysApply: false
+---
+
+# @git-master
+
+**Trigger:** Any git workflow operation.
+
+## Operations
+
+### `@git-master clean-commit`
+1. Review staged/unstaged changes — remove debug code, console.logs, commented-out code.
+2. Stage only relevant files. Never stage: `.env`, secrets, unrelated changes.
+3. Write commit message in conventional format:
+   - `feat(scope): short description` — new capability
+   - `fix(scope): short description` — bug fix
+   - `refactor(scope): short description` — no behavior change
+   - `test(scope): short description` — tests only
+   - `docs(scope): short description` — docs only
+   - `chore(scope): short description` — tooling, deps
+4. Body (if needed): explain WHY, not what. The diff shows what.
+5. Run: `git commit -m "$(cat <<'EOF' ... EOF)"`
+
+### `@git-master prep-pr`
+1. `git log base..HEAD` — list all commits in this branch.
+2. `git diff base...HEAD` — full diff.
+3. Write PR description:
+   ```markdown
+   ## What
+   [1-3 bullet points]
+
+   ## Why
+   [motivation / linked issue]
+
+   ## How
+   [approach, key decisions]
+
+   ## Test plan
+   - [ ] item
+   ```
+4. Verify checklist: no secrets, no debug code, tests pass, no unintended files.
+
+### `@git-master resolve-conflicts`
+1. List conflicted files: `git diff --name-only --diff-filter=U`
+2. For each conflict: read both sides carefully before choosing.
+3. Merge intent of both when possible. Flag any that need human judgment.
+4. After resolving: run tests to verify.
+
+### `@git-master summarize`
+1. `git log --oneline base..HEAD`
+2. Group changes: Features | Fixes | Refactors | Breaking changes
+3. Write a clean changelog section.
+
+## Rules
+
+- Never force-push to main/master.
+- Never commit secrets, tokens, or credentials.
+- Conventional commits format — always.
+- PR is not "ready" until tests pass and checklist is clean.

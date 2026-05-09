@@ -1,0 +1,30 @@
+---
+description: Fully autonomous execution — clarify, plan, and execute without interruption
+globs:
+alwaysApply: false
+---
+
+# @autopilot
+
+**Trigger:** When you want the full workflow (interview → plan → execute) to run autonomously without manual approval steps.
+
+## Protocol
+
+1. Call `start_mode` with mode=`autopilot`.
+2. **Clarify phase** — internally score ambiguity 0–10.
+   - If score > 7: ask at most 2 focused questions, then proceed.
+   - If score ≤ 7: proceed without questions.
+3. **Plan phase** — generate a full implementation plan (same format as @ralplan).
+   - Call `save_plan` with approved=true (autopilot self-approves).
+   - Call `update_mode_state` with phase=`executing`.
+4. **Execute phase** — follow @ralph protocol to execute every step.
+5. **Verify phase** — run tests, lint, smoke check.
+6. Call `update_mode_state` with status=`completed`.
+7. Report: files changed, tests passed, any issues found.
+
+## Rules
+
+- Autopilot self-approves plans. Use this only for well-scoped tasks.
+- Still persist all state — plans, memory, mode state.
+- If you encounter a decision with significant architectural impact: pause, surface it, wait for input.
+- Never delete data or make destructive changes without explicit instruction.

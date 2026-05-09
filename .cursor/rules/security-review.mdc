@@ -1,0 +1,75 @@
+---
+description: Security audit — OWASP Top 10, secrets, auth, injection, supply chain
+globs:
+alwaysApply: false
+---
+
+# @security-review
+
+**Trigger:** Before shipping anything that handles auth, user data, or external input.
+
+## Protocol
+
+1. Identify scope — files, diff, or area specified.
+2. Audit each category. For every finding: `file:line`, severity, attack vector, fix.
+
+   **Injection** (CRITICAL if found)
+   - SQL: string concatenation in queries, missing parameterization
+   - Command: `exec`, `spawn`, `eval` with user-controlled input
+   - HTML/template: unescaped user input rendered in HTML
+
+   **Authentication & Authorization** (CRITICAL/HIGH)
+   - Missing auth checks on sensitive routes
+   - JWT: algorithm confusion, missing expiry, weak secrets
+   - IDOR: object fetched by ID without ownership check
+   - Privilege escalation paths
+
+   **Secrets** (CRITICAL if found)
+   - Hardcoded API keys, passwords, tokens in source
+   - Secrets in environment variable names logged or exposed
+   - Check git history for previously committed secrets
+
+   **Input Validation** (HIGH)
+   - User-controlled input reaching filesystem, DB, or shell without validation
+   - Missing type/length/format checks at system boundaries
+   - File upload without type or size validation
+
+   **Data Exposure** (HIGH/MEDIUM)
+   - Sensitive fields (passwords, tokens, PII) in API responses or logs
+   - Stack traces or internal paths in error messages
+   - Overly verbose error responses
+
+   **Dependencies** (HIGH/MEDIUM)
+   - Known CVEs — check `package.json` or `requirements.txt` versions
+   - Loose version pins (`*`, `latest`, `^major`)
+   - Suspicious package names (typosquatting)
+
+   **Web** (MEDIUM)
+   - Missing CSRF protection on state-changing endpoints
+   - XSS: unescaped output, dangerouslySetInnerHTML
+   - Missing security headers (CSP, HSTS, X-Frame-Options)
+
+3. Write report:
+   ```markdown
+   ## Security Review: {scope}
+
+   **Verdict:** SECURE | ISSUES FOUND
+
+   ### Findings
+
+   **[CRITICAL]** `file:line`
+   Vector: ...
+   Fix: ...
+
+   ### Summary
+   Critical: N | High: N | Medium: N | Low: N
+   ```
+
+4. Call `save_artifact` type=`specs`, slug=`security-{scope-slug}`.
+5. Call `set_memory` key=`last-security-review`, value=the report.
+
+## Rules
+
+- Report only during this phase — no fixes.
+- SECURE verdict only if zero CRITICAL/HIGH findings.
+- Check git history for secrets if `git log` is available.

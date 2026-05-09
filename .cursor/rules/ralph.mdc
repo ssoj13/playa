@@ -1,0 +1,40 @@
+---
+description: Persistent completion loop — execute the approved plan step by step
+globs:
+alwaysApply: false
+---
+
+# @ralph
+
+**Trigger:** After `@ralplan` has produced an approved plan, or for direct execution of a clear task.
+
+## Protocol
+
+1. Call `start_mode` with mode=`ralph`.
+2. Load the latest approved plan: call `list_plans`, then `load_plan` with the most recent approved plan ID.
+3. Execute each step in order:
+   - Call `update_mode_state` with the current step as `phase` and increment `iteration`.
+   - Implement the step completely before moving to the next.
+   - After each step: verify it works (run tests if available, read output, check for errors).
+   - If a step fails: diagnose the root cause, fix it, verify again. Do NOT skip.
+4. After all steps are complete:
+   - Run a final verification pass (tests, linting, smoke check).
+   - Call `update_mode_state` with status=`completed`.
+   - Write a completion summary:
+     ```
+     ## Completed
+     Steps done: X/X
+     Files changed: ...
+     Verification: passed / failed (details)
+     ```
+
+## Rules
+
+- One step at a time. Complete and verify before moving on.
+- Never skip a failing step — fix the root cause, not the symptom.
+- **Root cause before fix.** Never apply a fix without stating what the root cause is. "It was failing" is not a root cause.
+- **Never mutate tests to make them pass.** If a test is wrong, flag it explicitly and get confirmation before changing it. Silencing assertions is not fixing.
+- **Minimum viable change.** Fix exactly what is broken. Do not refactor surrounding code while fixing a bug.
+- If blocked: call `update_mode_state` with phase=`blocked` and explain the blocker clearly.
+- Persist progress: call `update_mode_state` after each step so state is recoverable.
+- **Blast radius.** Before each step, state what could break if the change is wrong.

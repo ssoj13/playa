@@ -104,9 +104,18 @@ fn main() {
 }
 
 fn get_vcpkg_triplet() -> String {
-    // Respect VCPKG_DEFAULT_TRIPLET if set (e.g., for release-only builds)
+    // Honor explicit overrides in this order:
+    //  1. VCPKGRS_TRIPLET — what xtask::env_setup and the `vcpkg` crate use.
+    //  2. VCPKG_DEFAULT_TRIPLET — kept for backward compat with older docs/CI.
+    if let Ok(triplet) = env::var("VCPKGRS_TRIPLET") {
+        if !triplet.is_empty() {
+            return triplet;
+        }
+    }
     if let Ok(triplet) = env::var("VCPKG_DEFAULT_TRIPLET") {
-        return triplet;
+        if !triplet.is_empty() {
+            return triplet;
+        }
     }
 
     // Otherwise use platform defaults

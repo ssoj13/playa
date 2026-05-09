@@ -1,0 +1,34 @@
+---
+description: Resume from last checkpoint — load full context and continue exactly where you left off
+globs:
+alwaysApply: false
+---
+
+# @resume
+
+**Trigger:** At the start of a session when you want to explicitly continue previous work.
+
+## Protocol
+
+1. Call `get_session_context` — load active modes, plans, memories, and last checkpoint.
+2. Call `load_checkpoint` (no ID) — load the latest checkpoint.
+3. Present a resume summary:
+   ```
+   ## Resuming session
+
+   Last checkpoint: {created_at}
+   Summary: {what was done}
+   Next steps: {what to do now}
+   Blockers: {any blockers}
+
+   Active modes: {list}
+   Approved plan: {plan title or "none"}
+   ```
+4. Ask: "Continue with these next steps, or start something different?"
+5. On confirmation: execute the next steps as described.
+
+## Rules
+
+- Load the full checkpoint context before executing anything
+- If a plan was approved last session, load it with `load_plan` before proceeding
+- If a mode was active, restore it with `update_mode_state` and continue from the saved phase

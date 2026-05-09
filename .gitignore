@@ -37,3 +37,10 @@ CHANGELOG.preview.md
 # Certificate export files (sensitive data)
 cert.txt
 passwd.txt
+.gitnexus
+
+# oh-my-cursor state
+.omc/
+
+# Per-machine Claude Code overrides
+.claude/settings.local.json

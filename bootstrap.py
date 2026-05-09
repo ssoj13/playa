@@ -44,7 +44,23 @@ IS_MACOS = platform.system() == "Darwin"
 IS_LINUX = platform.system() == "Linux"
 
 DEFAULT_VCPKG_ROOT = Path("C:/vcpkg") if IS_WINDOWS else Path.home() / "vcpkg"
-DEFAULT_TRIPLET = "x64-windows-static-md-release" if IS_WINDOWS else ""
+
+
+def _default_triplet() -> str:
+    """Platform-default vcpkg triplet, mirrored from
+    ``crates/xtask/src/env_setup.rs::default_triplet`` and
+    ``crates/playa-ffmpeg/build.rs::get_vcpkg_triplet``.
+    """
+    if IS_WINDOWS:
+        return "x64-windows-static-md-release"
+    if IS_MACOS:
+        return "arm64-osx-release" if platform.machine().lower() in ("arm64", "aarch64") else "x64-osx-release"
+    if IS_LINUX:
+        return "x64-linux-release"
+    return ""
+
+
+DEFAULT_TRIPLET = _default_triplet()
 
 # Cargo tools that need to be installed
 CARGO_TOOLS = [
@@ -162,7 +178,7 @@ def setup_vcpkg() -> None:
             os.environ["VCPKG_ROOT"] = str(DEFAULT_VCPKG_ROOT)
             vcpkg_root = str(DEFAULT_VCPKG_ROOT)
 
-    if vcpkg_root and not os.environ.get("VCPKGRS_TRIPLET"):
+    if vcpkg_root and not os.environ.get("VCPKGRS_TRIPLET") and DEFAULT_TRIPLET:
         os.environ["VCPKGRS_TRIPLET"] = DEFAULT_TRIPLET
 
     triplet = os.environ.get("VCPKGRS_TRIPLET", "")

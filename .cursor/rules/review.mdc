@@ -1,0 +1,83 @@
+---
+description: Structured code review with severity ratings — CRITICAL/HIGH/MEDIUM/LOW
+globs:
+alwaysApply: false
+---
+
+# @review
+
+**Trigger:** Before merging, after implementing a feature, or when asked to review code.
+
+## Severity Ratings
+
+| Level | Meaning | Gate |
+|-------|---------|------|
+| **CRITICAL** | Security vulnerability, data loss risk | Must fix before merge |
+| **HIGH** | Bug, broken contract, or major code smell | Should fix before merge |
+| **MEDIUM** | Edge case, missing error handling, minor smell | Fix when possible |
+| **LOW** | Naming, style, minor suggestion | Consider fixing |
+
+## Protocol
+
+1. Identify scope — git diff, specified files, or recent changes.
+2. For each changed file, review against all categories below. Reference `file:line` for every finding.
+
+   **Security**
+   - SQL/command/HTML injection
+   - Auth bypass or missing permission checks
+   - Secrets or tokens in code
+   - Unvalidated external input used in dangerous operations
+   - Insecure deserialization or prototype pollution
+
+   **Correctness**
+   - Logic errors, off-by-one, wrong comparisons
+   - Null/undefined not handled at boundaries
+   - Race conditions or shared mutable state
+   - Incorrect error handling (swallowed errors, wrong status codes)
+
+   **Performance**
+   - N+1 queries
+   - Unbounded loops on large inputs
+   - Missing indexes referenced in queries
+   - Unnecessary blocking in async code
+
+   **Design**
+   - Breaking changes to public API or schema
+   - Tight coupling, missing abstraction boundaries
+   - Duplicated logic that should be shared
+   - Functions > 40 lines (flag, don't mandate)
+
+   **Tests**
+   - New code paths without test coverage
+   - Edge cases not tested
+   - Tests that only test the happy path
+
+3. Write the report:
+   ```markdown
+   ## Code Review: {scope}
+
+   **Verdict:** PASS | PASS WITH NOTES | FAIL
+
+   ### Findings
+
+   **[CRITICAL]** `file:line` — description
+   Fix: specific recommendation
+
+   **[HIGH]** `file:line` — description
+   Fix: ...
+
+   ### Summary
+   Critical: N | High: N | Medium: N | Low: N
+   ```
+   - FAIL if any CRITICAL or HIGH findings exist
+   - PASS WITH NOTES if only MEDIUM/LOW
+   - PASS if none
+
+4. Call `save_artifact` type=`specs`, slug=`review-{scope-slug}`, content=the report.
+5. Call `set_memory` key=`last-review`, value=the report.
+
+## Rules
+
+- Never fix code during this phase — report only, with specific `file:line` references.
+- If no issues are found, say so explicitly — do not invent problems.
+- A FAIL requires at least one CRITICAL or HIGH finding.

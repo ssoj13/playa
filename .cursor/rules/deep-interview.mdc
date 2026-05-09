@@ -1,0 +1,98 @@
+---
+description: Socratic clarification with ambiguity scoring before any code is written
+globs:
+alwaysApply: false
+---
+
+# @deep-interview
+
+**Trigger:** When scope, intent, or requirements are unclear. Use before @ralplan or @ralph on any non-trivial task.
+
+## Depth Profiles
+
+| Flag | Threshold | Max Rounds | Use when |
+|------|-----------|------------|----------|
+| `--quick` | ≤ 0.30 | 5 | Minor changes, mostly clear intent |
+| `--standard` (default) | ≤ 0.20 | 12 | Features, refactors |
+| `--deep` | ≤ 0.15 | 20 | Architecture changes, large scope |
+
+## Protocol
+
+### Phase 0 — Preflight
+
+1. Call `start_mode` with mode=`deep-interview` and the raw task.
+2. Classify: **greenfield** (new) vs **brownfield** (existing codebase). For brownfield, read relevant files first — never ask the user for facts you can discover.
+3. Call `save_artifact` type=`context`, slug=`deep-interview-{task-slug}`, with initial snapshot:
+   ```
+   Task: ...
+   Hypothesis: why the user likely wants this
+   Known facts: ...
+   Unknowns: ...
+   Decision boundaries: ...
+   ```
+
+### Phase 1 — Interview Loop
+
+Repeat until ambiguity ≤ threshold OR max rounds reached:
+
+1. **Ask ONE question** targeting the weakest clarity dimension.
+   - Never batch questions. One question per turn.
+   - Priority order: Intent → Outcome → Scope → Non-goals → Decision Boundaries → Constraints → Success Criteria
+   - For brownfield: use evidence-backed questions ("I see X in Y — should changes follow that pattern?")
+   - After each answer: probe assumptions, not just facts. Ask for evidence, counterexamples, or tradeoffs before moving to the next dimension.
+
+2. **Score ambiguity** after each answer (0.0 = fully clear, 1.0 = fully unclear):
+
+   **Greenfield:** `ambiguity = 1 - (intent×0.30 + outcome×0.25 + scope×0.20 + constraints×0.15 + success×0.10)`
+
+   **Brownfield:** `ambiguity = 1 - (intent×0.25 + outcome×0.20 + scope×0.20 + constraints×0.15 + success×0.10 + context×0.10)`
+
+3. **Show progress each round:**
+   ```
+   Round N | Ambiguity: 0.XX → 0.XX | Focus: {dimension}
+   ```
+
+4. Call `update_mode_state` with `phase={dimension}` and `iteration=N`.
+
+5. **Mandatory gates** — do NOT exit interview while these remain unresolved:
+   - Non-goals must be explicit
+   - Decision boundaries must be explicit ("what can AI decide without asking you?")
+   - At least one assumption has been challenged with a follow-up
+
+### Phase 2 — Challenge Modes (use each once when applicable)
+
+- **Contrarian** (round 2+): challenge a core assumption — "What if the opposite approach is better?"
+- **Simplifier** (round 4+ or scope is growing): "What's the minimum version that still solves the real problem?"
+- **Ontologist** (ambiguity stalled 3+ rounds): "Forget the solution — what is the actual problem in one sentence?"
+
+### Phase 3 — Crystallize
+
+When threshold is met:
+
+1. Write **Clarified Scope** document:
+   ```markdown
+   ## Clarified Scope: {task}
+
+   **Intent:** why the user wants this
+   **Outcome:** what done looks like
+   **In scope:** ...
+   **Out of scope / Non-goals:** ...
+   **Decision boundaries:** what AI may decide without asking
+   **Constraints:** ...
+   **Acceptance criteria:** testable conditions for done
+   **Assumptions surfaced:** ...
+   ```
+
+2. Call `save_artifact` type=`specs`, slug=`deep-interview-{task-slug}`, content=the spec.
+3. Call `set_memory` key=`clarified-scope`, value=the spec.
+4. Call `update_mode_state` status=`completed`.
+5. Present handoff options:
+   - **@ralplan** — generate + approve implementation plan (recommended)
+   - **@autopilot** — autonomous execution if scope is tight
+   - **Refine further** — continue interviewing
+
+## Rules
+
+- Zero code during this phase.
+- Never ask about facts you can read from the codebase.
+- If interrupted: state is saved — resume by calling `get_mode_state` mode=`deep-interview`.

@@ -1,0 +1,32 @@
+---
+description: Save a session checkpoint — what was done, what's next, blockers
+globs:
+alwaysApply: false
+---
+
+# @checkpoint
+
+**Trigger:** At the end of a working session, or when you want to save progress mid-session.
+
+## Protocol
+
+1. Summarize what was accomplished in this session (specific, not vague).
+2. Write exact next steps — specific enough that a fresh session can resume without context.
+3. Note any blockers or unresolved decisions.
+4. Call `save_checkpoint` with summary, next_steps, blockers.
+5. Also call `save_artifact` type=`logs`, slug=`session-{date}`, with a full session log.
+
+## Output
+
+```
+Checkpoint saved.
+
+Summary: {what was done}
+Next session: {exact next steps}
+Blockers: {any blockers, or "none"}
+```
+
+## Rules
+
+- Be specific in `next_steps` — "implement step 3 of plan-XXXXX" not "continue the plan"
+- Reference plan IDs, task IDs, and file names in next_steps so the next session can resume precisely

@@ -1,0 +1,59 @@
+---
+description: Read-only codebase exploration — understand structure and data flow before changing anything
+globs:
+alwaysApply: false
+---
+
+# @explore
+
+**Trigger:** When starting work in an unfamiliar area, or before designing a plan that touches multiple files.
+
+## Protocol
+
+1. **Read only** — no file edits, no code generation.
+2. Map the subsystem:
+   - Find entry points (main files, exported functions, routes, handlers)
+   - Trace data flow end-to-end
+   - Identify key types, interfaces, and models
+   - Note conventions (naming, patterns, idioms)
+   - Find non-obvious design decisions
+3. Produce an **Exploration Report**:
+   ```markdown
+   ## Exploration: <topic>
+
+   ### Files
+   - `path/to/file.ts` — role
+
+   ### Data flow
+   ...
+
+   ### Conventions
+   ...
+
+   ### Key decisions
+   ...
+
+   ### Where to make changes
+   If you need to modify this subsystem, start at: ...
+   ```
+4. Call `set_memory` with key=`explore-<topic>` and the report.
+5. Suggest next step: `@deep-interview` or `@ralplan` if a change is needed.
+
+## Source of truth hierarchy
+
+When docs, comments, and code conflict — trust in this order:
+1. **Live code** — what the entry point actually imports and calls
+2. **Running config** — what env vars and config files are actually loaded at startup
+3. **Tests** — what behaviour is asserted and passing
+4. **Comments** — may be stale
+5. **Docs/README** — most likely to be outdated
+
+Always flag conflicts between sources explicitly. Never silently blend stale docs with live code.
+
+## Rules
+
+- Zero code changes.
+- Prioritize depth over breadth — understand one thing well rather than many things superficially.
+- If something is unclear, read more files — don't guess.
+- If only some files are visible, state the partial view before drawing conclusions.
+- Dead code is not execution path — trace imports and call sites to confirm something is actually live.
