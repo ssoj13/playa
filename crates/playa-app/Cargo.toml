@@ -12,6 +12,8 @@ path = "src/lib.rs"
 [dependencies]
 playa-engine = { path = "../playa-engine" }
 playa-events = { path = "../playa-events" }
+playa-jobs = { path = "../playa-jobs" }
+playa-job-seedance = { path = "../playa-job-seedance" }
 playa-ui = { path = "../playa-ui" }
 anyhow = { workspace = true }
 clap = { workspace = true }

@@ -13,6 +13,7 @@ path = "src/lib.rs"
 playa-engine = { path = "../playa-engine" }
 playa-events = { path = "../playa-events" }
 playa-io = { path = "../playa-io", default-features = false }
+playa-time = { workspace = true }
 bytemuck = { workspace = true }
 eframe = { version = "0.33", default-features = false, features = [
     "accesskit",

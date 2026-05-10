@@ -39,6 +39,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
 use super::keys::{A_IN, A_SPEED, A_SRC_LEN, A_TRIM_IN, A_TRIM_OUT};
+use playa_time::{Round, Speed};
 
 // ============================================================================
 // Attribute Schema System
@@ -650,35 +651,30 @@ impl Attrs {
         self.get_bool(key).unwrap_or(default)
     }
 
-    /// Layer visible start in parent coords: in + trim_in/speed
-    /// trim_in is source frames offset, converted to timeline frames via speed
+    /// Layer visible start in parent coords: `in + trim_in/speed`.
+    /// `trim_in` is a source-frames offset, converted to timeline frames via speed.
     pub fn layer_start(&self) -> i32 {
         let in_val = self.get_i32_or_zero(A_IN);
         let trim_in = self.get_i32_or_zero(A_TRIM_IN);
-        // Clamp speed to safe range (0.1..4.0) to prevent duration explosion
-        let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
-        // Use f64 for intermediate calc to prevent overflow on large values
-        let offset = (trim_in as f64 / speed as f64)
-            .round()
-            .clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+        let speed = Speed::new(self.get_float_or(A_SPEED, 1.0));
+        let offset = speed.scale_src_to_timeline(trim_in, Round::Round);
         in_val.saturating_add(offset)
     }
 
-    /// Layer visible end in parent coords: layer_start + visible_timeline_frames - 1
-    /// visible_src_frames = src_len - trim_in - trim_out
-    /// visible_timeline_frames = visible_src_frames / speed
+    /// Layer visible end in parent coords: `layer_start + visible_timeline_frames - 1`,
+    /// where `visible_src_frames = src_len - trim_in - trim_out` and
+    /// `visible_timeline_frames = visible_src_frames / speed` (rounded).
     pub fn layer_end(&self) -> i32 {
         let layer_start = self.layer_start();
         let src_len = self.get_i32_or_zero(A_SRC_LEN);
         let trim_in = self.get_i32_or_zero(A_TRIM_IN);
         let trim_out = self.get_i32_or_zero(A_TRIM_OUT);
-        let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
-        // Visible source frames (at least 1 to prevent negative duration)
+        // Visible source frames (at least 1 to prevent negative duration).
         let visible_src = (src_len - trim_in - trim_out).max(1);
-        // Use f64 to prevent overflow on large frame counts
-        let visible_timeline = (visible_src as f64 / speed as f64)
-            .round()
-            .clamp(1.0, i32::MAX as f64) as i32;
+        let speed = Speed::new(self.get_float_or(A_SPEED, 1.0));
+        let visible_timeline = speed
+            .scale_src_to_timeline(visible_src, Round::Round)
+            .max(1);
         layer_start
             .saturating_add(visible_timeline)
             .saturating_sub(1)
@@ -689,16 +685,17 @@ impl Attrs {
         self.get_i32_or_zero(A_SRC_LEN)
     }
 
-    /// Full bar end (untrimmed): in + src_len/speed - 1
-    /// This replaces the "out" attribute - now computed, not stored
+    /// Full bar end (untrimmed): `in + src_len/speed - 1`. Computed, not stored —
+    /// this replaces the legacy persisted `"out"` attribute on layers.
+    ///
+    /// Uses [`Round::Ceil`] (not `Round::Round`) so the bar always covers every
+    /// source frame at least once on non-integer `speed`; matches the prior
+    /// behaviour at this call site.
     pub fn full_bar_end(&self) -> i32 {
         let in_val = self.get_i32_or_zero(A_IN);
         let src_len = self.get_i32_or_zero(A_SRC_LEN);
-        let speed = self.get_float_or(A_SPEED, 1.0).clamp(0.1, 4.0);
-        // Use f64 to prevent overflow on large frame counts
-        let duration = (src_len as f64 / speed as f64)
-            .ceil()
-            .clamp(1.0, i32::MAX as f64) as i32;
+        let speed = Speed::new(self.get_float_or(A_SPEED, 1.0));
+        let duration = speed.scale_src_to_timeline(src_len, Round::Ceil).max(1);
         in_val.saturating_add(duration).saturating_sub(1)
     }
 

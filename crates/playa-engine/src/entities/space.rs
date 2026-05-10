@@ -2,16 +2,13 @@
 //!
 //! ## Coordinate Spaces (simplified)
 //!
-//! - **Image space**: origin top-left, +Y down (pixels).
-//!   Standard image/texture coordinates for sampling.
-//!
-//! - **Frame space**: origin CENTER, +Y up (pixels).
-//!   Used for layer transforms and viewport/gizmo.
-//!   `position = (0,0,0)` = layer centered in comp.
-//!   Same as viewport space - no conversion needed for gizmo!
-//!
-//! - **Object space**: origin at layer center, +Y up (pixels).
-//!   Local space for rotation/scale around pivot.
+//! - **Image space**: origin top-left, +Y down (pixels). Standard image/texture
+//!   coordinates for sampling.
+//! - **Frame space**: origin CENTER, +Y up (pixels). Used for layer transforms
+//!   and viewport/gizmo. `position = (0,0,0)` = layer centered in comp. Same as
+//!   viewport space — no conversion needed for gizmo.
+//! - **Object space**: origin at layer center, +Y up (pixels). Local space for
+//!   rotation/scale around pivot.
 //!
 //! ## Transform Pipeline
 //!
@@ -27,61 +24,14 @@
 //!     v
 //! Source pixel (for texture sampling)
 //! ```
+//!
+//! The actual implementation lives in [`playa_time::coord`]; this module is a
+//! thin re-export so existing call sites (`playa_engine::entities::space::foo`)
+//! continue to compile while playa-ui, playa-engine, and any future crate share
+//! a single source. See `playa-time` crate docs for the rationale (audit found
+//! `frame_to_image` and `object_to_src` were bit-exact duplicates in the
+//! previous code path).
 
-use glam::Vec2;
-
-// =============================================================================
-// Frame Space (centered, Y-up) - PRIMARY coordinate system for transforms
-// =============================================================================
-
-/// Image space -> Frame space (centered, Y-up).
-///
-/// Converts screen/image pixel coords to centered frame coords.
-/// - Image (0, 0) = top-left -> Frame (-w/2, h/2)
-/// - Image (w/2, h/2) = center -> Frame (0, 0)
-/// - Image (w, h) = bottom-right -> Frame (w/2, -h/2)
-#[inline]
-pub fn image_to_frame(p: Vec2, size: (usize, usize)) -> Vec2 {
-    let w = size.0 as f32;
-    let h = size.1 as f32;
-    Vec2::new(p.x - w * 0.5, h * 0.5 - p.y)
-}
-
-/// Frame space -> Image space.
-///
-/// Inverse of image_to_frame.
-#[inline]
-pub fn frame_to_image(p: Vec2, size: (usize, usize)) -> Vec2 {
-    let w = size.0 as f32;
-    let h = size.1 as f32;
-    Vec2::new(p.x + w * 0.5, h * 0.5 - p.y)
-}
-
-// =============================================================================
-// Object Space (layer center origin)
-// =============================================================================
-
-#[inline]
-pub fn object_to_src(p: Vec2, src_size: (usize, usize)) -> Vec2 {
-    let w = src_size.0 as f32;
-    let h = src_size.1 as f32;
-    Vec2::new(p.x + w * 0.5, h * 0.5 - p.y)
-}
-
-// =============================================================================
-// Rotation Convention Helpers
-// =============================================================================
-// User convention: clockwise-positive (CW+) — matches After Effects, common UI expectation.
-// Math convention: counter-clockwise-positive (CCW+) — glam, OpenGL, standard math.
-
-/// Convert user rotation (CW+, degrees) to math rotation (CCW+, radians).
-#[inline]
-pub fn to_math_rot(deg: f32) -> f32 {
-    -deg.to_radians()
-}
-
-/// Convert math rotation (CCW+, radians) to user rotation (CW+, degrees).
-#[inline]
-pub fn from_math_rot(rad: f32) -> f32 {
-    -rad.to_degrees()
-}
+pub use playa_time::coord::{
+    frame_to_image, from_math_rot, image_to_frame, object_to_src, to_math_rot,
+};

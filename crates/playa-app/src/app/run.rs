@@ -299,6 +299,29 @@ impl eframe::App for PlayaApp {
         self.debounced_preloader.cancel();
         trace!("Cancelled pending frame loads for fast shutdown");
 
+        // Release worker threads parked inside
+        // playa_engine::entities::GpuBlendBridge::delegate_blend_blocking, then flush any
+        // queued blend requests so their reply channels close cleanly. Without this,
+        // Workers::drop's thread join hangs on a worker waiting for a reply that the UI
+        // thread is no longer going to deliver.
+        if let Some(bridge) = &self.gpu_blend_bridge {
+            bridge.shutdown();
+        }
+        {
+            let rx_guard = self
+                .gpu_blend_rx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if let Some(rx) = rx_guard.as_ref() {
+                let mut comp = self
+                    .project
+                    .compositor
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let _ = playa_engine::entities::GpuBlendBridge::drain_into_compositor(rx, &mut comp);
+            }
+        }
+
         let mut renderer = self.viewport_renderer.lock().unwrap_or_else(|e| e.into_inner());
         renderer.destroy();
         trace!("ViewportRenderer GPU resources cleaned up");

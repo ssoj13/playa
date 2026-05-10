@@ -27,7 +27,9 @@
 //! the original `Vec` is still usable locally without another compositor rebuild.
 
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::time::Duration;
 
 use super::compositor::BlendMode;
 use super::frame::Frame;
@@ -77,16 +79,38 @@ pub enum GpuBlendReport {
 #[derive(Clone)]
 pub struct GpuBlendBridge {
     tx: Sender<GpuBlendRequest>,
+    /// Set by the UI thread on teardown so workers blocked inside
+    /// [`Self::delegate_blend_blocking`] release cooperatively. Without this,
+    /// [`Workers::drop`](crate::core::workers::Workers) hangs joining a thread parked in
+    /// `recv()` when the UI side has already torn down its receiver (e.g. minimised window
+    /// closed during preload).
+    shutdown: Arc<AtomicBool>,
 }
 
 impl GpuBlendBridge {
     /// Builds a synchronous pair for [`gpu_blend_arc_pair`].
     pub fn pair() -> (Self, Receiver<GpuBlendRequest>) {
         let (tx, rx) = mpsc::channel();
-        (Self { tx }, rx)
+        (
+            Self {
+                tx,
+                shutdown: Arc::new(AtomicBool::new(false)),
+            },
+            rx,
+        )
     }
 
-    /// Worker thread: enqueue blend and block until [`Self::drain_into_compositor`] answers.
+    /// UI thread: signal that any pending blends should abort.
+    ///
+    /// Idempotent. Workers inside [`Self::delegate_blend_blocking`] observe the flag on the
+    /// next poll tick and return [`GpuBlendReport::ReplyDisconnected`] instead of waiting for
+    /// a reply that may never come (receiver dropped, compositor torn down).
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
+
+    /// Worker thread: enqueue blend and block until [`Self::drain_into_compositor`] answers,
+    /// the reply channel is dropped, or [`Self::shutdown`] is signalled.
     ///
     /// Returns [`GpuBlendReport::NotQueued`] when the UI dropped its receiver (portable/mobile
     /// teardown, corrupted init). Caller must fall back locally using the embedded vector.
@@ -98,6 +122,9 @@ impl GpuBlendBridge {
         frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
         dim: (usize, usize),
     ) -> GpuBlendReport {
+        // 100 ms tick keeps shutdown latency bounded without burning CPU on a hot poll.
+        const POLL: Duration = Duration::from_millis(100);
+
         let (reply_tx, reply_rx) = mpsc::channel();
         let req = GpuBlendRequest {
             frames,
@@ -107,13 +134,23 @@ impl GpuBlendBridge {
 
         match self.tx.send(req) {
             Err(send_err) => GpuBlendReport::NotQueued(send_err.0.frames),
-            Ok(()) => match reply_rx.recv() {
-                Ok(frame) => GpuBlendReport::Completed(frame),
-                Err(_) => {
-                    log::error!(
-                        "GPU blend bridge: reply channel disconnected before raster result — likely UI teardown ordering"
-                    );
-                    GpuBlendReport::ReplyDisconnected
+            Ok(()) => loop {
+                match reply_rx.recv_timeout(POLL) {
+                    Ok(frame) => break GpuBlendReport::Completed(frame),
+                    Err(RecvTimeoutError::Timeout) => {
+                        if self.shutdown.load(Ordering::Acquire) {
+                            log::warn!(
+                                "GPU blend bridge: shutdown signalled while awaiting reply — releasing worker"
+                            );
+                            break GpuBlendReport::ReplyDisconnected;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        log::error!(
+                            "GPU blend bridge: reply channel disconnected before raster result — likely UI teardown ordering"
+                        );
+                        break GpuBlendReport::ReplyDisconnected;
+                    }
                 }
             },
         }

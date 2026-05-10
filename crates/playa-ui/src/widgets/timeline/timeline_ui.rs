@@ -41,7 +41,17 @@ use crate::widgets::dnd::{
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
+use playa_time::{Round, Speed};
 use playa_engine::core::event_bus::BoxedEvent;
+
+/// Convert a horizontal drag delta (screen pixels) to a delta in timeline frames.
+/// Centralises the 4× copy-paste of `(delta_x / (ppf * zoom)).round() as i32`
+/// across the drag handlers below.
+#[inline]
+fn delta_px_to_frames(delta_px: f32, config: &TimelineConfig, state: &TimelineState) -> i32 {
+    let ppf = config.pixels_per_frame * state.zoom;
+    Round::Round.to_i32((delta_px / ppf) as f64)
+}
 use playa_events::project_media::{ProjectActiveChangedEvent, SelectionFocusEvent};
 use playa_engine::core::player_events::{
     JumpToEndEvent, JumpToStartEvent, SetFrameEvent, SetLoopEvent, StopEvent, TogglePlayPauseEvent,
@@ -1012,7 +1022,7 @@ pub fn render_canvas(
                                     GlobalDragState::MovingLayer { layer_idx, initial_start, drag_start_x, drag_start_y, .. } => {
                                         let delta_x = current_pos.x - drag_start_x;
                                         let delta_y = current_pos.y - drag_start_y;
-                                        let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
+                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
                                         let new_start = *initial_start + delta_frames;  // Allow negative values
 
                                         // Determine target child index from vertical position
@@ -1087,7 +1097,7 @@ pub fn render_canvas(
                                     }
                                     GlobalDragState::AdjustPlayStart { layer_idx, initial_play_start, drag_start_x } => {
                                         let delta_x = current_pos.x - drag_start_x;
-                                        let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
+                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
                                         let new_play_start = *initial_play_start + delta_frames;
 
                                         // Visual feedback: draw ghost play range preview
@@ -1126,7 +1136,7 @@ pub fn render_canvas(
                                     }
                                     GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x } => {
                                         let delta_x = current_pos.x - drag_start_x;
-                                        let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
+                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
                                         // play_end is ABSOLUTE source frame, so drag right = increase
                                         let new_play_end = *initial_play_end + delta_frames;
 
@@ -1169,7 +1179,7 @@ pub fn render_canvas(
                                         layer_idx, initial_in, initial_trim_in, initial_trim_out, speed, drag_start_x
                                     } => {
                                         let delta_x = current_pos.x - drag_start_x;
-                                        let delta_frames = (delta_x / (config.pixels_per_frame * state.zoom)).round() as i32;
+                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
 
                                         // Slide: move full bar while keeping visible content (layer_start & layer_end) in place
                                         //
@@ -1184,7 +1194,8 @@ pub fn render_canvas(
                                         //     If trim_in decreases by X, trim_out must increase by X
                                         //
                                         let new_in = *initial_in + delta_frames;
-                                        let trim_delta = (delta_frames as f32 * speed).round() as i32;
+                                        let speed_obj = Speed::new(*speed);
+                                        let trim_delta = speed_obj.scale_timeline_to_src(delta_frames, Round::Round);
                                         // trim_in decreases when sliding right (delta > 0)
                                         let new_trim_in = (*initial_trim_in - trim_delta).max(0);
                                         // trim_out increases by same amount to keep visible_src constant
@@ -1195,7 +1206,10 @@ pub fn render_canvas(
                                             let target_row = *layer_idx;  // row = layer index
                                             let layer_y = row_to_y(target_row, config, timeline_rect);
                                             let src_len = comp.get_layer_src_len(layer, &media);
-                                            let new_full_bar_end = new_in + (src_len as f32 / speed).ceil() as i32 - 1;
+                                            // Round::Ceil matches attrs::full_bar_end so the ghost bar
+                                            // covers every source frame at non-integer speeds.
+                                            let new_full_bar_end =
+                                                new_in + speed_obj.scale_src_to_timeline(src_len, Round::Ceil) - 1;
                                             let ghost_x_start = frame_to_screen_x(new_in as f32, timeline_rect.min.x, config, state);
                                             let ghost_x_end = frame_to_screen_x((new_full_bar_end + 1) as f32, timeline_rect.min.x, config, state);
 

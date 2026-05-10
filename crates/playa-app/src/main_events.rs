@@ -1248,13 +1248,13 @@ pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Op
                         "name",
                         playa_engine::entities::AttrValue::Str(new_name.clone()),
                     );
-                    // Shift both in and out by offset to preserve duration
+                    // Shift A_IN by offset (preserves duration since end is
+                    // computed from src_len/speed). A_OUT is no longer written
+                    // at Layer construction (audit B5), so we don't mirror it
+                    // here either — Layer::end() is the single source of truth.
                     let old_in = attrs.get_i32(A_IN).unwrap_or(0);
-                    let old_out = attrs.get_i32(A_OUT).unwrap_or(old_in + 100);
                     let new_in = old_in + offset;
-                    let new_out = old_out + offset;
                     attrs.set(A_IN, playa_engine::entities::AttrValue::Int(new_in));
-                    attrs.set(A_OUT, playa_engine::entities::AttrValue::Int(new_out));
                     // Create and insert new Layer at tracked position
                     let new_layer = playa_engine::entities::comp_node::Layer::from_attrs(
                         item.source_uuid,
@@ -1265,11 +1265,16 @@ pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Op
                     comp.layers.insert(insert_idx, new_layer);
                     insert_idx += 1;
                     comp.layer_selection.push(new_uuid);
-                    trace!("  Pasted '{}' at frames {}..{}", new_name, new_in, new_out);
+                    trace!("  Pasted '{}' at frame {}", new_name, new_in);
                 }
                 // Direct field changes (layers.insert, layer_selection) require explicit mark_dirty().
                 // modify_comp() will then emit AttrsChangedEvent.
                 comp.attrs.mark_dirty();
+                // Audit B2: paste path used to bypass rebound, leaving comp
+                // playable bounds stale and making freshly-pasted layers
+                // unreachable by scrub. Recompute now (no-op when comp is
+                // pinned via A_AUTO_BOUNDS=false).
+                comp.rebound();
             });
             trace!("Paste complete: {} layers", timeline_state.clipboard.len());
         }

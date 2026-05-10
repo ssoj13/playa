@@ -119,6 +119,10 @@ const COMP_SPECIFIC: &[AttrDef] = &[
     AttrDef::with_order("frame", AttrType::Int, 0, 20.7),
     // Timeline bookmarks: Map of digit "0"-"9" -> frame number
     AttrDef::with_order("bookmarks", AttrType::Map, 0, 90.0),
+    // Soft-marker mode for comp bounds. true (default) = rebound() auto-fits
+    // A_IN/A_OUT to layer extents. false = user-pinned bounds (AE-style).
+    // Non-DAG: toggling does not invalidate composed-frame cache.
+    AttrDef::with_order("auto_bounds", AttrType::Bool, DISP, 20.8),
 ];
 
 pub static COMP_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {

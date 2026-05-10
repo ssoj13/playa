@@ -185,6 +185,10 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
             // serde skips `GpuBlendBridge` channels — rebuild before any worker touches `CompNode::compute`.
             app.ensure_gpu_blend_initialized();
+            // serde also skips the long-running IO `JobQueue` (live thread handles).
+            // Reconstruct so persisted jobs from prior sessions can be replayed once
+            // providers register.
+            app.ensure_jobs_initialized();
 
             // Attempt to load shaders from the shaders directory
             if app

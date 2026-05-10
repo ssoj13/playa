@@ -10,9 +10,13 @@ pub const A_UUID: &str = "uuid";
 pub const A_NAME: &str = "name";
 
 // === Timeline ===
-/// In-point (start frame)
+/// In-point (start frame). On `CompNode` this is a soft marker (see
+/// [`A_AUTO_BOUNDS`]); on `Layer` it is the layer's start in the parent
+/// timeline.
 pub const A_IN: &str = "in";
-/// Out-point (end frame)
+/// Out-point (end frame). Same dual semantics as [`A_IN`]. On `Layer`,
+/// `Layer::end()` computes the runtime value from `src_len/speed` — the
+/// stored attr is no longer written at construction.
 pub const A_OUT: &str = "out";
 /// Trim in-point (work area start)
 pub const A_TRIM_IN: &str = "trim_in";
@@ -22,6 +26,10 @@ pub const A_TRIM_OUT: &str = "trim_out";
 pub const A_FPS: &str = "fps";
 /// Current playback frame position
 pub const A_FRAME: &str = "frame";
+/// Comp-only: when `true` (default), `rebound()` recomputes `A_IN/A_OUT`
+/// from layer extents on every layer mutation. When `false`, `A_IN/A_OUT`
+/// are user-pinned soft markers (After Effects-style "comp duration").
+pub const A_AUTO_BOUNDS: &str = "auto_bounds";
 
 // === Compose flags ===
 /// Solo flag - only render this layer

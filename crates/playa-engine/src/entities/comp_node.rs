@@ -67,6 +67,7 @@ use super::gpu_blend_bridge::GpuBlendReport;
 use super::keys::*;
 use super::node::{ComputeContext, Node};
 use super::transform;
+use playa_time::{Round, Speed};
 
 // Thread-local compositor and cycle detection
 //
@@ -139,10 +140,13 @@ impl Layer {
         attrs.set_uuid("source_uuid", source_uuid);
 
         attrs.set(A_NAME, AttrValue::Str(name.to_string()));
-        // Timing (unified: in, out, trim_in, trim_out, src_len, speed)
+        // Timing (unified: in, out, trim_in, trim_out, src_len, speed).
+        // A_OUT is intentionally NOT written: Layer::end() always computes from
+        // `src_len/speed` (audit B5 — stored A_OUT was never refreshed and
+        // misled the paste path). New layers carry no stale `out` attr.
         attrs.set(A_IN, AttrValue::Int(start));
-        attrs.set(A_OUT, AttrValue::Int(start + duration));
         attrs.set(A_SRC_LEN, AttrValue::Int(duration));
+        let _ = duration; // silence unused after dropping the A_OUT write.
         attrs.set(A_TRIM_IN, AttrValue::Int(0));
         attrs.set(A_TRIM_OUT, AttrValue::Int(0));
         attrs.set(A_OPACITY, AttrValue::Float(1.0));
@@ -200,52 +204,47 @@ impl Layer {
         self.attrs.get_i32(A_IN).unwrap_or(0)
     }
 
-    /// Layer end frame in parent timeline (computed from src_len and speed)
+    /// Layer end frame in parent timeline (computed from `src_len` and `speed`).
+    /// Uses [`Round::Round`] — see audit B1: previous truncate-via-`as i32` diverged
+    /// from `attrs::layer_end`'s `.round()` and produced 1-frame mismatches on
+    /// non-integer speeds.
     pub fn end(&self) -> i32 {
         let start = self.start();
         let src_len = self.attrs.get_i32("src_len").unwrap_or(1);
-        let speed = self
-            .attrs
-            .get_float(A_SPEED)
-            .unwrap_or(1.0)
-            .abs()
-            .max(0.001);
-        start + ((src_len as f32 / speed) as i32) - 1
+        let speed = Speed::new(self.attrs.get_float(A_SPEED).unwrap_or(1.0));
+        start
+            .saturating_add(speed.scale_src_to_timeline(src_len, Round::Round))
+            .saturating_sub(1)
     }
 
-    /// Work area (trimmed range) in absolute frames.
-    /// Layer trim_in/trim_out are OFFSETS in SOURCE frames, scaled by speed for parent timeline.
-    pub fn work_area(&self) -> (i32, i32) {
-        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0); // offset in source frames
-        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0); // offset in source frames
-        let speed = self
-            .attrs
-            .get_float(A_SPEED)
-            .unwrap_or(1.0)
-            .abs()
-            .max(0.001);
-        let trim_in_scaled = (trim_in as f32 / speed) as i32; // convert to parent timeline frames
-        let trim_out_scaled = (trim_out as f32 / speed) as i32;
-        (self.start() + trim_in_scaled, self.end() - trim_out_scaled)
-    }
-
-    /// Convert parent timeline frame to source local frame.
-    /// Accounts for layer start position and speed.
+    /// Work area (trimmed range) in absolute parent frames.
     ///
-    /// NOTE: Don't add trim_in here! The offset from layer.start() (which is "in")
-    /// already accounts for trim via the timeline position.
-    /// When playhead is at play_start (= in + trim_in/speed), offset = trim_in/speed,
-    /// so local_frame = trim_in - exactly the first visible source frame.
+    /// `trim_in` / `trim_out` are stored as offsets in **source** frames; this
+    /// scales them to parent-timeline frames via `speed` using [`Round::Round`].
+    pub fn work_area(&self) -> (i32, i32) {
+        let trim_in = self.attrs.get_i32(A_TRIM_IN).unwrap_or(0);
+        let trim_out = self.attrs.get_i32(A_TRIM_OUT).unwrap_or(0);
+        let speed = Speed::new(self.attrs.get_float(A_SPEED).unwrap_or(1.0));
+        let trim_in_scaled = speed.scale_src_to_timeline(trim_in, Round::Round);
+        let trim_out_scaled = speed.scale_src_to_timeline(trim_out, Round::Round);
+        (
+            self.start().saturating_add(trim_in_scaled),
+            self.end().saturating_sub(trim_out_scaled),
+        )
+    }
+
+    /// Convert parent timeline frame to source local frame. Accounts for layer
+    /// start position and speed.
+    ///
+    /// NOTE: Don't add `trim_in` here — the offset from `layer.start()` (which is
+    /// `"in"`) already accounts for trim via the timeline position. When playhead
+    /// is at `play_start` (= `in + trim_in/speed`), `offset = trim_in/speed`, so
+    /// `local_frame = trim_in` — exactly the first visible source frame.
     pub fn parent_to_local(&self, parent_frame: i32) -> i32 {
         let start = self.start(); // = "in" (full bar start)
-        let speed = self
-            .attrs
-            .get_float(A_SPEED)
-            .unwrap_or(1.0)
-            .abs()
-            .max(0.001);
+        let speed = Speed::new(self.attrs.get_float(A_SPEED).unwrap_or(1.0));
         let offset = parent_frame - start;
-        (offset as f32 * speed) as i32
+        speed.scale_timeline_to_src(offset, Round::Round)
     }
 
     pub fn is_visible(&self) -> bool {
@@ -307,6 +306,9 @@ impl CompNode {
         attrs.set(A_FRAME, AttrValue::Int(start));
         attrs.set(A_WIDTH, AttrValue::UInt(1920));
         attrs.set(A_HEIGHT, AttrValue::UInt(1080));
+        // Soft-marker default: bounds auto-fit to layers. UI flips to false
+        // when the user explicitly pins the comp's playable range.
+        attrs.set(A_AUTO_BOUNDS, AttrValue::Bool(true));
 
         // Clear dirty after construction - these are initial values, not changes
         attrs.clear_dirty();
@@ -469,25 +471,35 @@ impl CompNode {
         }
     }
 
-    /// Recalculate comp bounds and dimensions based on layer extents.
-    /// Uses stored src_len (acceptable for UI bounds).
+    /// Recalculate comp bounds based on layer extents (B1/L4 from audit).
+    ///
+    /// Two soft-marker modes via [`A_AUTO_BOUNDS`]:
+    /// - **`true`** (default): legacy auto-rebound — `A_IN/A_OUT` are derived
+    ///   from layer extents on every layer mutation.
+    /// - **`false`**: `A_IN/A_OUT` are pinned (AE-style "comp duration"
+    ///   user-set). Layer mutations leave bounds alone.
+    ///
+    /// Width/height are **never** auto-overwritten any more (audit L4): comp
+    /// dimensions are user intent, independent of the first layer's resolution.
+    /// "Fit Comp to Layers" is exposed as an explicit UI action via
+    /// [`Self::fit_dim_to_first_layer`].
     pub fn rebound(&mut self) {
+        let auto_bounds = self.attrs.get_bool(A_AUTO_BOUNDS).unwrap_or(true);
+        if !auto_bounds {
+            // Pinned mode: leave A_IN/A_OUT untouched.
+            return;
+        }
+
         let old_bounds = (self._in(), self._out());
         let old_work = self.work_area();
-
         let (new_start, new_end) = self.bounds_internal(true);
 
         self.attrs.set(A_IN, AttrValue::Int(new_start));
         self.attrs.set(A_OUT, AttrValue::Int(new_end));
 
-        // Update dimensions from first visible layer
-        if let Some((w, h)) = self.get_first_size() {
-            self.attrs.set(A_WIDTH, AttrValue::UInt(w as u32));
-            self.attrs.set(A_HEIGHT, AttrValue::UInt(h as u32));
-        }
-
-        // Keep work area in sync only if it used to match full bounds
-        // trim_in/trim_out are OFFSETS from _in/_out, not absolute values
+        // Keep work area in sync only when it used to match the full bounds —
+        // trim_in/trim_out are offsets, so a non-default work area survives a
+        // rebound that adds/removes layers.
         if old_work == old_bounds {
             self.attrs.set(A_TRIM_IN, AttrValue::Int(0));
             self.attrs.set(A_TRIM_OUT, AttrValue::Int(0));
@@ -501,6 +513,17 @@ impl CompNode {
             new_start,
             new_end
         );
+    }
+
+    /// Explicitly resize the comp's persisted dimensions to the first visible
+    /// layer's resolution. Replaces the previous side-effect inside
+    /// [`Self::rebound`] (audit L4); UI calls this from a "Fit Comp to Layers"
+    /// action so it stays user-driven.
+    pub fn fit_dim_to_first_layer(&mut self) {
+        if let Some((w, h)) = self.get_first_size() {
+            self.attrs.set(A_WIDTH, AttrValue::UInt(w as u32));
+            self.attrs.set(A_HEIGHT, AttrValue::UInt(h as u32));
+        }
     }
 
     /// Get frame at given index.
@@ -760,43 +783,52 @@ impl CompNode {
             .unwrap_or_else(|| layer.attrs.get_i32(super::keys::A_SRC_LEN).unwrap_or(1))
     }
 
-    /// Get layer end frame using source's actual duration.
-    /// More accurate than layer.end() which uses stored src_len.
+    /// Get layer end frame using source's actual duration. More accurate than
+    /// [`Layer::end`] which reads stored `src_len` (may be stale if media duration
+    /// changed without re-import).
     pub fn get_layer_end(
         &self,
         layer: &Layer,
         media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
     ) -> i32 {
         let src_len = self.get_layer_src_len(layer, media);
-        let speed = layer
-            .attrs
-            .get_float(super::keys::A_SPEED)
-            .unwrap_or(1.0)
-            .abs()
-            .max(0.001);
-        layer.start() + ((src_len as f32 / speed) as i32) - 1
+        let speed = Speed::new(
+            layer
+                .attrs
+                .get_float(super::keys::A_SPEED)
+                .unwrap_or(1.0),
+        );
+        layer
+            .start()
+            .saturating_add(speed.scale_src_to_timeline(src_len, Round::Round))
+            .saturating_sub(1)
     }
 
-    /// Get layer work area using source's actual duration.
+    /// Get layer work area using source's actual duration. See [`Self::get_layer_end`].
     pub fn get_layer_work_area(
         &self,
         layer: &Layer,
         media: &std::collections::HashMap<Uuid, std::sync::Arc<super::node_kind::NodeKind>>,
     ) -> (i32, i32) {
         let src_len = self.get_layer_src_len(layer, media);
-        let speed = layer
-            .attrs
-            .get_float(super::keys::A_SPEED)
-            .unwrap_or(1.0)
-            .abs()
-            .max(0.001);
+        let speed = Speed::new(
+            layer
+                .attrs
+                .get_float(super::keys::A_SPEED)
+                .unwrap_or(1.0),
+        );
         let trim_in = layer.attrs.get_i32(super::keys::A_TRIM_IN).unwrap_or(0);
         let trim_out = layer.attrs.get_i32(super::keys::A_TRIM_OUT).unwrap_or(0);
         let layer_start = layer.start();
-        let trim_in_scaled = (trim_in as f32 / speed) as i32;
-        let trim_out_scaled = (trim_out as f32 / speed) as i32;
-        let layer_end = layer_start + ((src_len as f32 / speed) as i32) - 1;
-        (layer_start + trim_in_scaled, layer_end - trim_out_scaled)
+        let trim_in_scaled = speed.scale_src_to_timeline(trim_in, Round::Round);
+        let trim_out_scaled = speed.scale_src_to_timeline(trim_out, Round::Round);
+        let layer_end = layer_start
+            .saturating_add(speed.scale_src_to_timeline(src_len, Round::Round))
+            .saturating_sub(1);
+        (
+            layer_start.saturating_add(trim_in_scaled),
+            layer_end.saturating_sub(trim_out_scaled),
+        )
     }
 
     /// Set multiple attributes on a layer
@@ -851,14 +883,9 @@ impl CompNode {
     pub fn trim_layers(&mut self, layer_uuids: &[Uuid], edge: &str, delta: i32) {
         for uuid in layer_uuids {
             if let Some(layer) = self.get_layer_mut(*uuid) {
-                // Convert timeline delta to source frames
-                let speed = layer
-                    .attrs
-                    .get_float(A_SPEED)
-                    .unwrap_or(1.0)
-                    .abs()
-                    .max(0.001);
-                let delta_source = (delta as f32 * speed).round() as i32;
+                // Convert timeline delta to source frames.
+                let speed = Speed::new(layer.attrs.get_float(A_SPEED).unwrap_or(1.0));
+                let delta_source = speed.scale_timeline_to_src(delta, Round::Round);
 
                 match edge {
                     "in" | "start" => {
@@ -1093,14 +1120,9 @@ impl CompNode {
             .get_mut(layer_idx)
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         let layer_in = layer.attrs.get_i32(A_IN).unwrap_or(0);
-        let speed = layer
-            .attrs
-            .get_float(A_SPEED)
-            .unwrap_or(1.0)
-            .abs()
-            .max(0.001);
-        // trim_in in source frames (negative = extend before source start)
-        let new_trim_in = ((new_play_start - layer_in) as f32 * speed) as i32;
+        let speed = Speed::new(layer.attrs.get_float(A_SPEED).unwrap_or(1.0));
+        // trim_in in source frames (negative = extend before source start).
+        let new_trim_in = speed.scale_timeline_to_src(new_play_start - layer_in, Round::Round);
         layer.attrs.set(A_TRIM_IN, AttrValue::Int(new_trim_in));
         self.mark_dirty();
         self.rebound();
@@ -1114,14 +1136,9 @@ impl CompNode {
             .get_mut(layer_idx)
             .ok_or_else(|| anyhow::anyhow!("Layer index out of bounds"))?;
         let layer_end = layer.end();
-        let speed = layer
-            .attrs
-            .get_float(A_SPEED)
-            .unwrap_or(1.0)
-            .abs()
-            .max(0.001);
-        // trim_out in source frames (negative = extend after source end)
-        let new_trim_out = ((layer_end - new_play_end) as f32 * speed) as i32;
+        let speed = Speed::new(layer.attrs.get_float(A_SPEED).unwrap_or(1.0));
+        // trim_out in source frames (negative = extend after source end).
+        let new_trim_out = speed.scale_timeline_to_src(layer_end - new_play_end, Round::Round);
         layer.attrs.set(A_TRIM_OUT, AttrValue::Int(new_trim_out));
         self.mark_dirty();
         self.rebound();
@@ -1664,7 +1681,6 @@ impl CompNode {
         gpu_blend_bridge: Option<&super::gpu_blend_bridge::GpuBlendBridge>,
         radius: i32,
     ) {
-        use super::compositor::CompositorType;
         use super::node::ComputeContext;
 
         // Nothing to preload for empty comp
@@ -1699,16 +1715,11 @@ impl CompNode {
             self.layers.len()
         );
 
-        let bridge_for_ctx = match *project
-            .compositor
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-        {
-            CompositorType::Wgpu(_) => gpu_blend_bridge,
-            CompositorType::Cpu(_) => None,
-        };
-
-        // Build ComputeContext and delegate to preload()
+        // Trust the caller's gating: PlayaApp::gpu_blend_bridge_ref_for_preload already returns
+        // None when the project's compositor is not Wgpu. Re-checking here under a separate
+        // compositor lock opens a race on Cpu↔Wgpu toggle and duplicates the source of truth.
+        // If a stale Some(bridge) reaches a Cpu compositor at drain time, blend_with_dim still
+        // runs CPU-side correctly — the bridge is a transport, not a backend selector.
         let media = project.media.read().expect("media lock");
         let ctx = ComputeContext {
             cache: global_cache.as_ref(),
@@ -1718,7 +1729,7 @@ impl CompNode {
             media_arc: Some(std::sync::Arc::clone(&project.media)),
             workers: Some(workers),
             epoch,
-            gpu_blend_bridge: bridge_for_ctx,
+            gpu_blend_bridge,
         };
 
         self.preload(center, radius, &ctx);

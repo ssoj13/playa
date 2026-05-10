@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 playa-io = { path = "../playa-io", default-features = false }
 playa-events = { path = "../playa-events" }
+playa-time = { workspace = true }
 anyhow = { workspace = true }
 bytemuck = { workspace = true }
 cosmic-text = "0.18"

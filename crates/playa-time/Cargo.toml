@@ -1,0 +1,11 @@
+[package]
+name = "playa-time"
+version = "0.1.142"
+edition = "2024"
+authors = ["joss13@gmail.com"]
+description = "Time + coordinate conversion primitives for playa: Fps, Speed, Round, Timecode, image/frame coord transforms."
+license = "MIT"
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }

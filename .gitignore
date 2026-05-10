@@ -39,6 +39,11 @@ cert.txt
 passwd.txt
 .gitnexus
 
+# Secrets — provider API keys etc. (FAL_KEY, future PLAYA_* tokens)
+.env
+.env.local
+.env.*
+
 # oh-my-cursor state
 .omc/
 

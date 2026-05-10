@@ -222,6 +222,12 @@ impl PlayaApp {
                         comp.attrs.mark_dirty();
                     });
                 }
+
+                // Match the boot-path invariant (runner.rs:187): keep GPU blend channels in a
+                // known-good state across project swaps. No-op when both bridge and rx are still
+                // Some, but defends against future regressions and any path that leaves the pair
+                // half-initialized.
+                self.ensure_gpu_blend_initialized();
             }
             Err(e) => {
                 error!("{}", e);

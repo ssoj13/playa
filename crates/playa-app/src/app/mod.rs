@@ -22,6 +22,7 @@ use playa_engine::core::player::Player;
 use playa_engine::core::workers::Workers;
 use playa_engine::entities;
 use playa_engine::entities::{Frame, GpuBlendBridge, GpuBlendRequest, Project, gpu_blend_arc_pair};
+use playa_jobs::{JobQueue, JobQueueConfig};
 use playa_ui::dialogs::encode::EncodeDialog;
 use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
 use playa_ui::dialogs::prefs::{AppSettings, HotkeyHandler};
@@ -35,15 +36,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::Receiver;
 use uuid::Uuid;
-
-/// Deserialization hook: `serde` skips `gpu_blend_rx` but still needs [`Default`] for placeholders.
-///
-/// Leaving `None` forces [`PlayaApp::ensure_gpu_blend_initialized`] to recreate the pair so workers
-/// can enqueue [`GpuBlendRequest`](playa_engine::entities::GpuBlendRequest)s again after loading
-/// persisted state.
-fn gpu_blend_rx_default() -> Mutex<Option<Receiver<GpuBlendRequest>>> {
-    Mutex::new(None)
-}
 
 /// Dock tab identifiers for the main UI layout.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -191,8 +183,18 @@ pub struct PlayaApp {
     /// Main-thread ingest queue for [`GpuBlendBridge::drain_into_compositor`].
     ///
     /// Wrapped in [`Mutex`] so `update()` can temporarily borrow alongside `project.compositor`.
-    #[serde(skip, default = "gpu_blend_rx_default")]
+    /// `Mutex<Option<_>>::default()` is `Mutex::new(None)`, which is exactly the state
+    /// [`PlayaApp::ensure_gpu_blend_initialized`] expects after deserialize.
+    #[serde(skip)]
     pub gpu_blend_rx: Mutex<Option<Receiver<GpuBlendRequest>>>,
+    /// Long-running IO job queue (Seedance video-gen, ffmpeg encodes that the
+    /// user wants tracked outside the encode dialog, future media-import jobs).
+    ///
+    /// `None` immediately after deserialize; [`Self::ensure_jobs_initialized`]
+    /// restores a fresh queue with the persistence log re-attached. Same
+    /// pattern as [`Self::gpu_blend_bridge`].
+    #[serde(skip)]
+    pub job_queue: Option<Arc<JobQueue>>,
 }
 
 impl Default for PlayaApp {
@@ -213,6 +215,8 @@ impl Default for PlayaApp {
         let comp_event_emitter = CompEventEmitter::from_emitter(event_bus.emitter());
 
         let (gpu_blend_bridge, gpu_blend_rx) = gpu_blend_arc_pair();
+
+        let job_queue = build_default_job_queue();
 
         Self {
             frame: None,
@@ -278,8 +282,95 @@ impl Default for PlayaApp {
             options_initialized: false,
             gpu_blend_bridge: Some(gpu_blend_bridge),
             gpu_blend_rx: Mutex::new(Some(gpu_blend_rx)),
+            job_queue,
         }
     }
+}
+
+/// Construct the application-wide [`JobQueue`] using OS-standard config /
+/// cache directories. Persistence is on by default (matches the user's Q3
+/// answer); a write failure on the persist log demotes to non-persistent so
+/// the rest of the app still boots.
+fn build_default_job_queue() -> Option<Arc<JobQueue>> {
+    let persist_path = dirs_next::config_dir().map(|d| d.join("playa").join("jobs.jsonl"));
+    let files_dir = dirs_next::cache_dir()
+        .map(|d| d.join("playa").join("jobs"))
+        .unwrap_or_else(|| std::env::temp_dir().join("playa-jobs"));
+
+    let cfg = JobQueueConfig {
+        thread_count: std::thread::available_parallelism()
+            .map(|n| n.get() / 4)
+            .unwrap_or(2)
+            .max(2),
+        files_dir,
+        persist_path: persist_path.clone(),
+    };
+
+    let queue = match JobQueue::new(cfg) {
+        Ok(q) => q,
+        Err(e) => {
+            log::warn!(
+                "JobQueue: failed to open persist log at {:?} ({}); falling back to non-persistent queue",
+                persist_path,
+                e
+            );
+            let fallback = JobQueueConfig {
+                thread_count: 2,
+                files_dir: std::env::temp_dir().join("playa-jobs-fallback"),
+                persist_path: None,
+            };
+            match JobQueue::new(fallback) {
+                Ok(q) => q,
+                Err(e) => {
+                    log::error!("JobQueue: fallback init also failed ({e}); disabling jobs");
+                    return None;
+                }
+            }
+        }
+    };
+
+    // Default visibility: log every event at debug level so dev sessions see
+    // job activity without any UI hookup. Real UI listeners go through
+    // `JobQueue::subscribe` from playa-ui.
+    queue.subscribe(|event| log::debug!("[jobs] {event:?}"));
+
+    // Register the Seedance provider iff a key is present. Lookup order:
+    //   PLAYA_FAL_KEY env > FAL_KEY env > .env file in CWD or one parent.
+    register_seedance_provider(&queue);
+
+    Some(Arc::new(queue))
+}
+
+/// Lookup precedence for the fal.ai API key. Three names because each
+/// ecosystem labels it differently:
+/// - `PLAYA_FAL_KEY` — playa-namespaced override.
+/// - `FAL_KEY` — fal.ai docs canonical (`Authorization: Key <FAL_KEY>`).
+/// - `FAL_API_KEY` — name used by the fal JS/Python SDKs and visible in many
+///   `.env` examples.
+const FAL_KEY_NAMES: &[&str] = &["PLAYA_FAL_KEY", "FAL_KEY", "FAL_API_KEY"];
+
+fn read_fal_key() -> Option<String> {
+    let cwd_env = std::path::PathBuf::from(".env");
+    let parent_env = std::path::PathBuf::from("../.env");
+    playa_jobs::secret::lookup(FAL_KEY_NAMES, &[cwd_env, parent_env])
+}
+
+fn register_seedance_provider(queue: &JobQueue) {
+    let Some(key) = read_fal_key() else {
+        log::info!(
+            "Seedance providers NOT registered: set FAL_KEY (or PLAYA_FAL_KEY / FAL_API_KEY) env var or place it in a .env file at the repo root"
+        );
+        return;
+    };
+    // Register both fal.ai Seedance endpoints. `kind()` distinguishes them in
+    // `JobQueue::submit`. Same key serves both.
+    queue.register_provider(playa_job_seedance::SeedanceProvider::image_to_video(key.clone()));
+    queue.register_provider(playa_job_seedance::SeedanceProvider::text_to_video(key));
+    log::info!(
+        "Seedance providers registered (kinds=`{}`, `{}`)",
+        playa_job_seedance::kinds::IMAGE_TO_VIDEO,
+        playa_job_seedance::kinds::TEXT_TO_VIDEO
+    );
 }
 
 impl PlayaApp {
@@ -290,6 +381,18 @@ impl PlayaApp {
     /// Otherwise callers observe repeated [`GpuBlendReport::NotQueued`](playa_engine::entities::GpuBlendReport::NotQueued) fallbacks (`comp_node`).
     ///
     /// [`Receiver`]: std::sync::mpsc::Receiver
+    /// Recreate the [`JobQueue`] when serde dropped the runtime handle on
+    /// load. Mirrors [`Self::ensure_gpu_blend_initialized`]: idempotent if
+    /// `job_queue` is already `Some`. Boot path (`runner.rs`) calls this
+    /// before any provider registration so [`JobQueue::replay_persisted`]
+    /// resumes orphaned jobs once providers are registered.
+    pub fn ensure_jobs_initialized(&mut self) {
+        if self.job_queue.is_some() {
+            return;
+        }
+        self.job_queue = build_default_job_queue();
+    }
+
     pub fn ensure_gpu_blend_initialized(&mut self) {
         if self.gpu_blend_bridge.is_some()
             && self

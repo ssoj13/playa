@@ -763,7 +763,9 @@ impl Project {
         fps: f32,
         _event_emitter: crate::core::event_bus::CompEventEmitter,
     ) -> Uuid {
-        let end = (fps * 5.0) as i32;
+        // Round (not truncate) so NTSC fps gives the expected 5-second comp:
+        //   fps=23.976 → 5 * 23.976 = 119.88 → round 120, not truncate to 119.
+        let end = (fps * 5.0).round() as i32;
         let comp = CompNode::new(name, 0, end, fps);
         let uuid = comp.uuid();
         self.add_node(NodeKind::Comp(comp));
