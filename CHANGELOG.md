@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — `dev` branch
 
+### Wave 7-pre Round 3 — auto-attach v2, RevealMp4 OS-level, AppSettings sliced
+
+Five commits (`8139d13` → `f9aa7f7`) closing the remaining app-level
+deferred items from `progress.txt`. After this round `AppSettings` is
+fully sliced (playback / cache / viewport / timeline / jobs) and the
+auto-attach loop is end-to-end functional.
+
+- **`8139d13` US-15 v2 — `auto_attach_mp4` actually imports the mp4 as
+  a layer.** v1 logged the resolved path. v2 closes the loop: the
+  `JobEvent::Completed` listener pushes the `PathBuf` through an mpsc
+  channel; `update()` drains it per-frame and routes through
+  `load_sequences` — the same `FileNode::detect_from_paths` import
+  path drag-drop uses. Threading: `EventBus` callbacks may fire on any
+  worker thread, but `Project` mutators expect the UI thread, so the
+  channel decouples them. `auto_attach_tx: Option<Sender<PathBuf>>`
+  and `auto_attach_rx: Mutex<Option<Receiver<PathBuf>>>` are both
+  `#[serde(skip)] / None` default so post-deserialize re-init
+  rebuilds the channel cleanly via the existing
+  `auto_attach_subscribed` latch.
+
+- **`6007f45` `JobsAction::RevealMp4` v2 — open containing folder in
+  the platform file manager.** Previously log-only with a
+  "`until we wire opener`" TODO. Now wired to `opener` 0.7
+  (Explorer / Finder / xdg-open). We open the **parent directory**
+  rather than the file so the user lands in a folder view (default
+  media-player auto-play is rarely what "Reveal" means). True
+  select-with-highlight reveal would require shell-out per-OS — out
+  of scope for one button. Failure logs the path so it's still
+  accessible.
+
+- **`aef666c` US-03b PlaybackSettings — first slice extracted.** New
+  `PlaybackSettings { fps_base, loop_enabled, preload_radius,
+  preload_delay_ms }` lives in `playa-ui::dialogs::prefs` and is
+  embedded in `AppSettings` via `#[serde(flatten)]`. Existing
+  `playa.json` saves load unchanged — top-level fields absorb into
+  the slice. 18-site consumer migration across 5 files. Three new
+  unit tests in `prefs.rs::tests` cover the legacy-JSON →
+  slice path, flat serialization round-trip, and default-value
+  preservation.
+
+- **`a74ae66` US-03b CacheSettings — second slice extracted.** Same
+  pattern: `CacheSettings { cache_memory_percent,
+  reserve_system_memory_gb, cache_strategy }`, 12-site migration,
+  2 new tests.
+
+- **`f9aa7f7` US-03b ViewportSettings + TimelineSettings — final two
+  slices.** `AppSettings` now fully sliced (5 slices: playback /
+  cache / viewport / timeline / jobs, plus `encode_dialog`). 21-site
+  migration across `tabs.rs` and `prefs.rs`. Three new tests including
+  a combined `all_slices_serialize_flat_combined` regression check
+  that asserts every legacy top-level key is present **and** none of
+  the slice keys (`playback`, `cache`, `viewport`, `timeline`) appear
+  in the JSON — catches future drops of `#[serde(flatten)]`.
+
+The slice extraction was originally pre-marked **gold-plating
+relative to jobs goal** (per `progress.txt`) — landed pragmatically:
+zero JSON shape change, mechanical consumer migration, comprehensive
+back-compat tests. `cargo test` of all jobs/prefs crates: 158/158
+green; `cargo check -p playa-app` green default +
+`--no-default-features`.
+
 ### Wave 7-pre Round 2 — pluggable Preferences modal + budget gate + auto-attach hook
 
 Closes the four deferred items from `progress.txt`'s "NEXT SESSION
