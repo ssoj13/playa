@@ -257,6 +257,39 @@ impl eframe::App for PlayaApp {
             }
         }
 
+        // Ctrl+Comma — open the new pluggable preferences modal. Direct
+        // input check (rather than going through the legacy event-factory
+        // hotkey handler) keeps the wiring local to this app and avoids
+        // adding an `OpenPrefsWindowEvent` type for a one-line UX hook.
+        // The legacy F12 → ToggleSettingsEvent path still drives the old
+        // settings window; the two coexist while migration unfolds.
+        let open_prefs_via_hotkey = ctx.input(|i| {
+            i.modifiers.ctrl
+                && i.events.iter().any(|e| matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Comma,
+                        pressed: true,
+                        ..
+                    }
+                ))
+        });
+        if open_prefs_via_hotkey && !self.prefs_window.is_open() {
+            self.prefs_window.open_with(&self.settings);
+        }
+
+        // Render the new pluggable preferences modal. Returns Closed when
+        // the window isn't open this frame; otherwise drives Apply/OK/Cancel.
+        match self
+            .prefs_window
+            .show(ctx, &mut self.prefs_registry, &mut self.settings)
+        {
+            playa_prefs::PrefsResult::Applied => log::info!("Preferences applied"),
+            playa_prefs::PrefsResult::OkClosed => log::info!("Preferences applied (OK)"),
+            playa_prefs::PrefsResult::Cancelled => log::info!("Preferences cancelled"),
+            playa_prefs::PrefsResult::Open | playa_prefs::PrefsResult::Closed => {}
+        }
+
         // Process keyboard input after hover states were updated by panel rendering
         self.handle_keyboard_input(ctx);
 

@@ -30,7 +30,7 @@ pub enum ExportMode {
 
 /// Encode dialog settings (persistent via AppSettings)
 /// Contains all codec settings + dialog state
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EncodeDialogSettings {
     // Dialog state
     pub output_path: PathBuf,
@@ -118,7 +118,7 @@ impl Default for EncoderSettings {
 }
 
 /// H.264 specific settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct H264Settings {
     pub encoder_impl: EncoderImpl,
     pub quality_mode: QualityMode,
@@ -140,7 +140,7 @@ impl Default for H264Settings {
 }
 
 /// H.265/HEVC specific settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct H265Settings {
     pub encoder_impl: EncoderImpl,
     pub quality_mode: QualityMode,
@@ -285,7 +285,7 @@ impl std::fmt::Display for ProResProfile {
 }
 
 /// ProRes specific settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProResSettings {
     pub profile: ProResProfile,
 }
@@ -299,7 +299,7 @@ impl Default for ProResSettings {
 }
 
 /// AV1 specific settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AV1Settings {
     pub encoder_impl: EncoderImpl,
     pub quality_mode: QualityMode,
@@ -319,7 +319,7 @@ impl Default for AV1Settings {
 }
 
 /// All codec-specific settings
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CodecSettings {
     pub h264: H264Settings,
     pub h265: H265Settings,
@@ -831,7 +831,7 @@ impl std::fmt::Display for ExrEncodeMode {
 /// EXR sequence settings. Bit depth comes from the global [`OutputBitDepth`]
 /// (filtered to F16/F32 by [`FormatCapabilities`]); per-channel mixed types
 /// flow through `mode = PassThrough` which preserves the source layout.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExrSequenceSettings {
     pub compression: ExrCompression,
     /// Quality 0..=100 for DWAA/DWAB. Ignored for other compressions.
@@ -858,7 +858,7 @@ impl Default for ExrSequenceSettings {
 }
 
 /// PNG compression level (0-9)
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PngSequenceSettings {
     pub compression: u8, // 0 (none) to 9 (max)
 }
@@ -870,7 +870,7 @@ impl Default for PngSequenceSettings {
 }
 
 /// JPEG quality settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct JpegSequenceSettings {
     pub quality: u8, // 1-100
 }
@@ -937,7 +937,7 @@ impl std::fmt::Display for TiffBitDepth {
 }
 
 /// TIFF sequence settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TiffSequenceSettings {
     pub bit_depth: TiffBitDepth,
     pub compression: TiffCompression,
@@ -953,7 +953,7 @@ impl Default for TiffSequenceSettings {
 }
 
 /// TGA settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TgaSequenceSettings {
     pub rle_compression: bool,
 }
@@ -967,7 +967,7 @@ impl Default for TgaSequenceSettings {
 }
 
 /// All sequence format settings
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SequenceFormatSettings {
     pub exr: ExrSequenceSettings,
     pub png: PngSequenceSettings,
@@ -977,7 +977,7 @@ pub struct SequenceFormatSettings {
 }
 
 /// Sequence export settings
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SequenceSettings {
     pub format: SequenceFormat,
     pub channels: ChannelMode,

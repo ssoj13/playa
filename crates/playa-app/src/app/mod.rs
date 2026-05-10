@@ -228,13 +228,17 @@ pub struct PlayaApp {
     /// for its slice of settings; the host registers an entry that calls
     /// that fn with `&mut SliceSettings` extracted from `AppSettings`.
     /// Built in [`Self::Default`] with the jobs entry pre-registered when
-    /// the `jobs` feature is on. `playa_prefs::PrefsWindow` wiring (modal
-    /// open/close + Apply/Cancel) is a follow-up — for v1 the registry is
-    /// queryable but no window UI exists yet.
+    /// the `jobs` feature is on.
     ///
     /// Generic over `AppSettings` from playa-ui for slice extraction.
     #[serde(skip)]
     pub prefs_registry: playa_prefs::PrefsRegistry<AppSettings>,
+
+    /// Modal preferences window state machine. `Ctrl+,` opens it with a
+    /// clone of `self.settings` as the working copy; Apply commits the
+    /// working copy back, Cancel discards.
+    #[serde(skip)]
+    pub prefs_window: playa_prefs::PrefsWindow<AppSettings>,
 }
 
 impl Default for PlayaApp {
@@ -337,6 +341,7 @@ impl Default for PlayaApp {
             // JobsSettings, this becomes:
             //   playa_jobs::register_default_prefs(&mut prefs_registry, |s| &mut s.jobs);
             prefs_registry: playa_prefs::PrefsRegistry::<AppSettings>::new(),
+            prefs_window: playa_prefs::PrefsWindow::<AppSettings>::new(),
         }
     }
 }

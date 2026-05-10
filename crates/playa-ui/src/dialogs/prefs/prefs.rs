@@ -41,7 +41,7 @@ impl SettingsCategory {
 }
 
 /// UI Layout configuration (dock splits, timeline/viewport state)
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Layout {
     pub dock_state_json: String,
     pub timeline_zoom: f32,
@@ -69,7 +69,7 @@ impl Default for Layout {
 }
 
 /// Application settings
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct AppSettings {
     // Playback

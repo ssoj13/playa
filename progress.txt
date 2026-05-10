@@ -1,5 +1,68 @@
 # Wave 7-pre modular Jobs/Prefs refactor — progress log
 
+## ⏭ NEXT SESSION PICKUP (read first after context compact)
+
+**Shipped (origin/dev `30ffc8f`):** 11 stories of Wave 7-pre modular jobs/prefs
+refactor; 154 tests across 6 crates green. Crates: `playa-prefs`,
+`playa-jobs-core` (was `playa-jobs`), `playa-jobs-ui`, `playa-jobs` (facade),
+plus existing `playa-job-seedance` + `playa-time`. Feature-gated `jobs` on
+`playa-app` (default on; `--no-default-features` boots without).
+
+**Deferred items, in priority order (all known-broken-down — pick top to
+resume):**
+
+1. **AppSettings derives + full PrefsWindow modal lifecycle.** Add
+   `#[derive(Clone, PartialEq)]` to `playa_ui::dialogs::prefs::AppSettings`
+   and the cascade: `Layout` (already Clone), `CacheStrategy`, `CompositorBackend`,
+   `EncodeDialogSettings`, `HotkeyHandler`. Then in `PlayaApp` add field
+   `prefs_window: PrefsWindow<AppSettings>`. Wire `Edit > Preferences…` menu
+   item + `Ctrl+,` hotkey to `prefs_window.open_with(&self.settings)`. In
+   `update()` after dock render call `prefs_window.show(ctx, &mut prefs_registry,
+   &mut self.settings)`. **Risk**: derive cascade may pull through a dozen
+   types — go incremental, run `cargo check -p playa-app` after each.
+2. **AppSettings.jobs slice + register_default_prefs entry.** Add
+   `pub jobs: playa_jobs::JobsSettings` to AppSettings (need `playa-jobs-core`
+   dep on `playa-ui`). Then in PlayaApp::Default call
+   `playa_jobs::register_default_prefs(&mut prefs_registry, |s| &mut s.jobs)`.
+   Result: Preferences modal shows the Jobs panel. (Item 1 must land first.)
+3. **Daily budget enforcement at JobQueue::submit.** Currently
+   `JobsSettings.daily_budget_usd` is editable but not enforced. Wire a
+   pre-submit check: if `enabled && stats().today_cost_usd + estimated >
+   cap` → reject with `JobError::Provider("daily budget exceeded ($X spent
+   today, cap=$Y)")`. Estimate comes from per-provider rate × params.duration
+   (Seedance is 0.3024 i2v / 0.3034 t2v). May want a `JobProvider::estimate_cost(&Value)`
+   trait method.
+4. **auto_attach mp4 listener.** Subscribe to `JobEvent::Completed` in
+   `playa-app`; if `JobsSettings.auto_attach_mp4` is on, read
+   `result.mp4_path` and call `Project::add_layer_from_file(active_comp, path)`.
+   Today the project add-layer hook lives in
+   `crates/playa-engine/src/entities/project.rs` — find the existing
+   "import file as layer" path and reuse.
+5. **US-03b — extract Viewport/Cache/Playback/Hotkey slice structs from
+   AppSettings** with `#[serde(flatten)]` for backwards-compat. Heavy
+   refactor; gold-plating relative to jobs goal. Tackle when independently
+   motivated.
+6. **`gsd-extract-learnings`** could turn `progress.txt` + `.bughunt/plan1.md`
+   into wiki entries if you want durable cross-project learnings file.
+
+**Verification commands (run after each step; cache should keep <5 s):**
+```
+PATH=/usr/bin:$PATH cargo test -p playa-time -p playa-prefs -p playa-jobs-core \
+                              -p playa-jobs-ui -p playa-job-seedance -p playa-jobs
+PATH=/usr/bin:$PATH cargo check -p playa-app -p playa-engine -p playa-ui
+PATH=/usr/bin:$PATH cargo check -p playa-app --no-default-features
+```
+
+**Magic resume phrase from user (compact-survivor):** `продолжи Wave 7-pre`
+or `прочитай progress.txt и доделывай`. Either lands the orchestrator on
+this section.
+
+**Spec / context (canonical):** `.bughunt/jobs_ui_design.md` (full design),
+`.bughunt/plan1.md` (audit ranking), `.omc/state/sessions/*/prd.json`
+(11 stories, all `passes:true` for the work that shipped).
+
+---
+
 ## Setup (this iteration)
 - Created `.omc/state/sessions/264259b0.../prd.json` with 11 task-specific user stories.
 - Spec is `.bughunt/jobs_ui_design.md` (variant 1 flat workspace).
