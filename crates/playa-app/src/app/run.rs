@@ -111,8 +111,8 @@ impl eframe::App for PlayaApp {
         }
 
         // Apply memory settings from UI if changed
-        let mem_fraction = (self.settings.cache_memory_percent as f64 / 100.0).clamp(0.25, 0.95);
-        let reserve_gb = self.settings.reserve_system_memory_gb as f64;
+        let mem_fraction = (self.settings.cache.cache_memory_percent as f64 / 100.0).clamp(0.25, 0.95);
+        let reserve_gb = self.settings.cache.reserve_system_memory_gb as f64;
 
         if (mem_fraction - self.applied_mem_fraction).abs() > f64::EPSILON {
             // Update cache manager with new limits (now lock-free via atomic)
@@ -482,7 +482,7 @@ impl PlayaApp {
 
     /// Apply cache strategy changes from settings.
     pub fn apply_cache_strategy_if_changed(&mut self) {
-        let desired = self.settings.cache_strategy;
+        let desired = self.settings.cache.cache_strategy;
         if desired == self.applied_cache_strategy {
             return;
         }

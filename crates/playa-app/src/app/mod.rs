@@ -306,7 +306,7 @@ impl Default for PlayaApp {
             project: {
                 let settings = AppSettings::default();
                 let mut project =
-                    Project::new_with_strategy(Arc::clone(&cache_manager), settings.cache_strategy);
+                    Project::new_with_strategy(Arc::clone(&cache_manager), settings.cache.cache_strategy);
                 // Set event emitter for auto-emit of AttrsChangedEvent on comp modifications
                 project.set_event_emitter(event_bus.emitter());
                 project

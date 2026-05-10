@@ -156,7 +156,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             // Rebuild runtime + set cache manager (unified, lost during clone/deserialization)
             app.project.rebuild_with_manager(
                 Arc::clone(&app.cache_manager),
-                app.settings.cache_strategy,
+                app.settings.cache.cache_strategy,
                 Some(app.comp_event_emitter.clone()),
             );
             // Restore event emitter (lost during serde deserialization - #[serde(skip)])
@@ -179,7 +179,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             app.player = player;
             app.status_bar = StatusBar::new();
             app.applied_mem_fraction = mem_fraction;
-            app.applied_cache_strategy = app.settings.cache_strategy;
+            app.applied_cache_strategy = app.settings.cache.cache_strategy;
             app.applied_workers = desired_workers;
             app.path_config = path_config_for_app;
 
@@ -247,7 +247,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
                             project.rebuild_with_manager(
                                 Arc::clone(&app.cache_manager),
-                                app.settings.cache_strategy,
+                                app.settings.cache.cache_strategy,
                                 Some(app.comp_event_emitter.clone()),
                             );
                             project.set_event_emitter(app.event_bus.emitter());

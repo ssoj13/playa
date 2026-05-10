@@ -40,6 +40,32 @@ impl SettingsCategory {
     }
 }
 
+/// Cache-related settings. Slice of [`AppSettings`] flattened into the
+/// parent via `#[serde(flatten)]` so existing `playa.json` saves
+/// (which store these fields at top level) load unchanged.
+///
+/// Accessed via `settings.cache.cache_memory_percent` etc.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct CacheSettings {
+    /// 25-95% of available RAM (default 75%).
+    pub cache_memory_percent: f32,
+    /// Reserve for system (default 2.0 GB).
+    pub reserve_system_memory_gb: f32,
+    /// Caching strategy (LastOnly or All).
+    pub cache_strategy: playa_engine::entities::CacheStrategy,
+}
+
+impl Default for CacheSettings {
+    fn default() -> Self {
+        Self {
+            cache_memory_percent: 75.0,
+            reserve_system_memory_gb: 2.0,
+            cache_strategy: playa_engine::entities::CacheStrategy::All,
+        }
+    }
+}
+
 /// Playback-related settings. Slice of [`AppSettings`] flattened into
 /// the parent via `#[serde(flatten)]` so existing `playa.json` saves
 /// (which store these fields at top level) load unchanged.
@@ -132,10 +158,11 @@ pub struct AppSettings {
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
 
-    // Cache & Memory
-    pub cache_memory_percent: f32, // 25-95% of available (default 75%)
-    pub reserve_system_memory_gb: f32, // Reserve for system (default 2.0 GB)
-    pub cache_strategy: playa_engine::entities::CacheStrategy, // Caching strategy (LastOnly or All)
+    /// Cache slice — flattens to the legacy top-level keys
+    /// `cache_memory_percent`, `reserve_system_memory_gb`,
+    /// `cache_strategy` so existing saves load unchanged.
+    #[serde(flatten)]
+    pub cache: CacheSettings,
 
     // Compositor backend (CPU or GPU)
     pub compositor_backend: CompositorBackend,
@@ -187,9 +214,7 @@ impl Default for AppSettings {
             hover_corner_length: 20.0,
             hover_opacity: 0.5,
             workers_override: 0,
-            cache_memory_percent: 75.0,
-            reserve_system_memory_gb: 2.0,
-            cache_strategy: playa_engine::entities::CacheStrategy::All, // Default: cache all frames
+            cache: CacheSettings::default(),
             compositor_backend: CompositorBackend::default(),
             encode_dialog: crate::dialogs::encode::EncodeDialogSettings::default(),
             selected_settings_category: Some("UI".to_string()),
@@ -399,7 +424,7 @@ fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 
     ui.label("Cache Memory Limit (% of available):");
     ui.add(
-        egui::Slider::new(&mut settings.cache_memory_percent, 25.0..=95.0)
+        egui::Slider::new(&mut settings.cache.cache_memory_percent, 25.0..=95.0)
             .suffix("%")
             .step_by(5.0),
     );
@@ -408,7 +433,7 @@ fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add_space(8.0);
     ui.label("Reserve for System (GB):");
     ui.add(
-        egui::Slider::new(&mut settings.reserve_system_memory_gb, 0.5..=8.0)
+        egui::Slider::new(&mut settings.cache.reserve_system_memory_gb, 0.5..=8.0)
             .suffix(" GB")
             .step_by(0.5),
     );
@@ -419,12 +444,12 @@ fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.horizontal(|ui| {
         use playa_engine::entities::CacheStrategy;
         ui.radio_value(
-            &mut settings.cache_strategy,
+            &mut settings.cache.cache_strategy,
             CacheStrategy::All,
             "All Frames",
         );
         ui.radio_value(
-            &mut settings.cache_strategy,
+            &mut settings.cache.cache_strategy,
             CacheStrategy::LastOnly,
             "Last Only",
         );
@@ -676,5 +701,33 @@ mod tests {
         assert!(p.loop_enabled);
         assert_eq!(p.preload_radius, -1);
         assert_eq!(p.preload_delay_ms, 500);
+    }
+
+    #[test]
+    fn legacy_top_level_cache_fields_load_into_slice() {
+        let legacy = r#"{
+            "cache_memory_percent": 50.0,
+            "reserve_system_memory_gb": 4.0,
+            "cache_strategy": "LastOnly"
+        }"#;
+        let s: AppSettings = serde_json::from_str(legacy).expect("legacy JSON parses");
+        assert_eq!(s.cache.cache_memory_percent, 50.0);
+        assert_eq!(s.cache.reserve_system_memory_gb, 4.0);
+        assert_eq!(
+            s.cache.cache_strategy,
+            playa_engine::entities::CacheStrategy::LastOnly
+        );
+    }
+
+    #[test]
+    fn cache_slice_serializes_flat() {
+        let mut s = AppSettings::default();
+        s.cache.cache_memory_percent = 80.0;
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            json.get("cache_memory_percent").and_then(|v| v.as_f64()),
+            Some(80.0)
+        );
+        assert!(json.get("cache").is_none(), "must NOT nest under 'cache'");
     }
 }

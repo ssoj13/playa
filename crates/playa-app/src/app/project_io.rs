@@ -194,7 +194,7 @@ impl PlayaApp {
                 // Rebuild runtime + set cache manager (unified)
                 project.rebuild_with_manager(
                     Arc::clone(&self.cache_manager),
-                    self.settings.cache_strategy,
+                    self.settings.cache.cache_strategy,
                     Some(self.comp_event_emitter.clone()),
                 );
                 // Set event emitter for auto-emit of AttrsChangedEvent
