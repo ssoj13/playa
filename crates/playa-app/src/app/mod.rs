@@ -614,9 +614,13 @@ impl PlayaApp {
                 }
             }
             JobsAction::RevealMp4(id) => {
-                // OS reveal omitted for v1; log the path so the user sees
-                // where the mp4 is until we wire `opener` or platform
-                // shells.
+                // Open the containing directory in the platform's file
+                // manager. `opener::open` does the right thing per-OS:
+                // Explorer on Windows, Finder on macOS, xdg-open on
+                // Linux. We open the parent rather than the file itself
+                // so the user gets a folder view (not the default media
+                // player). Falls back to logging if open fails so the
+                // user still has the path.
                 if let Some(j) = queue.get(id)
                     && let Some(path) = j
                         .result
@@ -624,7 +628,14 @@ impl PlayaApp {
                         .and_then(|v| v.get("mp4_path"))
                         .and_then(|v| v.as_str())
                 {
-                    log::info!("Reveal mp4: {path}");
+                    let p = std::path::Path::new(path);
+                    let target = p.parent().unwrap_or(p);
+                    match opener::open(target) {
+                        Ok(()) => log::info!("Reveal mp4: {path}"),
+                        Err(e) => log::warn!(
+                            "Reveal mp4 failed ({e}); path is {path}"
+                        ),
+                    }
                 }
             }
             JobsAction::OpenSubmit => {
