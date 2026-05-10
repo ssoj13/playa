@@ -217,6 +217,13 @@ pub struct PlayaApp {
     #[serde(skip)]
     pub submit_dialog: playa_jobs::ui::SubmitDialog,
 
+    /// Persisted user preferences for the jobs subsystem (daily budget cap,
+    /// auto-attach, retention). Edited via the Jobs DockTab's Settings
+    /// section. Persists across restarts via eframe's serde.
+    #[cfg(feature = "jobs")]
+    #[serde(default)]
+    pub jobs_settings: playa_jobs::JobsSettings,
+
     /// Pluggable preferences registry. Each module exposes a `pub fn render`
     /// for its slice of settings; the host registers an entry that calls
     /// that fn with `&mut SliceSettings` extracted from `AppSettings`.
@@ -322,6 +329,8 @@ impl Default for PlayaApp {
             jobs_panel: playa_jobs::ui::JobsPanel::new(),
             #[cfg(feature = "jobs")]
             submit_dialog: playa_jobs::ui::SubmitDialog::default(),
+            #[cfg(feature = "jobs")]
+            jobs_settings: playa_jobs::JobsSettings::default(),
             // Empty registry — entry-registration is gated on AppSettings
             // having a `.jobs` slice, which is part of the deferred US-03b
             // (slice-extraction refactor). Once AppSettings carries
@@ -459,6 +468,15 @@ impl PlayaApp {
             return;
         };
 
+        // Inline jobs prefs as a collapsing header above the table — until
+        // a full Preferences modal lands, this is the canonical place to
+        // edit budget cap / auto-attach / retention. Persists via
+        // `PlayaApp::jobs_settings` (eframe serde).
+        ui.collapsing("⚙ Settings", |ui| {
+            playa_jobs::ui::prefs::render(ui, &mut self.jobs_settings);
+        });
+        ui.separator();
+
         match self.jobs_panel.ui(ui, &queue) {
             JobsAction::None => {}
             JobsAction::Cancel(ids) => {
@@ -579,12 +597,18 @@ impl PlayaApp {
         let mut dock_state = DockState::new(vec![DockTab::Viewport]);
 
         // Always split viewport and timeline vertically (timeline at bottom ~23%)
-        // NodeEditor is a tab next to Timeline (same panel, tab switching)
-        let [viewport, _timeline] = dock_state.main_surface_mut().split_below(
-            NodeIndex::root(),
-            0.77,
-            vec![DockTab::Timeline, DockTab::NodeEditor],
-        );
+        // NodeEditor is a tab next to Timeline (same panel, tab switching);
+        // when the `jobs` feature is on, Jobs is a third tab in that bottom
+        // panel so it shares the timeline strip without claiming new screen
+        // real estate.
+        #[cfg(feature = "jobs")]
+        let bottom_tabs = vec![DockTab::Timeline, DockTab::NodeEditor, DockTab::Jobs];
+        #[cfg(not(feature = "jobs"))]
+        let bottom_tabs = vec![DockTab::Timeline, DockTab::NodeEditor];
+        let [viewport, _timeline] =
+            dock_state
+                .main_surface_mut()
+                .split_below(NodeIndex::root(), 0.77, bottom_tabs);
 
         if show_project || show_attributes {
             if show_project && show_attributes {

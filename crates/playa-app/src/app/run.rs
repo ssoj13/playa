@@ -228,6 +228,35 @@ impl eframe::App for PlayaApp {
 
         playa_ui::widgets::dnd::paint_global_project_drag_overlay(ctx);
 
+        // Render the Submit dialog modal (jobs subsystem). Sits on top of the
+        // dock so the form covers the panel that opened it. The dialog state
+        // machine handles Submit/Cancel internally; on Submit we route to the
+        // job queue here.
+        #[cfg(feature = "jobs")]
+        {
+            use playa_jobs::ui::SubmitDialogResult;
+            match self.submit_dialog.show(ctx) {
+                SubmitDialogResult::Submit {
+                    kind,
+                    params,
+                    auto_attach: _,
+                } => {
+                    if let Some(queue) = self.job_queue.as_ref() {
+                        match queue.submit(kind, params) {
+                            Ok(id) => log::info!("Submitted job {id} (kind={kind})"),
+                            Err(e) => log::warn!("Submit failed: {e}"),
+                        }
+                    } else {
+                        log::warn!(
+                            "Submit dialog accepted but JobQueue is not initialized — request dropped"
+                        );
+                    }
+                }
+                SubmitDialogResult::Cancelled => {}
+                SubmitDialogResult::None => {}
+            }
+        }
+
         // Process keyboard input after hover states were updated by panel rendering
         self.handle_keyboard_input(ctx);
 
