@@ -228,6 +228,19 @@ impl eframe::App for PlayaApp {
 
         playa_ui::widgets::dnd::paint_global_project_drag_overlay(ctx);
 
+        // Sync the persisted budget cap into the queue. Cheap atomic
+        // write per frame — the queue checks it pre-insert in submit().
+        // None when disabled, Some(cap) when enabled.
+        #[cfg(feature = "jobs")]
+        if let Some(queue) = self.job_queue.as_ref() {
+            let cap = if self.settings.jobs.daily_budget_enabled {
+                Some(self.settings.jobs.daily_budget_usd)
+            } else {
+                None
+            };
+            queue.set_budget_cap(cap);
+        }
+
         // Render the Submit dialog modal (jobs subsystem). Sits on top of the
         // dock so the form covers the panel that opened it. The dialog state
         // machine handles Submit/Cancel internally; on Submit we route to the

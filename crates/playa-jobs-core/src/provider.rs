@@ -87,6 +87,15 @@ pub trait JobProvider: Send + Sync + 'static {
     ) -> Result<serde_json::Value, JobError> {
         self.run(ctx, params)
     }
+
+    /// Pre-submit cost estimate, in USD. Used by [`crate::JobQueue::submit`]
+    /// when a daily budget cap is set. Default `None` — providers without
+    /// a fixed per-job rate can leave this unimplemented; the queue then
+    /// counts the job as $0 against the cap (favouring submit over false
+    /// rejection).
+    fn estimate_cost_usd(&self, _params: &serde_json::Value) -> Option<f64> {
+        None
+    }
 }
 
 // -----------------------------------------------------------------------------

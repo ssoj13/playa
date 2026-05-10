@@ -225,6 +225,24 @@ impl JobProvider for SeedanceProvider {
         self.endpoint.kind()
     }
 
+    /// Pre-submit cost estimate, in USD. Mirrors [`Self::report_cost_from_params`]:
+    /// reads the requested duration (integer for i2v, string for t2v) and
+    /// multiplies by the per-second rate. Returns `None` when duration is
+    /// absent / `"auto"` so the queue treats the job as $0 against the cap
+    /// rather than rejecting it on incomplete information.
+    fn estimate_cost_usd(&self, params: &Value) -> Option<f64> {
+        let duration_secs = params.get("duration").and_then(|v| {
+            v.as_u64()
+                .map(|n| n as u32)
+                .or_else(|| v.as_str().and_then(|s| s.parse::<u32>().ok()))
+        })?;
+        let per_sec = match self.endpoint {
+            SeedanceEndpoint::ImageToVideo => 0.3024_f64,
+            SeedanceEndpoint::TextToVideo => 0.3034_f64,
+        };
+        Some(per_sec * duration_secs as f64)
+    }
+
     fn run(&self, ctx: &JobContext, params: Value) -> Result<Value, JobError> {
         ctx.set_state(JobState::Submitting);
         ctx.cancel.check_err()?;
@@ -496,6 +514,28 @@ mod tests {
             SeedanceEndpoint::TextToVideo.submit_url(),
             "https://queue.fal.run/bytedance/seedance-2.0/text-to-video"
         );
+    }
+
+    #[test]
+    fn estimate_cost_usd_matches_per_endpoint_rate() {
+        // i2v at $0.3024/s, t2v at $0.3034/s — verify the trait method
+        // returns the same numbers as report_cost_from_params would emit
+        // post-completion, so the budget gate uses identical accounting.
+        let i2v = SeedanceProvider::image_to_video("k");
+        let t2v = SeedanceProvider::text_to_video("k");
+        // i2v: integer duration in JSON.
+        assert_eq!(
+            i2v.estimate_cost_usd(&json!({"duration": 5_u64})),
+            Some(0.3024 * 5.0)
+        );
+        // t2v: string duration in JSON.
+        assert_eq!(
+            t2v.estimate_cost_usd(&json!({"duration": "8"})),
+            Some(0.3034 * 8.0)
+        );
+        // Missing/auto duration → None (queue treats as $0 against cap).
+        assert_eq!(t2v.estimate_cost_usd(&json!({})), None);
+        assert_eq!(t2v.estimate_cost_usd(&json!({"duration": "auto"})), None);
     }
 
     #[test]

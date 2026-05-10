@@ -96,6 +96,12 @@ struct Inner {
     /// pub/sub system; no ad-hoc closures.
     event_bus: Arc<EventBus>,
     files_dir: PathBuf,
+    /// Daily USD cap. `None` = enforcement disabled (default). When set,
+    /// [`JobQueue::submit`] rejects requests whose
+    /// `today_cost_usd + provider.estimate_cost_usd(&params)` would exceed
+    /// the cap. The host (e.g. PlayaApp) writes this from its persisted
+    /// [`crate::JobsSettings`] each frame.
+    budget_cap: RwLock<Option<f64>>,
     work_queue: (Mutex<VecDeque<JobId>>, Condvar),
     update_tx: Sender<UpdateMsg>,
     shutdown: AtomicBool,
@@ -127,6 +133,7 @@ impl JobQueue {
             providers: RwLock::new(HashMap::new()),
             event_bus,
             files_dir: config.files_dir,
+            budget_cap: RwLock::new(None),
             work_queue: (Mutex::new(VecDeque::new()), Condvar::new()),
             update_tx,
             shutdown: AtomicBool::new(false),
@@ -305,15 +312,48 @@ impl JobQueue {
             .collect()
     }
 
+    /// Set (or clear) the daily USD budget cap. Pass `None` to disable
+    /// enforcement; pass `Some(x)` to reject submissions that would push
+    /// the day's cumulative cost past `x`. Cheap atomic write — safe to
+    /// call every frame from the UI thread.
+    pub fn set_budget_cap(&self, cap_usd: Option<f64>) {
+        *self.inner.budget_cap.write().unwrap() = cap_usd;
+    }
+
+    /// Read the active daily budget cap, if any.
+    pub fn budget_cap(&self) -> Option<f64> {
+        *self.inner.budget_cap.read().unwrap()
+    }
+
     pub fn submit(
         &self,
         kind: impl Into<String>,
         params: serde_json::Value,
     ) -> Result<JobId, JobError> {
         let kind = kind.into();
-        if !self.inner.providers.read().unwrap().contains_key(&kind) {
-            return Err(JobError::UnknownProvider(kind));
+        let provider = {
+            let providers = self.inner.providers.read().unwrap();
+            match providers.get(&kind) {
+                Some(p) => Arc::clone(p),
+                None => return Err(JobError::UnknownProvider(kind)),
+            }
+        };
+
+        // Pre-insert budget enforcement. Compute estimate BEFORE inserting
+        // the job into the map so a rejection is observable to the caller
+        // and leaves no orphan in `list()`. `today_cost_usd` walks the
+        // current map; the lock is dropped before the (potential) insert
+        // below to avoid holding two locks at once.
+        if let Some(cap) = self.budget_cap() {
+            let today_spent = self.stats().today_cost_usd;
+            let estimated = provider.estimate_cost_usd(&params).unwrap_or(0.0);
+            if today_spent + estimated > cap {
+                return Err(JobError::Provider(format!(
+                    "daily budget exceeded (${today_spent:.2} spent today + ${estimated:.2} estimated > ${cap:.2} cap)"
+                )));
+            }
         }
+
         let job = Job::new(kind, params);
         let id = job.id;
         let cancel = CancelToken::new();
@@ -982,6 +1022,62 @@ mod tests {
         // event_bus() returns a borrowed Arc — same underlying allocation as
         // the one passed to new().
         assert!(Arc::ptr_eq(q.event_bus(), &bus));
+        q.shutdown();
+    }
+
+    /// Provider that reports a fixed estimate per submit. Used to drive the
+    /// budget gate without exercising the actual run loop.
+    struct EstimatingProvider(f64);
+    impl JobProvider for EstimatingProvider {
+        fn kind(&self) -> &'static str {
+            "test.estimate"
+        }
+        fn run(
+            &self,
+            _ctx: &JobContext,
+            params: serde_json::Value,
+        ) -> Result<serde_json::Value, JobError> {
+            Ok(params)
+        }
+        fn estimate_cost_usd(&self, _params: &serde_json::Value) -> Option<f64> {
+            Some(self.0)
+        }
+    }
+
+    #[test]
+    fn submit_rejected_when_estimate_would_exceed_budget_cap() {
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EstimatingProvider(2.0));
+        q.set_budget_cap(Some(1.0));
+        let err = q
+            .submit("test.estimate", serde_json::json!({}))
+            .unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("daily budget exceeded"), "got: {msg}");
+        // Reject must not insert a tombstone-orphan into the map.
+        assert_eq!(q.list().len(), 0);
+        q.shutdown();
+    }
+
+    #[test]
+    fn submit_succeeds_when_budget_disabled_even_with_high_estimate() {
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EstimatingProvider(99999.0));
+        // Default cap is None (disabled).
+        assert!(q.budget_cap().is_none());
+        q.submit("test.estimate", serde_json::json!({})).unwrap();
+        q.shutdown();
+    }
+
+    #[test]
+    fn submit_succeeds_when_provider_has_no_estimate_impl() {
+        // EchoProvider does NOT override estimate_cost_usd — default returns
+        // None. With a cap set, that should be treated as $0 against the
+        // cap (favouring submit over false rejection).
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EchoProvider);
+        q.set_budget_cap(Some(0.01));
+        q.submit("echo", serde_json::json!({})).unwrap();
         q.shutdown();
     }
 
