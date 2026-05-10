@@ -217,6 +217,22 @@ pub struct PlayaApp {
     #[serde(skip)]
     pub submit_dialog: playa_jobs::ui::SubmitDialog,
 
+    /// Atomic mirror of [`playa_jobs::JobsSettings::auto_attach_mp4`] so the
+    /// `JobEvent::Completed` listener can read the live value without
+    /// holding any borrow on `&self`. Synced from `settings.jobs` once per
+    /// frame in `update()`.
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub auto_attach_enabled: Arc<std::sync::atomic::AtomicBool>,
+
+    /// Idempotency latch for [`Self::register_auto_attach_listener`]. Set
+    /// the first time we subscribe to `JobEvent::Completed` so re-running
+    /// `ensure_jobs_initialized` (or repeated boot paths) doesn't stack
+    /// multiple listeners on the same `EventBus`.
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub auto_attach_subscribed: bool,
+
     /// Pluggable preferences registry. Each module exposes a `pub fn render`
     /// for its slice of settings; the host registers an entry that calls
     /// that fn with `&mut SliceSettings` extracted from `AppSettings`.
@@ -326,6 +342,12 @@ impl Default for PlayaApp {
             jobs_panel: playa_jobs::ui::JobsPanel::new(),
             #[cfg(feature = "jobs")]
             submit_dialog: playa_jobs::ui::SubmitDialog::default(),
+            #[cfg(feature = "jobs")]
+            auto_attach_enabled: Arc::new(std::sync::atomic::AtomicBool::new(
+                playa_jobs::JobsSettings::default().auto_attach_mp4,
+            )),
+            #[cfg(feature = "jobs")]
+            auto_attach_subscribed: false,
             prefs_registry: {
                 let mut registry = playa_prefs::PrefsRegistry::<AppSettings>::new();
                 #[cfg(feature = "jobs")]
@@ -447,10 +469,43 @@ impl PlayaApp {
     /// resumes orphaned jobs once providers are registered.
     #[cfg(feature = "jobs")]
     pub fn ensure_jobs_initialized(&mut self) {
-        if self.job_queue.is_some() {
+        if self.job_queue.is_none() {
+            self.job_queue = build_default_job_queue(Arc::new(self.event_bus.clone()));
+        }
+        // Subscribe AFTER queue init so the EventBus is the same handle
+        // the queue emits through. Idempotent — see auto_attach_subscribed
+        // doc.
+        self.register_auto_attach_listener();
+    }
+
+    /// Subscribe a `JobEvent::Completed` listener that auto-attaches the
+    /// completed mp4 when the user has the setting enabled. The flag is
+    /// read AT EVENT TIME via [`Self::auto_attach_enabled`] so toggling
+    /// the preference takes effect for future jobs without re-subscribing.
+    /// Idempotent: a latch (`auto_attach_subscribed`) prevents stacking
+    /// multiple listeners on repeated calls.
+    ///
+    /// v1: logs the resolved mp4 path. Wiring it into the engine's
+    /// add-layer path is acceptable as v2 — the engine's `Project` mutators
+    /// generally aren't designed to be invoked from arbitrary subscriber
+    /// threads, so a clean implementation routes via mpsc channel back to
+    /// the UI thread's `update()`. That refactor is intentionally deferred.
+    #[cfg(feature = "jobs")]
+    fn register_auto_attach_listener(&mut self) {
+        if self.auto_attach_subscribed {
             return;
         }
-        self.job_queue = build_default_job_queue(Arc::new(self.event_bus.clone()));
+        let flag = Arc::clone(&self.auto_attach_enabled);
+        self.event_bus
+            .subscribe::<playa_jobs::JobEvent, _>(move |event| {
+                if let playa_jobs::JobEvent::Completed(id, value) = event
+                    && flag.load(std::sync::atomic::Ordering::Relaxed)
+                    && let Some(path) = value.get("mp4_path").and_then(|v| v.as_str())
+                {
+                    log::info!("auto-attach: job {id} mp4 ready at {path}");
+                }
+            });
+        self.auto_attach_subscribed = true;
     }
 
     /// Render the Jobs dock tab content. Pulls from `self.job_queue` if

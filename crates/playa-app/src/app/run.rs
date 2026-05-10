@@ -241,6 +241,15 @@ impl eframe::App for PlayaApp {
             queue.set_budget_cap(cap);
         }
 
+        // Mirror auto_attach_mp4 into the atomic the JobEvent::Completed
+        // listener reads. Toggling the preference takes effect for jobs
+        // that complete on or after the next frame.
+        #[cfg(feature = "jobs")]
+        self.auto_attach_enabled.store(
+            self.settings.jobs.auto_attach_mp4,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
         // Render the Submit dialog modal (jobs subsystem). Sits on top of the
         // dock so the form covers the panel that opened it. The dialog state
         // machine handles Submit/Cancel internally; on Submit we route to the
