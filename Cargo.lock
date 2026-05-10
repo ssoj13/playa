@@ -4146,6 +4146,7 @@ dependencies = [
  "playa-engine",
  "playa-events",
  "playa-io",
+ "playa-jobs-core",
  "playa-time",
  "rfd",
  "serde",

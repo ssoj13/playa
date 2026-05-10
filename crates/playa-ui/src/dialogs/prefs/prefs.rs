@@ -125,6 +125,14 @@ pub struct AppSettings {
     // Layouts (named UI configurations)
     pub layouts: HashMap<String, Layout>,
     pub current_layout: String,
+
+    /// Persisted user preferences for the jobs subsystem (daily budget cap,
+    /// auto-attach, retention). Lives on AppSettings so the pluggable
+    /// Preferences modal can register a single render closure that mutates
+    /// `&mut s.jobs` (see `playa_jobs::register_default_prefs`).
+    /// `#[serde(default)]` keeps existing playa.json saves loadable.
+    #[serde(default)]
+    pub jobs: playa_jobs_core::JobsSettings,
 }
 
 impl Default for AppSettings {
@@ -164,6 +172,7 @@ impl Default for AppSettings {
             api_server_port: Some(9876),
             layouts: HashMap::new(),
             current_layout: String::new(),
+            jobs: playa_jobs_core::JobsSettings::default(),
         }
     }
 }

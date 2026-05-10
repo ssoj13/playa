@@ -217,13 +217,6 @@ pub struct PlayaApp {
     #[serde(skip)]
     pub submit_dialog: playa_jobs::ui::SubmitDialog,
 
-    /// Persisted user preferences for the jobs subsystem (daily budget cap,
-    /// auto-attach, retention). Edited via the Jobs DockTab's Settings
-    /// section. Persists across restarts via eframe's serde.
-    #[cfg(feature = "jobs")]
-    #[serde(default)]
-    pub jobs_settings: playa_jobs::JobsSettings,
-
     /// Pluggable preferences registry. Each module exposes a `pub fn render`
     /// for its slice of settings; the host registers an entry that calls
     /// that fn with `&mut SliceSettings` extracted from `AppSettings`.
@@ -333,14 +326,15 @@ impl Default for PlayaApp {
             jobs_panel: playa_jobs::ui::JobsPanel::new(),
             #[cfg(feature = "jobs")]
             submit_dialog: playa_jobs::ui::SubmitDialog::default(),
-            #[cfg(feature = "jobs")]
-            jobs_settings: playa_jobs::JobsSettings::default(),
-            // Empty registry — entry-registration is gated on AppSettings
-            // having a `.jobs` slice, which is part of the deferred US-03b
-            // (slice-extraction refactor). Once AppSettings carries
-            // JobsSettings, this becomes:
-            //   playa_jobs::register_default_prefs(&mut prefs_registry, |s| &mut s.jobs);
-            prefs_registry: playa_prefs::PrefsRegistry::<AppSettings>::new(),
+            prefs_registry: {
+                let mut registry = playa_prefs::PrefsRegistry::<AppSettings>::new();
+                #[cfg(feature = "jobs")]
+                playa_jobs::register_default_prefs::<AppSettings>(
+                    &mut registry,
+                    |s: &mut AppSettings| &mut s.jobs,
+                );
+                registry
+            },
             prefs_window: playa_prefs::PrefsWindow::<AppSettings>::new(),
         }
     }
@@ -478,7 +472,7 @@ impl PlayaApp {
         // edit budget cap / auto-attach / retention. Persists via
         // `PlayaApp::jobs_settings` (eframe serde).
         ui.collapsing("⚙ Settings", |ui| {
-            playa_jobs::ui::prefs::render(ui, &mut self.jobs_settings);
+            playa_jobs::ui::prefs::render(ui, &mut self.settings.jobs);
         });
         ui.separator();
 

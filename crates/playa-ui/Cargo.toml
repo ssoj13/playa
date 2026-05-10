@@ -14,6 +14,7 @@ playa-engine = { path = "../playa-engine" }
 playa-events = { path = "../playa-events" }
 playa-io = { path = "../playa-io", default-features = false }
 playa-time = { workspace = true }
+playa-jobs-core = { path = "../playa-jobs-core", default-features = false }
 bytemuck = { workspace = true }
 eframe = { version = "0.33", default-features = false, features = [
     "accesskit",
