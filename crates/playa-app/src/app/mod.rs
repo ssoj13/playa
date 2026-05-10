@@ -233,6 +233,24 @@ pub struct PlayaApp {
     #[serde(skip)]
     pub auto_attach_subscribed: bool,
 
+    /// Producer end of the auto-attach hand-off. The listener captures a
+    /// clone and pushes resolved mp4 paths through it from whatever thread
+    /// the `EventBus` invokes callbacks on. `update()` drains the receiver
+    /// on the UI thread (where `Project` mutators are safe) and routes the
+    /// paths into [`Self::load_sequences`]. `None` until
+    /// `register_auto_attach_listener` builds the channel.
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub auto_attach_tx: Option<std::sync::mpsc::Sender<std::path::PathBuf>>,
+
+    /// Consumer end of the auto-attach hand-off. `Mutex<Option<...>>` so
+    /// it survives serde reload (default = `None`) and `register_…` can
+    /// install a fresh receiver after deserialize without re-implementing
+    /// `Default`. Drained per-frame in `update()`.
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub auto_attach_rx: Mutex<Option<std::sync::mpsc::Receiver<std::path::PathBuf>>>,
+
     /// Pluggable preferences registry. Each module exposes a `pub fn render`
     /// for its slice of settings; the host registers an entry that calls
     /// that fn with `&mut SliceSettings` extracted from `AppSettings`.
@@ -348,6 +366,10 @@ impl Default for PlayaApp {
             )),
             #[cfg(feature = "jobs")]
             auto_attach_subscribed: false,
+            #[cfg(feature = "jobs")]
+            auto_attach_tx: None,
+            #[cfg(feature = "jobs")]
+            auto_attach_rx: Mutex::new(None),
             prefs_registry: {
                 let mut registry = playa_prefs::PrefsRegistry::<AppSettings>::new();
                 #[cfg(feature = "jobs")]
@@ -479,22 +501,31 @@ impl PlayaApp {
     }
 
     /// Subscribe a `JobEvent::Completed` listener that auto-attaches the
-    /// completed mp4 when the user has the setting enabled. The flag is
-    /// read AT EVENT TIME via [`Self::auto_attach_enabled`] so toggling
-    /// the preference takes effect for future jobs without re-subscribing.
-    /// Idempotent: a latch (`auto_attach_subscribed`) prevents stacking
-    /// multiple listeners on repeated calls.
+    /// completed mp4 as a layer when the user has the setting enabled. The
+    /// flag is read AT EVENT TIME via [`Self::auto_attach_enabled`] so
+    /// toggling the preference takes effect for future jobs without
+    /// re-subscribing.
     ///
-    /// v1: logs the resolved mp4 path. Wiring it into the engine's
-    /// add-layer path is acceptable as v2 — the engine's `Project` mutators
-    /// generally aren't designed to be invoked from arbitrary subscriber
-    /// threads, so a clean implementation routes via mpsc channel back to
-    /// the UI thread's `update()`. That refactor is intentionally deferred.
+    /// Threading: `EventBus` callbacks may fire on any worker thread, and
+    /// `Project` mutators expect the UI thread. We hand the path through
+    /// an `mpsc` channel; `update()` drains it and calls
+    /// [`Self::load_sequences`] (same canonical import path as drag-drop).
+    ///
+    /// Idempotent: a latch (`auto_attach_subscribed`) prevents stacking
+    /// listeners on repeated calls. The channel is rebuilt fresh inside
+    /// this method so a post-deserialize re-init gets a working pair.
     #[cfg(feature = "jobs")]
     fn register_auto_attach_listener(&mut self) {
         if self.auto_attach_subscribed {
             return;
         }
+        let (tx, rx) = std::sync::mpsc::channel::<std::path::PathBuf>();
+        self.auto_attach_tx = Some(tx.clone());
+        *self
+            .auto_attach_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(rx);
+
         let flag = Arc::clone(&self.auto_attach_enabled);
         self.event_bus
             .subscribe::<playa_jobs::JobEvent, _>(move |event| {
@@ -502,10 +533,39 @@ impl PlayaApp {
                     && flag.load(std::sync::atomic::Ordering::Relaxed)
                     && let Some(path) = value.get("mp4_path").and_then(|v| v.as_str())
                 {
-                    log::info!("auto-attach: job {id} mp4 ready at {path}");
+                    let pb = std::path::PathBuf::from(path);
+                    log::info!("auto-attach: job {id} → queuing mp4 import: {pb:?}");
+                    // Receiver dropped means the app is shutting down; the
+                    // send error is non-fatal.
+                    let _ = tx.send(pb);
                 }
             });
         self.auto_attach_subscribed = true;
+    }
+
+    /// Drain the auto-attach receiver and route any queued mp4 paths into
+    /// `load_sequences`. Called once per frame from `update()`. Same
+    /// import path that drag-drop uses (`FileNode::detect_from_paths` →
+    /// add to media pool → activate as first sequence if no active comp).
+    #[cfg(feature = "jobs")]
+    pub fn drain_auto_attach_queue(&mut self) {
+        let paths: Vec<std::path::PathBuf> = {
+            let guard = self
+                .auto_attach_rx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let Some(rx) = guard.as_ref() else {
+                return;
+            };
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        if paths.is_empty() {
+            return;
+        }
+        log::info!("auto-attach: importing {} mp4 path(s)", paths.len());
+        if let Err(e) = self.load_sequences(paths) {
+            log::warn!("auto-attach: load_sequences failed: {e}");
+        }
     }
 
     /// Render the Jobs dock tab content. Pulls from `self.job_queue` if

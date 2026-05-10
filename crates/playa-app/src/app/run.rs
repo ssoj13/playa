@@ -250,6 +250,12 @@ impl eframe::App for PlayaApp {
             std::sync::atomic::Ordering::Relaxed,
         );
 
+        // Drain any mp4 paths the auto-attach listener queued from worker
+        // threads. Routes through `load_sequences`, the same import path
+        // drag-drop uses.
+        #[cfg(feature = "jobs")]
+        self.drain_auto_attach_queue();
+
         // Render the Submit dialog modal (jobs subsystem). Sits on top of the
         // dock so the form covers the panel that opened it. The dialog state
         // machine handles Submit/Cancel internally; on Submit we route to the
