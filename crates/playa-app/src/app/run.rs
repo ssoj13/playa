@@ -266,13 +266,19 @@ impl eframe::App for PlayaApp {
             match self.submit_dialog.show(ctx) {
                 SubmitDialogResult::Submit {
                     kind,
-                    params,
+                    params_batch,
                     auto_attach: _,
                 } => {
                     if let Some(queue) = self.job_queue.as_ref() {
-                        match queue.submit(kind, params) {
-                            Ok(id) => log::info!("Submitted job {id} (kind={kind})"),
-                            Err(e) => log::warn!("Submit failed: {e}"),
+                        let n = params_batch.len();
+                        for (i, params) in params_batch.into_iter().enumerate() {
+                            match queue.submit(kind, params) {
+                                Ok(id) => log::info!(
+                                    "Submitted job {id} (kind={kind}, {}/{n})",
+                                    i + 1
+                                ),
+                                Err(e) => log::warn!("Submit {} failed: {e}", i + 1),
+                            }
                         }
                     } else {
                         log::warn!(

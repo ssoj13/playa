@@ -44,6 +44,10 @@ pub struct SubmitDialog {
     pub generate_audio: bool,
     pub seed_text: String,
     pub auto_attach: bool,
+    /// When true, each non-empty line in `prompt` is submitted as a
+    /// separate job (same resolution/duration/etc, different prompts).
+    /// When false, the whole textarea is one prompt → one job.
+    pub batch_mode: bool,
 }
 
 impl Default for SubmitDialog {
@@ -59,6 +63,7 @@ impl Default for SubmitDialog {
             generate_audio: false,
             seed_text: String::new(),
             auto_attach: true,
+            batch_mode: false,
         }
     }
 }
@@ -67,11 +72,13 @@ impl Default for SubmitDialog {
 pub enum SubmitDialogResult {
     /// No interaction this frame.
     None,
-    /// User clicked Submit. Body suitable to pass to
-    /// [`playa_jobs_core::JobQueue::submit`].
+    /// User clicked Submit. `params_batch` always has ≥1 entry — a
+    /// single-job submit produces a 1-elem Vec, a batch submit
+    /// produces N. Caller loops and calls
+    /// [`playa_jobs_core::JobQueue::submit`] once per entry.
     Submit {
         kind: &'static str,
-        params: Value,
+        params_batch: Vec<Value>,
         auto_attach: bool,
     },
     /// User clicked Cancel or `[x]`.
@@ -88,9 +95,13 @@ impl SubmitDialog {
     }
 
     /// Check if input is ready for Submit (caller can use this to gray out
-    /// the Submit button server-side).
+    /// the Submit button server-side). Batch mode also requires at least
+    /// one non-empty prompt line.
     pub fn is_valid(&self) -> bool {
         if self.prompt.trim().is_empty() {
+            return false;
+        }
+        if self.batch_mode && self.batch_prompts().is_empty() {
             return false;
         }
         if self.endpoint == SubmitEndpoint::ImageToVideo && self.image_url.trim().is_empty() {
@@ -102,15 +113,55 @@ impl SubmitDialog {
         true
     }
 
+    /// Cost estimate for a single job in this configuration. Use
+    /// [`Self::cost_estimate_batch_usd`] for batch totals.
     pub fn cost_estimate_usd(&self) -> f64 {
         self.endpoint.cost_per_sec_usd() * self.duration_secs as f64
     }
 
-    /// Build the JSON params body for the chosen endpoint. Caller passes
-    /// this to `JobQueue::submit(self.endpoint.kind(), params)`.
+    /// Total cost across all jobs that Submit would queue (1 in single
+    /// mode, N in batch mode where N = non-empty prompt lines).
+    pub fn cost_estimate_batch_usd(&self) -> f64 {
+        let n = if self.batch_mode {
+            self.batch_prompts().len().max(1)
+        } else {
+            1
+        };
+        self.cost_estimate_usd() * n as f64
+    }
+
+    /// Non-empty trimmed prompt lines when batch mode is on. Empty when
+    /// the textarea has no usable content.
+    pub fn batch_prompts(&self) -> Vec<String> {
+        self.prompt
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect()
+    }
+
+    /// Build a one-job params body using the current `prompt` field
+    /// verbatim. For batch dispatch use [`Self::build_params_batch`].
     pub fn build_params(&self) -> Value {
+        self.build_params_with(self.prompt.clone())
+    }
+
+    /// Build the params batch suitable for dispatching to the queue.
+    /// Returns a 1-elem `Vec` when [`Self::batch_mode`] is off; otherwise
+    /// one entry per non-empty prompt line.
+    pub fn build_params_batch(&self) -> Vec<Value> {
+        if !self.batch_mode {
+            return vec![self.build_params()];
+        }
+        self.batch_prompts()
+            .into_iter()
+            .map(|p| self.build_params_with(p))
+            .collect()
+    }
+
+    fn build_params_with(&self, prompt: String) -> Value {
         let mut obj = serde_json::Map::new();
-        obj.insert("prompt".into(), Value::String(self.prompt.clone()));
+        obj.insert("prompt".into(), Value::String(prompt));
         obj.insert("resolution".into(), Value::String(self.resolution.clone()));
         match self.endpoint {
             SubmitEndpoint::ImageToVideo => {
@@ -213,23 +264,47 @@ impl SubmitDialog {
                 });
 
                 ui.checkbox(&mut self.auto_attach, "Auto-attach mp4 to active comp on completion");
+                ui.checkbox(
+                    &mut self.batch_mode,
+                    "Batch — one job per non-empty prompt line",
+                );
                 ui.add_space(8.0);
 
                 ui.separator();
-                ui.label(format!(
-                    "Estimated cost: ${:.2} USD ({} × {} s, standard tier)",
-                    self.cost_estimate_usd(),
-                    self.resolution,
-                    self.duration_secs,
-                ));
+                let batch_n = if self.batch_mode {
+                    self.batch_prompts().len()
+                } else {
+                    1
+                };
+                if self.batch_mode && batch_n != 1 {
+                    ui.label(format!(
+                        "Batch: {batch_n} jobs × ${:.2} = ${:.2} USD ({} × {} s)",
+                        self.cost_estimate_usd(),
+                        self.cost_estimate_batch_usd(),
+                        self.resolution,
+                        self.duration_secs,
+                    ));
+                } else {
+                    ui.label(format!(
+                        "Estimated cost: ${:.2} USD ({} × {} s, standard tier)",
+                        self.cost_estimate_usd(),
+                        self.resolution,
+                        self.duration_secs,
+                    ));
+                }
 
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let valid = self.is_valid();
-                    if ui.add_enabled(valid, egui::Button::new("Submit")).clicked() {
+                    let label = if self.batch_mode && batch_n > 1 {
+                        format!("Submit ({batch_n})")
+                    } else {
+                        "Submit".to_string()
+                    };
+                    if ui.add_enabled(valid, egui::Button::new(label)).clicked() {
                         result = SubmitDialogResult::Submit {
                             kind: self.endpoint.kind(),
-                            params: self.build_params(),
+                            params_batch: self.build_params_batch(),
                             auto_attach: self.auto_attach,
                         };
                     }
@@ -382,5 +457,54 @@ mod tests {
     fn endpoint_kind_strings() {
         assert_eq!(SubmitEndpoint::ImageToVideo.kind(), "seedance.image_to_video");
         assert_eq!(SubmitEndpoint::TextToVideo.kind(), "seedance.text_to_video");
+    }
+
+    #[test]
+    fn single_mode_emits_one_entry_batch() {
+        // Default (batch off) wraps build_params in a 1-elem Vec —
+        // caller code can loop uniformly without branching on mode.
+        let mut d = SubmitDialog::default();
+        d.prompt = "a single take".into();
+        let batch = d.build_params_batch();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch[0]["prompt"], "a single take");
+        assert!(!d.batch_mode);
+    }
+
+    #[test]
+    fn batch_mode_splits_prompt_into_separate_jobs() {
+        let mut d = SubmitDialog::default();
+        d.batch_mode = true;
+        d.prompt = "alpha\nbeta\n\n  gamma  \n".into();
+        let batch = d.build_params_batch();
+        assert_eq!(batch.len(), 3, "blank line dropped, whitespace trimmed");
+        assert_eq!(batch[0]["prompt"], "alpha");
+        assert_eq!(batch[1]["prompt"], "beta");
+        assert_eq!(batch[2]["prompt"], "gamma");
+        // Other params are shared across the batch.
+        for entry in &batch {
+            assert_eq!(entry["resolution"], d.resolution);
+        }
+    }
+
+    #[test]
+    fn batch_cost_estimate_scales_with_count() {
+        let mut d = SubmitDialog::default();
+        d.batch_mode = true;
+        d.prompt = "one\ntwo\nthree".into();
+        let single = d.cost_estimate_usd();
+        let total = d.cost_estimate_batch_usd();
+        assert!((total - single * 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn batch_with_only_blank_lines_is_invalid() {
+        let mut d = SubmitDialog::default();
+        d.batch_mode = true;
+        d.prompt = "   \n\n  \t  ".into();
+        assert!(
+            !d.is_valid(),
+            "batch needs ≥1 non-empty line — whitespace-only is rejected"
+        );
     }
 }
