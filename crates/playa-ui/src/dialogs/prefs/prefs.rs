@@ -40,6 +40,61 @@ impl SettingsCategory {
     }
 }
 
+/// Viewport hover/selection highlight settings. Slice of [`AppSettings`]
+/// flattened via `#[serde(flatten)]` for back-compat with legacy
+/// playa.json saves.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ViewportSettings {
+    pub viewport_hover_highlight: bool,
+    /// Highlight selected layer in Move/Rotate/Scale tool modes.
+    pub tools_selection_highlight: bool,
+    pub hover_stroke_width: f32,
+    pub hover_corner_length: f32,
+    pub hover_opacity: f32,
+}
+
+impl Default for ViewportSettings {
+    fn default() -> Self {
+        Self {
+            viewport_hover_highlight: true,
+            tools_selection_highlight: true,
+            hover_stroke_width: 2.0,
+            hover_corner_length: 20.0,
+            hover_opacity: 0.5,
+        }
+    }
+}
+
+/// Timeline layout + behaviour settings. Slice of [`AppSettings`]
+/// flattened via `#[serde(flatten)]` for back-compat.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct TimelineSettings {
+    /// Layer row height in timeline (default 30.0).
+    pub timeline_layer_height: f32,
+    /// Name column width in outline (default 80.0).
+    pub timeline_name_column_width: f32,
+    /// Fine-tune outline vertical alignment with canvas.
+    pub timeline_outline_top_offset: f32,
+    pub timeline_snap_enabled: bool,
+    pub timeline_lock_work_area: bool,
+    pub timeline_hover_highlight: bool,
+}
+
+impl Default for TimelineSettings {
+    fn default() -> Self {
+        Self {
+            timeline_layer_height: 30.0,
+            timeline_name_column_width: 80.0,
+            timeline_outline_top_offset: 42.0,
+            timeline_snap_enabled: true,
+            timeline_lock_work_area: false,
+            timeline_hover_highlight: false,
+        }
+    }
+}
+
 /// Cache-related settings. Slice of [`AppSettings`] flattened into the
 /// parent via `#[serde(flatten)]` so existing `playa.json` saves
 /// (which store these fields at top level) load unchanged.
@@ -143,17 +198,16 @@ pub struct AppSettings {
     pub show_tooltips: bool,      // Show tooltips on toolbar controls (2s delay)
     pub dark_mode: bool,
     pub font_size: f32,
-    pub timeline_layer_height: f32, // Layer row height in timeline (default 32.0)
-    pub timeline_name_column_width: f32, // Name column width in outline (default 150.0)
-    pub timeline_outline_top_offset: f32, // Fine-tune outline vertical alignment with canvas
-    pub timeline_snap_enabled: bool,
-    pub timeline_lock_work_area: bool,
-    pub viewport_hover_highlight: bool,
-    pub tools_selection_highlight: bool, // Show highlight for selected layer in Move/Rotate/Scale modes
-    pub timeline_hover_highlight: bool,
-    pub hover_stroke_width: f32,
-    pub hover_corner_length: f32,
-    pub hover_opacity: f32,
+
+    /// Timeline slice (layer height, name column, snap/lock flags etc.) —
+    /// flattens to legacy top-level `timeline_*` keys.
+    #[serde(flatten)]
+    pub timeline: TimelineSettings,
+
+    /// Viewport hover/selection slice — flattens to legacy
+    /// `viewport_hover_highlight`, `tools_selection_highlight`, `hover_*`.
+    #[serde(flatten)]
+    pub viewport: ViewportSettings,
 
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
@@ -202,17 +256,8 @@ impl Default for AppSettings {
             show_tooltips: true,
             dark_mode: true,
             font_size: 11.0,
-            timeline_layer_height: 30.0,
-            timeline_name_column_width: 80.0,
-            timeline_outline_top_offset: 42.0, // fine-tuned for alignment with canvas
-            timeline_snap_enabled: true,
-            timeline_lock_work_area: false,
-            viewport_hover_highlight: true,
-            tools_selection_highlight: true,
-            timeline_hover_highlight: false,
-            hover_stroke_width: 2.0,
-            hover_corner_length: 20.0,
-            hover_opacity: 0.5,
+            timeline: TimelineSettings::default(),
+            viewport: ViewportSettings::default(),
             workers_override: 0,
             cache: CacheSettings::default(),
             compositor_backend: CompositorBackend::default(),
@@ -312,7 +357,7 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 
     ui.label("Timeline Layer Height:");
     ui.add(
-        egui::Slider::new(&mut settings.timeline_layer_height, 20.0..=64.0)
+        egui::Slider::new(&mut settings.timeline.timeline_layer_height, 20.0..=64.0)
             .suffix(" px")
             .step_by(2.0),
     );
@@ -320,7 +365,7 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 
     ui.label("Timeline Name Column Width:");
     ui.add(
-        egui::Slider::new(&mut settings.timeline_name_column_width, 80.0..=300.0)
+        egui::Slider::new(&mut settings.timeline.timeline_name_column_width, 80.0..=300.0)
             .suffix(" px")
             .step_by(10.0),
     );
@@ -328,7 +373,7 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 
     ui.label("Timeline Outline Top Offset:");
     ui.add(
-        egui::Slider::new(&mut settings.timeline_outline_top_offset, 0.0..=120.0)
+        egui::Slider::new(&mut settings.timeline.timeline_outline_top_offset, 0.0..=120.0)
             .suffix(" px")
             .step_by(1.0),
     );
@@ -340,21 +385,21 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
         "Show Tooltips (2s delay on toolbar controls)",
     );
     ui.checkbox(
-        &mut settings.viewport_hover_highlight,
+        &mut settings.viewport.viewport_hover_highlight,
         "Viewport hover highlight (Select mode)",
     );
     ui.checkbox(
-        &mut settings.tools_selection_highlight,
+        &mut settings.viewport.tools_selection_highlight,
         "Tools selection highlight (Move/Rotate/Scale)",
     );
     ui.checkbox(
-        &mut settings.timeline_hover_highlight,
+        &mut settings.timeline.timeline_hover_highlight,
         "Timeline hover highlight",
     );
     ui.horizontal(|ui| {
         ui.label("Hover stroke:");
         ui.add(
-            egui::Slider::new(&mut settings.hover_stroke_width, 1.0..=5.0)
+            egui::Slider::new(&mut settings.viewport.hover_stroke_width, 1.0..=5.0)
                 .suffix("px")
                 .step_by(0.5),
         );
@@ -362,14 +407,14 @@ fn render_ui_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.horizontal(|ui| {
         ui.label("Hover corner:");
         ui.add(
-            egui::Slider::new(&mut settings.hover_corner_length, 5.0..=50.0)
+            egui::Slider::new(&mut settings.viewport.hover_corner_length, 5.0..=50.0)
                 .suffix("px")
                 .step_by(1.0),
         );
     });
     ui.horizontal(|ui| {
         ui.label("Hover opacity:");
-        ui.add(egui::Slider::new(&mut settings.hover_opacity, 0.1..=1.0).step_by(0.1));
+        ui.add(egui::Slider::new(&mut settings.viewport.hover_opacity, 0.1..=1.0).step_by(0.1));
     });
 
     ui.add_space(16.0);
@@ -729,5 +774,68 @@ mod tests {
             Some(80.0)
         );
         assert!(json.get("cache").is_none(), "must NOT nest under 'cache'");
+    }
+
+    #[test]
+    fn legacy_top_level_viewport_fields_load_into_slice() {
+        let legacy = r#"{
+            "viewport_hover_highlight": false,
+            "tools_selection_highlight": false,
+            "hover_stroke_width": 4.0,
+            "hover_corner_length": 30.0,
+            "hover_opacity": 0.75
+        }"#;
+        let s: AppSettings = serde_json::from_str(legacy).expect("legacy JSON parses");
+        assert!(!s.viewport.viewport_hover_highlight);
+        assert!(!s.viewport.tools_selection_highlight);
+        assert_eq!(s.viewport.hover_stroke_width, 4.0);
+        assert_eq!(s.viewport.hover_corner_length, 30.0);
+        assert_eq!(s.viewport.hover_opacity, 0.75);
+    }
+
+    #[test]
+    fn legacy_top_level_timeline_fields_load_into_slice() {
+        let legacy = r#"{
+            "timeline_layer_height": 40.0,
+            "timeline_name_column_width": 200.0,
+            "timeline_outline_top_offset": 50.0,
+            "timeline_snap_enabled": false,
+            "timeline_lock_work_area": true,
+            "timeline_hover_highlight": true
+        }"#;
+        let s: AppSettings = serde_json::from_str(legacy).expect("legacy JSON parses");
+        assert_eq!(s.timeline.timeline_layer_height, 40.0);
+        assert_eq!(s.timeline.timeline_name_column_width, 200.0);
+        assert_eq!(s.timeline.timeline_outline_top_offset, 50.0);
+        assert!(!s.timeline.timeline_snap_enabled);
+        assert!(s.timeline.timeline_lock_work_area);
+        assert!(s.timeline.timeline_hover_highlight);
+    }
+
+    #[test]
+    fn all_slices_serialize_flat_combined() {
+        // Frozen sanity: every slice's fields appear at the top level in
+        // one serialized AppSettings. Catches regressions where a future
+        // refactor accidentally drops a #[serde(flatten)].
+        let s = AppSettings::default();
+        let json = serde_json::to_value(&s).unwrap();
+        for key in &[
+            "fps_base",
+            "preload_radius",
+            "cache_memory_percent",
+            "cache_strategy",
+            "viewport_hover_highlight",
+            "hover_opacity",
+            "timeline_layer_height",
+            "timeline_snap_enabled",
+        ] {
+            assert!(json.get(key).is_some(), "missing legacy top-level key {key}");
+        }
+        for nested in &["playback", "cache", "viewport", "timeline"] {
+            assert!(
+                json.get(nested).is_none(),
+                "must NOT nest under {nested}"
+            );
+        }
     }
 }

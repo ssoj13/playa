@@ -38,8 +38,8 @@ impl PlayaApp {
     /// Syncs timeline toggles from settings, handles shader changes.
     pub fn render_timeline_tab(&mut self, ui: &mut egui::Ui) {
         // Sync timeline toggles from settings
-        self.timeline_state.snap_enabled = self.settings.timeline_snap_enabled;
-        self.timeline_state.lock_work_area = self.settings.timeline_lock_work_area;
+        self.timeline_state.snap_enabled = self.settings.timeline.timeline_snap_enabled;
+        self.timeline_state.lock_work_area = self.settings.timeline.timeline_lock_work_area;
 
         // Collect layout names for ComboBox
         let layout_names: Vec<String> = self.settings.layouts.keys().cloned().collect();
@@ -53,12 +53,12 @@ impl PlayaApp {
             &mut self.timeline_state,
             &self.event_bus,
             self.settings.show_tooltips,
-            self.settings.timeline_layer_height,
-            self.settings.timeline_name_column_width,
-            self.settings.timeline_outline_top_offset,
+            self.settings.timeline.timeline_layer_height,
+            self.settings.timeline.timeline_name_column_width,
+            self.settings.timeline.timeline_outline_top_offset,
             &layout_names,
             &self.settings.current_layout,
-            self.settings.timeline_hover_highlight,
+            self.settings.timeline.timeline_hover_highlight,
         );
 
         // Store hover state for input routing
@@ -124,11 +124,11 @@ impl PlayaApp {
             self.show_help,
             self.is_fullscreen,
             texture_needs_upload,
-            self.settings.viewport_hover_highlight,
-            self.settings.tools_selection_highlight,
-            self.settings.hover_stroke_width,
-            self.settings.hover_corner_length,
-            self.settings.hover_opacity,
+            self.settings.viewport.viewport_hover_highlight,
+            self.settings.viewport.tools_selection_highlight,
+            self.settings.viewport.hover_stroke_width,
+            self.settings.viewport.hover_corner_length,
+            self.settings.viewport.hover_opacity,
         );
         self.last_render_time_ms = render_time;
 
@@ -141,8 +141,8 @@ impl PlayaApp {
         }
 
         // Persist timeline options back to settings
-        self.settings.timeline_snap_enabled = self.timeline_state.snap_enabled;
-        self.settings.timeline_lock_work_area = self.timeline_state.lock_work_area;
+        self.settings.timeline.timeline_snap_enabled = self.timeline_state.snap_enabled;
+        self.settings.timeline.timeline_lock_work_area = self.timeline_state.lock_work_area;
     }
 
     /// Render node editor tab (composition as node graph).
