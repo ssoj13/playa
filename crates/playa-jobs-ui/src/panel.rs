@@ -268,7 +268,20 @@ impl JobsPanel {
                             if let Some(err) = &job.error {
                                 ui.colored_label(Color32::from_rgb(220, 60, 60), err);
                             } else if let Some(progress) = &job.progress {
-                                ui.label(progress.message.as_deref().unwrap_or(&progress.stage));
+                                let label = progress.message.as_deref().unwrap_or(&progress.stage);
+                                if let Some(frac) = progress.fraction {
+                                    // Render a real progress bar when the
+                                    // provider supplied a fraction. fal
+                                    // status polls don't always include one
+                                    // — falls back to plain text below.
+                                    ui.add(
+                                        egui::ProgressBar::new(frac.clamp(0.0, 1.0))
+                                            .text(label.to_string())
+                                            .desired_width(ui.available_width().min(220.0)),
+                                    );
+                                } else {
+                                    ui.label(label);
+                                }
                             } else if matches!(job.state, JobState::Complete) {
                                 if ui
                                     .add(egui::Button::new("Reveal mp4").sense(Sense::click()))

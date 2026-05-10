@@ -506,7 +506,23 @@ impl<'a> TabViewer for DockTabs<'a> {
             DockTab::Attributes => "Attributes".into(),
             DockTab::NodeEditor => "Node Editor".into(),
             #[cfg(feature = "jobs")]
-            DockTab::Jobs => "Jobs".into(),
+            DockTab::Jobs => {
+                // Append active-job count to the tab title so the user
+                // sees background generation activity without switching
+                // to the Jobs tab. Counts non-terminal jobs from the
+                // queue stats; 0 → plain "Jobs".
+                let active = self
+                    .app
+                    .job_queue
+                    .as_ref()
+                    .map(|q| q.stats().queue_depth)
+                    .unwrap_or(0);
+                if active > 0 {
+                    format!("Jobs ({active})").into()
+                } else {
+                    "Jobs".into()
+                }
+            }
         }
     }
 
