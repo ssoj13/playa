@@ -6,6 +6,85 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased] — `dev` branch
 
+### Wave 7-pre Round 2 — pluggable Preferences modal + budget gate + auto-attach hook
+
+Closes the four deferred items from `progress.txt`'s "NEXT SESSION
+PICKUP" block. Five commits on `dev` (`975acf1` → `1f775d4`); 158/158
+tests across 6 crates green; `cargo check -p playa-app` green default
++ `--no-default-features`. Architect verdict: **APPROVED**.
+
+- **US-12 (`975acf1`) — `AppSettings` `Clone+PartialEq` cascade +
+  `PrefsWindow` modal lifecycle.** Adds `Clone+PartialEq` to
+  `AppSettings`, `Layout`, and the 13-struct cascade in
+  `playa-ui::dialogs::encode` (`EncodeDialogSettings`,
+  `H264/H265/ProRes/AV1Settings`, `CodecSettings`,
+  `Sequence{,Format}Settings`, `{Exr,Png,Jpeg,Tiff,Tga}SequenceSettings`)
+  so `playa_prefs::PrefsWindow<AppSettings>` can keep a working copy
+  and detect dirty state for the **Apply** button. `PlayaApp` carries
+  `prefs_window: PrefsWindow<AppSettings>`; `update()` calls `show()`
+  once per frame. **`Ctrl+,`** opens the modal via direct
+  `ctx.input` check (no event-factory hop); the legacy `F12 →
+  ToggleSettingsEvent` window keeps working while migration unfolds.
+  No top menu bar exists in this app, so an `Edit > Preferences…`
+  item was deliberately omitted as gold-plating.
+
+- **US-13 (`18fb2d0`) — `AppSettings.jobs` slice +
+  `register_default_prefs`.** `playa-ui` takes a direct path-dep on
+  `playa-jobs-core` (default-features off — type is feature-agnostic);
+  `AppSettings` gains `pub jobs: JobsSettings` with `#[serde(default)]`
+  for backwards-compat with existing `playa.json` saves. `PlayaApp`
+  drops the standalone `jobs_settings` field; `render_jobs_tab` reads
+  `&mut self.settings.jobs`. `PlayaApp::default` registers the default
+  prefs entry under `cfg(feature = "jobs")` via
+  `playa_jobs::register_default_prefs(&mut registry, |s| &mut s.jobs)`.
+  The "Jobs & Rendering" panel now appears in the Preferences modal.
+
+- **US-14 (`4d429f8`) — daily budget enforcement at
+  `JobQueue::submit`.** New `JobProvider::estimate_cost_usd(&Value) ->
+  Option<f64>` trait method (default `None`). `SeedanceProvider`
+  implements it parsing duration (int for i2v at $0.3024/s, str for
+  t2v at $0.3034/s) — same accounting `report_cost_from_params` emits
+  post-completion. `JobQueue` gains
+  `budget_cap: RwLock<Option<f64>>` + `set_budget_cap()` / `budget_cap()`.
+  `submit()` now resolves the provider via `Arc::clone`, computes
+  `today_spent + estimated`, and rejects with
+  `JobError::Provider("daily budget exceeded ($X.YZ today + $A.BC
+  estimated > $D.EF cap)")` when the sum would exceed the cap; the
+  rejected job is **never** inserted into the map (no orphan in
+  `list()`). `PlayaApp.update()` writes
+  `queue.set_budget_cap(if enabled { Some(cap) } else { None })` per
+  frame from `settings.jobs.{daily_budget_enabled, daily_budget_usd}`.
+  Provider with no estimate impl → counted as $0 against the cap
+  (favours submit over false rejection). +3 tests in playa-jobs-core
+  (45 → 48), +1 in playa-job-seedance (18 → 19).
+
+- **US-15 (`6fc2fc2`) — `auto_attach_mp4` listener (subscribe to
+  `JobEvent::Completed`).** `PlayaApp` registers an EventBus subscriber
+  on jobs init (idempotent via an `auto_attach_subscribed` latch). The
+  handler reads `auto_attach_enabled` — an `Arc<AtomicBool>` mirror of
+  `settings.jobs.auto_attach_mp4` synced from `update()` each frame —
+  so toggling the preference takes effect for future jobs without
+  re-subscribing. v1 logs `auto-attach: job {id} mp4 ready at {path}`;
+  full `Project::add_layer_from_file` integration is intentionally
+  deferred to v2 (engine `Project` mutators aren't designed to be
+  invoked from arbitrary subscriber threads — clean implementation
+  routes via mpsc back to the UI thread). Subscription happens via
+  `ensure_jobs_initialized` (`runner.rs:192`) so both fresh-boot and
+  post-deserialize paths re-subscribe (the global `event_bus` is
+  `#[serde(skip)]`, so all subscribers are lost on reload).
+
+- **`1f775d4` — deslop pass.** Two minor cleanups: stale comment in
+  `render_jobs_tab` ("until a full Preferences modal lands" / "Persists
+  via `PlayaApp.jobs_settings`") replaced with live behaviour; one
+  redundant what-it-does comment dropped above the
+  `prefs_window.show` match.
+
+Remaining deferred from `progress.txt`: **US-03b** (Viewport / Cache /
+Playback / Hotkey slice extraction with `#[serde(flatten)]` for
+back-compat — gold-plating relative to jobs goal; tackle when
+independently motivated) and `gsd-extract-learnings` to convert
+`progress.txt` + `.bughunt/plan1.md` into wiki entries.
+
 ### Pinned vcpkg FFmpeg via manifest mode
 
 `vcpkg.json` + `vcpkg-configuration.json` at the workspace root lock
