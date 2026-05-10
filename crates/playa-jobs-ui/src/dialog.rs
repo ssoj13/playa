@@ -48,6 +48,11 @@ pub struct SubmitDialog {
     /// separate job (same resolution/duration/etc, different prompts).
     /// When false, the whole textarea is one prompt → one job.
     pub batch_mode: bool,
+    /// Set by the "📸 Snapshot current frame" button in i2v mode. The
+    /// host (PlayaApp) sees this in `update()` and performs the actual
+    /// snapshot (it has access to the player / project / frame); after
+    /// it fills `image_url` it clears this flag.
+    pub snapshot_requested: bool,
 }
 
 impl Default for SubmitDialog {
@@ -64,6 +69,7 @@ impl Default for SubmitDialog {
             seed_text: String::new(),
             auto_attach: true,
             batch_mode: false,
+            snapshot_requested: false,
         }
     }
 }
@@ -230,7 +236,20 @@ impl SubmitDialog {
                 if self.endpoint == SubmitEndpoint::ImageToVideo {
                     ui.horizontal(|ui| {
                         ui.label("Image URL:");
-                        ui.text_edit_singleline(&mut self.image_url);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.image_url)
+                                .desired_width(ui.available_width() - 180.0),
+                        );
+                        if ui
+                            .button("📸 Snapshot current frame")
+                            .on_hover_text(
+                                "Capture the active comp's current frame as a JPEG, \
+                                 import it into the project, and use it as the i2v reference.",
+                            )
+                            .clicked()
+                        {
+                            self.snapshot_requested = true;
+                        }
                     });
                     ui.add_space(4.0);
                 }

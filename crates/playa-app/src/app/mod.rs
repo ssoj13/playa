@@ -10,6 +10,7 @@ mod events;
 mod layout;
 mod project_io;
 mod run;
+mod snapshot;
 mod tabs;
 
 pub use tabs::DockTabs;

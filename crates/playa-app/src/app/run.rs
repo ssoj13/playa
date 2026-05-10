@@ -263,6 +263,24 @@ impl eframe::App for PlayaApp {
         #[cfg(feature = "jobs")]
         {
             use playa_jobs::ui::SubmitDialogResult;
+            // Handle snapshot button before show() so the dialog can
+            // display the filled image_url on the same frame the user
+            // clicked the button. capture_raw_frame walks the active
+            // comp's decoded frame (NOT the viewport — no UI chrome).
+            if self.submit_dialog.snapshot_requested {
+                self.submit_dialog.snapshot_requested = false;
+                match self.snapshot_current_frame() {
+                    Ok(snap) => {
+                        log::info!(
+                            "Snapshot ready: {} ({} bytes data URL)",
+                            snap.path.display(),
+                            snap.data_url.len()
+                        );
+                        self.submit_dialog.image_url = snap.data_url;
+                    }
+                    Err(e) => log::warn!("Snapshot failed: {e}"),
+                }
+            }
             match self.submit_dialog.show(ctx) {
                 SubmitDialogResult::Submit {
                     kind,

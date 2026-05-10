@@ -4032,6 +4032,7 @@ name = "playa-app"
 version = "0.1.142"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "const_format",
  "crossbeam-channel",

@@ -44,6 +44,7 @@ wgpu = { workspace = true }
 scanseq = "0.1.5"
 const_format = "0.2"
 crossbeam-channel = "0.5"
+base64 = "0.22"
 dirs-next = "2.0"
 num_cpus = "1.17"
 opener = "0.7"
