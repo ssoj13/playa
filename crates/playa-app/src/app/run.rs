@@ -139,10 +139,10 @@ impl eframe::App for PlayaApp {
 
         // Sync preload delay from settings and check debounced preloader
         self.debounced_preloader
-            .set_delay(self.settings.preload_delay_ms);
+            .set_delay(self.settings.playback.preload_delay_ms);
         if let Some(_comp_uuid) = self.debounced_preloader.tick() {
             // Delayed preload triggered - load full radius around playhead
-            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+            self.enqueue_frame_loads_around_playhead(self.settings.playback.preload_radius);
         }
 
         // Handle drag-and-drop files/folders - queue for async loading
@@ -362,8 +362,8 @@ impl eframe::App for PlayaApp {
     /// Save app state to persistent storage.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // Gather all settings from components
-        self.settings.fps_base = self.player.fps_base();
-        self.settings.loop_enabled = self.player.loop_enabled();
+        self.settings.playback.fps_base = self.player.fps_base();
+        self.settings.playback.loop_enabled = self.player.loop_enabled();
         self.settings.current_shader = self.shader_manager.current_shader.clone();
         self.settings.show_help = self.show_help;
         self.settings.show_playlist = self.show_playlist;
@@ -374,7 +374,7 @@ impl eframe::App for PlayaApp {
             storage.set_string(eframe::APP_KEY, json);
             trace!(
                 "App state saved: FPS={}, Loop={}, Shader={}",
-                self.settings.fps_base, self.settings.loop_enabled, self.settings.current_shader
+                self.settings.playback.fps_base, self.settings.playback.loop_enabled, self.settings.current_shader
             );
         }
     }

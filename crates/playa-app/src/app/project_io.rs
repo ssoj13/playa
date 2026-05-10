@@ -87,7 +87,7 @@ impl PlayaApp {
                     );
                     self.node_editor_state.set_comp(uuid);
                     self.node_editor_state.mark_dirty();
-                    self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+                    self.enqueue_frame_loads_around_playhead(self.settings.playback.preload_radius);
                 }
 
                 self.error_msg = None;

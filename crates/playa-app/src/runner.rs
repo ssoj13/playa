@@ -201,17 +201,17 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Apply persisted settings to components
-            app.player.set_fps_base(app.settings.fps_base);
-            app.player.set_fps_play(app.settings.fps_base);
-            app.player.set_loop_enabled(app.settings.loop_enabled);
+            app.player.set_fps_base(app.settings.playback.fps_base);
+            app.player.set_fps_play(app.settings.playback.fps_base);
+            app.player.set_loop_enabled(app.settings.playback.loop_enabled);
             app.shader_manager.current_shader = app.settings.current_shader.clone();
             app.show_help = app.settings.show_help;
             app.show_playlist = app.settings.show_playlist;
             app.show_attributes_editor = app.settings.show_attributes_editor;
             info!(
                 "Applied settings: FPS={}, Loop={}, Shader={}, Help={}",
-                app.settings.fps_base,
-                app.settings.loop_enabled,
+                app.settings.playback.fps_base,
+                app.settings.playback.loop_enabled,
                 app.settings.current_shader,
                 app.show_help
             );

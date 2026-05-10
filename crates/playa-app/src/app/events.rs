@@ -43,7 +43,7 @@ impl PlayaApp {
                     "Comp {} frame changed: {} → {}",
                     e.comp_uuid, e.old_frame, e.new_frame
                 );
-                self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+                self.enqueue_frame_loads_around_playhead(self.settings.playback.preload_radius);
                 continue;
             }
             if let Some(e) = downcast_event::<LayersChangedEvent>(&event) {
@@ -260,7 +260,7 @@ impl PlayaApp {
             info!("Created new text: {}", uuid);
         }
         if deferred_enqueue_frames {
-            self.enqueue_frame_loads_around_playhead(self.settings.preload_radius);
+            self.enqueue_frame_loads_around_playhead(self.settings.playback.preload_radius);
         }
         if deferred_quick_save {
             self.quick_save();

@@ -40,6 +40,34 @@ impl SettingsCategory {
     }
 }
 
+/// Playback-related settings. Slice of [`AppSettings`] flattened into
+/// the parent via `#[serde(flatten)]` so existing `playa.json` saves
+/// (which store these fields at top level) load unchanged.
+///
+/// Accessed via `settings.playback.fps_base` etc.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct PlaybackSettings {
+    /// Base FPS (persistent across restarts).
+    pub fps_base: f32,
+    pub loop_enabled: bool,
+    /// Frames to preload around playhead (-1 = all, default 100).
+    pub preload_radius: i32,
+    /// Delay before full preload after attr change (default 500ms).
+    pub preload_delay_ms: u64,
+}
+
+impl Default for PlaybackSettings {
+    fn default() -> Self {
+        Self {
+            fps_base: 24.0,
+            loop_enabled: true,
+            preload_radius: -1,
+            preload_delay_ms: 500,
+        }
+    }
+}
+
 /// UI Layout configuration (dock splits, timeline/viewport state)
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Layout {
@@ -72,9 +100,11 @@ impl Default for Layout {
 #[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct AppSettings {
-    // Playback
-    pub fps_base: f32, // Base FPS (persistent)
-    pub loop_enabled: bool,
+    /// Playback slice — `#[serde(flatten)]` preserves the legacy top-level
+    /// JSON shape (`fps_base`, `loop_enabled`, `preload_radius`,
+    /// `preload_delay_ms`) so existing `playa.json` saves load unchanged.
+    #[serde(flatten)]
+    pub playback: PlaybackSettings,
 
     // Shader
     pub current_shader: String,
@@ -98,8 +128,6 @@ pub struct AppSettings {
     pub hover_stroke_width: f32,
     pub hover_corner_length: f32,
     pub hover_opacity: f32,
-    pub preload_radius: i32, // Frames to preload around playhead (-1 = all, default 100)
-    pub preload_delay_ms: u64, // Delay before full preload after attr change (default 500ms)
 
     // Workers (applied to App::workers / playback/encoding threads)
     pub workers_override: u32, // 0 = auto, N = override (applies on restart)
@@ -138,8 +166,7 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            fps_base: 24.0,
-            loop_enabled: true,
+            playback: PlaybackSettings::default(),
             current_shader: "default".to_string(),
             show_help: true,
             show_playlist: true,
@@ -159,8 +186,6 @@ impl Default for AppSettings {
             hover_stroke_width: 2.0,
             hover_corner_length: 20.0,
             hover_opacity: 0.5,
-            preload_radius: -1,
-            preload_delay_ms: 500,
             workers_override: 0,
             cache_memory_percent: 75.0,
             reserve_system_memory_gb: 2.0,
@@ -345,15 +370,15 @@ fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
 
     ui.label("Preload Radius (frames):");
     ui.horizontal(|ui| {
-        if settings.preload_radius < 0 {
+        if settings.playback.preload_radius < 0 {
             ui.label("All");
             if ui.small_button("Set limit").clicked() {
-                settings.preload_radius = 100;
+                settings.playback.preload_radius = 100;
             }
         } else {
-            ui.add(egui::Slider::new(&mut settings.preload_radius, 10..=500).step_by(10.0));
+            ui.add(egui::Slider::new(&mut settings.playback.preload_radius, 10..=500).step_by(10.0));
             if ui.small_button("All").clicked() {
-                settings.preload_radius = -1;
+                settings.playback.preload_radius = -1;
             }
         }
     });
@@ -362,7 +387,7 @@ fn render_cache_settings(ui: &mut egui::Ui, settings: &mut AppSettings) {
     ui.add_space(8.0);
     ui.label("Preload Delay (ms):");
     ui.add(
-        egui::Slider::new(&mut settings.preload_delay_ms, 0..=2000)
+        egui::Slider::new(&mut settings.playback.preload_delay_ms, 0..=2000)
             .suffix(" ms")
             .step_by(50.0),
     );
@@ -602,4 +627,54 @@ pub fn render_settings_window(
 
     // Save selected category
     settings.selected_settings_category = Some(selected.as_str().to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Frozen JSON sample mimicking a pre-slice playa.json: the four
+    /// Playback fields live at the top level, not nested under `playback`.
+    /// `#[serde(flatten)]` on `AppSettings.playback` must absorb them.
+    #[test]
+    fn legacy_top_level_playback_fields_load_into_slice() {
+        // Only the four migrated fields plus a sentinel field so the test
+        // is robust to other fields gaining defaults. `serde(default)` on
+        // AppSettings supplies the rest.
+        let legacy = r#"{
+            "fps_base": 30.0,
+            "loop_enabled": false,
+            "preload_radius": 50,
+            "preload_delay_ms": 250,
+            "current_shader": "custom"
+        }"#;
+        let s: AppSettings = serde_json::from_str(legacy).expect("legacy JSON parses");
+        assert_eq!(s.playback.fps_base, 30.0);
+        assert!(!s.playback.loop_enabled);
+        assert_eq!(s.playback.preload_radius, 50);
+        assert_eq!(s.playback.preload_delay_ms, 250);
+        assert_eq!(s.current_shader, "custom");
+    }
+
+    /// Round-trip a populated AppSettings and verify the four Playback
+    /// fields serialize at top level (the flatten contract is symmetric).
+    #[test]
+    fn playback_slice_serializes_flat() {
+        let mut s = AppSettings::default();
+        s.playback.fps_base = 60.0;
+        s.playback.loop_enabled = false;
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json.get("fps_base").and_then(|v| v.as_f64()), Some(60.0));
+        assert_eq!(json.get("loop_enabled").and_then(|v| v.as_bool()), Some(false));
+        assert!(json.get("playback").is_none(), "must NOT nest under 'playback'");
+    }
+
+    #[test]
+    fn playback_defaults_match_pre_refactor_values() {
+        let p = PlaybackSettings::default();
+        assert_eq!(p.fps_base, 24.0);
+        assert!(p.loop_enabled);
+        assert_eq!(p.preload_radius, -1);
+        assert_eq!(p.preload_delay_ms, 500);
+    }
 }
