@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use playa_jobs::{JobContext, JobError, JobProgress, JobProvider, JobState};
+use playa_jobs_core::{JobContext, JobError, JobProgress, JobProvider, JobState};
 use serde_json::{Value, json};
 
 use crate::http::{FalHttp, UreqFalHttp};
@@ -199,6 +199,25 @@ impl SeedanceProvider {
             "fal_response": result,
         }))
     }
+
+    /// Best-effort cost reporter — call after `poll_until_complete_then_download`
+    /// returns Ok. Reads the requested duration out of the original params
+    /// (integer for i2v, string for t2v); skips silently when the value is
+    /// `"auto"` or absent.
+    fn report_cost_from_params(&self, ctx: &JobContext, params: &Value) {
+        let dur = params.get("duration").and_then(|v| {
+            v.as_u64()
+                .map(|n| n as u32)
+                .or_else(|| v.as_str().and_then(|s| s.parse::<u32>().ok()))
+        });
+        if let Some(duration_secs) = dur {
+            let per_sec = match self.endpoint {
+                SeedanceEndpoint::ImageToVideo => 0.3024_f64,
+                SeedanceEndpoint::TextToVideo => 0.3034_f64,
+            };
+            ctx.report_cost(per_sec * duration_secs as f64);
+        }
+    }
 }
 
 impl JobProvider for SeedanceProvider {
@@ -247,7 +266,9 @@ impl JobProvider for SeedanceProvider {
         ctx.persist_param("response_url", json!(response_url));
 
         ctx.set_state(JobState::AwaitingProvider);
-        self.poll_until_complete_then_download(ctx, &status_url, &response_url)
+        let result = self.poll_until_complete_then_download(ctx, &status_url, &response_url)?;
+        self.report_cost_from_params(ctx, &params);
+        Ok(result)
     }
 
     fn resume(&self, ctx: &JobContext, params: Value) -> Result<Value, JobError> {
@@ -265,7 +286,10 @@ impl JobProvider for SeedanceProvider {
                     "Seedance: resuming job, status_url={status_url} response_url={response_url}"
                 );
                 ctx.set_state(JobState::AwaitingProvider);
-                self.poll_until_complete_then_download(ctx, &status_url, &response_url)
+                let result = self
+                    .poll_until_complete_then_download(ctx, &status_url, &response_url)?;
+                self.report_cost_from_params(ctx, &params);
+                Ok(result)
             }
             _ => {
                 log::warn!("Seedance: resume called without persisted URLs — re-submitting");
@@ -290,7 +314,7 @@ fn truncate(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use playa_jobs::{JobEvent, JobQueue, JobQueueConfig};
+    use playa_jobs_core::{JobEvent, JobQueue, JobQueueConfig};
     use std::path::Path;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -435,7 +459,8 @@ mod tests {
             mock.clone() as Arc<dyn FalHttp>,
             fast_config(),
         );
-        let queue = JobQueue::new(jobs_config_no_persist()).unwrap();
+        let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+        let queue = JobQueue::new(jobs_config_no_persist(), std::sync::Arc::clone(&event_bus)).unwrap();
         queue.register_provider(provider);
         let kind = endpoint.kind();
         let id = queue
@@ -502,7 +527,8 @@ mod tests {
             fast_config(),
         );
 
-        let queue = JobQueue::new(jobs_config_no_persist()).unwrap();
+        let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+        let queue = JobQueue::new(jobs_config_no_persist(), std::sync::Arc::clone(&event_bus)).unwrap();
         queue.register_provider(provider);
 
         let id = queue
@@ -561,7 +587,8 @@ mod tests {
             fast_config(),
         );
 
-        let queue = JobQueue::new(jobs_config_no_persist()).unwrap();
+        let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+        let queue = JobQueue::new(jobs_config_no_persist(), std::sync::Arc::clone(&event_bus)).unwrap();
         queue.register_provider(provider);
 
         let id = queue
@@ -602,7 +629,8 @@ mod tests {
             fast_config(),
         );
 
-        let queue = JobQueue::new(jobs_config_no_persist()).unwrap();
+        let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+        let queue = JobQueue::new(jobs_config_no_persist(), std::sync::Arc::clone(&event_bus)).unwrap();
         queue.register_provider(provider);
 
         let id = queue
@@ -631,7 +659,8 @@ mod tests {
             mock.clone() as Arc<dyn FalHttp>,
             fast_config(),
         );
-        let queue = JobQueue::new(jobs_config_no_persist()).unwrap();
+        let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+        let queue = JobQueue::new(jobs_config_no_persist(), std::sync::Arc::clone(&event_bus)).unwrap();
         queue.register_provider(provider);
         let id = queue
             .submit(kinds::IMAGE_TO_VIDEO, json!({"prompt": "x", "image_url": "https://a/b.png"}))
@@ -658,7 +687,8 @@ mod tests {
             mock as Arc<dyn FalHttp>,
             fast_config(),
         );
-        let queue = JobQueue::new(jobs_config_no_persist()).unwrap();
+        let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+        let queue = JobQueue::new(jobs_config_no_persist(), std::sync::Arc::clone(&event_bus)).unwrap();
         queue.register_provider(provider);
         let id = queue
             .submit(kinds::IMAGE_TO_VIDEO, json!({"prompt": "x", "image_url": "https://a/b.png"}))
@@ -686,12 +716,13 @@ mod tests {
             mock as Arc<dyn FalHttp>,
             fast_config(),
         );
-        let queue = JobQueue::new(jobs_config_no_persist()).unwrap();
+        let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+        let queue = JobQueue::new(jobs_config_no_persist(), std::sync::Arc::clone(&event_bus)).unwrap();
         queue.register_provider(provider);
 
         let progress_count = Arc::new(AtomicUsize::new(0));
         let pc = Arc::clone(&progress_count);
-        queue.subscribe(move |ev| {
+        event_bus.subscribe::<JobEvent, _>(move |ev| {
             if matches!(ev, JobEvent::Progress(_, _)) {
                 pc.fetch_add(1, Ordering::Relaxed);
             }

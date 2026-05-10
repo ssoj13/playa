@@ -35,7 +35,7 @@ use playa_job_seedance::params::SeedanceDuration;
 use playa_job_seedance::{
     SeedanceEndpoint, SeedanceImageToVideoParams, SeedanceProvider, SeedanceTextToVideoParams,
 };
-use playa_jobs::{JobEvent, JobQueue, JobQueueConfig, JobState};
+use playa_jobs_core::{JobEvent, JobQueue, JobQueueConfig, JobState};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SeedanceEndpoint::TextToVideo
     };
 
-    let api_key = playa_jobs::secret::lookup(
+    let api_key = playa_jobs_core::secret::lookup(
         &["PLAYA_FAL_KEY", "FAL_KEY", "FAL_API_KEY"],
         &[PathBuf::from(".env"), PathBuf::from("../.env")],
     )
@@ -127,10 +127,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Disable persistence — this example runs one job, then exits.
         persist_path: None,
     };
-    let queue = JobQueue::new(cfg)?;
+    let event_bus = std::sync::Arc::new(playa_jobs_core::EventBus::new());
+    let queue = JobQueue::new(cfg, std::sync::Arc::clone(&event_bus))?;
     queue.register_provider(SeedanceProvider::new(endpoint, api_key));
 
-    queue.subscribe(|ev| match &ev {
+    event_bus.subscribe::<JobEvent, _>(|ev: &JobEvent| match ev {
         JobEvent::Created(id) => println!("[event] created {id}"),
         JobEvent::StateChanged(id, st) => println!("[event] {id} state → {st:?}"),
         JobEvent::Progress(id, pr) => println!(

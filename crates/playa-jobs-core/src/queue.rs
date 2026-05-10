@@ -16,15 +16,14 @@ use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use playa_events::EventBus;
+
 use crate::cancel::CancelToken;
 use crate::event::JobEvent;
 use crate::job::{Job, JobError, JobId, JobState, now_secs};
 #[cfg(feature = "persist")]
 use crate::persist::{Log as PersistLog, LogEntry};
 use crate::provider::{JobContext, JobProvider, UpdateMsg};
-
-/// Listener callback invoked synchronously from the updater thread.
-pub type Listener = Box<dyn Fn(JobEvent) + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct JobQueueConfig {
@@ -55,6 +54,32 @@ impl Default for JobQueueConfig {
     }
 }
 
+/// Aggregate statistics returned by [`JobQueue::stats`].
+#[derive(Debug, Clone, Default)]
+pub struct JobStats {
+    pub by_state: HashMap<JobState, usize>,
+    pub total_cost_usd: f64,
+    pub today_cost_usd: f64,
+    pub today_completed: usize,
+    pub queue_depth: usize,
+    pub active_providers: usize,
+}
+
+/// Filter passed to [`JobQueue::list_filtered`]. All fields combine with AND.
+#[derive(Debug, Clone, Default)]
+pub struct JobFilter {
+    /// Allowed states. `None` = any.
+    pub state: Option<Vec<JobState>>,
+    /// `j.kind.starts_with(prefix)` — matches both Seedance endpoints with
+    /// `"seedance."` for example.
+    pub kind_prefix: Option<String>,
+    /// Case-insensitive substring search across job id, kind, params.prompt
+    /// (when present), and error string.
+    pub search: Option<String>,
+    /// Drop jobs created before this Unix-seconds timestamp.
+    pub since: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct JobQueue {
     inner: Arc<Inner>,
@@ -64,7 +89,12 @@ struct Inner {
     jobs: RwLock<HashMap<JobId, Job>>,
     cancel_tokens: RwLock<HashMap<JobId, CancelToken>>,
     providers: RwLock<HashMap<String, Arc<dyn JobProvider>>>,
-    listeners: RwLock<Vec<Listener>>,
+    /// Canonical event sink — required (not optional). All [`JobEvent`]s
+    /// flow through here. Consumers subscribe via
+    /// `event_bus.subscribe::<JobEvent, _>(...)`. Removing the legacy
+    /// `JobQueue::subscribe()` public API forces callers to use the unified
+    /// pub/sub system; no ad-hoc closures.
+    event_bus: Arc<EventBus>,
     files_dir: PathBuf,
     work_queue: (Mutex<VecDeque<JobId>>, Condvar),
     update_tx: Sender<UpdateMsg>,
@@ -76,7 +106,11 @@ struct Inner {
 }
 
 impl JobQueue {
-    pub fn new(config: JobQueueConfig) -> std::io::Result<Self> {
+    /// Construct a new job queue. Caller passes the application's shared
+    /// [`EventBus`]; all [`JobEvent`]s emitted by the queue flow through
+    /// it. UI consumers subscribe via
+    /// `event_bus.subscribe::<JobEvent, _>(|ev| ...)`.
+    pub fn new(config: JobQueueConfig, event_bus: Arc<EventBus>) -> std::io::Result<Self> {
         std::fs::create_dir_all(&config.files_dir)?;
 
         #[cfg(feature = "persist")]
@@ -91,7 +125,7 @@ impl JobQueue {
             jobs: RwLock::new(HashMap::new()),
             cancel_tokens: RwLock::new(HashMap::new()),
             providers: RwLock::new(HashMap::new()),
-            listeners: RwLock::new(Vec::new()),
+            event_bus,
             files_dir: config.files_dir,
             work_queue: (Mutex::new(VecDeque::new()), Condvar::new()),
             update_tx,
@@ -134,13 +168,141 @@ impl JobQueue {
             .insert(kind, Arc::new(provider));
     }
 
-    /// Subscribe to [`JobEvent`]s. Listener is invoked synchronously from the
-    /// updater thread — keep it cheap (push into a queue, request_repaint, …).
-    pub fn subscribe<F>(&self, listener: F)
-    where
-        F: Fn(JobEvent) + Send + Sync + 'static,
-    {
-        self.inner.listeners.write().unwrap().push(Box::new(listener));
+    /// Access the underlying [`EventBus`] passed to [`Self::new`].
+    /// Consumers subscribe to [`JobEvent`]s through this:
+    /// `queue.event_bus().subscribe::<JobEvent, _>(|ev| ...)`.
+    pub fn event_bus(&self) -> &Arc<EventBus> {
+        &self.inner.event_bus
+    }
+
+    /// Drop a TERMINAL job from the in-memory map. Persists a
+    /// [`LogEntry::Tombstone`] so replay does not resurrect it. Errors with
+    /// [`JobError::Provider`] when the id is unknown or non-terminal.
+    pub fn remove(&self, id: JobId) -> Result<(), JobError> {
+        let mut jobs = self.inner.jobs.write().unwrap();
+        let Some(job) = jobs.get(&id) else {
+            return Err(JobError::Provider(format!("job {id} not found")));
+        };
+        if !job.state.is_terminal() {
+            return Err(JobError::Provider(format!(
+                "cannot remove non-terminal job {id} (state={:?})",
+                job.state
+            )));
+        }
+        jobs.remove(&id);
+        drop(jobs);
+        self.inner.cancel_tokens.write().unwrap().remove(&id);
+        #[cfg(feature = "persist")]
+        if let Some(p) = &self.inner.persist {
+            let _ = p.append(&LogEntry::Tombstone(id));
+        }
+        Ok(())
+    }
+
+    /// Re-submit a TERMINAL Failed/Cancelled job with the same kind +
+    /// params. Returns the **new** [`JobId`]; the original stays in the
+    /// list for history. Errors with [`JobError::Provider`] when the id is
+    /// unknown or the state is not retryable (Complete, or any
+    /// non-terminal state).
+    pub fn retry(&self, id: JobId) -> Result<JobId, JobError> {
+        let (kind, params) = {
+            let jobs = self.inner.jobs.read().unwrap();
+            let Some(job) = jobs.get(&id) else {
+                return Err(JobError::Provider(format!("job {id} not found")));
+            };
+            if !matches!(job.state, JobState::Failed | JobState::Cancelled) {
+                return Err(JobError::Provider(format!(
+                    "can only retry Failed or Cancelled jobs (state={:?})",
+                    job.state
+                )));
+            }
+            (job.kind.clone(), job.params.clone())
+        };
+        self.submit(kind, params)
+    }
+
+    /// Cheap aggregate read for status-bar / footer / budget enforcement.
+    /// Walks the job map once; constant memory.
+    pub fn stats(&self) -> JobStats {
+        let jobs = self.inner.jobs.read().unwrap();
+        let providers = self.inner.providers.read().unwrap();
+        let now = now_secs();
+        let day_start = now - (now % 86_400);
+
+        let mut s = JobStats {
+            active_providers: providers.len(),
+            ..JobStats::default()
+        };
+        for j in jobs.values() {
+            *s.by_state.entry(j.state).or_default() += 1;
+            if !j.state.is_terminal() {
+                s.queue_depth += 1;
+            }
+            if let Some(c) = j.cost_usd {
+                s.total_cost_usd += c;
+                if j.updated_at >= day_start {
+                    s.today_cost_usd += c;
+                }
+            }
+            if matches!(j.state, JobState::Complete) && j.updated_at >= day_start {
+                s.today_completed += 1;
+            }
+        }
+        s
+    }
+
+    /// Filter the in-memory job map. Returned vector is a clone of matching
+    /// jobs (callers must not block writers).
+    pub fn list_filtered(&self, filter: &JobFilter) -> Vec<Job> {
+        let jobs = self.inner.jobs.read().unwrap();
+        let q = filter
+            .search
+            .as_ref()
+            .map(|s| s.to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+        jobs.values()
+            .filter(|j| {
+                if let Some(states) = &filter.state
+                    && !states.contains(&j.state)
+                {
+                    return false;
+                }
+                if let Some(prefix) = &filter.kind_prefix
+                    && !j.kind.starts_with(prefix)
+                {
+                    return false;
+                }
+                if let Some(since) = filter.since
+                    && j.created_at < since
+                {
+                    return false;
+                }
+                if let Some(q) = &q {
+                    let id = j.id.to_string().to_ascii_lowercase();
+                    let kind = j.kind.to_ascii_lowercase();
+                    let prompt = j
+                        .params
+                        .get("prompt")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    let err = j
+                        .error
+                        .as_deref()
+                        .map(|s| s.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    if !id.contains(q)
+                        && !kind.contains(q)
+                        && !prompt.contains(q)
+                        && !err.contains(q)
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn submit(
@@ -258,10 +420,7 @@ impl Drop for JobQueue {
 
 impl Inner {
     fn broadcast(&self, event: JobEvent) {
-        let listeners = self.listeners.read().unwrap();
-        for l in listeners.iter() {
-            l(event.clone());
-        }
+        self.event_bus.emit(event);
     }
 }
 
@@ -376,23 +535,45 @@ fn updater_loop(inner: Arc<Inner>, rx: Receiver<UpdateMsg>) {
                     let _ = p.append(&LogEntry::ParamPatch { id, key, value });
                 }
             }
+            UpdateMsg::Cost(id, usd) => {
+                let at = now_secs();
+                {
+                    let mut jobs = inner.jobs.write().unwrap();
+                    if let Some(j) = jobs.get_mut(&id) {
+                        j.cost_usd = Some(usd);
+                        j.updated_at = at;
+                    }
+                }
+                #[cfg(feature = "persist")]
+                if let Some(p) = &inner.persist {
+                    let _ = p.append(&LogEntry::Cost { id, usd, at });
+                }
+            }
             UpdateMsg::Final(id, outcome) => {
                 let (state, result, error) = match outcome {
                     Ok(value) => (JobState::Complete, Some(value), None),
                     Err(JobError::Cancelled) => (JobState::Cancelled, None, None),
                     Err(e) => (JobState::Failed, None, Some(e.to_string())),
                 };
+                let at = now_secs();
                 {
                     let mut jobs = inner.jobs.write().unwrap();
                     if let Some(j) = jobs.get_mut(&id) {
                         j.state = state;
                         j.result = result.clone();
                         j.error = error.clone();
-                        j.touch();
+                        j.updated_at = at;
+                        // Append the terminal transition to state_history
+                        // (skip if last entry already at this state — paranoia
+                        // against double-write paths).
+                        if j.state_history.last().map(|(s, _)| *s) != Some(state) {
+                            j.state_history.push((state, at));
+                        }
                     }
                 }
                 #[cfg(feature = "persist")]
                 if let Some(p) = &inner.persist {
+                    let _ = p.append(&LogEntry::StageEntered { id, state, at });
                     let snapshot = inner.jobs.read().unwrap().get(&id).cloned();
                     if let Some(j) = snapshot {
                         let _ = p.append(&LogEntry::Updated {
@@ -423,26 +604,21 @@ fn updater_loop(inner: Arc<Inner>, rx: Receiver<UpdateMsg>) {
 }
 
 fn apply_state(inner: &Arc<Inner>, id: JobId, state: JobState) {
+    let at = now_secs();
     {
         let mut jobs = inner.jobs.write().unwrap();
         if let Some(j) = jobs.get_mut(&id) {
             j.state = state;
-            j.updated_at = now_secs();
+            j.updated_at = at;
+            if j.state_history.last().map(|(s, _)| *s) != Some(state) {
+                j.state_history.push((state, at));
+            }
         }
     }
     #[cfg(feature = "persist")]
     if let Some(p) = &inner.persist {
-        let snapshot = inner.jobs.read().unwrap().get(&id).cloned();
-        if let Some(j) = snapshot {
-            let _ = p.append(&LogEntry::Updated {
-                id,
-                state: j.state,
-                progress: j.progress.clone(),
-                result: j.result.clone(),
-                error: j.error.clone(),
-                updated_at: j.updated_at,
-            });
-        }
+        // Compact stage-transition entry — replay folds into state_history.
+        let _ = p.append(&LogEntry::StageEntered { id, state, at });
     }
     inner.broadcast(JobEvent::StateChanged(id, state));
 }
@@ -522,9 +698,16 @@ mod tests {
         cfg
     }
 
+    /// Construct a queue + its EventBus together so test sites can subscribe.
+    fn make_queue(cfg: JobQueueConfig) -> (JobQueue, Arc<EventBus>) {
+        let bus = Arc::new(EventBus::new());
+        let q = JobQueue::new(cfg, Arc::clone(&bus)).unwrap();
+        (q, bus)
+    }
+
     #[test]
     fn unknown_provider_rejected_at_submit() {
-        let q = JobQueue::new(config_no_persist()).unwrap();
+        let (q, _bus) = make_queue(config_no_persist());
         let err = q.submit("nonexistent", serde_json::json!({})).unwrap_err();
         assert!(matches!(err, JobError::UnknownProvider(_)));
         q.shutdown();
@@ -532,12 +715,12 @@ mod tests {
 
     #[test]
     fn echo_round_trip_completes() {
-        let q = JobQueue::new(config_no_persist()).unwrap();
+        let (q, bus) = make_queue(config_no_persist());
         q.register_provider(EchoProvider);
 
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
-        q.subscribe(move |ev| {
+        bus.subscribe::<JobEvent, _>(move |ev| {
             if matches!(ev, JobEvent::Completed(_, _)) {
                 counter_clone.fetch_add(1, Ordering::Relaxed);
             }
@@ -554,11 +737,10 @@ mod tests {
 
     #[test]
     fn cancel_mid_run_resolves_to_cancelled() {
-        let q = JobQueue::new(config_no_persist()).unwrap();
+        let (q, _bus) = make_queue(config_no_persist());
         q.register_provider(SlowProvider);
 
         let id = q.submit("slow", serde_json::json!({})).unwrap();
-        // Let the worker reach AwaitingProvider before cancelling.
         assert!(poll_until(Duration::from_millis(500), || {
             q.get(id)
                 .map(|j| j.state == JobState::AwaitingProvider)
@@ -575,13 +757,12 @@ mod tests {
 
     #[test]
     fn list_returns_every_job() {
-        let q = JobQueue::new(config_no_persist()).unwrap();
+        let (q, _bus) = make_queue(config_no_persist());
         q.register_provider(EchoProvider);
 
         for i in 0..3 {
             q.submit("echo", serde_json::json!({"i": i})).unwrap();
         }
-        // Wait a bit for completion.
         assert!(poll_until(Duration::from_secs(2), || {
             q.list().iter().filter(|j| j.state == JobState::Complete).count() == 3
         }));
@@ -591,13 +772,217 @@ mod tests {
 
     #[test]
     fn shutdown_unblocks_idle_workers_quickly() {
-        let q = JobQueue::new(config_no_persist()).unwrap();
+        let (q, _bus) = make_queue(config_no_persist());
         q.register_provider(EchoProvider);
         let started = Instant::now();
         q.shutdown();
-        // Sub-second is plenty: workers wake on Condvar notify_all + shutdown
-        // flag observation.
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn state_history_appends_on_each_transition() {
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EchoProvider);
+        let id = q.submit("echo", serde_json::json!({})).unwrap();
+        assert!(poll_until(Duration::from_secs(2), || q
+            .get(id)
+            .map(|j| j.state == JobState::Complete)
+            .unwrap_or(false)));
+        let job = q.get(id).unwrap();
+        let states: Vec<JobState> = job.state_history.iter().map(|(s, _)| *s).collect();
+        // Always starts with Pending (Job::new), ends with Complete via Final.
+        assert_eq!(states.first(), Some(&JobState::Pending));
+        assert_eq!(states.last(), Some(&JobState::Complete));
+        // EchoProvider hits Submitting between.
+        assert!(states.contains(&JobState::Submitting));
+        // Timestamps monotonic non-decreasing.
+        let times: Vec<u64> = job.state_history.iter().map(|(_, t)| *t).collect();
+        for w in times.windows(2) {
+            assert!(w[0] <= w[1], "state_history timestamps must be non-decreasing");
+        }
+        q.shutdown();
+    }
+
+    #[test]
+    fn cost_usd_populated_via_report_cost() {
+        struct CostReporter;
+        impl JobProvider for CostReporter {
+            fn kind(&self) -> &'static str {
+                "test.cost"
+            }
+            fn run(
+                &self,
+                ctx: &JobContext,
+                _params: serde_json::Value,
+            ) -> Result<serde_json::Value, JobError> {
+                ctx.report_cost(1.21);
+                Ok(serde_json::json!({}))
+            }
+        }
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(CostReporter);
+        let id = q.submit("test.cost", serde_json::json!({})).unwrap();
+        assert!(poll_until(Duration::from_secs(2), || q
+            .get(id)
+            .map(|j| j.state == JobState::Complete)
+            .unwrap_or(false)));
+        let job = q.get(id).unwrap();
+        assert_eq!(job.cost_usd, Some(1.21));
+        q.shutdown();
+    }
+
+    #[test]
+    fn remove_rejects_non_terminal() {
+        struct StuckProvider;
+        impl JobProvider for StuckProvider {
+            fn kind(&self) -> &'static str {
+                "test.stuck"
+            }
+            fn run(
+                &self,
+                ctx: &JobContext,
+                _params: serde_json::Value,
+            ) -> Result<serde_json::Value, JobError> {
+                ctx.set_state(JobState::AwaitingProvider);
+                for _ in 0..200 {
+                    ctx.cancel.check_err()?;
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(serde_json::json!({}))
+            }
+        }
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(StuckProvider);
+        let id = q.submit("test.stuck", serde_json::json!({})).unwrap();
+        assert!(poll_until(Duration::from_millis(500), || q
+            .get(id)
+            .map(|j| j.state == JobState::AwaitingProvider)
+            .unwrap_or(false)));
+        let err = q.remove(id).unwrap_err();
+        assert!(format!("{err}").contains("non-terminal"));
+        q.cancel(id);
+        q.shutdown();
+    }
+
+    #[test]
+    fn remove_succeeds_on_terminal_job() {
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EchoProvider);
+        let id = q.submit("echo", serde_json::json!({})).unwrap();
+        assert!(poll_until(Duration::from_secs(2), || q
+            .get(id)
+            .map(|j| j.state == JobState::Complete)
+            .unwrap_or(false)));
+        q.remove(id).unwrap();
+        assert!(q.get(id).is_none());
+        q.shutdown();
+    }
+
+    #[test]
+    fn retry_rejects_non_failed_cancelled() {
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EchoProvider);
+        let id = q.submit("echo", serde_json::json!({})).unwrap();
+        assert!(poll_until(Duration::from_secs(2), || q
+            .get(id)
+            .map(|j| j.state == JobState::Complete)
+            .unwrap_or(false)));
+        let err = q.retry(id).unwrap_err();
+        assert!(format!("{err}").contains("can only retry Failed or Cancelled"));
+        q.shutdown();
+    }
+
+    #[test]
+    fn retry_returns_new_id_with_same_params() {
+        struct FailingProvider;
+        impl JobProvider for FailingProvider {
+            fn kind(&self) -> &'static str {
+                "test.fails"
+            }
+            fn run(
+                &self,
+                _ctx: &JobContext,
+                _params: serde_json::Value,
+            ) -> Result<serde_json::Value, JobError> {
+                Err(JobError::Provider("boom".into()))
+            }
+        }
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(FailingProvider);
+        let id = q.submit("test.fails", serde_json::json!({"x": 1})).unwrap();
+        assert!(poll_until(Duration::from_secs(2), || q
+            .get(id)
+            .map(|j| j.state == JobState::Failed)
+            .unwrap_or(false)));
+        let new_id = q.retry(id).unwrap();
+        assert_ne!(new_id, id);
+        assert_eq!(q.get(new_id).unwrap().params, serde_json::json!({"x": 1}));
+        // Original kept for history.
+        assert!(q.get(id).is_some());
+        q.shutdown();
+    }
+
+    #[test]
+    fn stats_counts_by_state_and_active_providers() {
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EchoProvider);
+        for i in 0..3 {
+            q.submit("echo", serde_json::json!({"i": i})).unwrap();
+        }
+        assert!(poll_until(Duration::from_secs(2), || {
+            q.list().iter().filter(|j| j.state == JobState::Complete).count() == 3
+        }));
+        let s = q.stats();
+        assert_eq!(s.by_state.get(&JobState::Complete).copied(), Some(3));
+        assert_eq!(s.queue_depth, 0);
+        assert_eq!(s.active_providers, 1);
+        q.shutdown();
+    }
+
+    #[test]
+    fn list_filtered_respects_kind_prefix_and_search() {
+        let (q, _bus) = make_queue(config_no_persist());
+        q.register_provider(EchoProvider);
+        q.submit("echo", serde_json::json!({"prompt": "alpha"})).unwrap();
+        q.submit("echo", serde_json::json!({"prompt": "beta"})).unwrap();
+        // Wait for both to complete so list has stable contents.
+        assert!(poll_until(Duration::from_secs(2), || {
+            q.list().iter().filter(|j| j.state == JobState::Complete).count() == 2
+        }));
+
+        let alpha_only = q.list_filtered(&JobFilter {
+            search: Some("alpha".into()),
+            ..Default::default()
+        });
+        assert_eq!(alpha_only.len(), 1);
+
+        let kind_match = q.list_filtered(&JobFilter {
+            kind_prefix: Some("echo".into()),
+            ..Default::default()
+        });
+        assert_eq!(kind_match.len(), 2);
+
+        let kind_miss = q.list_filtered(&JobFilter {
+            kind_prefix: Some("seedance.".into()),
+            ..Default::default()
+        });
+        assert_eq!(kind_miss.len(), 0);
+
+        let state_filter = q.list_filtered(&JobFilter {
+            state: Some(vec![JobState::Failed]),
+            ..Default::default()
+        });
+        assert_eq!(state_filter.len(), 0);
+        q.shutdown();
+    }
+
+    #[test]
+    fn event_bus_accessor_returns_same_handle() {
+        let (q, bus) = make_queue(config_no_persist());
+        // event_bus() returns a borrowed Arc — same underlying allocation as
+        // the one passed to new().
+        assert!(Arc::ptr_eq(q.event_bus(), &bus));
+        q.shutdown();
     }
 
     #[cfg(feature = "persist")]
@@ -609,14 +994,13 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&log_path);
 
-        // Phase 1: submit, run, complete, persist.
         let id = {
             let cfg = JobQueueConfig {
                 thread_count: 1,
                 files_dir: std::env::temp_dir().join("playa-jobs-replay-files"),
                 persist_path: Some(log_path.clone()),
             };
-            let q = JobQueue::new(cfg).unwrap();
+            let (q, _bus) = make_queue(cfg);
             q.register_provider(EchoProvider);
             let id = q.submit("echo", serde_json::json!({"v": 1})).unwrap();
             assert!(poll_until(Duration::from_secs(2), || q
@@ -627,15 +1011,13 @@ mod tests {
             id
         };
 
-        // Phase 2: fresh queue, replay log, verify state.
         let cfg = JobQueueConfig {
             thread_count: 1,
             files_dir: std::env::temp_dir().join("playa-jobs-replay-files"),
             persist_path: Some(log_path.clone()),
         };
-        let q = JobQueue::new(cfg).unwrap();
+        let (q, _bus) = make_queue(cfg);
         let resumed = q.replay_persisted().unwrap();
-        // Completed jobs are not resumable.
         assert_eq!(resumed, 0);
         let restored = q.get(id).expect("job restored");
         assert_eq!(restored.state, JobState::Complete);

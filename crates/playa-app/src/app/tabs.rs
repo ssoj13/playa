@@ -505,6 +505,8 @@ impl<'a> TabViewer for DockTabs<'a> {
             DockTab::Project => "Project".into(),
             DockTab::Attributes => "Attributes".into(),
             DockTab::NodeEditor => "Node Editor".into(),
+            #[cfg(feature = "jobs")]
+            DockTab::Jobs => "Jobs".into(),
         }
     }
 
@@ -522,6 +524,8 @@ impl<'a> TabViewer for DockTabs<'a> {
             DockTab::Project => self.app.render_project_tab(ui),
             DockTab::Attributes => self.app.render_attributes_tab(ui),
             DockTab::NodeEditor => self.app.render_node_editor_tab(ui),
+            #[cfg(feature = "jobs")]
+            DockTab::Jobs => self.app.render_jobs_tab(ui),
         }
     }
 }

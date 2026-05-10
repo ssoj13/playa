@@ -40,6 +40,22 @@ pub enum LogEntry {
     },
     /// Tombstone: forget this job on next replay.
     Tombstone(JobId),
+    /// Compact "state transition" event written by the updater thread on
+    /// every state change. Replay folds these into `Job.state_history`. Much
+    /// smaller than a full `Updated` snapshot for the common case of "job
+    /// just stepped from Submitting to AwaitingProvider".
+    StageEntered {
+        id: JobId,
+        state: JobState,
+        at: u64,
+    },
+    /// Cost reported by the provider (e.g. `0.3024 * duration_secs` for
+    /// Seedance). Replay folds into `Job.cost_usd`.
+    Cost {
+        id: JobId,
+        usd: f64,
+        at: u64,
+    },
 }
 
 pub struct Log {
@@ -138,6 +154,21 @@ impl Log {
                 LogEntry::Tombstone(id) => {
                     jobs.remove(&id);
                 }
+                LogEntry::StageEntered { id, state, at } => {
+                    if let Some(j) = jobs.get_mut(&id) {
+                        j.state = state;
+                        j.updated_at = at;
+                        if j.state_history.last().map(|(s, _)| *s) != Some(state) {
+                            j.state_history.push((state, at));
+                        }
+                    }
+                }
+                LogEntry::Cost { id, usd, at } => {
+                    if let Some(j) = jobs.get_mut(&id) {
+                        j.cost_usd = Some(usd);
+                        j.updated_at = at;
+                    }
+                }
             }
         }
         Ok(jobs)
@@ -230,6 +261,53 @@ mod tests {
 
         let jobs = Log::replay_to_jobs(&path).unwrap();
         assert!(jobs.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn replay_reconstructs_state_history_from_stage_entries() {
+        let path = tmp_log_path("hist");
+        let _ = std::fs::remove_file(&path);
+        let log = Log::open(path.clone()).unwrap();
+        let mut job = Job::new("seedance.text_to_video", serde_json::json!({}));
+        let id = job.id;
+        let created_at = job.created_at;
+        log.append(&LogEntry::Created(job.clone())).unwrap();
+
+        // Append three stage transitions.
+        for (state, offset) in [
+            (JobState::Submitting, 1),
+            (JobState::AwaitingProvider, 2),
+            (JobState::Complete, 3),
+        ] {
+            log.append(&LogEntry::StageEntered {
+                id,
+                state,
+                at: created_at + offset,
+            })
+            .unwrap();
+            job.state = state;
+        }
+        // Cost entry too.
+        log.append(&LogEntry::Cost {
+            id,
+            usd: 9.99,
+            at: created_at + 4,
+        })
+        .unwrap();
+        drop(log);
+
+        let jobs = Log::replay_to_jobs(&path).unwrap();
+        let restored = jobs.get(&id).unwrap();
+        assert_eq!(restored.state, JobState::Complete);
+        let states: Vec<JobState> = restored.state_history.iter().map(|(s, _)| *s).collect();
+        // Pending was already in the Created snapshot's state_history; replay
+        // appended Submitting / AwaitingProvider / Complete on top.
+        assert!(states.contains(&JobState::Pending));
+        assert!(states.contains(&JobState::Submitting));
+        assert!(states.contains(&JobState::AwaitingProvider));
+        assert!(states.contains(&JobState::Complete));
+        assert_eq!(restored.cost_usd, Some(9.99));
         let _ = std::fs::remove_file(&path);
     }
 

@@ -7,7 +7,7 @@ description = "playa-jobs provider: Seedance 2.0 image-to-video via fal.ai (http
 license = "MIT"
 
 [dependencies]
-playa-jobs = { path = "../playa-jobs" }
+playa-jobs-core = { path = "../playa-jobs-core" }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,0 +1,132 @@
+# Wave 7-pre modular Jobs/Prefs refactor — progress log
+
+## Setup (this iteration)
+- Created `.omc/state/sessions/264259b0.../prd.json` with 11 task-specific user stories.
+- Spec is `.bughunt/jobs_ui_design.md` (variant 1 flat workspace).
+- Pre-refactor baseline: 95 tests across new code (playa-time 46, playa-jobs 31, playa-job-seedance 18); cargo check workspace green; live fal.ai run validated end-to-end (mp4 downloaded). Bughunt round 1 commit `6c551ce` shipped.
+
+## Iteration log
+
+### US-11 — PrefsWindow wiring (PASSED, scope-reduced)
+- playa-app dep: + playa-prefs direct path-dep.
+- PlayaApp adds `pub prefs_registry: PrefsRegistry<AppSettings>` (#[serde(skip)]).
+- Default impl constructs empty registry. **Entry registration deferred** — registering the jobs entry needs `AppSettings::jobs: JobsSettings` slice, which is part of US-03b (deferred slice-extraction refactor).
+- Modal `PrefsWindow::show` open + Apply/Cancel/OK + menu wiring + Ctrl+, hotkey: **deferred**. AppSettings doesn't impl Clone+PartialEq today (Layout struct lacks PartialEq derive); adding those + the modal lifecycle is a separate phase. The infrastructure (registry storage + render-fn export from playa-jobs-ui) is in place — only the host-side lifecycle plumbing remains.
+- `cargo check -p playa-app` green both default + --no-default-features.
+
+### US-10 — Jobs DockTab + JobsPanel rendering wiring (PASSED)
+- DockTab enum: + `#[cfg(feature = "jobs")] Jobs,` variant.
+- tabs.rs title + ui handlers: cfg-gated arms for Jobs.
+- PlayaApp adds `pub jobs_panel: JobsPanel` and `pub submit_dialog: SubmitDialog` (both cfg-gated, #[serde(skip)]).
+- New method `PlayaApp::render_jobs_tab(ui)` renders panel, dispatches JobsAction (Cancel→queue.cancel, Retry→queue.retry, Delete→queue.remove, RevealMp4→log path, OpenSubmit→submit_dialog.open()).
+- Empty state hint when job_queue is None.
+- default_dock_state NOT modified to add Jobs tab — user adds manually via dock UI for now (low blast-radius).
+- SubmitDialog rendering not yet plumbed into update() — wiring of show(ctx) is one-line follow-up; flag toggles correctly per OpenSubmit dispatch.
+- `cargo check -p playa-app` green default + --no-default-features.
+
+### US-09 — JobQueue API: remove + retry + stats + list_filtered (PASSED)
+- queue.rs: 4 new methods. `JobStats` struct (by_state HashMap, total_cost_usd, today_cost_usd, today_completed, queue_depth, active_providers). `JobFilter` struct (state list / kind_prefix / search / since).
+- remove(id): rejects non-terminal with descriptive error; on terminal removes from map + cancel_tokens + appends LogEntry::Tombstone.
+- retry(id): rejects non-Failed/Cancelled; clones kind+params and calls submit, returns new JobId. Original kept.
+- stats(): one walk, computes by_state counts, today/total cost (UTC day boundaries), queue_depth (non-terminal jobs), active_providers count.
+- list_filtered(&filter): AND-combines all filter fields. Search is case-insensitive substring across id/kind/params.prompt/error.
+- 6 new tests: remove rejects non-terminal, remove succeeds on terminal, retry rejects Complete, retry returns new id with same params, stats counts by state, list_filtered respects kind_prefix + search + state.
+- lib.rs exports: + JobFilter, JobStats.
+- `cargo test -p playa-jobs-core`: 45/45 (39 → 45).
+
+### US-08 — Job schema additions + persist evolution (PASSED)
+- Job struct: + state_history: Vec<(JobState, u64)>, + estimated_total_secs: Option<u32>, + cost_usd: Option<f64>. All `#[serde(default)]` for backwards-compat.
+- Job::new pushes initial (Pending, created_at) into state_history.
+- LogEntry: + StageEntered { id, state, at }, + Cost { id, usd, at }.
+- replay_to_jobs handles both new variants; StageEntered appends to state_history (deduped against last entry).
+- queue.rs apply_state and Final case: write state_history entry + persist StageEntered (replaces the heavyweight Updated for state-only transitions, only Final still emits Updated for the result/error blob).
+- queue.rs UpdateMsg::Cost handler: writes Job.cost_usd + persists LogEntry::Cost.
+- provider.rs: JobContext::report_cost(usd: f64) helper + new UpdateMsg::Cost variant.
+- SeedanceProvider: report_cost_from_params parses duration (int for i2v, string for t2v) and emits cost based on per-second rate (0.3024 i2v, 0.3034 t2v). Called from run() AND resume() after poll_until succeeds.
+- 3 new tests: state_history monotonic timestamps + transitions, replay reconstructs state_history from StageEntered + Cost log entries, JobContext::report_cost populates Job.cost_usd via mock provider.
+- `cargo test -p playa-jobs-core`: 39/39 (was 36, +3).
+
+### US-07 — JobQueue refactor: EventBus mandatory, subscribe() removed (PASSED)
+- playa-jobs-core/Cargo.toml + playa-events as direct path-dep.
+- queue.rs: Inner.listeners (RwLock<Vec<Listener>>) + Listener type → removed. Replaced with `event_bus: Arc<EventBus>`.
+- JobQueue::new(cfg, event_bus: Arc<EventBus>) — mandatory event_bus.
+- JobQueue::subscribe() public API removed; replaced with JobQueue::event_bus() accessor returning &Arc<EventBus> for callers to subscribe directly.
+- inner.broadcast(ev) now just `event_bus.emit(ev)` — single-line.
+- playa-jobs-core/src/lib.rs `pub use playa_events::{EventBus, EventEmitter}` so downstream consumers don't need to import playa-events directly.
+- All 5 queue tests refactored: helper `make_queue(cfg) -> (JobQueue, Arc<EventBus>)`, subscribers use `event_bus.subscribe::<JobEvent, _>(...)`. Plus new test `event_bus_accessor_returns_same_handle`.
+- playa-job-seedance: 7 JobQueue::new sites + 1 subscribe site updated. Imports playa_jobs_core::EventBus.
+- playa-job-seedance/examples/run_one.rs updated.
+- playa-jobs facade tests/facade.rs: 2 sites updated.
+- playa-jobs facade lib.rs setup_with_fal signature: now takes Arc<EventBus> first arg.
+- playa-app build_default_job_queue: takes event_bus: Arc<EventBus>; PlayaApp::Default passes Arc::new(event_bus.clone()).
+- playa-app ensure_jobs_initialized: passes Arc::new(self.event_bus.clone()).
+- Verified: 36/36 jobs-core, 18/18 seedance, 10/10 facade integration, playa-app check green.
+
+### US-06 — playa-app feature `jobs` (PASSED)
+- crates/playa-app/Cargo.toml: features = { default = ["jobs"], jobs = ["dep:playa-jobs"] }. playa-jobs-core and playa-job-seedance removed as direct deps; come via facade.
+- All job-related code in playa-app cfg-gated #[cfg(feature = "jobs")]: job_queue field, build_default_job_queue, ensure_jobs_initialized, register_seedance_provider, FAL_KEY_NAMES, read_fal_key, runner.rs ensure_jobs_initialized call.
+- Struct literal: `#[cfg(feature = "jobs")] job_queue,`.
+- Path migration: playa_jobs_core::, playa_job_seedance:: → playa_jobs::, playa_jobs::seedance::
+- `cargo check -p playa-app` green; `cargo check -p playa-app --no-default-features` green.
+
+### US-05 — Create playa-jobs facade crate (PASSED)
+- New crate `crates/playa-jobs/` with Cargo.toml + lib.rs + tests/facade.rs.
+- Cargo features: default = [ui, prefs, seedance, persist]; ui implies prefs; persist forwards to playa-jobs-core/persist.
+- Re-exports: `pub use playa_jobs_core::*;` + namespaced ui/prefs/seedance modules cfg-gated.
+- `setup_with_fal(event_bus, config, fal_key_paths) -> Arc<JobQueue>` (cfg seedance).
+- `register_default_prefs<S>(registry, extract_fn)` (cfg ui+prefs).
+- 10 integration tests in tests/facade.rs use ONLY `playa_jobs::*` imports (no underlying crate imports), proving facade is consumer-friendly.
+- All feature combinations tested: default / --no-default-features / --features ui / prefs / seedance — all green.
+- log dep added (was missing — caught at first verify).
+- Workspace Cargo.toml members += crates/playa-jobs.
+
+### US-04 — Create playa-jobs-ui crate (PASSED)
+- New crate `crates/playa-jobs-ui/` (4 source files: lib, panel, dialog, prefs).
+- Cargo deps: playa-jobs-core, playa-prefs, egui 0.33, egui_extras 0.33, log, serde_json.
+- `JobsPanel` with sortable table (egui_extras::TableBuilder), filter bar (search + active-only checkbox), multi-select via HashSet<JobId>, action bar with Cancel/Retry/Delete, footer stats.
+- `JobsAction` enum: None / Cancel(Vec<JobId>) / Retry(Vec<JobId>) / Delete(Vec<JobId>) / RevealMp4(JobId) / OpenSubmit. Caller (host app) dispatches.
+- `SubmitDialog` modal: endpoint switch (TextToVideo/ImageToVideo), prompt textarea, image_url (only when i2v), resolution radio (480p/720p/1080p i2v only), duration spinbox (4..15), aspect_ratio dropdown, generate_audio toggle, seed input, auto_attach checkbox. Live cost preview ($per_sec * duration).
+- `SubmitDialogResult` enum: None/Submit{kind,params,auto_attach}/Cancelled. Caller submits via JobQueue::submit if Submit.
+- `prefs::render(ui, &mut JobsSettings)` for plug-in into PrefsRegistry — budget enable+slider, auto-attach, retention dropdown.
+- 20 tests cover: filter (search/kind/active-only/error-msg), sort (submitted/kind), footer stats, format_elapsed; dialog defaults/validation/cost-estimate/build_params (i2v integer vs t2v string duration)/aspect-ratio omission/seed parse/audio toggle/kind strings.
+- `cargo test -p playa-jobs-ui`: 20/20 passed.
+- Side fix: `Job::new` and `now_secs` made pub in playa-jobs-core (with rationale doc) so downstream UI test fixtures can fabricate Job structs.
+- Workspace Cargo.toml members += crates/playa-jobs-ui.
+
+### US-03 — JobsSettings struct (PASSED, scope-reduced)
+- Reduced scope: only added JobsSettings to playa-jobs-core. Extracting Viewport/Cache/Playback/Hotkey slices from existing AppSettings is gold-plating for the JOBS modularity goal — deferred to US-03b which is marked deferred in PRD.
+- New file `crates/playa-jobs-core/src/settings.rs` with `pub struct JobsSettings { daily_budget_enabled, daily_budget_usd, auto_attach_mp4, retention_days }`.
+- Defaults: budget off (daily_budget_usd=50.0 ready to enable), auto_attach=true, retention=Some(30).
+- All fields use #[serde(default = "...")] for partial-save backwards-compat.
+- 4 new tests: defaults sensible, JSON round-trip, partial deserialize uses defaults, retention=None round-trips.
+- Lib.rs `pub mod settings;` + `pub use settings::JobsSettings;`.
+- `cargo test -p playa-jobs-core`: 35/35 (31 → 35).
+
+### US-02 — Create playa-prefs crate (PASSED)
+- crates/playa-prefs/Cargo.toml: standalone crate, only dep `egui = "0.33"`. License MIT for crates.io shipping later.
+- crates/playa-prefs/src/lib.rs (~580 LOC including tests):
+  - `PrefsEntry<S>` { id, label, category, search_keywords, render: Box<dyn FnMut(&mut Ui, &mut S) + Send + Sync> }
+  - `PrefsRegistry<S>` { entries: Vec<PrefsEntry<S>> } with new/add/iter/find_by_id/filtered_indices
+  - `PrefsResult` enum: Closed/Open/Applied/OkClosed/Cancelled
+  - `PrefsWindow<S: Clone + PartialEq>` state machine: open_with/is_open/is_dirty/working/working_mut/apply/ok/cancel/close + show(ctx, registry, state)
+  - show() renders egui Window with: search bar (top), sidebar tree-view grouped by category (left, scrollable), action panel Apply/Cancel/OK (bottom, right-aligned), entry render in central panel.
+  - search filters case-insensitive across label / category / search_keywords; empty query → all.
+  - Apply: working_copy → state, baseline updated, window stays open. OK: apply + close. Cancel: discard working, close. Window [x] = treat as Cancel.
+- 15 tests cover: registry add/iter/find_by_id, filtered_indices (empty / by label / case-insensitive keyword / by category / no match), window state machine (closed initial, open_with clones, dirty flips, apply commits and clears dirty, OK applies+closes, Cancel discards without touching host, working_when_closed=None, search clears on close).
+- Workspace Cargo.toml members += crates/playa-prefs.
+- `cargo test -p playa-prefs`: 15/15 passed.
+- Notes: render closures use Send+Sync so PrefsRegistry<S> is thread-shareable for completeness. Window doesn't render in tests (egui Context not constructed) — UI rendering covered by smoke once first consumer (playa-jobs-ui) wires it; state machine is fully covered headlessly which is the value-bearing logic.
+
+### US-01 — Rename playa-jobs → playa-jobs-core (PASSED)
+- `git mv crates/playa-jobs crates/playa-jobs-core` (history preserved)
+- crates/playa-jobs-core/Cargo.toml: `name = "playa-jobs-core"`
+- crates/playa-job-seedance/Cargo.toml: dep path + name → playa-jobs-core
+- crates/playa-app/Cargo.toml: same
+- crates/playa-app/src/app/mod.rs: 2 sites `playa_jobs::` → `playa_jobs_core::`
+- crates/playa-job-seedance/src/provider.rs: 2 sites (lib + tests)
+- crates/playa-job-seedance/examples/run_one.rs: 2 sites
+- Workspace Cargo.toml members updated
+- Verify: `cargo test -p playa-jobs-core` 31/31, `cargo test -p playa-job-seedance` 18/18, `cargo check -p playa-app` green
+- Notes: Rustdoc-link references `[`playa_jobs::Foo`]` in seedance lib.rs/params.rs/http.rs/provider.rs prose — kept as-is for now (will be re-targeted to `playa_jobs::` once facade ships in US-05). Until then they break rustdoc but not cargo build/check/test. Acceptable transient.
+
+

@@ -116,10 +116,33 @@ pub struct Job {
     /// not embed a non-portable `SystemTime`).
     pub created_at: u64,
     pub updated_at: u64,
+    /// Append-only log of `(state, unix_seconds_at_entry)` tuples — the first
+    /// entry is `(Pending, created_at)`. Updater thread pushes a new tuple on
+    /// every transition. Used by UI panels to render time-in-state breakdown.
+    /// `#[serde(default)]` for backwards-compat with older persisted jobs
+    /// that lack the field.
+    #[serde(default)]
+    pub state_history: Vec<(JobState, u64)>,
+    /// Provider-supplied estimate of total runtime in seconds. Used by UI for
+    /// ETA bars. `None` when the provider has no idea (e.g. unknown queue
+    /// depth).
+    #[serde(default)]
+    pub estimated_total_secs: Option<u32>,
+    /// Provider-reported cost for this job in USD. Populated via
+    /// [`crate::JobContext::report_cost`] (typically on Complete). `None`
+    /// while running, on Failed/Cancelled (no charge incurred from our
+    /// side), or for cost-free providers.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
 }
 
 impl Job {
-    pub(crate) fn new(kind: impl Into<String>, params: serde_json::Value) -> Self {
+    /// Construct a fresh `Job` with a new id, initial `Pending` state, and
+    /// the given kind/params. Production code should go through
+    /// [`crate::JobQueue::submit`]; this is exposed `pub` so test fixtures
+    /// in downstream UI crates (e.g. `playa-jobs-ui`) can fabricate jobs
+    /// without standing up a real queue.
+    pub fn new(kind: impl Into<String>, params: serde_json::Value) -> Self {
         let now = now_secs();
         Self {
             id: JobId::new(),
@@ -131,6 +154,10 @@ impl Job {
             result: None,
             created_at: now,
             updated_at: now,
+            // Initial Pending entry timestamped at create.
+            state_history: vec![(JobState::Pending, now)],
+            estimated_total_secs: None,
+            cost_usd: None,
         }
     }
 
@@ -139,8 +166,11 @@ impl Job {
     }
 }
 
+/// Current UTC time as seconds since the Unix epoch. Public so UI consumers
+/// (e.g. `playa-jobs-ui::JobsPanel` showing "elapsed" columns) compute the
+/// same now-value the queue uses internally.
 #[inline]
-pub(crate) fn now_secs() -> u64 {
+pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

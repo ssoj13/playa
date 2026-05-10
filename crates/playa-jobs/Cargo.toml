@@ -3,15 +3,23 @@ name = "playa-jobs"
 version = "0.1.142"
 edition = "2024"
 authors = ["joss13@gmail.com"]
-description = "playa job queue: long-running IO tasks (e.g. Seedance video-gen, ffmpeg encode) with state machine, cancellation, and crash-resumable JSONL persistence."
+description = "All-in-one playa-jobs facade. Re-exports playa-jobs-core + (optional) ui + prefs + Seedance provider. Pick what you need via cargo features."
 license = "MIT"
 
 [features]
-default = ["persist"]
-persist = []
+default = ["ui", "prefs", "seedance", "persist"]
+ui = ["dep:playa-jobs-ui", "dep:playa-prefs"]
+prefs = ["dep:playa-prefs"]
+seedance = ["dep:playa-job-seedance"]
+persist = ["playa-jobs-core/persist"]
 
 [dependencies]
 log = { workspace = true }
-serde = { workspace = true }
+playa-jobs-core = { path = "../playa-jobs-core", default-features = false }
+playa-jobs-ui = { path = "../playa-jobs-ui", optional = true }
+playa-prefs = { path = "../playa-prefs", optional = true }
+playa-job-seedance = { path = "../playa-job-seedance", optional = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }
 uuid = { workspace = true }

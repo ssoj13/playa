@@ -1,0 +1,18 @@
+[package]
+name = "playa-jobs-core"
+version = "0.1.142"
+edition = "2024"
+authors = ["joss13@gmail.com"]
+description = "playa job queue: long-running IO tasks (e.g. Seedance video-gen, ffmpeg encode) with state machine, cancellation, and crash-resumable JSONL persistence."
+license = "MIT"
+
+[features]
+default = ["persist"]
+persist = []
+
+[dependencies]
+log = { workspace = true }
+playa-events = { path = "../playa-events" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

@@ -22,6 +22,7 @@ use playa_engine::core::player::Player;
 use playa_engine::core::workers::Workers;
 use playa_engine::entities;
 use playa_engine::entities::{Frame, GpuBlendBridge, GpuBlendRequest, Project, gpu_blend_arc_pair};
+#[cfg(feature = "jobs")]
 use playa_jobs::{JobQueue, JobQueueConfig};
 use playa_ui::dialogs::encode::EncodeDialog;
 use playa_ui::dialogs::prefs::prefs_events::HotkeyWindow;
@@ -45,6 +46,10 @@ pub enum DockTab {
     Project,
     Attributes,
     NodeEditor,
+    /// Long-running jobs queue panel (Seedance video-gen, ffmpeg encodes,
+    /// etc). Feature-gated under `jobs` (default on).
+    #[cfg(feature = "jobs")]
+    Jobs,
 }
 
 /// Main application state.
@@ -193,8 +198,36 @@ pub struct PlayaApp {
     /// `None` immediately after deserialize; [`Self::ensure_jobs_initialized`]
     /// restores a fresh queue with the persistence log re-attached. Same
     /// pattern as [`Self::gpu_blend_bridge`].
+    ///
+    /// Feature-gated under `jobs` (default on) so callers building without
+    /// jobs (`--no-default-features`) compile this struct cleanly.
+    #[cfg(feature = "jobs")]
     #[serde(skip)]
     pub job_queue: Option<Arc<JobQueue>>,
+
+    /// Per-frame state for the Jobs DockTab (sort, filter, selection).
+    /// Ephemeral — not persisted across restarts.
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub jobs_panel: playa_jobs::ui::JobsPanel,
+
+    /// Modal state for the "Generate via Seedance…" dialog. Opened from
+    /// the Jobs panel's `+ Generate` button. Ephemeral.
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub submit_dialog: playa_jobs::ui::SubmitDialog,
+
+    /// Pluggable preferences registry. Each module exposes a `pub fn render`
+    /// for its slice of settings; the host registers an entry that calls
+    /// that fn with `&mut SliceSettings` extracted from `AppSettings`.
+    /// Built in [`Self::Default`] with the jobs entry pre-registered when
+    /// the `jobs` feature is on. `playa_prefs::PrefsWindow` wiring (modal
+    /// open/close + Apply/Cancel) is a follow-up — for v1 the registry is
+    /// queryable but no window UI exists yet.
+    ///
+    /// Generic over `AppSettings` from playa-ui for slice extraction.
+    #[serde(skip)]
+    pub prefs_registry: playa_prefs::PrefsRegistry<AppSettings>,
 }
 
 impl Default for PlayaApp {
@@ -216,7 +249,8 @@ impl Default for PlayaApp {
 
         let (gpu_blend_bridge, gpu_blend_rx) = gpu_blend_arc_pair();
 
-        let job_queue = build_default_job_queue();
+        #[cfg(feature = "jobs")]
+        let job_queue = build_default_job_queue(Arc::new(event_bus.clone()));
 
         Self {
             frame: None,
@@ -282,7 +316,18 @@ impl Default for PlayaApp {
             options_initialized: false,
             gpu_blend_bridge: Some(gpu_blend_bridge),
             gpu_blend_rx: Mutex::new(Some(gpu_blend_rx)),
+            #[cfg(feature = "jobs")]
             job_queue,
+            #[cfg(feature = "jobs")]
+            jobs_panel: playa_jobs::ui::JobsPanel::new(),
+            #[cfg(feature = "jobs")]
+            submit_dialog: playa_jobs::ui::SubmitDialog::default(),
+            // Empty registry — entry-registration is gated on AppSettings
+            // having a `.jobs` slice, which is part of the deferred US-03b
+            // (slice-extraction refactor). Once AppSettings carries
+            // JobsSettings, this becomes:
+            //   playa_jobs::register_default_prefs(&mut prefs_registry, |s| &mut s.jobs);
+            prefs_registry: playa_prefs::PrefsRegistry::<AppSettings>::new(),
         }
     }
 }
@@ -291,7 +336,10 @@ impl Default for PlayaApp {
 /// cache directories. Persistence is on by default (matches the user's Q3
 /// answer); a write failure on the persist log demotes to non-persistent so
 /// the rest of the app still boots.
-fn build_default_job_queue() -> Option<Arc<JobQueue>> {
+#[cfg(feature = "jobs")]
+fn build_default_job_queue(event_bus: Arc<playa_jobs::EventBus>) -> Option<Arc<JobQueue>> {
+    use playa_jobs::JobEvent;
+
     let persist_path = dirs_next::config_dir().map(|d| d.join("playa").join("jobs.jsonl"));
     let files_dir = dirs_next::cache_dir()
         .map(|d| d.join("playa").join("jobs"))
@@ -306,7 +354,7 @@ fn build_default_job_queue() -> Option<Arc<JobQueue>> {
         persist_path: persist_path.clone(),
     };
 
-    let queue = match JobQueue::new(cfg) {
+    let queue = match JobQueue::new(cfg, Arc::clone(&event_bus)) {
         Ok(q) => q,
         Err(e) => {
             log::warn!(
@@ -319,7 +367,7 @@ fn build_default_job_queue() -> Option<Arc<JobQueue>> {
                 files_dir: std::env::temp_dir().join("playa-jobs-fallback"),
                 persist_path: None,
             };
-            match JobQueue::new(fallback) {
+            match JobQueue::new(fallback, Arc::clone(&event_bus)) {
                 Ok(q) => q,
                 Err(e) => {
                     log::error!("JobQueue: fallback init also failed ({e}); disabling jobs");
@@ -330,9 +378,9 @@ fn build_default_job_queue() -> Option<Arc<JobQueue>> {
     };
 
     // Default visibility: log every event at debug level so dev sessions see
-    // job activity without any UI hookup. Real UI listeners go through
-    // `JobQueue::subscribe` from playa-ui.
-    queue.subscribe(|event| log::debug!("[jobs] {event:?}"));
+    // job activity without any UI hookup. Subscribed through the EventBus —
+    // any other consumer (status bar, jobs panel) does the same.
+    event_bus.subscribe::<JobEvent, _>(|event| log::debug!("[jobs] {event:?}"));
 
     // Register the Seedance provider iff a key is present. Lookup order:
     //   PLAYA_FAL_KEY env > FAL_KEY env > .env file in CWD or one parent.
@@ -347,14 +395,17 @@ fn build_default_job_queue() -> Option<Arc<JobQueue>> {
 /// - `FAL_KEY` — fal.ai docs canonical (`Authorization: Key <FAL_KEY>`).
 /// - `FAL_API_KEY` — name used by the fal JS/Python SDKs and visible in many
 ///   `.env` examples.
+#[cfg(feature = "jobs")]
 const FAL_KEY_NAMES: &[&str] = &["PLAYA_FAL_KEY", "FAL_KEY", "FAL_API_KEY"];
 
+#[cfg(feature = "jobs")]
 fn read_fal_key() -> Option<String> {
     let cwd_env = std::path::PathBuf::from(".env");
     let parent_env = std::path::PathBuf::from("../.env");
     playa_jobs::secret::lookup(FAL_KEY_NAMES, &[cwd_env, parent_env])
 }
 
+#[cfg(feature = "jobs")]
 fn register_seedance_provider(queue: &JobQueue) {
     let Some(key) = read_fal_key() else {
         log::info!(
@@ -364,12 +415,12 @@ fn register_seedance_provider(queue: &JobQueue) {
     };
     // Register both fal.ai Seedance endpoints. `kind()` distinguishes them in
     // `JobQueue::submit`. Same key serves both.
-    queue.register_provider(playa_job_seedance::SeedanceProvider::image_to_video(key.clone()));
-    queue.register_provider(playa_job_seedance::SeedanceProvider::text_to_video(key));
+    queue.register_provider(playa_jobs::seedance::SeedanceProvider::image_to_video(key.clone()));
+    queue.register_provider(playa_jobs::seedance::SeedanceProvider::text_to_video(key));
     log::info!(
         "Seedance providers registered (kinds=`{}`, `{}`)",
-        playa_job_seedance::kinds::IMAGE_TO_VIDEO,
-        playa_job_seedance::kinds::TEXT_TO_VIDEO
+        playa_jobs::seedance::kinds::IMAGE_TO_VIDEO,
+        playa_jobs::seedance::kinds::TEXT_TO_VIDEO
     );
 }
 
@@ -386,11 +437,67 @@ impl PlayaApp {
     /// `job_queue` is already `Some`. Boot path (`runner.rs`) calls this
     /// before any provider registration so [`JobQueue::replay_persisted`]
     /// resumes orphaned jobs once providers are registered.
+    #[cfg(feature = "jobs")]
     pub fn ensure_jobs_initialized(&mut self) {
         if self.job_queue.is_some() {
             return;
         }
-        self.job_queue = build_default_job_queue();
+        self.job_queue = build_default_job_queue(Arc::new(self.event_bus.clone()));
+    }
+
+    /// Render the Jobs dock tab content. Pulls from `self.job_queue` if
+    /// present; otherwise shows a "jobs disabled" hint. Dispatches the
+    /// returned [`playa_jobs::ui::JobsAction`] to queue methods.
+    #[cfg(feature = "jobs")]
+    pub fn render_jobs_tab(&mut self, ui: &mut eframe::egui::Ui) {
+        use playa_jobs::ui::JobsAction;
+
+        let Some(queue) = self.job_queue.as_ref().map(Arc::clone) else {
+            ui.centered_and_justified(|ui| {
+                ui.weak("Job queue not initialized.");
+            });
+            return;
+        };
+
+        match self.jobs_panel.ui(ui, &queue) {
+            JobsAction::None => {}
+            JobsAction::Cancel(ids) => {
+                for id in ids {
+                    queue.cancel(id);
+                }
+            }
+            JobsAction::Retry(ids) => {
+                for id in ids {
+                    if let Err(e) = queue.retry(id) {
+                        log::warn!("retry({id}) failed: {e}");
+                    }
+                }
+            }
+            JobsAction::Delete(ids) => {
+                for id in ids {
+                    if let Err(e) = queue.remove(id) {
+                        log::warn!("remove({id}) failed: {e}");
+                    }
+                }
+            }
+            JobsAction::RevealMp4(id) => {
+                // OS reveal omitted for v1; log the path so the user sees
+                // where the mp4 is until we wire `opener` or platform
+                // shells.
+                if let Some(j) = queue.get(id)
+                    && let Some(path) = j
+                        .result
+                        .as_ref()
+                        .and_then(|v| v.get("mp4_path"))
+                        .and_then(|v| v.as_str())
+                {
+                    log::info!("Reveal mp4: {path}");
+                }
+            }
+            JobsAction::OpenSubmit => {
+                self.submit_dialog.open();
+            }
+        }
     }
 
     pub fn ensure_gpu_blend_initialized(&mut self) {

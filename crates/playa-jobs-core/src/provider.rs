@@ -48,6 +48,14 @@ impl JobContext {
             .update_tx
             .send(UpdateMsg::ParamPatch(self.job_id, key.into(), value));
     }
+
+    /// Report this job's cost in USD. Typically called on success once the
+    /// provider knows the actual billed amount (e.g. for Seedance,
+    /// `per_sec_rate * duration_secs`). Populates `Job.cost_usd` and
+    /// persists a `LogEntry::Cost` so reboot restores the value.
+    pub fn report_cost(&self, usd: f64) {
+        let _ = self.update_tx.send(UpdateMsg::Cost(self.job_id, usd));
+    }
 }
 
 /// Trait every long-running task implements. Synchronous: the provider is
@@ -90,6 +98,8 @@ pub(crate) enum UpdateMsg {
     Progress(JobId, JobProgress),
     /// Set `params[key] = value` so a crash-restart sees the new value.
     ParamPatch(JobId, String, serde_json::Value),
+    /// Provider-reported cost in USD for this job.
+    Cost(JobId, f64),
     /// Final outcome from a worker thread. Carries either a success value or
     /// an error, plus the job id. Always followed by a terminal state write.
     Final(JobId, Result<serde_json::Value, JobError>),

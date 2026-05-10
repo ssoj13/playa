@@ -9,11 +9,18 @@ description = "Playa desktop host — PlayaApp, event routing, REST API, CLI"
 name = "playa_app"
 path = "src/lib.rs"
 
+[features]
+default = ["jobs"]
+# Enables the long-running IO jobs subsystem (queue + UI panel + Seedance
+# provider + Preferences-panel render). Disable via --no-default-features for
+# a leaner build with no fal.ai integration, no Jobs DockTab, no jobs prefs.
+jobs = ["dep:playa-jobs"]
+
 [dependencies]
 playa-engine = { path = "../playa-engine" }
 playa-events = { path = "../playa-events" }
-playa-jobs = { path = "../playa-jobs" }
-playa-job-seedance = { path = "../playa-job-seedance" }
+playa-jobs = { path = "../playa-jobs", optional = true }
+playa-prefs = { path = "../playa-prefs" }
 playa-ui = { path = "../playa-ui" }
 anyhow = { workspace = true }
 clap = { workspace = true }

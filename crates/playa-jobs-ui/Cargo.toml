@@ -1,0 +1,15 @@
+[package]
+name = "playa-jobs-ui"
+version = "0.1.142"
+edition = "2024"
+authors = ["joss13@gmail.com"]
+description = "egui widgets for playa-jobs: JobsPanel, SubmitDialog, prefs::render. Optional addon to the playa-jobs subsystem."
+license = "MIT"
+
+[dependencies]
+playa-jobs-core = { path = "../playa-jobs-core" }
+playa-prefs = { path = "../playa-prefs" }
+egui = "0.33"
+egui_extras = "0.33"
+log = { workspace = true }
+serde_json = { workspace = true }
