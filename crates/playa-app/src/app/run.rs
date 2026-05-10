@@ -300,8 +300,6 @@ impl eframe::App for PlayaApp {
             self.prefs_window.open_with(&self.settings);
         }
 
-        // Render the new pluggable preferences modal. Returns Closed when
-        // the window isn't open this frame; otherwise drives Apply/OK/Cancel.
         match self
             .prefs_window
             .show(ctx, &mut self.prefs_registry, &mut self.settings)

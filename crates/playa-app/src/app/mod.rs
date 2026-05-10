@@ -522,10 +522,11 @@ impl PlayaApp {
             return;
         };
 
-        // Inline jobs prefs as a collapsing header above the table — until
-        // a full Preferences modal lands, this is the canonical place to
-        // edit budget cap / auto-attach / retention. Persists via
-        // `PlayaApp::jobs_settings` (eframe serde).
+        // Inline jobs prefs as a collapsing header above the table.
+        // Mirrors what the central Preferences modal (Ctrl+,) shows — kept
+        // here as a quick edit path so users don't have to leave the tab
+        // to flip auto-attach. Same `&mut self.settings.jobs`, so changes
+        // reflect immediately in both surfaces.
         ui.collapsing("⚙ Settings", |ui| {
             playa_jobs::ui::prefs::render(ui, &mut self.settings.jobs);
         });
