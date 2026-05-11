@@ -237,8 +237,18 @@ impl Effect {
                     contrast,
                 })
             }
-            // hsv + blur not yet ported to GPU — caller runs CPU apply().
-            EffectType::AdjustHSV | EffectType::GaussianBlur => None,
+            EffectType::AdjustHSV => {
+                let hue_shift = self.attrs.get_float("hue_shift").unwrap_or(0.0);
+                let saturation = self.attrs.get_float("saturation").unwrap_or(1.0);
+                let value = self.attrs.get_float("value").unwrap_or(1.0);
+                Some(GpuEffect::AdjustHsv {
+                    hue_shift,
+                    saturation,
+                    value,
+                })
+            }
+            // blur not yet ported to GPU — caller runs CPU apply().
+            EffectType::GaussianBlur => None,
         }
     }
 }

@@ -19,6 +19,7 @@
 //!    `comp_node::compose_internal`.
 
 pub mod brightness;
+pub mod hsv;
 
 use wgpu::util::DeviceExt;
 
@@ -64,6 +65,7 @@ pub struct EffectsRunner {
     sampler: wgpu::Sampler,
     quad_vbo: wgpu::Buffer,
     brightness: brightness::BrightnessRunner,
+    hsv: hsv::HsvRunner,
 }
 
 impl EffectsRunner {
@@ -84,12 +86,14 @@ impl EffectsRunner {
             usage: wgpu::BufferUsages::VERTEX,
         });
         let brightness = brightness::BrightnessRunner::new();
+        let hsv = hsv::HsvRunner::new();
         Self {
             device: device.clone(),
             queue: queue.clone(),
             sampler,
             quad_vbo,
             brightness,
+            hsv,
         }
     }
 
@@ -159,6 +163,24 @@ impl EffectsRunner {
                     format,
                     *brightness,
                     *contrast,
+                );
+            }
+            GpuEffect::AdjustHsv {
+                hue_shift,
+                saturation,
+                value,
+            } => {
+                self.hsv.run(
+                    &self.device,
+                    &self.queue,
+                    &self.sampler,
+                    &self.quad_vbo,
+                    input,
+                    output,
+                    format,
+                    *hue_shift,
+                    *saturation,
+                    *value,
                 );
             }
             // Effects not yet ported to GPU should never reach here:

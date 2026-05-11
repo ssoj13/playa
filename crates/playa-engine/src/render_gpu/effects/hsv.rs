@@ -1,27 +1,20 @@
-//! Brightness + contrast effect — direct GPU port of
-//! `entities::effects::brightness`.
-//!
-//! Shader formula matches the CPU implementation exactly:
-//! `out.rgb = (in.rgb - 0.5) * (1 + contrast) + 0.5 + brightness`.
-//! Alpha untouched.
+//! HSV adjustment effect — GPU port of `entities::effects::hsv`.
 
 use std::collections::HashMap;
 
-const WGSL: &str = include_str!("../shaders/effects/brightness.wgsl");
+const WGSL: &str = include_str!("../shaders/effects/hsv.wgsl");
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
-    brightness: f32,
-    contrast: f32,
-    _pad: [f32; 2],
+    hue_shift: f32,
+    saturation: f32,
+    value: f32,
+    _pad: f32,
 }
 
-/// Per-output-format render pipeline cache for the brightness effect.
-/// Shader source is identical across formats but pipelines must be
-/// created per-format because the color target format is baked into
-/// the pipeline state.
-pub struct BrightnessRunner {
+/// Per-output-format render pipeline cache for the HSV effect.
+pub struct HsvRunner {
     shader: Option<wgpu::ShaderModule>,
     bgl: Option<wgpu::BindGroupLayout>,
     pip_layout: Option<wgpu::PipelineLayout>,
@@ -29,7 +22,7 @@ pub struct BrightnessRunner {
     uniform_buf: Option<wgpu::Buffer>,
 }
 
-impl BrightnessRunner {
+impl HsvRunner {
     pub fn new() -> Self {
         Self {
             shader: None,
@@ -43,13 +36,13 @@ impl BrightnessRunner {
     fn ensure(&mut self, device: &wgpu::Device) {
         if self.shader.is_none() {
             self.shader = Some(device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("playa_effect_brightness"),
+                label: Some("playa_effect_hsv"),
                 source: wgpu::ShaderSource::Wgsl(WGSL.into()),
             }));
         }
         if self.bgl.is_none() {
             self.bgl = Some(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("playa_effect_brightness_bgl"),
+                label: Some("playa_effect_hsv_bgl"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -83,14 +76,14 @@ impl BrightnessRunner {
         if self.pip_layout.is_none() {
             let bgl = self.bgl.as_ref().unwrap();
             self.pip_layout = Some(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("playa_effect_brightness_layout"),
+                label: Some("playa_effect_hsv_layout"),
                 bind_group_layouts: &[bgl],
                 push_constant_ranges: &[],
             }));
         }
         if self.uniform_buf.is_none() {
             self.uniform_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("playa_effect_brightness_uni"),
+                label: Some("playa_effect_hsv_uni"),
                 size: std::mem::size_of::<Uniforms>() as u64,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -107,7 +100,7 @@ impl BrightnessRunner {
             let shader = self.shader.as_ref().unwrap();
             let layout = self.pip_layout.as_ref().unwrap();
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("playa_effect_brightness_pipeline"),
+                label: Some("playa_effect_hsv_pipeline"),
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: shader,
@@ -149,29 +142,29 @@ impl BrightnessRunner {
         input: &wgpu::Texture,
         output: &wgpu::Texture,
         format: wgpu::TextureFormat,
-        brightness: f32,
-        contrast: f32,
+        hue_shift: f32,
+        saturation: f32,
+        value: f32,
     ) {
         self.ensure(device);
-        // Borrow pipeline before grabbing &uniform_buf to avoid double mut borrow.
         let _ = self.pipeline_for(device, format);
 
         let uni = Uniforms {
-            brightness,
-            contrast,
-            _pad: [0.0; 2],
+            hue_shift,
+            saturation,
+            value,
+            _pad: 0.0,
         };
         let uniform_buf = self.uniform_buf.as_ref().unwrap();
         queue.write_buffer(uniform_buf, 0, bytemuck::bytes_of(&uni));
 
         let pipeline = self.pipelines.get(&format).unwrap();
-
         let in_view = input.create_view(&wgpu::TextureViewDescriptor::default());
         let out_view = output.create_view(&wgpu::TextureViewDescriptor::default());
 
         let bgl = self.bgl.as_ref().unwrap();
         let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("playa_effect_brightness_bg"),
+            label: Some("playa_effect_hsv_bg"),
             layout: bgl,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -190,11 +183,11 @@ impl BrightnessRunner {
         });
 
         let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("playa_effect_brightness_enc"),
+            label: Some("playa_effect_hsv_enc"),
         });
         {
             let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("playa_effect_brightness_rp"),
+                label: Some("playa_effect_hsv_rp"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &out_view,
                     resolve_target: None,
@@ -217,7 +210,7 @@ impl BrightnessRunner {
     }
 }
 
-impl Default for BrightnessRunner {
+impl Default for HsvRunner {
     fn default() -> Self {
         Self::new()
     }
