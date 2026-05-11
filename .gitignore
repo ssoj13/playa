@@ -8,7 +8,8 @@ target/
 !vcpkg.json
 !vcpkg-configuration.json
 *.svg
-cdx.cmd
+*.cmd
+*.sh
 temp_log.txt
 
 # Manifest-mode vcpkg install root (FFmpeg + deps, multi-GB; per-machine)
