@@ -45,8 +45,12 @@ passwd.txt
 .env.local
 .env.*
 
-# oh-my-cursor state
-.omc/
-
-# Per-machine Claude Code overrides
-.claude/settings.local.json
+# AI
+.bughunt
+.claude
+.cursor
+.omc
+.planning
+*.cmd
+*.sh
+*.log

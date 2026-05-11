@@ -4,22 +4,26 @@ bootstrap.py - Unified build/test/package script for Playa.
 
 Cross-platform (Python 3, stdlib only). Replaces obsolete bootstrap.ps1 / .sh.
 
-Commands:
-    build         Build playa via `cargo xtask` (default: release profile)
-    test          Run all tests via xtask
-    check         Run clippy and fmt check
-    clean         Clean build artifacts
-    python        Build Python wheel via maturin
-    python-reqs   Install Python dev dependencies
-    publish       Publish crate to crates.io
-    install       Install playa from crates.io (checks FFmpeg deps)
-    package       Package for distribution via cargo-packager
+Commands (each long form has a short alias):
+    build, b             Build playa via `cargo xtask` (default: release profile)
+    test, t              Run all tests via xtask
+    check, ch            Run clippy and fmt check
+    clean, c             Clean build artifacts
+    python, py         Build Python wheel via maturin
+    python-reqs, pyreqs Install Python dev dependencies
+    install, i         Install playa from crates.io (checks FFmpeg deps)
+    publish, pub       Publish crate to crates.io
+    package, pkg       Package for distribution via cargo-packager
+    help, h            Show help
+
+Flags already have short forms where applicable: -d/--debug, -f/--features,
+-n/--nocapture, -i/--install (python).
 
 Usage:
     python bootstrap.py build
-    python bootstrap.py build -d
+    python bootstrap.py b -d
     python bootstrap.py test
-    python bootstrap.py python --install
+    python bootstrap.py py -i
 """
 
 from __future__ import annotations
@@ -658,16 +662,17 @@ def run_xtask(extra_args: list[str]) -> int:
 HELP_TEXT = f"""
  PLAYA BUILD SYSTEM
 
- COMMANDS
-   build           Build playa (via xtask)
-   test            Run all tests (via xtask)
-   check           Run clippy and fmt check
-   clean           Clean build artifacts
-   python          Build Python wheel via maturin
-   python-reqs     Install Python dev dependencies
-   install         Install playa from crates.io (checks FFmpeg deps)
-   publish         Publish crate to crates.io
-   package         Package for distribution
+ COMMANDS (alias in parentheses)
+   build (b)            Build playa (via xtask)
+   test (t)             Run all tests (via xtask)
+   check (ch)           Run clippy and fmt check
+   clean (c)            Clean build artifacts
+   python (py)          Build Python wheel via maturin
+   python-reqs (pyreqs) Install Python dev dependencies
+   install (i)          Install playa from crates.io (checks FFmpeg deps)
+   publish (pub)        Publish crate to crates.io
+   package (pkg)        Package for distribution
+   help (h)             Show this help
 
  BUILD OPTIONS
    -d, --debug     Debug mode (default: release)
@@ -692,12 +697,16 @@ HELP_TEXT = f"""
 
  EXAMPLES
    python bootstrap.py build                     # Release build (default)
-   python bootstrap.py build -d                 # Debug build
+   python bootstrap.py b -d                       # Same: debug via alias
    python bootstrap.py build -f profiler        # Extra Cargo features
    python bootstrap.py test                       # Run tests
+   python bootstrap.py t -n                       # Tests with output (aliases)
    python bootstrap.py check                      # Clippy + fmt
+   python bootstrap.py ch                         # Same via alias
    python bootstrap.py python --install           # Build & install Python wheel in .venv
+   python bootstrap.py py -i                      # Same via aliases
    python bootstrap.py install                    # Install from crates.io
+   python bootstrap.py i                          # Same via alias
 """
 
 
@@ -725,9 +734,34 @@ XTASK_COMMANDS = [
     "wipe-wf",
 ]
 
+# Short names for bootstrap commands (expanded before argparse / xtask routing).
+COMMAND_ALIASES: dict[str, str] = {
+    "b": "build",
+    "t": "test",
+    "ch": "check",
+    "c": "clean",
+    "py": "python",
+    "pyreqs": "python-reqs",
+    "i": "install",
+    "pub": "publish",
+    "pkg": "package",
+    "h": "help",
+}
+
+
+def normalize_command_alias(argv: list[str]) -> None:
+    """Rewrite argv[1] from a short alias to the canonical command name."""
+    if len(argv) <= 1:
+        return
+    canon = COMMAND_ALIASES.get(argv[1])
+    if canon is not None:
+        argv[1] = canon
+
 
 def main() -> int:
     C.init()
+
+    normalize_command_alias(sys.argv)
 
     # Check for xtask-forwarded commands before argparse
     if len(sys.argv) > 1 and sys.argv[1] in XTASK_COMMANDS:
@@ -748,7 +782,7 @@ def main() -> int:
         nargs="?",
         choices=COMMANDS,
         default="help",
-        help="Command to run",
+        help="Command (aliases: b,t,ch,c,py,pyreqs,i,pub,pkg,h). Run `help` for full text.",
     )
 
     # Build options
