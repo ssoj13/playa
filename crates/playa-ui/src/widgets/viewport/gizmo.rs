@@ -337,35 +337,25 @@ fn build_gizmo_matrices(
         let view_f64 = DMat4::from_cols_array(&cam_view.to_cols_array().map(|v| v as f64));
         let proj_f64 = DMat4::from_cols_array(&cam_proj.to_cols_array().map(|v| v as f64));
 
-        // Comp size (what camera renders to) and viewport size
-        let comp_w = viewport_state.image_size.x as f64;
-        let comp_h = viewport_state.image_size.y as f64;
-        let vp_w = clip_rect.width() as f64;
-        let vp_h = clip_rect.height() as f64;
-        let zoom = viewport_state.zoom as f64;
-        let pan_x = viewport_state.pan.x as f64;
-        let pan_y = viewport_state.pan.y as f64;
-
-        // Transform camera NDC to screen NDC:
-        // 1. Camera NDC [-1,1] represents [-comp/2, comp/2] in world
-        // 2. Screen NDC [-1,1] represents [-viewport/2, viewport/2] in screen
-        // 3. Apply zoom and pan to match image_to_screen()
-        //
-        // screen_pos = world_pos * zoom + pan
-        // screen_NDC = screen_pos / (viewport/2)
-        //            = (cam_NDC * comp/2 * zoom + pan) / (viewport/2)
-        //            = cam_NDC * (comp * zoom / viewport) + pan * 2 / viewport
-        let scale_x = comp_w * zoom / vp_w;
-        let scale_y = comp_h * zoom / vp_h;
-        let trans_x = pan_x * 2.0 / vp_w;
-        let trans_y = pan_y * 2.0 / vp_h;
-
-        let viewport_transform = DMat4::from_cols(
-            glam::DVec4::new(scale_x, 0.0, 0.0, 0.0),
-            glam::DVec4::new(0.0, scale_y, 0.0, 0.0),
-            glam::DVec4::new(0.0, 0.0, 1.0, 0.0),
-            glam::DVec4::new(trans_x, trans_y, 0.0, 1.0),
+        // Camera NDC → screen NDC chain (zoom + pan, comp/viewport
+        // remap). Single source of truth lives in
+        // `playa_coord::screen_ndc_from_frame_ndc` — gizmo and any
+        // future viewport overlay share the algebra. f32 helper cast
+        // up to DMat4 here for gizmo's f64 precision pipeline.
+        let comp_size = (
+            viewport_state.image_size.x as usize,
+            viewport_state.image_size.y as usize,
         );
+        let vp_size_f32 = glam::Vec2::new(clip_rect.width(), clip_rect.height());
+        let pan_f32 = glam::Vec2::new(viewport_state.pan.x, viewport_state.pan.y);
+        let viewport_transform_f32 = space::screen_ndc_from_frame_ndc(
+            viewport_state.zoom,
+            pan_f32,
+            comp_size,
+            vp_size_f32,
+        );
+        let viewport_transform =
+            DMat4::from_cols_array(&viewport_transform_f32.to_cols_array().map(f64::from));
 
         // Final projection = viewport_transform * camera_proj
         let final_proj = viewport_transform * proj_f64;

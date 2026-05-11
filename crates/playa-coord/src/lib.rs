@@ -55,7 +55,7 @@
 //! - Drawing an overlay on top of egui screen? Convert frame → viewport
 //!   → screen via the chain.
 
-use glam::{Affine2, Vec2};
+use glam::{Affine2, Mat4, Vec2, Vec4};
 
 /// Image space → frame space.
 ///
@@ -231,6 +231,64 @@ pub fn screen_to_viewport(p: Vec2, viewport_size: Vec2) -> Vec2 {
 pub fn object_to_src_affine(src_size: (usize, usize)) -> Affine2 {
     let half = Vec2::new(src_size.0 as f32 * 0.5, src_size.1 as f32 * 0.5);
     Affine2::from_translation(half) * Affine2::from_scale(Vec2::new(1.0, -1.0))
+}
+
+// ---------------------------------------------------------------------------
+// Y-flip (glam Vec2)
+// ---------------------------------------------------------------------------
+
+/// Flip the Y component. Single-formula helper used wherever a Y-down
+/// vector needs to become Y-up or vice versa without re-deriving the
+/// negation from scratch.
+#[inline]
+pub fn flip_y(p: Vec2) -> Vec2 {
+    Vec2::new(p.x, -p.y)
+}
+
+// ---------------------------------------------------------------------------
+// Camera-NDC → screen-NDC Mat4 (matrix form of the viewport chain)
+// ---------------------------------------------------------------------------
+
+/// Build the 4×4 matrix that maps camera NDC (`[-1, +1]` over `comp_size`
+/// in world) to screen NDC (`[-1, +1]` over `viewport_size` in screen),
+/// applying viewport zoom + pan.
+///
+/// This is the matrix form of the chain
+/// `viewport_to_screen ∘ frame_to_viewport ∘ ndc_to_frame` lifted into
+/// NDC, suitable for multiplying into a camera projection matrix when
+/// rendering an overlay (gizmo, brackets) on top of the camera-rendered
+/// comp.
+///
+/// Derivation:
+/// ```text
+/// screen_pos = world_pos * zoom + pan
+/// screen_NDC = screen_pos / (viewport / 2)
+///            = (cam_NDC * comp/2 * zoom + pan) / (viewport / 2)
+///            = cam_NDC * (comp * zoom / viewport) + pan * 2 / viewport
+/// ```
+///
+/// Single source of truth for this chain. Gizmo overlay matrices and
+/// the viewport image render share this algebra (cast to `DMat4` at the
+/// call site if f64 precision is needed).
+#[inline]
+pub fn screen_ndc_from_frame_ndc(
+    zoom: f32,
+    pan: Vec2,
+    comp_size: (usize, usize),
+    viewport_size: Vec2,
+) -> Mat4 {
+    let comp_w = comp_size.0 as f32;
+    let comp_h = comp_size.1 as f32;
+    let scale_x = comp_w * zoom / viewport_size.x;
+    let scale_y = comp_h * zoom / viewport_size.y;
+    let trans_x = pan.x * 2.0 / viewport_size.x;
+    let trans_y = pan.y * 2.0 / viewport_size.y;
+    Mat4::from_cols(
+        Vec4::new(scale_x, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, scale_y, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, 1.0, 0.0),
+        Vec4::new(trans_x, trans_y, 0.0, 1.0),
+    )
 }
 
 #[cfg(test)]
@@ -456,6 +514,121 @@ mod tests {
     }
 
     // ----- object_to_src_affine -----
+
+    // ----- flip_y -----
+
+    #[test]
+    fn flip_y_negates_only_y() {
+        assert_eq!(flip_y(Vec2::new(3.0, 4.0)), Vec2::new(3.0, -4.0));
+        assert_eq!(flip_y(Vec2::new(-1.0, -2.0)), Vec2::new(-1.0, 2.0));
+        assert_eq!(flip_y(Vec2::ZERO), Vec2::ZERO);
+    }
+
+    #[test]
+    fn flip_y_self_inverse() {
+        for p in [Vec2::ZERO, Vec2::new(7.5, -3.25), Vec2::new(100.0, 200.0)] {
+            assert_eq!(flip_y(flip_y(p)), p);
+        }
+    }
+
+    // ----- screen_ndc_from_frame_ndc -----
+
+    #[test]
+    fn screen_ndc_identity_when_comp_matches_viewport() {
+        // zoom=1, pan=0, comp_size == viewport_size → matrix is identity on
+        // the (x, y) channels (z and w pass through).
+        let comp = (1920, 1080);
+        let vp = Vec2::new(1920.0, 1080.0);
+        let m = screen_ndc_from_frame_ndc(1.0, Vec2::ZERO, comp, vp);
+
+        // Apply to a few NDC corners; result should match input.
+        for ndc in [Vec2::ZERO, Vec2::new(1.0, 1.0), Vec2::new(-1.0, 0.5)] {
+            let v = m * Vec4::new(ndc.x, ndc.y, 0.0, 1.0);
+            assert!(
+                (v.x - ndc.x).abs() < 1e-5 && (v.y - ndc.y).abs() < 1e-5,
+                "ndc={:?} got=({}, {})",
+                ndc,
+                v.x,
+                v.y
+            );
+        }
+    }
+
+    #[test]
+    fn screen_ndc_pan_only_translates() {
+        // zoom=1, pan=(50, -25), comp == vp.
+        // Expected NDC translation = (50*2/1920, -25*2/1080).
+        let comp = (1920, 1080);
+        let vp = Vec2::new(1920.0, 1080.0);
+        let pan = Vec2::new(50.0, -25.0);
+        let m = screen_ndc_from_frame_ndc(1.0, pan, comp, vp);
+
+        // Origin transforms to translation.
+        let v = m * Vec4::new(0.0, 0.0, 0.0, 1.0);
+        let expected = (pan.x * 2.0 / vp.x, pan.y * 2.0 / vp.y);
+        assert!(
+            (v.x - expected.0).abs() < 1e-5 && (v.y - expected.1).abs() < 1e-5,
+            "got=({}, {}) expected=({}, {})",
+            v.x,
+            v.y,
+            expected.0,
+            expected.1
+        );
+    }
+
+    #[test]
+    fn screen_ndc_zoom_only_scales() {
+        // zoom=2, pan=0, comp == vp.
+        // Expected scale = comp/vp * 2 = 2 on each axis.
+        let comp = (800, 600);
+        let vp = Vec2::new(800.0, 600.0);
+        let m = screen_ndc_from_frame_ndc(2.0, Vec2::ZERO, comp, vp);
+
+        let v = m * Vec4::new(0.5, 0.5, 0.0, 1.0);
+        assert!(
+            (v.x - 1.0).abs() < 1e-5 && (v.y - 1.0).abs() < 1e-5,
+            "got=({}, {}) expected=(1, 1)",
+            v.x,
+            v.y
+        );
+    }
+
+    /// Algebra check: matrix application equals the point chain
+    /// `viewport_to_screen ∘ frame_to_viewport ∘ ndc_to_frame` lifted
+    /// into NDC. If this fails, gizmo and viewport.rs have diverged.
+    #[test]
+    fn screen_ndc_matches_point_chain() {
+        let comp = (1280, 720);
+        let vp = Vec2::new(1600.0, 900.0);
+        let zoom = 1.5_f32;
+        let pan = Vec2::new(40.0, -20.0);
+        let m = screen_ndc_from_frame_ndc(zoom, pan, comp, vp);
+
+        for ndc in [Vec2::ZERO, Vec2::new(1.0, 1.0), Vec2::new(-0.5, 0.25)] {
+            // Via matrix
+            let via_matrix = m * Vec4::new(ndc.x, ndc.y, 0.0, 1.0);
+
+            // Via point chain → screen pos → screen NDC.
+            let frame = ndc_to_frame(ndc, comp);
+            let viewport = frame_to_viewport(frame, zoom, pan);
+            // Convert viewport (centered, Y-up) to NDC (centered, Y-up,
+            // [-1,+1] over viewport_size). NOTE: NOT viewport_to_screen
+            // — that flips Y for egui consumption. Here we want NDC
+            // before any Y-flip.
+            let via_chain = Vec2::new(viewport.x * 2.0 / vp.x, viewport.y * 2.0 / vp.y);
+
+            assert!(
+                (via_matrix.x - via_chain.x).abs() < 1e-4
+                    && (via_matrix.y - via_chain.y).abs() < 1e-4,
+                "ndc={:?}: matrix=({}, {}) chain=({}, {})",
+                ndc,
+                via_matrix.x,
+                via_matrix.y,
+                via_chain.x,
+                via_chain.y
+            );
+        }
+    }
 
     #[test]
     fn object_to_src_affine_matches_point_helper() {
