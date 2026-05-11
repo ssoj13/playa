@@ -131,7 +131,9 @@ fn init_format() {
     format::register_all();
 }
 
-#[cfg(not(feature = "format"))]
+/// No-op placeholder when `format` is disabled and FFmpeg is older than 5.0 (`init()` still invokes this).
+/// With FFmpeg 5.0+, `init()` skips format registration (handled inside libavformat).
+#[cfg(all(not(feature = "format"), not(feature = "ffmpeg_5_0")))]
 fn init_format() {}
 
 /// Initializes the device input/output subsystem.
@@ -155,7 +157,9 @@ fn init_filter() {
     filter::register_all();
 }
 
-#[cfg(not(feature = "filter"))]
+/// No-op placeholder when `filter` is disabled and FFmpeg is older than 5.0 (`init()` still invokes this).
+/// With FFmpeg 5.0+, `init()` skips filter registration (handled inside libavfilter).
+#[cfg(all(not(feature = "filter"), not(feature = "ffmpeg_5_0")))]
 fn init_filter() {}
 
 /// Initializes the FFmpeg library.

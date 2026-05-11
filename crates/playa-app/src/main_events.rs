@@ -373,8 +373,7 @@ pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Op
             project.modify_comp(comp_uuid, |comp| {
                 comp.set_frame(e.0);
             });
-            // enqueue_frames is intentionally omitted: CurrentFrameChangedEvent
-            // emitted by modify_comp handles preloading to avoid double-preload.
+            // Preload: `Project::modify_comp` emits `CurrentFrameChangedEvent` when frame changes.
         }
         return Some(result);
     }

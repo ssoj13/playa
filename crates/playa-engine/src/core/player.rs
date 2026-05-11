@@ -333,7 +333,10 @@ impl Player {
 
     /// Update playback state.
     /// Returns Some(new_frame) if frame changed, None otherwise.
-    /// Caller should emit SetFrameEvent for unified frame change handling.
+    ///
+    /// Frame steps use `Project::modify_comp` → `CurrentFrameChangedEvent`. The app also emits
+    /// [`SetFrameEvent`](crate::core::player_events::SetFrameEvent) each tick so `handle_app_event`
+    /// applies the same scrub rules (e.g. epoch bump on large jumps when playback seeks).
     pub fn update(&mut self, project: &mut Project) -> Option<i32> {
         if !self.is_playing() || self.total_frames(project) == 0 {
             return None;
@@ -474,7 +477,9 @@ impl Player {
         self.last_frame_time = None;
     }
 
-    /// Set current frame (emits CompEvent::CurrentFrameChanged).
+    /// Set current frame on the active composition (via `Project::modify_comp`).
+    ///
+    /// Playhead changes emit `CurrentFrameChangedEvent` from `modify_comp` when an emitter is set.
     ///
     /// Clamps to full comp timeline [comp.start..=comp.end], not play_range,
     /// so scrubbing/timeline can move outside work area while playback still

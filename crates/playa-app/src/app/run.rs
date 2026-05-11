@@ -121,8 +121,9 @@ impl eframe::App for PlayaApp {
             self.applied_mem_fraction = mem_fraction;
         }
 
-        // Unified frame change path: both playback and scrubbing go through SetFrameEvent.
-        // Why: single codepath for preload logic, distance-based epoch increment, etc.
+        // Unified frame change path: scrub/API emit `SetFrameEvent`; playback emits after advance.
+        // Actual playhead mutation goes through `Project::modify_comp`, which emits
+        // `CurrentFrameChangedEvent` for preload (see `events.rs`).
         // player.update() returns Some(frame) if frame changed during playback.
         if let Some(new_frame) = self.player.update(&mut self.project) {
             // Emit same event as scrubbing - unified handling in handle_events()
@@ -130,7 +131,7 @@ impl eframe::App for PlayaApp {
                 .emit(playa_engine::core::player_events::SetFrameEvent(new_frame));
         }
 
-        // Handle composition events (SetFrameEvent -> triggers frame loading)
+        // Handle composition events (SetFrame epoch/scrub; preload via CurrentFrameChangedEvent)
         self.handle_events();
 
         // Update REST API state and handle commands from remote clients

@@ -13,14 +13,16 @@
 //!
 //! All comp modifications should go through `modify_comp()` which:
 //! 1. Executes the closure (may call `attrs.set()` → dirty=true)
-//! 2. If comp or any layer is dirty → emits `AttrsChangedEvent`
+//! 2. If playhead (`frame`) changed → emits `CurrentFrameChangedEvent` (preload / timeline SSOT)
+//! 3. If comp or any layer is dirty → emits `AttrsChangedEvent`
 //!
 //! ```text
 //! project.modify_comp(uuid, |comp| {
 //!     comp.set_child_attrs(...);  // attrs.set() → dirty=true
 //! });
 //! // Auto-emits AttrsChangedEvent if comp/layers dirty
-//! // → triggers cache.clear_comp() and viewport refresh
+//! // Auto-emits CurrentFrameChangedEvent if playhead moved
+//! // → preload + cache.clear_comp / viewport refresh as appropriate
 //! ```
 //!
 //! ## Important: Event Emitter Restoration
@@ -58,7 +60,7 @@ impl Default for ProjectPrefs {
 use super::CacheStrategy;
 use super::attr_schemas::PROJECT_SCHEMA;
 use super::attrs::AttrValue;
-use super::comp_events::AttrsChangedEvent;
+use super::comp_events::{AttrsChangedEvent, CurrentFrameChangedEvent};
 use super::comp_node::CompNode;
 use super::file_node::FileNode;
 use super::frame::Frame;
@@ -707,8 +709,11 @@ impl Project {
 
     /// Modify CompNode in-place via closure.
     ///
-    /// Auto-emits `AttrsChangedEvent` if comp or any layer is dirty after modification,
-    /// triggering cache invalidation and viewport refresh.
+    /// Auto-emits `AttrsChangedEvent` when comp or any layer is dirty after modification (first —
+    /// so epoch/cache clears run before preload).
+    ///
+    /// Auto-emits `CurrentFrameChangedEvent` when `comp.frame()` changes (playhead-only updates are
+    /// non-DAG and skip `AttrsChangedEvent` — preload listens here).
     ///
     /// ## Why Arc::make_mut here?
     /// Workers may hold Arc clones while computing frames. make_mut ensures:
@@ -725,19 +730,27 @@ impl Project {
             .get_mut(&uuid)
             && let Some(comp) = Arc::make_mut(arc_node).as_comp_mut()
         {
+            let old_frame = comp.frame();
             f(comp);
-            // Emit event if comp or any layer is dirty after modification.
-            // This ensures ALL changes that affect render trigger cache invalidation,
-            // even when multiple modify_comp calls happen before next render.
+            let new_frame = comp.frame();
+            // Emit `AttrsChangedEvent` before `CurrentFrameChangedEvent` when both apply so that
+            // `handle_attrs_changed` runs first (`increment_epoch`, cache clear) and preload sees the new epoch.
             let dirty = comp.is_dirty(None);
             if dirty && let Some(ref emitter) = self.event_emitter {
                 emitter.emit(AttrsChangedEvent(uuid));
-                // Clear dirty immediately after emit to prevent re-emit on next modify_comp.
-                // Without this, rapid scrubbing would trigger multiple cache clears.
                 comp.clear_dirty();
             } else if dirty {
                 log::warn!("modify_comp: dirty but no emitter! uuid={}", uuid);
-                comp.clear_dirty(); // Clear anyway to prevent stale dirty state
+                comp.clear_dirty();
+            }
+            if old_frame != new_frame {
+                if let Some(ref emitter) = self.event_emitter {
+                    emitter.emit(CurrentFrameChangedEvent {
+                        comp_uuid: uuid,
+                        old_frame,
+                        new_frame,
+                    });
+                }
             }
             return true;
         }

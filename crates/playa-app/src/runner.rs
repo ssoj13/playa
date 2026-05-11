@@ -280,7 +280,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
                 // Apply CLI options
                 if let Some(frame) = args.start_frame {
                     app.player.set_frame(frame, &mut app.project);
-                    app.enqueue_current_frame_only();
+                    // Preload scheduled via `CurrentFrameChangedEvent` from `modify_comp`.
                 }
 
                 if args.autoplay {
