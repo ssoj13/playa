@@ -1359,21 +1359,38 @@ impl CompNode {
                 ];
                 let src_size = (frame.width(), frame.height());
 
-                // CPU pre-render of layer transform + camera projection.
+                // Decide between CPU pre-render and GPU inline transform.
                 //
-                // Today: both backends consume pre-rendered (canvas-sized)
-                // frames + identity matrix. The matrix bundle is wired
-                // through the API but unused — see
-                // `.bughunt/gpu_compositor_unification.md` for the plan to
-                // skip pre-render on the GPU path (Phase B) and unify the
-                // CPU compositor on a matrix-aware resample-blend
-                // (Phase C).
+                // Phase B: when the GPU compositor is active AND the
+                // layer is 2D-flat (no camera, no X/Y rotation), skip
+                // the CPU pre-render — pass the raw layer frame plus
+                // a canvas-to-src 3×3 matrix. The wgpu shader resamples
+                // inline. Saves a full canvas-sized memory read+write
+                // per layer per frame (the dominant CPU cost in heavy
+                // comps).
+                //
+                // CPU path (and GPU+camera, GPU+tilted) keep the
+                // legacy pre-render until Phase B-camera + Phase C.
                 let canvas = self.dim();
+                let layer_is_3d =
+                    view_projection.is_some() || rot_rad[0] != 0.0 || rot_rad[1] != 0.0;
+                let gpu_2d_inline = ctx.gpu_blend_bridge.is_some() && !layer_is_3d;
+
                 let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt)
                     || view_projection.is_some()
                     || src_size != canvas; // Source != output = needs centering
 
-                if needs_transform {
+                let inv_matrix = if !needs_transform {
+                    identity_matrix
+                } else if gpu_2d_inline {
+                    // GPU 2D path: shader resamples raw src via
+                    // canvas→src 3×3. Frame stays at src dimensions.
+                    transform::build_inverse_canvas_to_src_3x3(
+                        pos, rot_rad[2], scl, pvt, canvas, src_size,
+                    )
+                } else {
+                    // CPU path or 3D / camera / tilted: pre-render
+                    // CPU-side, hand identity matrix to the compositor.
                     frame = transform::transform_frame_with_camera(
                         &frame,
                         canvas,
@@ -1383,14 +1400,8 @@ impl CompNode {
                         pvt,
                         view_projection,
                     );
-                }
-
-                // Identity matrix until Phase B re-introduces the
-                // canvas-to-src matrix on the GPU path. `build_inverse_canvas_to_src_3x3`
-                // exists and is tested but is dead code until then —
-                // intentionally so, to land matrix infrastructure
-                // ahead of the consumer.
-                let inv_matrix = identity_matrix;
+                    identity_matrix
+                };
 
                 // Track matte: if this layer references a RefNode via
                 // mask_ref_uuid, resolve it and multiply the per-pixel
@@ -1449,10 +1460,6 @@ impl CompNode {
         // Add black base with identity transform
         let base = create_base_frame(dim, target_format);
         source_frames.insert(0, LayerPayload::pre_rendered(base, 1.0, BlendMode::Normal));
-        // identity_matrix is the default — kept as a binding for
-        // call-site consistency (other Phase B-or-later code may
-        // reference it).
-        let _ = identity_matrix;
 
         trace!(
             "CompNode::compose {} frames, dim={}x{}, all_loaded={}",
