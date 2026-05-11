@@ -210,6 +210,7 @@ impl Project {
                     NodeKind::Comp(c) => c.attach_schema(),
                     NodeKind::Camera(c) => c.attach_schema(),
                     NodeKind::Text(t) => t.attach_schema(),
+                    NodeKind::Ref(r) => r.attach_schema(),
                 }
             }
         }

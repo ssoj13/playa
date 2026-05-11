@@ -14,6 +14,7 @@ use super::comp_node::CompNode;
 use super::file_node::FileNode;
 use super::frame::Frame;
 use super::node::{ComputeContext, Node};
+use super::ref_node::RefNode;
 use super::text_node::TextNode;
 
 /// Enum containing all possible node types.
@@ -25,6 +26,7 @@ pub enum NodeKind {
     Comp(CompNode),
     Camera(CameraNode),
     Text(TextNode),
+    Ref(RefNode),
 }
 
 impl NodeKind {
@@ -48,11 +50,18 @@ impl NodeKind {
         matches!(self, NodeKind::Text(_))
     }
 
+    /// Check if this is a reference node (utility — points at another
+    /// node + channel selector).
+    pub fn is_ref(&self) -> bool {
+        matches!(self, NodeKind::Ref(_))
+    }
+
     /// Check if this node type can be rendered as a layer.
-    /// Returns false for control nodes (camera, light, null, audio).
+    /// Returns false for control nodes (camera, light, null, audio, ref).
     pub fn is_renderable(&self) -> bool {
         match self {
             NodeKind::Camera(_) => false,
+            NodeKind::Ref(_) => false,
             // Future: Light, Transform (null), Audio -> false
             _ => true,
         }
@@ -156,6 +165,22 @@ impl NodeKind {
     pub fn as_text_mut(&mut self) -> Option<&mut TextNode> {
         match self {
             NodeKind::Text(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// Get as `RefNode` reference.
+    pub fn as_ref_node(&self) -> Option<&RefNode> {
+        match self {
+            NodeKind::Ref(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// Get as mutable `RefNode` reference.
+    pub fn as_ref_node_mut(&mut self) -> Option<&mut RefNode> {
+        match self {
+            NodeKind::Ref(n) => Some(n),
             _ => None,
         }
     }

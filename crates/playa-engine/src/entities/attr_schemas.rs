@@ -160,6 +160,9 @@ const LAYER_SPECIFIC: &[AttrDef] = &[
     AttrDef::with_order("renderable", AttrType::Bool, DAG_DISP, 30.4), // false for camera/light/null/audio
     AttrDef::with_order("mute", AttrType::Bool, DAG_DISP, 30.2),
     AttrDef::with_order("solo", AttrType::Bool, DAG_DISP, 30.1),
+    // Track-matte reference. UUID of a `RefNode` in `project.media`
+    // whose target+channel masks this layer's composited alpha.
+    AttrDef::with_order("mask_ref_uuid", AttrType::Uuid, DAG_DISP, 31.0),
 ];
 
 pub static LAYER_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
@@ -313,6 +316,27 @@ const TEXT_SPECIFIC: &[AttrDef] = &[
     // Background
     AttrDef::with_order("bg_color", AttrType::Vec4, DAG_DISP, 60.6),
 ];
+
+// ============================================================================
+// RefNode Schema
+// ============================================================================
+
+/// `RefNode`-specific attributes: target uuid + channel selector.
+/// `RefNode` has no timing / transform / opacity — it's a pure
+/// indirection node. `IDENTITY` provides name / uuid / listed.
+const REF_SPECIFIC: &[AttrDef] = &[
+    AttrDef::with_order("target_uuid", AttrType::Uuid, DAG_DISP, 80.0),
+    AttrDef::with_ui_order(
+        "channel",
+        AttrType::String,
+        DAG_DISP,
+        &["composite", "alpha", "luminance", "red", "green", "blue"],
+        80.1,
+    ),
+];
+
+pub static REF_SCHEMA: LazyLock<AttrSchema> =
+    LazyLock::new(|| AttrSchema::from_slices("RefNode", &[IDENTITY, REF_SPECIFIC]));
 
 pub static TEXT_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
     AttrSchema::from_slices("TextNode", &[IDENTITY, TEXT_SPECIFIC, TIMING, OPACITY])

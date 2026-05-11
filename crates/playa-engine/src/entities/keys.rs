@@ -84,3 +84,16 @@ pub const A_HEIGHT: &str = "height";
 // === Layer attributes ===
 /// Source length in frames (invariant, doesn't change with speed)
 pub const A_SRC_LEN: &str = "src_len";
+
+// === Reference / track-matte attributes ===
+/// On `Layer`: UUID of a `RefNode` in `project.media`. Resolving the
+/// ref's target + channel yields the mask source for this layer's
+/// composited alpha. Nil = no mask. `#[serde(default)]` keeps legacy
+/// saves loading.
+pub const A_MASK_REF_UUID: &str = "mask_ref_uuid";
+/// On `RefNode`: UUID of the node the ref points at. Nil = unset.
+pub const A_TARGET_UUID: &str = "target_uuid";
+/// On `RefNode`: which channel of the target's frame to read. Stored
+/// as string for forward-compat ("alpha", "luminance", "composite",
+/// "red", "green", "blue"). Unknown values fall back to alpha.
+pub const A_CHANNEL: &str = "channel";

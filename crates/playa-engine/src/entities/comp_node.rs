@@ -183,6 +183,21 @@ impl Layer {
         self.attrs.get_uuid("source_uuid").unwrap_or_else(Uuid::nil)
     }
 
+    /// UUID of the `RefNode` that masks this layer's composited alpha.
+    /// `None` when the attr is missing or set to [`Uuid::nil`].
+    /// Existence of the referenced node in `project.media` is **not**
+    /// checked here — that's the compose path's responsibility.
+    pub fn mask_ref_uuid(&self) -> Option<Uuid> {
+        let u = self.attrs.get_uuid(A_MASK_REF_UUID)?;
+        if u.is_nil() { None } else { Some(u) }
+    }
+
+    /// Set or clear the mask-ref. Pass [`Uuid::nil`] to clear
+    /// (semantically equivalent to `None`).
+    pub fn set_mask_ref_uuid(&mut self, ref_uuid: Uuid) {
+        self.attrs.set(A_MASK_REF_UUID, AttrValue::Uuid(ref_uuid));
+    }
+
     /// Create layer from existing attrs (for duplication/paste).
     /// Sets new uuid, keeps source_uuid from attrs.
     pub fn from_attrs(source_uuid: Uuid, mut attrs: Attrs) -> Self {
@@ -1825,6 +1840,58 @@ mod tests {
         assert_eq!(layer.source_uuid(), source_uuid);
         assert_eq!(layer.start(), 10);
         assert_eq!(layer.end(), 59); // 10 + 50 - 1
+    }
+
+    #[test]
+    fn layer_mask_ref_default_is_none() {
+        let layer = Layer::new(Uuid::new_v4(), "L", 0, 50, (1920, 1080));
+        assert_eq!(layer.mask_ref_uuid(), None);
+    }
+
+    #[test]
+    fn layer_mask_ref_set_and_clear() {
+        let mut layer = Layer::new(Uuid::new_v4(), "L", 0, 50, (1920, 1080));
+        let ref_uuid = Uuid::new_v4();
+        layer.set_mask_ref_uuid(ref_uuid);
+        assert_eq!(layer.mask_ref_uuid(), Some(ref_uuid));
+        // Setting to nil clears (semantically equivalent to "no mask").
+        layer.set_mask_ref_uuid(Uuid::nil());
+        assert_eq!(layer.mask_ref_uuid(), None);
+    }
+
+    #[test]
+    fn layer_json_without_mask_ref_loads_clean() {
+        // Frozen back-compat: a legacy playa.json save with no
+        // mask_ref_uuid attr in Layer must deserialize and resolve as
+        // "no mask". Attrs is permissive about missing keys, so this
+        // test verifies the helper layers on that behaviour.
+        let original = Layer::new(Uuid::new_v4(), "L", 0, 50, (1920, 1080));
+        let mut json: serde_json::Value =
+            serde_json::to_value(&original).expect("serialize");
+        // Surgically drop mask_ref_uuid from the JSON to simulate a
+        // pre-feature save. Layer attrs serialise as a nested map; the
+        // exact path depends on the Attrs serde shape, so we just look
+        // for any object containing the key and remove it everywhere.
+        fn strip(v: &mut serde_json::Value, key: &str) {
+            match v {
+                serde_json::Value::Object(map) => {
+                    map.remove(key);
+                    for child in map.values_mut() {
+                        strip(child, key);
+                    }
+                }
+                serde_json::Value::Array(arr) => {
+                    for item in arr {
+                        strip(item, key);
+                    }
+                }
+                _ => {}
+            }
+        }
+        strip(&mut json, "mask_ref_uuid");
+        let restored: Layer =
+            serde_json::from_value(json).expect("legacy JSON deserialises");
+        assert_eq!(restored.mask_ref_uuid(), None);
     }
 
     #[test]
