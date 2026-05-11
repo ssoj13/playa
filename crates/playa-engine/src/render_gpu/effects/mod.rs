@@ -18,6 +18,7 @@
 //! 5. Map the CPU `Effect` to the new `GpuEffect` variant in
 //!    `comp_node::compose_internal`.
 
+pub mod blur;
 pub mod brightness;
 pub mod hsv;
 
@@ -66,6 +67,7 @@ pub struct EffectsRunner {
     quad_vbo: wgpu::Buffer,
     brightness: brightness::BrightnessRunner,
     hsv: hsv::HsvRunner,
+    blur: blur::BlurRunner,
 }
 
 impl EffectsRunner {
@@ -87,6 +89,7 @@ impl EffectsRunner {
         });
         let brightness = brightness::BrightnessRunner::new();
         let hsv = hsv::HsvRunner::new();
+        let blur = blur::BlurRunner::new();
         Self {
             device: device.clone(),
             queue: queue.clone(),
@@ -94,6 +97,7 @@ impl EffectsRunner {
             quad_vbo,
             brightness,
             hsv,
+            blur,
         }
     }
 
@@ -183,10 +187,20 @@ impl EffectsRunner {
                     *value,
                 );
             }
-            // Effects not yet ported to GPU should never reach here:
-            // comp_node only attaches GpuEffect variants that have a
-            // dispatch arm. If one slips through (programmer error),
-            // pass through unchanged + warn.
+            GpuEffect::GaussianBlur { radius } => {
+                self.blur.run(
+                    &self.device,
+                    &self.queue,
+                    &self.sampler,
+                    &self.quad_vbo,
+                    input,
+                    output,
+                    format,
+                    *radius,
+                );
+            }
+            // Should not reach here once all variants have arms.
+            #[allow(unreachable_patterns)]
             other => {
                 log::warn!(
                     "GpuEffect '{}' not implemented yet; passing through",

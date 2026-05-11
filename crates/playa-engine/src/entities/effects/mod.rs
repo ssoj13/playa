@@ -247,8 +247,10 @@ impl Effect {
                     value,
                 })
             }
-            // blur not yet ported to GPU — caller runs CPU apply().
-            EffectType::GaussianBlur => None,
+            EffectType::GaussianBlur => {
+                let radius = self.attrs.get_float("radius").unwrap_or(5.0);
+                Some(GpuEffect::GaussianBlur { radius })
+            }
         }
     }
 }
