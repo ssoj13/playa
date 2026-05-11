@@ -1,277 +1,457 @@
-# Paint comp + track matte — переписанный план #2
+# Wave 8 — Paint comp + RefNode + AINode + Generation history
 
-> Старая версия предлагала hermetic `playa-paint` crate с собственным
-> canvas. **Эта версия её заменяет.** Painting встраивается в
-> существующий CompNode pipeline: paint comp = обычный Comp с
-> однокадровыми layer'ами, рисование = мутация frame buffer слоя.
+> Финальный план. Заменяет предыдущие версии. После обсуждения залочены
+> **три независимых primitive'а**: RefNode (named indirection),
+> AINode (AI generation as media), Paint comp (raster editing). Они
+> переиспользуются друг другом, но каждый ship'нется отдельной фазой
+> и имеет смысл сам по себе.
+
+---
 
 ## Цель
 
-Дать пользователю:
-1. Создать comp типа «paint» с одним или несколькими однокадровыми
-   PNG слоями.
-2. Рисовать кистью на каждом слое (brush mutates frame buffer →
-   compositor рекомпозит → viewport показывает обновлённый результат).
-3. Использовать AE-style track matte: любой слой может быть
-   замаскирован альфой/luma другого слоя из того же comp'а.
-4. Отправить comp на inpaint provider: один из слоёв = source, другой
-   (через dropdown) = mask. Результат auto-attach как новый node.
+Дать пользователю полный AI compositing workflow:
+1. Создавать paint comp с однокадровыми layer'ами
+2. Рисовать кистью на layer'ах (mutates frame buffer + sidecar PNG)
+3. Связывать layer'ы через AE-style track matte (любой layer → mask
+   любого другого через named RefNode)
+4. Создавать AI generations как first-class media nodes с полной
+   воспроизводимостью (resolved seeds, content hashes, lineage)
+5. Submit через NewAINode (text-to-video / image-to-video / inpaint /
+   future: img2img, upscale, style transfer)
+6. Регенерировать exact или iterate с tweaks через Generations history
 
-## Архитектурные решения (LOCKED после обсуждения)
+---
 
-### B1. Никакого hermetic `playa-paint` крейта
+## Архитектурные решения (LOCKED)
 
-Painting встраивается в `playa-engine` (mutable frame buffer +
-sidecar storage) + `playa-ui` (paint widget + tool palette).
-Композитор — существующий `CompNode::compose_internal`. Layer model
-— существующий `LayerNode`.
+### B1. Три independent primitives, не один большой крейт
 
-### B2. AE-style track matte для масок
+Никакого hermetic `playa-paint`. Painting + masking + AI генерация —
+расширения существующих движков:
+- `playa-engine`: новые NodeKind variants (Ref, AI), Layer attrs для
+  mask references, frame buffer mutation surface
+- `playa-ui`: paint widget (brush kernels + apply), attr editor
+  расширения, layer panel UI, AI generation dialogs
+- `playa-job-inpaint`: новый crate (mirror seedance) — provider для
+  inpaint / img2img endpoints
 
-LayerNode добавляет:
+### B2. RefNode — named indirection через `NodeKind`
 
 ```rust
-pub mask_source: Option<Uuid>,  // None = no mask, Some(uuid) = matted by layer Uuid
-pub mask_channel: MaskChannel,  // Alpha / Luminance (default Alpha)
+// crates/playa-engine/src/entities/ref_node.rs (новый)
+pub struct RefNode { pub attrs: Attrs }
+// attrs: A_NAME, A_TARGET_UUID, A_CHANNEL
+//   target: любой uuid в project.media — другой Layer (через layer.uuid()
+//   resolved via parent comp), FileNode, CompNode, любой
+//   channel: Channel enum (см. ниже)
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Channel {
+    Composite,                // full RGBA — для AI input refs
+    #[default]
+    Alpha,                    // А канал — default для track matte
+    Luminance,                // luma из RGB (Rec.709) — v1.1 (нужен tonemap для HDR)
+    Red, Green, Blue,
+}
+
+impl RefNode {
+    pub fn new(name: &str, target: Uuid, channel: Channel) -> Self;
+    pub fn target(&self) -> Option<Uuid>;
+    pub fn set_target(&mut self, target: Uuid);
+    pub fn channel(&self) -> Channel;
+    pub fn set_channel(&mut self, ch: Channel);
+}
+
+// NodeKind:
+pub enum NodeKind {
+    File(FileNode), Comp(CompNode), Camera(CameraNode),
+    Text(TextNode),
+    +Ref(RefNode),
+    +AI(AINode),
+}
+
+// Node trait:
+//   RefNode is_renderable() = false   (utility node, не виден на таймлайне)
+//   RefNode is_listed() = true        (виден в Project tree)
+```
+
+### B3. Track matte через RefNode (Layer.mask_ref_uuid)
+
+```rust
+// Layer attrs:
+const A_MASK_REF_UUID: &str = "mask_ref_uuid";  // Uuid → RefNode; nil = no mask
 ```
 
 В `CompNode::compose_internal` после композиции каждого layer'а:
-- Если `mask_source.is_some()`:
-  - Look up referenced layer's frame
-  - Read its alpha (or luma per `mask_channel`)
-  - Multiply current composite layer's alpha by mask value
-- Layer, который ЯВЛЯЕТСЯ mask_source для кого-то, **всё равно**
-  блендится в visual composite (как в AE — track matte source видим
-  по умолчанию, но AE имеет toggle «hide matte layer»; v1 не делаем
-  toggle, видим всегда).
+1. `if let Some(ref_uuid) = layer.mask_ref_uuid()`
+2. `project.media.get(ref_uuid)` → `NodeKind::Ref(rn)`
+3. `target = rn.target()`; ищем target's current frame (либо как Layer
+   в текущем comp'е по `source_uuid`, либо как media node)
+4. Извлекаем channel `rn.channel()` из target's pixel buffer
+5. Multiply current layer's composited alpha by mask value
+6. Edge cases: target deleted → ref orphan → skip mask + log warn;
+   target.status != Loaded → skip + log trace
 
-UI: в Layer panel рядом с каждой строкой — dropdown
-«Mask: [None | LayerName1 | LayerName2 | ...]».
+**Auto-create UX:** в Layer panel dropdown «Mask: [None | пик
+layer X]» — при выборе layer X скрытно создаётся RefNode named
+`"{layer.name}.alpha"` с target=X.uuid + channel=Alpha. Ref виден в
+Project tree, можно переименовать / перенаправить target / переключить
+channel вручную.
 
-### B3. Copy-on-edit sidecar storage
+### B4. AINode — AI generation as first-class media
 
-Когда юзер делает первый stroke на layer'е:
-1. Engine копирует оригинальный PNG в `<project_dir>/paint/{layer_uuid}.png`
-   (или `<cache_dir>/playa/paint-unsaved/{project_uuid}/{layer_uuid}.png`
-   если проект не сохранён).
-2. FileNode.path переключается на sidecar.
-3. Дальнейшие strokes мутируют in-memory `PixelBuffer::U8` (cached
-   frame). Cache invalidates → CompNode перекомпонует → viewport
-   обновляется.
-4. На «Save All Paint» (или auto-save by idle): in-memory buffer
-   пишется в sidecar PNG.
-
-Оригинал юзера никогда не трогается. `paint/` дир рядом с проектом
-портабельна (zip → перенос).
-
-### B4. «New Paint Layer (W×H)» button
-
-В Layer panel paint comp'а — кнопка. По клику:
-- Открыть диалог: `Width: [comp.width] Height: [comp.height]`
-  (defaults), + button `Use comp resolution`.
-- Создать transparent RGBA PNG (все пиксели 0,0,0,0).
-- Сохранить в `<project_dir>/paint/blank_{ts}.png`.
-- Импортировать как FileNode → добавить в comp.
-
-### B5. Paint UI surface
-
-Два варианта где живёт paint mode (выбираем при старте Phase 2):
-- **A**: Новый `DockTab::Paint`. Когда активный comp выбран и
-  пользователь переключился на этот таб — рендерим viewport
-  composite + brush overlay. Tools в side panel.
-- **B**: Paint **mode toggle** в существующем Viewport tab. Кнопка
-  «🖌 Paint» в toolbar. Toggle on → курсор становится кистью, side
-  panel показывает paint tools.
-
-Склонен к B — меньше дублирующего viewport кода. Решим в Phase 2.
-
-### B6. Hermetic brush kernel module
-
-Brush + apply остаются в playa-ui (не отдельный крейт):
 ```rust
-// crates/playa-ui/src/paint/
-//   mod.rs            - re-exports
-//   brush.rs          - Brush struct + kernel cache
-//   apply.rs          - apply_brush(buffer, brush, x, y, color) — pure fn
-//   tools.rs          - Tool enum + ToolState
-//   widget.rs         - paint_overlay_widget (brush cursor + click handling)
-//   panel.rs          - PaintToolboxWidget (sliders)
+// crates/playa-engine/src/entities/ai_node.rs (новый)
+pub struct AINode { pub attrs: Attrs }
 ```
 
-Pure functions, легко unit-test'аются (no egui in apply.rs).
+Attrs:
+| key | type | назначение |
+|---|---|---|
+| A_NAME | Str | "Cyberpunk wolf" |
+| A_PROMPT | Str | пользовательский prompt |
+| A_PROVIDER | Str | `"seedance.text_to_video"` etc. |
+| A_INPUT_REFS | List<Uuid> | RefNode'ы (через indirection) |
+| A_PARAMS_TEMPLATE | Json | provider-specific params БЕЗ seed (template для UI) |
+| A_GENERATIONS | Json (Vec<Generation>) | история всех run'ов |
+| A_ACTIVE_GENERATION | Uuid | какая из истории сейчас compose'ится |
+| A_PARENT_NODE | Uuid опционально | если ноду создали через "Duplicate AINode" |
 
-### B7. Inpaint flow
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Generation {
+    pub uuid: Uuid,                          // unique per run
+    pub timestamp_secs: u64,
+    pub provider: String,                    // verbatim provider kind
+    pub provider_version: Option<String>,    // если provider возвращает (model id etc)
+    pub params: serde_json::Value,           // ВСЕ params С РАЗРЕШЁННЫМ seed
+    pub input_snapshots: Vec<RefSnapshot>,
+    pub job_id: Uuid,
+    pub request_id: Option<String>,
+    pub result_path: PathBuf,
+    pub cost_usd: Option<f64>,
+    pub parent_gen_uuid: Option<Uuid>,       // lineage chain
+}
 
-SubmitDialog получает новый endpoint `Inpaint` (помимо
-TextToVideo/ImageToVideo):
-- Dropdown «Source layer»: list of layers in active comp
-- Dropdown «Mask layer»: same list
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RefSnapshot {
+    pub ref_uuid: Uuid,
+    pub target_uuid: Uuid,
+    pub target_content_hash: String,         // SHA-256 of target's bytes
+    pub channel: Channel,
+}
+```
+
+**AINode is_renderable() = true** — comp'ы могут содержать Layer
+ссылающиеся на AINode через `source_uuid` (как с FileNode). На compose
+читается frame из текущего `A_ACTIVE_GENERATION.result_path`.
+
+**Seed reproducibility (critical):**
+
+`SubmitDialog.seed_text == ""` больше НЕ означает "let provider decide".
+- На submit: `let resolved_seed: u64 = if empty { rand::random() } else { parsed };`
+- `params["seed"] = resolved_seed` (concrete u64 идёт на provider)
+- `Generation.params["seed"]` хранит то же значение
+- Regenerate exact = copy Generation.params verbatim → submit → byte-identical (mod GPU FP indeterminism)
+
+**Lineage operations:**
+| Кнопка | Что делает |
+|---|---|
+| Generate new | Create new Generation в той же AINode, prompt/refs from current attrs, новый seed (если "auto"), submit |
+| Regenerate exact | Pick selected Generation → copy params verbatim → submit (для debug / retry) |
+| Iterate from | Pick selected → copy as new params, открыть Edit dialog → submit как child (`parent_gen_uuid` = selected) |
+| Set active | Pick generation из истории → A_ACTIVE_GENERATION = its uuid → comp перекомпонуется с этой версией |
+| Delete generation | Remove from history + delete result file (warn если active) |
+
+**Result storage:**
+
+```
+<project_dir>/ai_results/{ainode_uuid}/
+   ├── {gen_uuid_1}.mp4
+   ├── {gen_uuid_2}.mp4
+   └── manifest.json          # mirror of A_GENERATIONS — даже если проект потерян, метаданные читаются
+```
+
+`manifest.json` — disaster recovery: если проект .playa файл утерян,
+manifest позволяет восстановить historу. Mirror, не source of truth
+(source = A_GENERATIONS attr в project save).
+
+### B5. Paint comp = обычный CompNode
+
+Никакого spec'ального типа. Paint comp = CompNode со специфическим
+содержимым: однокадровые layer'ы (источники = FileNode'ы указывающие
+на PNG). Конвенция, не enum variant.
+
+**Paint UI surface** — toggle в Viewport tab:
+- Кнопка `🖌 Paint` в viewport toolbar (рядом с tool select)
+- Toggle on → cursor становится brush, side panel показывает Paint
+  toolbox (size/hardness/opacity sliders, brush/eraser/select switches)
+- Toggle off → нормальный viewport mode
+
+Активный «target layer» для рисования = selected layer в Layer panel.
+
+### B6. Layer frame buffer mutation (copy-on-edit)
+
+```rust
+// crates/playa-engine/src/entities/file_node.rs (existing)
+// Add: paint state tracking
+struct PaintState {
+    original_path: PathBuf,    // immutable original
+    sidecar_path: PathBuf,     // <project>/paint/{uuid}.png
+    dirty_buffer: Option<Vec<u8>>,  // in-memory edits not yet flushed to sidecar
+    last_save_secs: u64,
+}
+```
+
+Lifecycle:
+1. First stroke на FileNode → copy `original_path` → `sidecar_path` →
+   FileNode.path switches to sidecar. PaintState created.
+2. Each stroke → mutate `dirty_buffer` (clone of cached PixelBuffer::U8)
+   → swap into cached frame via `Arc::make_mut` → invalidate cache
+   epoch для зависимых composite layers
+3. Auto-save: idle 5s OR explicit "Save Paint" button → write
+   `dirty_buffer` to `sidecar_path`, clear dirty_buffer
+4. Project save: ensures all paint sidecars on disk
+
+**Crash safety**: on app boot, scan project's `paint/` дир. Если
+sidecar существует и FileNode ссылается на original — переключить
+на sidecar (assume editing was in progress).
+
+### B7. Submit flow через AINode
+
+```
+[User clicks "+ Generate" в Jobs tab OR "+ AI Layer" в Layer panel]
+                       ↓
+              [NewAINode wizard]
+                       ↓
+       Provider dropdown: text-to-video / image-to-video / inpaint
+                       ↓
+       Build input refs (auto-create RefNodes if user picks layers
+       from current comp)
+                       ↓
+       Edit params (prompt, duration, resolution, seed (random by
+       default but resolved to u64 immediately))
+                       ↓
+       [Submit]
+                       ↓
+       1. Create AINode в project.media
+       2. Compute input_snapshots с SHA-256 каждого ref target
+       3. Create Generation { uuid, timestamp, params (resolved seed),
+          provider, input_snapshots, parent_gen_uuid=None }
+       4. queue.submit(provider_kind, params + ainode_uuid as context)
+       5. Generation.job_id = id
+       6. Push Generation onto AINode.A_GENERATIONS
+       7. AINode.A_ACTIVE_GENERATION = generation.uuid
+       8. AINode placed in active comp at user's position (Layer
+          с source_uuid = AINode.uuid())
+                       ↓
+       [Job runs through existing queue pipeline]
+                       ↓
+       JobEvent::Completed → result_path → assign в Generation.result_path
+       → save A_GENERATIONS attr back to AINode → comp re-composes,
+       AINode-source-layers теперь показывают frame'ы из result_path
+```
+
+### B8. Provider crate: `playa-job-inpaint`
+
+Mirror `playa-job-seedance` структуры:
+- `InpaintProvider impl JobProvider`
+- kinds: `"inpaint.flux_kontext"`, `"inpaint.flux_pro_v1_1"` (выбрать
+  один при старте Phase 6)
+- params: `{prompt, image_url (data URL or fal storage), mask_url, ...}`
+- run: POST → poll → download → result: `{png_path, request_id, model_version, ...}`
+- estimate_cost_usd: per-provider rate
+- Регистрируется в `playa-app::build_default_job_queue` рядом с
+  Seedance providers
+
+### B9. AttrEditor extensions
+
+Для AINode selected:
+- Provider radio
 - Prompt textarea
-- На submit: read source layer's PNG bytes + mask layer's PNG bytes →
-  base64 data URLs → submit к `playa-job-inpaint` provider (новый
-  crate, mirror seedance) → результат auto-attach как новый node
-  (existing US-15 v2 pipeline).
+- Input refs list: each row = `[ref name dropdown] [channel radio] [×]`,
+  + button "Add ref" (creates RefNode in project.media)
+- Params: dynamic fields per provider (provider exposes JSON schema —
+  v2; v1 hardcode 3-4 known providers)
+- Seed: u64 input + `🎲 random` button (regenerates) + `🔒 lock` toggle
+- Generations panel:
+  ```
+  ▸ 2026-05-10 16:23   active   gen_xyz
+  ▸ 2026-05-10 15:11            gen_abc   (parent=gen_xyz)
+  ```
+- Action buttons: `Generate new` `Regenerate exact` `Iterate` `Set active`
 
-## Engine changes (Phase 1 — track matte foundation)
+Для RefNode selected:
+- Target picker: dropdown all named nodes in project (with content type
+  icon)
+- Channel radio: Composite / Alpha / R / G / B / Luminance (latter
+  greyed in v1)
 
-### Files
+Для Layer selected:
+- Existing attrs (position, scale, opacity, blend_mode, etc.)
+- + `Mask Ref:` dropdown → all RefNodes in project (None / ref1 /
+  ref2 / ...) → set/clear Layer.mask_ref_uuid
 
-```
-crates/playa-engine/src/entities/layer.rs  (or wherever LayerNode lives)
-  + mask_source: Option<Uuid>
-  + mask_channel: MaskChannel { Alpha, Luminance }
-  + serde(default) on both for back-compat
+---
 
-crates/playa-engine/src/entities/comp_node.rs
-  compose_internal:
-    for each layer in stack:
-      composite layer onto canvas (existing)
-      if let Some(src_uuid) = layer.mask_source:
-        find src layer's current frame
-        for each pixel: composite.alpha *= mask_value(src.pixel, mask_channel)
-      (if src not found / not Loaded: skip mask this frame, log warn)
+## Phase breakdown
 
-crates/playa-engine/src/entities/cache_manager.rs (or wherever)
-  + invalidation hook: when layer A is mask_source for layer B,
-    paint stroke on A invalidates B's cached composite
-```
+### Phase 1 — Track matte foundation
+Engine: `RefNode` + `Channel` + NodeKind variant + Layer attr
+`mask_ref_uuid` + compose_internal masking step + cache invalidation
+hook + frozen JSON tests + `is_listed/is_renderable` Project tree
+support. ~700 LOC. ~1.5 дня.
 
-### UI changes for Phase 1
+**Useful standalone**: track matte — fundamental compositing feature,
+не paint-specific. Может shipnуться как auto-merge даже если Phase 2+
+не делаем.
 
-```
-crates/playa-ui/src/widgets/timeline/* (where layer outline is rendered)
-  + per-layer mask source dropdown
-```
+### Phase 1b — Layer panel + AttrEditor для RefNode
+UI: per-layer Mask dropdown (auto-create RefNode), Project tree
+shows RefNodes, AttrEditor handles RefNode selection. ~300 LOC.
+~half-day.
 
-## Phase breakdown — new
+### Phase 2 — Paint UI + brush kernels
+New module `playa-ui/src/paint/`: brush/apply/tools/widget/panel.
+Pure-fn `apply_brush(buffer, brush, x, y, color)` (unit-testable
+without egui). Viewport `🖌 Paint` toggle. Side panel toolbox.
+Strokes mutate cached frame in-place, invalidate cache (no disk yet).
+~700 LOC. ~1 день.
 
-### Phase 1: Track matte foundation (engine + UI)
+### Phase 3 — Copy-on-edit sidecar storage
+`FileNode::PaintState` + first-stroke copy + auto-save by idle +
+crash recovery scan + "Save Paint" button. ~400 LOC. ~half-day.
 
-- LayerNode.mask_source + mask_channel + serde back-compat
-- CompNode::compose_internal applies mask
-- Mask source cache invalidation
-- Layer panel mask dropdown UI
-- Frozen JSON test: legacy comp save without mask_source loads
-- Visual test: two layers, set B as mask of A, observe A masked by B's alpha
+### Phase 4 — New Paint Layer (W×H) button
+"+ Paint Layer" → создаёт transparent RGBA PNG в `<project>/paint/`
+→ import как FileNode → add to comp. ~150 LOC. couple hours.
 
-**Scope: ~600-800 LOC, ~1.5 days. Useful standalone — track matte is
-a fundamental compositing feature, not paint-specific.**
+### Phase 5 — Undo/redo (paint scope)
+ActionStack per FileNode в edit-сессии. 50-stroke ring, snapshot per
+stroke (diff-rect → v1.1). Ctrl+Z / Ctrl+Shift+Z. ~250 LOC. ~half-day.
 
-### Phase 2: Paint UI infrastructure
+### Phase 6 — AINode + Generation history (engine)
+New `AINode` + `Generation` + `RefSnapshot` types. NodeKind variant.
+Compose path: AINode source layer → fetch from active_generation.result_path.
+SHA-256 content hashing util. manifest.json mirror writer. Engine
+unit tests: lineage chain, active swap, snapshot validation. ~600 LOC.
+~1 день.
 
-- New `playa-ui/src/paint/` module (brush, apply, tools, widget, panel)
-- Paint mode toggle in viewport (B above)
-- Side panel: brush size / hardness / opacity sliders
-- Brush apply mutates active FileNode's frame buffer
-- Cache invalidation hook from paint stroke
-- No persistence yet — strokes lost on app restart
+### Phase 7 — `playa-job-inpaint` crate
+Mirror seedance: provider impl, MockHttp tests, register in
+build_default_job_queue. Pick provider endpoint при старте phase
+(flux-pro/v1.1 inpainting vs runway vs seedream — research). ~500
+LOC. ~1 день.
 
-**Scope: ~700 LOC, ~1 day**
+### Phase 8 — Submit flow via AINode (host wiring)
+NewAINode wizard в Jobs tab + "+ AI Layer" в Layer panel.
+SubmitDialog (или новый AINodeDialog?) с provider picker + ref editor
++ params + seed-resolved-at-submit. Generation creation +
+result writing on Completed. Existing US-15 v2 auto-attach path
+заменяется на "fill ActiveGeneration.result_path + invalidate
+AINode layer caches". ~700 LOC. ~1 день.
 
-### Phase 3: Copy-on-edit sidecar storage
+### Phase 9 — AttrEditor для AINode
+Generations history panel (sortable). Generate / Regenerate exact /
+Iterate / Set active actions. Lineage display. ~400 LOC. ~half-day.
 
-- First stroke on a layer: copy original PNG → `<project_dir>/paint/{uuid}.png`,
-  redirect FileNode.path
-- Auto-save by idle (e.g. 5s after last stroke): write in-memory
-  buffer to sidecar PNG on disk
-- «Save All Paint» button (manual flush)
-- Crash safety: on app restart, if sidecar exists and is newer than
-  original — use sidecar
-- Project not saved → cache_dir fallback
+### Phase 10 (v1.1, optional polish)
+- Luma channel support (HDR tonemap path)
+- Fill / Rect select / Color picker tools
+- Diff-rect undo (memory efficient)
+- AISettings prefs slice (default seed lock, retention policy)
+- Multi-frame paint (per-frame edits on animated layer)
+- AINode chain workflow (output of A → input of B)
 
-**Scope: ~400 LOC, ~0.5 day**
+**v1 total (Phases 1-9): ~8-10 фокусных дней.**
 
-### Phase 4: New Paint Layer (W×H) button
+---
 
-- Layer panel button «+ Paint Layer»
-- Dialog: width/height inputs, default = comp resolution
-- Create transparent RGBA PNG → import → add to comp
+## Order & checkpointing
 
-**Scope: ~150 LOC, couple hours**
+Order: **1 → 1b → 6 → 7 → 8 → 9 → 2 → 3 → 4 → 5**.
 
-### Phase 5: Undo/redo (paint scope)
+Reason: AI workflow (gen + history + provider + submit) — это
+независимая фича, не требует paint. Paint работает поверх RefNode
+foundation. Если в середине осознаем что приоритеты сместились —
+можем остановиться после Phase 9 (full AI workflow ships без paint)
+или после Phase 5 (paint + masks ships без AINode).
 
-- ActionStack per FileNode being edited
-- 50-stroke limit, snapshot per stroke (v1) → diff-rect per stroke (v2)
-- Ctrl+Z / Ctrl+Shift+Z hotkeys
+**Checkpoints для коммита:**
+- Phase 1 + 1b → 1 PR (foundation + UI вместе)
+- Phase 6 → 1 PR (AINode engine alone — без provider пока nothing
+  происходит, но JSON шейп залочен)
+- Phase 7 → 1 PR (inpaint provider standalone tested)
+- Phase 8 + 9 → 1 PR (host wiring + full UX)
+- Phase 2 + 3 → 1 PR (paint UI + persistence together)
+- Phase 4 → 1 PR
+- Phase 5 → 1 PR
 
-**Scope: ~250 LOC, ~0.5 day**
+---
 
-### Phase 6: Inpaint provider crate
+## Open questions (deferred to phase starts)
 
-- `playa-job-inpaint` mirror of playa-job-seedance
-- Pick fal endpoint (flux-pro/v1.1/inpainting or similar — research
-  at start of phase)
-- Submit: upload source PNG + mask PNG to fal storage → run → poll →
-  download result → auto-attach via US-15 v2 pipeline
+| # | Question | Phase |
+|---|---|---|
+| 1 | Channel default for mask: Alpha (locked) vs Luma | locked Alpha |
+| 2 | Inpaint provider: flux-pro v1.1 vs runway gen-fill vs seedream | Phase 7 |
+| 3 | Auto-save interval for paint (5s? configurable?) | Phase 3 |
+| 4 | manifest.json schema versioning | Phase 6 |
+| 5 | Cross-comp ref resolution: same comp only v1 vs project-wide | Phase 1 |
+| 6 | Project-dir API resolution (where is `<project_dir>`?) | Phase 3 |
+| 7 | Comp resolution inheritance from first layer | Phase 4 |
+| 8 | AttrValue::Reference variant vs two-attr storage | Phase 1 |
+| 9 | Result_path collision (regenerate exact overwrites?) | Phase 6 |
 
-**Scope: ~500 LOC, ~1 day**
+---
 
-### Phase 7: SubmitDialog Inpaint variant
-
-- New endpoint radio: TextToVideo / ImageToVideo / **Inpaint**
-- Inpaint mode: hide image_url field, show two layer-pickers
-  (source / mask) populated from active comp's layers
-- Cost estimate per-provider
-- Submit dispatches kind = `"inpaint.flux_kontext"` (or whatever)
-
-**Scope: ~250 LOC, ~0.5 day**
-
-### Phase 8 (v1.1, optional polish)
-
-- Fill tool (bucket flood-fill on mask alpha)
-- Rect select (stamp into mask)
-- Color picker (sample from layer)
-- "Hide matte layer" toggle (AE compat)
-- Diff-rect undo for memory efficiency on large canvases
-
-**v1 total (Phases 1-7): ~4-5 фокусных дней.**
-
-## Open questions deferred to phase starts
-
-1. **Inpaint provider**: flux-pro v1.1 inpainting vs runway gen-fill
-   vs seedance/seedream inpaint. Pricing + quality. Phase 6.
-2. **MaskChannel default**: Alpha (default) vs Luminance (white=mask).
-   AE convention. Start of Phase 1.
-3. **Auto-save interval**: 5s idle? On every stroke? Configurable in
-   prefs? Start of Phase 3.
-4. **Mask edge softness**: hard threshold on alpha, or soft (0..255
-   smooth blend)? V1 — passes through as-is, soft alpha works
-   naturally. Start of Phase 1.
-5. **Project save path resolution**: какой API возвращает
-   `<project_dir>`? Check `Project.save_path` / `Project.path` at
-   start of Phase 3.
-6. **Comp resolution policy**: when first layer is added to a fresh
-   comp, does comp inherit layer's W×H or stays at predefined size?
-   Start of Phase 4.
-
-## Risks / mitigations (updated)
+## Risk table
 
 | Risk | Mitigation |
 |---|---|
-| Track matte cache invalidation correctness | Phase 1 unit tests: changing mask source invalidates target's cache |
-| Paint stroke on shared `Arc<PixelBuffer>` racing with frame compose | Phase 2: mutate via `Arc::make_mut` or replace buffer atomically; cache will refetch on next compose |
-| Sidecar PNG bloat for long projects | Phase 3: per-layer sidecar lifecycle: deleted if user deletes layer; auto-cleanup on project close |
-| Track matte misses non-loaded frames | Phase 1: skip mask + log warn when src.status != Loaded; track matte == best-effort |
-| AE-style mask UX expectations vs simplified model | Phase 1: dropdown + alpha channel only. Luma/invert/etc — v1.1 |
-| Brush apply perf on large canvas | Phase 2: profile; if slow → rayon worker. Single-thread first. |
+| Track matte cache invalidation correctness | Phase 1 unit tests: changing target invalidates dependent layers |
+| Arc<PixelBuffer> mutation race с compose | Phase 2: Arc::make_mut on stroke, compose уже за фрейм-lock |
+| Sidecar bloat on large projects | Phase 3: lifecycle (delete layer → delete sidecar); manual cleanup tool |
+| Track matte miss non-loaded source | Phase 1: skip + log; track matte best-effort |
+| AINode result file lost mid-load | Phase 8: missing result_path → AINode shows "missing" placeholder + offer regen |
+| Generation params drift if provider API changes | Phase 6: params JSON verbatim; provider version stored; warn on regen mismatch |
+| Seed determinism varies by GPU/CPU | Document; offer "exact reproduction not guaranteed cross-host" |
+| AINode lineage chain deep nesting UI | Phase 9: max-depth visualization; flatten in display |
+| Content hash mismatch on regen | Phase 6: warn + ask user "input changed, continue?" |
+| Storage growth from generations history | Phase 9: AISettings retention policy + per-node cap |
+| Inpaint mask polarity (white vs black) | Phase 7: verify per-provider; document expected convention |
 
-## Что выйдет за scope v1 (Phases 1-7)
+---
 
-- Animated paint (paint different on each frame of a multi-frame layer)
+## Что выйдет за scope v1 (Phases 1-9)
+
+- Animated paint (per-frame strokes on multi-frame source)
 - Vector layers / paths
-- Multi-frame inpaint (consistent across frames — temporal video edit)
-- Stylus pressure sensitivity
-- Layer groups
-- Adjustment layers
+- Multi-frame inpaint with temporal consistency
+- Stylus pressure
+- Layer groups / adjustment layers
 - Non-destructive filters
+- Provider chain auto-composition (output of A becomes input of B
+  automatically)
+- AINode batch ladder (one node, N seed variations as Generations
+  in one submit) — partially overlap с existing batch_mode
 
-## Migration / commit strategy
+Эти приходят после v1 если UX устоится и есть запрос.
 
-Каждая Phase = 1 коммит (или 2 если engine + UI). После Phase 1 уже
-есть полезная feature (track matte) — можно merge даже если paint
-дальше не делаем. Phases 2-5 связаны (paint без track matte бесполезен
-для inpaint, но track matte без paint полезен сам по себе).
+---
 
-Order matters: Phase 1 ДО Phase 2 (paint без masking — окей, но inpaint
-не работает; paint + track matte — полная фича).
+## Migration / API contract
+
+**Backwards compat**: все новые attrs используют `#[serde(default)]` →
+старые playa.json saves загружаются. NodeKind enum gains variants —
+serde tag automatically handles new vs old. На load старого файла
+RefNode / AINode просто отсутствуют → проект работает как раньше.
+
+**Workspace deps additions:**
+- `sha2` (для content hashing) — workspace dep
+- `rand` (для seed generation) — workspace dep
+- Существующий `base64` уже в playa-app
+
+**Phase 1 уже **готов к старту** — все дизайны зафиксированы, файлы
+известны, edge cases имеют mitigation, тесты сформулированы.**
