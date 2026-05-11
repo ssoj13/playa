@@ -11,28 +11,26 @@ data shape, faster, no logic loss.**
 | A — LayerPayload type | ✅ unified data shape across CompositorType / GpuBlendBridge / both backends | `3a1d82b` |
 | B-2D — GPU skip pre-render (2D-flat) | ✅ raw frame + canvas-to-src matrix on GPU path for layers without camera or X/Y rot | `97a1e3c` |
 | B-camera — GPU shader camera VP | ✅ per-pixel ray-plane unproject in layer_blend.wgsl, comp_node populates CameraPathInfo | `123c6c4` |
-| C — CPU compositor matrix-aware | ⏳ next session | — |
+| C — CPU compositor matrix-aware | ✅ rayon-parallel resample-blend mirrors shader's canvas_to_src; gpu_inline gate dropped | `5a401c1` |
 | D — GPU depth + OIT | ⏳ pending | — |
-| E — Effects framework + ports | ⏳ pending | — |
+| E — Effects framework + ports | ⏳ in progress | — |
 
 Shipped tooling (separate from compositor work): `playa-coord`
 crate (`df1bf38`), screen_ndc Mat4 + flip_y (`ba1f09d`).
 
-**Result of Phases A + B**: GPU compositor backend now skips CPU
-pre-render for **all non-tilted layers** (covers ≥95% of typical
-layer transforms — only X/Y rotated layers still pre-render). The
-~33 GB/s memory bandwidth burn from the canvas-sized resample on
-heavy comps is gone on the GPU path.
+**Result of Phases A + B + C**: CPU and GPU compositors now sit on
+identical input data (`LayerPayload`). Both backends:
+- Receive raw frames + matrices for non-tilted layers (no CPU
+  pre-render on either backend).
+- Apply 2D affine OR camera ray-plane via the same algebra
+  (`canvas_to_src`).
+- Produce equivalent output (modulo 1-LSB bilinear tolerance).
 
-**Next step (Phase C)**: rewrite `CpuCompositor::blend_with_dim` as
-a matrix-aware single-pass resample-blend. For each output canvas
-pixel: iterate layers bottom-to-top, apply each layer's `inv_matrix`
-(or `camera_path` ray-plane) → src pixel, bilinear sample, blend with
-mode + opacity. Removes CPU pre-render from the CPU backend too,
-unifying both backends on one data shape. Then drop `gpu_inline`
-gate in comp_node — both backends consume raw frames + matrices for
-non-tilted layers. Estimated 2-3 days; recommend starting in fresh
-session for focus + rayon-parallelization decisions.
+Tilted layers (X/Y rotation) still pre-render on CPU — pragmatic
+exception kept indefinitely.
+
+**Next**: Phase E (GpuEffect framework + port brightness/HSV/blur),
+then Phase D (depth buffer + OIT).
 
 ## 1. Current state of the world
 
