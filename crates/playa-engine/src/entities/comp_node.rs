@@ -1353,6 +1353,19 @@ impl CompNode {
                     transform::build_inverse_matrix_3x3(pos, rot_rad[2], scl, pvt, src_size)
                 };
 
+                // Track matte: if this layer references a RefNode via
+                // mask_ref_uuid, resolve it and multiply the per-pixel
+                // mask channel into this layer's alpha. Best-effort —
+                // any resolve failure (orphan ref, missing target,
+                // target frame not yet Loaded, dimension mismatch)
+                // leaves the layer unmasked.
+                if let Some(ref_uuid) = layer.mask_ref_uuid()
+                    && let Some((mask_frame, channel)) =
+                        super::track_matte::resolve_mask_frame(ref_uuid, frame_idx, ctx)
+                {
+                    frame = super::track_matte::apply_track_matte(frame, &mask_frame, channel);
+                }
+
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
 

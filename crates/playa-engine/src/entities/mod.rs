@@ -20,6 +20,7 @@ pub mod project;
 pub mod ref_node;
 pub mod space;
 pub mod text_node;
+pub mod track_matte;
 pub mod traits;
 pub mod transform;
 
