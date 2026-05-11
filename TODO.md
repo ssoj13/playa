@@ -1,101 +1,57 @@
 # TODO
 
-## Coord-system centralization (HIGH priority — accumulating bugs)
+## Coord-system centralization
 
-Recurring class of visual bugs: each module does its own Y-flip /
-center-offset / scale; on the seam between two modules they disagree
-and overlays drift, images render in corners, brackets follow opposite
-of pan, etc. Fixed cases this session: `image_to_screen` Y-flip
-(commit `6ca7a96`). Probably more lurking — bracket / gizmo / hover
-highlight / wgpu compositor handoffs.
+### Status (2026-05-10)
 
-Coord systems currently in use (9):
-1. Image / source pixel — top-left, Y-down
-2. Frame (centered) — center, Y-up [AE convention]
-3. Object — layer center, Y-up
-4. NDC (wgpu) — center, Y-up
-5. UV (texture) — top-left, Y-down
-6. Viewport screen — top-left, Y-down (egui pointer)
-7. Viewport centered — center, Y-up (pan + zoom storage)
-8. Layer params (pos / pivot) — center, Y-up (user-facing AE)
-9. Source seq frame index — start-relative, integer
+**DONE** — phases A, B, plus partial C (algebra-checked tests act as
+type-safety proxy):
 
-Single source of truth that EXISTS: `playa-time::coord::{
-image_to_frame, frame_to_image, object_to_src, to_math_rot,
-from_math_rot}`. NOT used everywhere — many sites still inline
-their own Y math.
+- Phase A audit at `.bughunt/coord_audit.md` (historical record of
+  pre-fix state).
+- 11 helpers in new `playa-coord` crate (extracted from playa-time):
+  `image_to_frame` / `frame_to_image` / `object_to_src` /
+  `image_to_natural` / `natural_to_frame` / `frame_to_ndc` /
+  `frame_to_viewport` / `viewport_to_screen` / `flip_y` /
+  `object_to_src_affine` / `screen_ndc_from_frame_ndc` (+ their
+  inverses). All re-exported via `playa_engine::entities::space`.
+- 22 round-trip + corner + algebra-identity tests in playa-coord.
+- Migration of inline Y/center/zoom-pan math at sites S1-S6, S5, S9
+  (viewport.rs, viewport_ui.rs, transform.rs, gizmo.rs, coords.rs).
+- New space added: `ImageNatural` (bottom-left, Y-up) — the
+  user-natural Cartesian addressing. Helpers ready; UI/storage
+  migration deferred to next pass.
 
-Refactor plan — 4 phases, ~3 focused days total:
+Coord systems now (11) — see `playa-coord` crate-level doc.
 
-### Phase A — Audit + inventory (~half day)
-Use filesystem MCP `grep_files` for Y-flip patterns:
-`h - y`, `h * 0.5 - p`, `1.0 - uv.y`, `-y`, `flip_y`, manual `0.5 -`,
-`* -1.0`. Produce `.bughunt/coord_audit.md` listing every site with:
-- file:line
-- input space → output space
-- through helper (good) or inline (suspect)
-- if inline: hypothesised correct version
+Single source of truth: `playa-coord` crate (sibling of playa-time).
+playa-engine and playa-ui pull through `entities::space` re-export.
+Both crates unchanged at the call sites; only the source pivoted.
 
-### Phase B — Centralize all helpers (~day)
-Move all Y-flips to `playa-time::coord::` (or new `playa-coord` crate
-if we want playa-time clean). Touch sites:
-- `playa-ui/src/widgets/viewport/coords.rs` → re-export from playa-time
-- `playa-ui/src/widgets/viewport/viewport.rs::image_to_screen` and
-  `screen_to_image` → use coord helpers verbatim (already fixed
-  this session but still inline; should call helpers explicitly)
-- `playa-ui/src/widgets/viewport/viewport_ui.rs:717` (`image_size.y * 0.5 - world_pt.y`) — replace with `frame_to_image` call
-- `playa-engine/src/entities/transform.rs::transform_frame_with_camera`
-  — verify all inline math (image_to_frame / object_to_src already
-  used; verify no leftover inline)
-- `playa-engine/src/render_gpu/shaders/layer_blend.wgsl` — document
-  the coordinate convention assumed by the matrix passed from
-  `build_inverse_matrix_3x3` and the UV→canvas mapping. Decide
-  CANONICAL convention for shader: either pre-transformed frame +
-  identity matrix (current) or raw frame + non-identity matrix.
-  Document and enforce one.
-- gizmo / brackets / hover-highlight rendering: each goes through
-  `image_to_screen` (now fixed) — verify no inline Y math remains.
+### Remaining
 
-### Phase C — Newtype wrappers (~day) [optional but bulletproof]
-Distinct types per space:
-```rust
-struct ImagePos(Vec2);    // top-left, Y-down
-struct FramePos(Vec2);    // center, Y-up
-struct ScreenPos(Vec2);   // top-left, Y-down, viewport-relative
-struct NdcPos(Vec2);      // center, Y-up, clip-space
-struct UvPos(Vec2);       // 0..1, Y-down
-```
-Conversions are the ONLY way to cross types. Compiler error if you
-mix. Eliminates entire class of "I forgot which Y" bugs forever.
-
-### Phase D — Test matrix (~half day)
-Round-trip + corner-case tests for every pair:
-- `image_to_frame(frame_to_image(p, sz), sz) == p`
-- For known corners (top-left, top-right, bottom-left, bottom-right,
-  center) verify mapping into each other space.
-
-### Triggers for executing this refactor
-- Add this to the active phase queue WHEN starting Paint workstream
-  (Phases 2-5 of Wave 8 paint comp) — paint adds yet another coord
-  layer (brush position on canvas), so centralizing FIRST prevents
-  another bug class.
-- OR after first user report of new Y-flip bug post-this-session.
-
-### Known bugs probably belonging to the same coord-system class
-(not yet fixed; will need bisect or audit):
-- "Image renders in bottom-right corner of canvas at frame 33" —
-  reproduced on both CPU and GPU backend; same on TGA and EXR
-  sources. User hint: cache/time also disagrees with display ("время
-  и отображение разъезжается"). Hypothesis: regression in
-  `6c551ce` (playa-time extraction). Bisect path:
-  `git checkout 30ffc8f` (commit before Wave 7-pre big merge), build,
-  test same scene. If clean → diff `30ffc8f..6c551ce` for coord /
-  speed / round migration in `comp_node.rs` (221 LOC changed),
-  `attrs.rs` (45 LOC), `keys.rs` (12 LOC).
-- Cache/time desync reported by user separately — possibly the
-  same root cause. Speed::scale_timeline_to_src migrations with
-  Round::Round semantics may produce off-by-one frame_idx that
-  mis-keys the cache.
+- **S7 wgpu render path image-in-corner bug** — static analysis of
+  the pipeline (renderer.rs quad VBO + UV mapping + ortho_rh proj +
+  wgpu Y-up NDC) shows a self-consistent upright-image chain.
+  Bug must be in dynamic state at frame 33 (model/view/proj
+  recompute, texture upload format mismatch, or specific src-frame
+  attrs). Needs the sanity scene below + bisect 30ffc8f..6c551ce
+  to localize.
+- **S8 layer_blend.wgsl** — design decision: kill GPU compositor
+  matrix path (currently degraded per `comp_node.rs:1380-1387`
+  comment), OR finish wiring it. Not a coord bug; documentation +
+  decision debt.
+- **ImageNatural promotion to UI / storage** — layer attrs
+  pos/pivot, status-bar readouts, picker tooltips currently in
+  frame coords. Migration to natural is a UX+serialization pass
+  ("совместимость не нужна" already greenlit by user). Touch:
+  layer attrs (de)serialization, every UI display of a coord,
+  scene-file format docs.
+- **Phase C — newtype wrappers** [optional]: distinct types per
+  space (`struct ImagePos(Vec2)`, `struct FramePos(Vec2)`, etc.)
+  so the compiler rejects accidental mixing. Algebra-identity
+  tests in playa-coord cover the same drift class but at runtime
+  only.
 
 ### Sanity test scene (build once, reuse for any future coord
 audit / bisect / fix)
@@ -108,6 +64,15 @@ audit / bisect / fix)
   top to test compositor stacking
 - Add same scene with layer scale=2.0, pos=(360,288) to test
   transform-with-non-identity path (centers a 2× zoom-in)
+
+### Bisect path (when scene exists)
+`git checkout 30ffc8f` (commit before Wave 7-pre big merge), build,
+test same scene. If clean → diff `30ffc8f..6c551ce` for coord /
+speed / round migration in `comp_node.rs` (221 LOC changed),
+`attrs.rs` (45 LOC), `keys.rs` (12 LOC). User hint: cache/time
+also disagrees with display ("время и отображение разъезжается") —
+possibly Speed::scale_timeline_to_src + Round::Round off-by-one
+mis-keying the cache.
 
 ---
 
