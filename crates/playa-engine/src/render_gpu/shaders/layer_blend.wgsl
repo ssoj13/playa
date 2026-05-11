@@ -80,15 +80,13 @@ fn fs_blend(inp: VsOut) -> @location(0) vec4<f32> {
         u.col2.xyz,
     );
 
-    // `build_inverse_matrix_3x3` (transform.rs) expects input in
-    // canvas-centered, Y-up coordinates (range
-    // [-W/2, W/2] × [-H/2, H/2]) — that's the AE convention used by
-    // the CPU compositor path. Since wgpu's NDC is Y-up and the quad
-    // vertex (-1, +1) ↔ uv (0, 1) maps to framebuffer top-left, our
-    // `inp.uv * canvas_size` already gives a Y-up coord but with
-    // bottom-left as origin, range [0, W] × [0, H]. Subtract half
-    // the canvas to recentre.
-    let canvas_pixel = inp.uv * u.canvas_size - u.canvas_size * 0.5;
+    // canvas_pixel in top-left Y-down convention, range [0, W]×[0, H].
+    // Pairs with `IDENTITY_TRANSFORM` (identity matrix passed by
+    // compose_internal when no per-layer transform is active) — the
+    // typical case since `transform_frame_with_camera` PRE-renders
+    // any non-identity layer transform on the CPU side before the
+    // compositor sees the frame.
+    let canvas_pixel = inp.uv * u.canvas_size;
     let transformed = m * vec3<f32>(canvas_pixel, 1.0);
     let top_tc = transformed.xy / u.top_size;
 
