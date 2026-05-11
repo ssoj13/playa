@@ -3,6 +3,27 @@
 Date: 2026-05-10. Goal stated by user: **GPU-first, unified CPU/GPU
 data shape, faster, no logic loss.**
 
+## Status (2026-05-11)
+
+| Phase | Done | Commit |
+|---|---|---|
+| Infrastructure | ✅ canvas-to-src matrix, image_to_frame_affine helper, GPU double-transform fix | `a4863d0` |
+| A — LayerPayload type | ✅ unified data shape across CompositorType / GpuBlendBridge / both backends | `3a1d82b` |
+| B-2D — GPU skip pre-render (2D-flat) | ✅ raw frame + canvas-to-src matrix on GPU path for layers without camera or X/Y rot | `97a1e3c` |
+| B-camera — GPU shader camera VP | ⏳ next | — |
+| C — CPU compositor matrix-aware | ⏳ pending | — |
+| D — GPU depth + OIT | ⏳ pending | — |
+| E — Effects framework + ports | ⏳ pending | — |
+
+Shipped tooling (separate from compositor work): `playa-coord`
+crate (`df1bf38`), screen_ndc Mat4 + flip_y (`ba1f09d`).
+
+**Next step**: Phase B-camera. Add `camera_vp_inv: mat4x4` uniform
+to layer_blend.wgsl + per-pixel ray-plane unproject for camera-projected
+2D-flat layers. comp_node populates `LayerPayload.camera_vp_inv`
+when camera active. Removes CPU pre-render for the camera-projected
+case (currently only no-camera 2D-flat skips). Estimated 1 day.
+
 ## 1. Current state of the world
 
 ### 1.1 Per-layer pipeline (today, in `compose_internal`)
