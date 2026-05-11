@@ -3,10 +3,13 @@ struct Uniforms {
     blend_mode: i32,
     canvas_size: vec2<f32>,
     top_size: vec2<f32>,
-    pad0: vec2<f32>,
+    use_camera: u32,        // 0 = 2D path (3x3 inv_matrix). 1 = camera path.
+    layer_z: f32,           // World-space Z of layer plane (camera path only).
     col0: vec4<f32>,
     col1: vec4<f32>,
     col2: vec4<f32>,
+    camera_vp_inv: mat4x4<f32>,  // inverse(view * proj). camera path.
+    layer_inv: mat4x4<f32>,      // inverse layer model. camera path.
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -70,25 +73,58 @@ fn blend_rgb(bottom: vec3<f32>, top: vec3<f32>, mode: i32) -> vec3<f32> {
     return t_clamp;
 }
 
+/// Compute the src buffer-space pixel coord that the current canvas
+/// pixel should sample, going through the active layer transform path
+/// (2D inverse-affine OR camera ray-plane unproject).
+fn canvas_to_src(canvas_pixel: vec2<f32>) -> vec2<f32> {
+    if u.use_camera == 0u {
+        // 2D path — single 3×3 affine, canvas (top-left, Y-down) → src.
+        let m = mat3x3<f32>(u.col0.xyz, u.col1.xyz, u.col2.xyz);
+        let t = m * vec3<f32>(canvas_pixel, 1.0);
+        return t.xy;
+    }
+
+    // Camera path — non-tilted layer at world Z = u.layer_z.
+    //
+    // 1. canvas pixel (top-left, Y-down) → NDC (Y-up, [-1,+1])
+    let ndc_x = canvas_pixel.x / u.canvas_size.x * 2.0 - 1.0;
+    let ndc_y = 1.0 - canvas_pixel.y / u.canvas_size.y * 2.0;
+
+    // 2. Unproject the near and far ends of the camera ray for this NDC.
+    let near4 = u.camera_vp_inv * vec4<f32>(ndc_x, ndc_y, -1.0, 1.0);
+    let far4  = u.camera_vp_inv * vec4<f32>(ndc_x, ndc_y,  1.0, 1.0);
+    let p_near = near4.xyz / near4.w;
+    let p_far  = far4.xyz  / far4.w;
+    let dir = p_far - p_near;
+
+    // 3. Intersect ray with the layer plane (Z = u.layer_z).
+    //    Non-tilted layer = plane normal is (0, 0, 1). For perpendicular
+    //    rays this collapses naturally to the parallel-ortho fast path.
+    let denom = dir.z;
+    if abs(denom) < 1.0e-6 {
+        // Camera looking edge-on at the layer — out of bounds.
+        return vec2<f32>(-1.0, -1.0);
+    }
+    let t = (u.layer_z - p_near.z) / denom;
+    let world = p_near + dir * t;
+
+    // 4. World → object via inverse layer model.
+    let obj4 = u.layer_inv * vec4<f32>(world, 1.0);
+    let object = obj4.xyz;
+
+    // 5. object (center, Y-up) → src buffer pixel (top-left, Y-down).
+    return vec2<f32>(
+        object.x + u.top_size.x * 0.5,
+        u.top_size.y * 0.5 - object.y,
+    );
+}
+
 @fragment
 fn fs_blend(inp: VsOut) -> @location(0) vec4<f32> {
     let bottom_color = textureSample(t_bottom, s_tex, inp.uv);
-
-    let m = mat3x3<f32>(
-        u.col0.xyz,
-        u.col1.xyz,
-        u.col2.xyz,
-    );
-
-    // canvas_pixel in top-left Y-down convention, range [0, W]×[0, H].
-    // Pairs with `IDENTITY_TRANSFORM` (identity matrix passed by
-    // compose_internal when no per-layer transform is active) — the
-    // typical case since `transform_frame_with_camera` PRE-renders
-    // any non-identity layer transform on the CPU side before the
-    // compositor sees the frame.
     let canvas_pixel = inp.uv * u.canvas_size;
-    let transformed = m * vec3<f32>(canvas_pixel, 1.0);
-    let top_tc = transformed.xy / u.top_size;
+    let src_pixel = canvas_to_src(canvas_pixel);
+    let top_tc = src_pixel / u.top_size;
 
     var top_color: vec4<f32>;
     if (top_tc.x < 0.0 || top_tc.x > 1.0 || top_tc.y < 0.0 || top_tc.y > 1.0) {

@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::mpsc;
 
-use crate::entities::compositor::{BlendMode, CpuCompositor, LayerPayload};
+use crate::entities::compositor::{BlendMode, CpuCompositor, IDENTITY_MAT4, LayerPayload};
 use crate::entities::frame::{CropAlign, Frame, FrameStatus, PixelBuffer, PixelFormat};
 use log::warn;
 use wgpu::util::DeviceExt;
@@ -15,17 +15,24 @@ use wgpu::util::DeviceExt;
 const BLEND_SHADER: &str = include_str!("shaders/layer_blend.wgsl");
 const ROW_ALIGN: usize = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
 
+/// Layout matches `Uniforms` in `shaders/layer_blend.wgsl` exactly.
+/// Field order + padding chosen so every vec/mat is 16-byte aligned
+/// for std140 / wgsl uniform rules without explicit pad fields.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct BlendUniforms {
-    opacity: f32,
-    blend_mode: i32,
-    canvas_size: [f32; 2],
-    top_size: [f32; 2],
-    pad0: [f32; 2],
-    col0: [f32; 4],
-    col1: [f32; 4],
-    col2: [f32; 4],
+    opacity: f32,                       // offset 0
+    blend_mode: i32,                    // offset 4
+    canvas_size: [f32; 2],              // offset 8  (vec2 — 8-aligned)
+    top_size: [f32; 2],                 // offset 16
+    use_camera: u32,                    // offset 24
+    layer_z: f32,                       // offset 28
+    col0: [f32; 4],                     // offset 32 (vec4 — 16-aligned)
+    col1: [f32; 4],                     // offset 48
+    col2: [f32; 4],                     // offset 64
+    camera_vp_inv: [[f32; 4]; 4],       // offset 80 (mat4 — 16-aligned)
+    layer_inv: [[f32; 4]; 4],           // offset 144
+    // total: 208 bytes
 }
 
 /// wgpu-backed layer stack blender (runs on the `eframe` render thread).
@@ -172,24 +179,24 @@ impl WgpuCompositor {
         }
     }
 
-    fn build_uniforms(
-        opacity: f32,
-        mode: &BlendMode,
-        canvas_w: usize,
-        canvas_h: usize,
-        top_w: usize,
-        top_h: usize,
-        m: &[f32; 9],
-    ) -> BlendUniforms {
+    fn build_uniforms(layer: &LayerPayload, canvas_w: usize, canvas_h: usize) -> BlendUniforms {
+        let m = &layer.inv_matrix;
+        let (use_camera, layer_z, camera_vp_inv, layer_inv) = match &layer.camera_path {
+            Some(c) => (1u32, c.layer_z, c.camera_vp_inv, c.layer_inv),
+            None => (0u32, 0.0, IDENTITY_MAT4, IDENTITY_MAT4),
+        };
         BlendUniforms {
-            opacity,
-            blend_mode: Self::blend_mode_idx(mode),
+            opacity: layer.opacity,
+            blend_mode: Self::blend_mode_idx(&layer.blend_mode),
             canvas_size: [canvas_w as f32, canvas_h as f32],
-            top_size: [top_w as f32, top_h as f32],
-            pad0: [0.0; 2],
+            top_size: [layer.frame.width() as f32, layer.frame.height() as f32],
+            use_camera,
+            layer_z,
             col0: [m[0], m[1], m[2], 0.0],
             col1: [m[3], m[4], m[5], 0.0],
             col2: [m[6], m[7], m[8], 0.0],
+            camera_vp_inv,
+            layer_inv,
         }
     }
 
@@ -614,19 +621,12 @@ impl WgpuCompositor {
         let mut uploads = uploads.into_iter();
         let mut acc = uploads.next().ok_or_else(|| "no textures".to_string())?;
 
-        // Phase A: only inv_matrix is consumed by the shader. Phase B
-        // adds camera_vp_inv. Phase D consumes z_position. Phase E
-        // consumes mask.
+        // Phase B-camera: shader handles both 2D (3×3 inv_matrix) and
+        // camera-projected (camera_vp_inv + layer_inv + layer_z) paths,
+        // selected per-layer via use_camera flag in build_uniforms.
+        // Phase D consumes z_position. Phase E consumes mask.
         for (layer, top_tex) in layers.iter().skip(1).zip(uploads) {
-            let u = Self::build_uniforms(
-                layer.opacity,
-                &layer.blend_mode,
-                width,
-                height,
-                layer.frame.width(),
-                layer.frame.height(),
-                &layer.inv_matrix,
-            );
+            let u = Self::build_uniforms(layer, width, height);
             let out =
                 self.blend_pass(&acc, &top_tex, u, w_u32, h_u32, wf, &pipeline, "playa_blend_step");
             acc = out;

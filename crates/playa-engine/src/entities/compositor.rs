@@ -78,6 +78,17 @@ impl Clone for CompositorType {
 /// transforms or for any case where src and canvas dimensions differ.
 pub const IDENTITY_TRANSFORM: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
 
+/// 4×4 identity, column-major. Used as the placeholder camera VP /
+/// layer-inv when [`LayerPayload::camera_path`] is `None` (the GPU
+/// shader sees these but the `use_camera` flag short-circuits the
+/// camera path before it touches them).
+pub const IDENTITY_MAT4: [[f32; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
 /// Channel of a mask source to use for a track matte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaskChannel {
@@ -98,6 +109,32 @@ pub enum MaskChannel {
 pub struct MaskInfo {
     pub frame: Frame,
     pub channel: MaskChannel,
+}
+
+/// Per-layer camera-projection bundle used by the GPU shader's
+/// camera-path branch (Phase B-camera).
+///
+/// Carries everything the shader needs to ray-march from a canvas
+/// pixel to a src pixel via the camera's inverse view-projection
+/// and the layer's inverse model matrix.
+///
+/// `None` on `LayerPayload` means the comp has no active camera and
+/// the 2D path (`inv_matrix` 3×3) is used instead.
+#[derive(Clone, Copy, Debug)]
+pub struct CameraPathInfo {
+    /// Inverse of the camera's `view * projection` matrix.
+    /// Column-major. Maps clip-space `[ndc.x, ndc.y, ndc.z, 1]` → world.
+    pub camera_vp_inv: [[f32; 4]; 4],
+    /// Inverse of the layer's model matrix (4×4, column-major).
+    /// Maps world → layer-local object space.
+    /// For non-tilted (no X/Y rot) layers this collapses cleanly when
+    /// applied to the world point produced by the ray-plane intersection
+    /// at `layer_z`.
+    pub layer_inv: [[f32; 4]; 4],
+    /// World-space Z position of the layer's plane. Used by the shader's
+    /// ray-plane intersection to find where the camera ray for a given
+    /// canvas pixel hits the layer.
+    pub layer_z: f32,
 }
 
 /// One layer's full payload to the compositor.
@@ -134,10 +171,10 @@ pub struct LayerPayload {
     /// `IDENTITY_TRANSFORM` when the frame is already pre-rendered
     /// at canvas size.
     pub inv_matrix: [f32; 9],
-    /// Inverse 4×4 view-projection matrix when a camera is active on
-    /// the comp. `None` for 2D ortho (the common case). Phase B
-    /// consumer: GPU shader unprojects through this for 3D-flat layers.
-    pub camera_vp_inv: Option<[f32; 16]>,
+    /// Camera-projection bundle for layers rendered through an active
+    /// camera (perspective or ortho). `None` when the comp has no
+    /// camera — the 2D path uses `inv_matrix` only. See [`CameraPathInfo`].
+    pub camera_path: Option<CameraPathInfo>,
     /// Layer Z position for depth-buffer / OIT (Phase D). 0.0 = comp
     /// plane; positive = closer to camera.
     pub z_position: f32,
@@ -162,7 +199,7 @@ impl LayerPayload {
             opacity,
             blend_mode,
             inv_matrix: IDENTITY_TRANSFORM,
-            camera_vp_inv: None,
+            camera_path: None,
             z_position: 0.0,
             mask: None,
             layer_is_tilted: false,

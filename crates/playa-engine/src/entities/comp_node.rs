@@ -1362,35 +1362,77 @@ impl CompNode {
                 // Decide between CPU pre-render and GPU inline transform.
                 //
                 // Phase B: when the GPU compositor is active AND the
-                // layer is 2D-flat (no camera, no X/Y rotation), skip
-                // the CPU pre-render — pass the raw layer frame plus
-                // a canvas-to-src 3×3 matrix. The wgpu shader resamples
-                // inline. Saves a full canvas-sized memory read+write
-                // per layer per frame (the dominant CPU cost in heavy
-                // comps).
+                // layer is NOT tilted (no X/Y rotation), skip the CPU
+                // pre-render — pass the raw layer frame to the shader
+                // along with either:
+                //   - a canvas-to-src 3×3 (no camera), OR
+                //   - camera_vp_inv + layer_inv + layer_z (camera path)
+                // The wgpu shader resamples inline. Saves a full
+                // canvas-sized memory read+write per layer per frame
+                // (the dominant CPU cost in heavy comps).
                 //
-                // CPU path (and GPU+camera, GPU+tilted) keep the
-                // legacy pre-render until Phase B-camera + Phase C.
+                // CPU path and GPU+tilted keep the legacy pre-render
+                // until Phase C / kept indefinitely respectively.
                 let canvas = self.dim();
-                let layer_is_3d =
-                    view_projection.is_some() || rot_rad[0] != 0.0 || rot_rad[1] != 0.0;
-                let gpu_2d_inline = ctx.gpu_blend_bridge.is_some() && !layer_is_3d;
+                let layer_is_tilted_local = rot_rad[0] != 0.0 || rot_rad[1] != 0.0;
+                let gpu_inline = ctx.gpu_blend_bridge.is_some() && !layer_is_tilted_local;
 
                 let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt)
                     || view_projection.is_some()
                     || src_size != canvas; // Source != output = needs centering
 
+                let mut camera_path: Option<super::compositor::CameraPathInfo> = None;
+
                 let inv_matrix = if !needs_transform {
                     identity_matrix
-                } else if gpu_2d_inline {
-                    // GPU 2D path: shader resamples raw src via
-                    // canvas→src 3×3. Frame stays at src dimensions.
-                    transform::build_inverse_canvas_to_src_3x3(
-                        pos, rot_rad[2], scl, pvt, canvas, src_size,
-                    )
+                } else if gpu_inline {
+                    if let Some(vp) = view_projection {
+                        // GPU camera path: shader unprojects per-pixel
+                        // through camera_vp_inv, intersects layer plane
+                        // at layer_z, then applies layer_inv to reach
+                        // object space. inv_matrix is unused in this
+                        // path (use_camera flag selects camera branch).
+                        use glam::{Mat4, Vec3};
+                        let inv_scale = Vec3::new(
+                            if scl[0].abs() > f32::EPSILON {
+                                1.0 / scl[0]
+                            } else {
+                                0.0
+                            },
+                            if scl[1].abs() > f32::EPSILON {
+                                1.0 / scl[1]
+                            } else {
+                                0.0
+                            },
+                            if scl[2].abs() > f32::EPSILON {
+                                1.0 / scl[2]
+                            } else {
+                                0.0
+                            },
+                        );
+                        // Inverse layer model: undo (T_pos * R_-z * S_scl * T_-pvt).
+                        // R_-z used in forward (CW deg → -rot for glam CCW math),
+                        // so inverse rotates by +rot_rad[2].
+                        let layer_inv_mat4 = Mat4::from_translation(Vec3::from(pvt))
+                            * Mat4::from_rotation_z(rot_rad[2])
+                            * Mat4::from_scale(inv_scale)
+                            * Mat4::from_translation(-Vec3::from(pos));
+                        camera_path = Some(super::compositor::CameraPathInfo {
+                            camera_vp_inv: vp.inverse().to_cols_array_2d(),
+                            layer_inv: layer_inv_mat4.to_cols_array_2d(),
+                            layer_z: pos[2],
+                        });
+                        identity_matrix
+                    } else {
+                        // GPU 2D path: shader resamples raw src via
+                        // canvas→src 3×3. Frame stays at src dimensions.
+                        transform::build_inverse_canvas_to_src_3x3(
+                            pos, rot_rad[2], scl, pvt, canvas, src_size,
+                        )
+                    }
                 } else {
-                    // CPU path or 3D / camera / tilted: pre-render
-                    // CPU-side, hand identity matrix to the compositor.
+                    // CPU path or tilted: pre-render CPU-side, hand
+                    // identity matrix to the compositor.
                     frame = transform::transform_frame_with_camera(
                         &frame,
                         canvas,
@@ -1424,8 +1466,9 @@ impl CompNode {
                     opacity,
                     blend_mode: blend,
                     inv_matrix,
-                    // Phase B will populate when camera is active.
-                    camera_vp_inv: None,
+                    // Populated above for GPU+camera paths; None
+                    // otherwise (2D shader path or CPU pre-render).
+                    camera_path,
                     // Layer Z (depth-buffer / OIT in Phase D).
                     z_position: pos[2],
                     // Phase A: track matte still pre-multiplied above.
