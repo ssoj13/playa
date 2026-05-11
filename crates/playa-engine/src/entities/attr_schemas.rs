@@ -123,6 +123,16 @@ const COMP_SPECIFIC: &[AttrDef] = &[
     // A_IN/A_OUT to layer extents. false = user-pinned bounds (AE-style).
     // Non-DAG: toggling does not invalidate composed-frame cache.
     AttrDef::with_order("auto_bounds", AttrType::Bool, DISP, 20.8),
+    // Comp-level color depth — locks the composite output pixel format
+    // so the GPU texture doesn't flicker between U8/F16/F32 at layer
+    // boundaries. Missing attr falls back to legacy infer-from-layers.
+    AttrDef::with_ui_order(
+        "comp_depth",
+        AttrType::String,
+        DAG_DISP,
+        &["rgba8", "rgba_f16", "rgba_f32"],
+        20.9,
+    ),
 ];
 
 pub static COMP_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {

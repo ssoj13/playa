@@ -736,6 +736,34 @@ impl CompNode {
         self.attrs.set(A_FPS, super::attrs::AttrValue::Float(fps));
     }
 
+    /// Comp-level pixel format. Determines the composite output's
+    /// precision regardless of which layers happen to cover the
+    /// current frame. Defaults to [`PixelFormat::Rgba8`] when the attr
+    /// is missing or holds an unknown string — preserves legacy
+    /// behaviour for projects that predate this attr.
+    pub fn depth(&self) -> super::frame::PixelFormat {
+        use super::frame::PixelFormat;
+        match self.attrs.get_str(A_COMP_DEPTH) {
+            Some("rgba_f32") => PixelFormat::RgbaF32,
+            Some("rgba_f16") => PixelFormat::RgbaF16,
+            _ => PixelFormat::Rgba8,
+        }
+    }
+
+    /// Set the comp-level pixel format. UI surfaces (AttrEditor radio,
+    /// comp settings dialog) call this; written verbatim to the attr
+    /// store as the canonical wire string.
+    pub fn set_depth(&mut self, depth: super::frame::PixelFormat) {
+        use super::attrs::AttrValue;
+        use super::frame::PixelFormat;
+        let wire = match depth {
+            PixelFormat::RgbaF32 => "rgba_f32",
+            PixelFormat::RgbaF16 => "rgba_f16",
+            PixelFormat::Rgba8 => "rgba8",
+        };
+        self.attrs.set(A_COMP_DEPTH, AttrValue::Str(wire.to_string()));
+    }
+
     /// Layer index to UUID
     pub fn idx_to_uuid(&self, idx: usize) -> Option<Uuid> {
         self.layers.get(idx).map(|l| l.uuid())
@@ -1184,7 +1212,12 @@ impl CompNode {
         // New API: (frame, opacity, blend_mode, inverse_transform_matrix)
         let mut source_frames: Vec<(Frame, f32, BlendMode, [f32; 9])> = Vec::new();
         let identity_matrix = super::compositor::IDENTITY_TRANSFORM;
-        let mut target_format = PixelFormat::Rgba8;
+        // Seed target_format with the comp's locked depth so scrubbing
+        // past every layer (empty source_frames) keeps the same
+        // pixel format as while layers were visible. The per-layer
+        // promote step below still upgrades to higher precision when
+        // a layer demands it — comp_depth is a FLOOR, not a cap.
+        let mut target_format = self.depth();
         let mut all_loaded = true;
 
         // Check if any layer has solo enabled
@@ -1905,6 +1938,56 @@ mod tests {
         let restored: Layer =
             serde_json::from_value(json).expect("legacy JSON deserialises");
         assert_eq!(restored.mask_ref_uuid(), None);
+    }
+
+    #[test]
+    fn comp_depth_default_is_rgba8() {
+        // Fresh comp without explicit set_depth → legacy behaviour.
+        let comp = CompNode::new("C", 0, 100, 24.0);
+        assert_eq!(
+            comp.depth(),
+            super::super::frame::PixelFormat::Rgba8
+        );
+    }
+
+    #[test]
+    fn comp_depth_set_get_all_three_variants() {
+        use super::super::frame::PixelFormat;
+        let mut comp = CompNode::new("C", 0, 100, 24.0);
+
+        comp.set_depth(PixelFormat::RgbaF32);
+        assert_eq!(comp.depth(), PixelFormat::RgbaF32);
+
+        comp.set_depth(PixelFormat::RgbaF16);
+        assert_eq!(comp.depth(), PixelFormat::RgbaF16);
+
+        comp.set_depth(PixelFormat::Rgba8);
+        assert_eq!(comp.depth(), PixelFormat::Rgba8);
+    }
+
+    #[test]
+    fn comp_depth_serde_round_trip_preserves_value() {
+        use super::super::frame::PixelFormat;
+        let mut comp = CompNode::new("C", 0, 100, 24.0);
+        comp.set_depth(PixelFormat::RgbaF32);
+        let json = serde_json::to_string(&comp).expect("serialize");
+        let restored: CompNode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(restored.depth(), PixelFormat::RgbaF32);
+    }
+
+    #[test]
+    fn comp_depth_unknown_string_falls_back_to_rgba8() {
+        // Defensive: a future / corrupted save with an unrecognised
+        // wire string must not panic — fall through to Rgba8 (matches
+        // missing-attr legacy behaviour).
+        use super::super::attrs::AttrValue;
+        let mut comp = CompNode::new("C", 0, 100, 24.0);
+        comp.attrs
+            .set(A_COMP_DEPTH, AttrValue::Str("rgba_f64".to_string()));
+        assert_eq!(
+            comp.depth(),
+            super::super::frame::PixelFormat::Rgba8
+        );
     }
 
     #[test]

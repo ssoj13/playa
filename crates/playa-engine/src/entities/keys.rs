@@ -85,6 +85,14 @@ pub const A_HEIGHT: &str = "height";
 /// Source length in frames (invariant, doesn't change with speed)
 pub const A_SRC_LEN: &str = "src_len";
 
+// === CompNode color depth ===
+/// On `CompNode`: pixel format of the composite output, locked at the
+/// comp level so scrubbing past all layers doesn't flicker the GPU
+/// texture format. Stored as string for forward-compat — accepted
+/// values are `"rgba8"`, `"rgba_f16"`, `"rgba_f32"`. Missing attr →
+/// behaviour falls back to the legacy infer-from-layers path.
+pub const A_COMP_DEPTH: &str = "comp_depth";
+
 // === AINode attributes ===
 /// On `AINode`: free-form prompt template (provider-agnostic).
 pub const A_PROMPT: &str = "prompt";
