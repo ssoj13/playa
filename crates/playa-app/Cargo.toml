@@ -48,6 +48,7 @@ base64 = "0.22"
 dirs-next = "2.0"
 num_cpus = "1.17"
 opener = "0.7"
+rand = { workspace = true }
 regex = "1.12"
 rfd = "0.17"
 rouille = "3.6"

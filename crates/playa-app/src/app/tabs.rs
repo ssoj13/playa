@@ -356,6 +356,125 @@ impl PlayaApp {
     }
 
     /// Render node attributes (File, Comp, Camera, Text nodes).
+    /// Action footer for AINode: Generate button + Generations history
+    /// list + Set Active / Delete per-row. No-op when `node_uuid` is
+    /// not an AINode — keeps the call site uniform.
+    fn render_ainode_footer(&mut self, ui: &mut egui::Ui, node_uuid: uuid::Uuid) {
+        use playa_events::project_media::GenerateAINodeEvent;
+
+        // Snapshot what we need to render. Tuples come out as
+        // `Option<Option<(Vec<Generation>, Option<Uuid>)>>` —
+        // outer Option = node missing, inner = node not AINode.
+        let Some(Some((generations, active))) = self.project.with_node(node_uuid, |node| {
+            node.as_ai()
+                .map(|ai| (ai.generations(), ai.active_generation_uuid()))
+        }) else {
+            return;
+        };
+
+        ui.separator();
+        ui.add_space(4.0);
+        ui.heading("AI Actions");
+
+        // Primary action: submit a fresh generation with the current
+        // attrs. Seed resolution + Generation record building happens
+        // in events.rs::generate_ainode (it has access to the
+        // JobQueue).
+        ui.horizontal(|ui| {
+            if ui
+                .button("⚡ Generate")
+                .on_hover_text(
+                    "Submit a fresh Generation using this AINode's current\n\
+                     prompt / provider / refs / params. Seed resolves to a\n\
+                     concrete u64 (random if absent) so the run is\n\
+                     reproducible via Regenerate exact.",
+                )
+                .clicked()
+            {
+                self.event_bus
+                    .emit_boxed(Box::new(GenerateAINodeEvent(node_uuid)));
+            }
+        });
+
+        ui.add_space(8.0);
+        ui.label(format!("Generations ({}):", generations.len()));
+        if generations.is_empty() {
+            ui.add_space(4.0);
+            ui.weak("(none yet — click Generate to submit)");
+            return;
+        }
+
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for g in generations.iter().rev() {
+                    self.render_generation_row(ui, node_uuid, g, active);
+                }
+            });
+    }
+
+    fn render_generation_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        node_uuid: uuid::Uuid,
+        g: &playa_engine::entities::Generation,
+        active: Option<uuid::Uuid>,
+    ) {
+        use playa_events::project_media::{DeleteGenerationEvent, SetActiveGenerationEvent};
+
+        let is_active = active == Some(g.uuid);
+        ui.horizontal(|ui| {
+            // Active indicator dot.
+            let dot = if is_active { "●" } else { "○" };
+            ui.label(dot);
+            // Uuid short prefix as identity.
+            let short = g.uuid.to_string();
+            let short = &short[..8];
+            ui.monospace(short);
+            // Cost or empty.
+            match g.cost_usd {
+                Some(c) => ui.label(format!("${c:.2}")),
+                None => ui.weak("—"),
+            };
+            // Result path (truncated) or "(pending)".
+            if g.result_path.as_os_str().is_empty() {
+                ui.weak("(pending)");
+            } else {
+                let p = g.result_path.to_string_lossy();
+                let display = if p.len() > 32 {
+                    format!("…{}", &p[p.len() - 31..])
+                } else {
+                    p.into_owned()
+                };
+                ui.label(display);
+            }
+            if !is_active
+                && ui
+                    .small_button("Set Active")
+                    .on_hover_text("Make this generation the comp source for this AINode.")
+                    .clicked()
+            {
+                self.event_bus
+                    .emit_boxed(Box::new(SetActiveGenerationEvent {
+                        ainode_uuid: node_uuid,
+                        gen_uuid: g.uuid,
+                    }));
+            }
+            if ui
+                .small_button("✕")
+                .on_hover_text("Delete this Generation from history (file kept on disk).")
+                .clicked()
+            {
+                self.event_bus
+                    .emit_boxed(Box::new(DeleteGenerationEvent {
+                        ainode_uuid: node_uuid,
+                        gen_uuid: g.uuid,
+                    }));
+            }
+        });
+    }
+
     fn render_node_attributes(&mut self, ui: &mut egui::Ui, ae_focus: &[uuid::Uuid]) {
         if ae_focus.len() == 1 {
             // Single node - edit directly
@@ -372,6 +491,13 @@ impl PlayaApp {
                     node_changed = true;
                 }
             });
+
+            // AINode footer — actions (Generate / Set Active / Delete)
+            // and the read-only Generations history list. The standard
+            // attribute editor above already renders prompt / provider /
+            // seed / refs as plain attrs; this footer is the
+            // **action surface** that those attrs can't express.
+            self.render_ainode_footer(ui, node_uuid);
 
             // === Cache invalidation for source node attribute changes ===
             //

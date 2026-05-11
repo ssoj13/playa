@@ -29,6 +29,39 @@ pub struct AddTextEvent {
     pub text: String,
 }
 
+/// Create an empty `AINode` in the project. The provider defaults to
+/// `"seedance.text_to_video"`; the user edits prompt / provider / etc.
+/// via the standard Attribute Editor afterwards.
+#[derive(Clone, Debug)]
+pub struct AddAINodeEvent {
+    pub name: String,
+    pub provider: String,
+}
+
+/// Submit the AINode's current attrs as a new `Generation`. Handler
+/// resolves auto-fields (seed), builds the `Generation` record with
+/// input_snapshots, calls `queue.submit` with `ainode_uuid` +
+/// `gen_uuid` in params, and pushes the Generation onto the AINode's
+/// history (making it active).
+#[derive(Clone, Debug)]
+pub struct GenerateAINodeEvent(pub Uuid);
+
+/// Mark a specific Generation as the active one for compose.
+#[derive(Clone, Debug)]
+pub struct SetActiveGenerationEvent {
+    pub ainode_uuid: Uuid,
+    pub gen_uuid: Uuid,
+}
+
+/// Remove a Generation from the AINode's history. If it was active,
+/// the next-most-recent generation becomes active (or none if it was
+/// the last).
+#[derive(Clone, Debug)]
+pub struct DeleteGenerationEvent {
+    pub ainode_uuid: Uuid,
+    pub gen_uuid: Uuid,
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoveMediaEvent(pub Uuid);
 

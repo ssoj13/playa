@@ -70,6 +70,20 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 name: "Camera 1".to_string(),
             });
         }
+        if ui
+            .button("+AI")
+            .on_hover_text(
+                "Create a new AINode (text-to-video by default). Edit the\n\
+                 prompt / provider / seed in the Attribute Editor, then click\n\
+                 Generate to submit a Generation.",
+            )
+            .clicked()
+        {
+            actions.send(AddAINodeEvent {
+                name: "AI Generation".to_string(),
+                provider: "seedance.text_to_video".to_string(),
+            });
+        }
         ui.separator();
         if ui.button("Clear").clicked() {
             actions.send(ClearAllMediaEvent);

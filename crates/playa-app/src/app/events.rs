@@ -33,6 +33,7 @@ impl PlayaApp {
         let mut deferred_enqueue_frames = false;
         let mut deferred_quick_save = false;
         let mut deferred_show_open = false;
+        let mut deferred_generate_ainode: Option<uuid::Uuid> = None;
 
         // Poll all events from the bus
         let events = self.event_bus.poll();
@@ -180,6 +181,9 @@ impl PlayaApp {
                 if result.show_open_dialog {
                     deferred_show_open = true;
                 }
+                if let Some(uuid) = result.generate_ainode {
+                    deferred_generate_ainode = Some(uuid);
+                }
                 // Update AE panel focus (immediate, not deferred)
                 if let Some(focus) = result.ae_focus_update {
                     self.ae_focus = focus;
@@ -267,6 +271,144 @@ impl PlayaApp {
         }
         if deferred_show_open {
             self.show_open_project_dialog();
+        }
+        #[cfg(feature = "jobs")]
+        if let Some(uuid) = deferred_generate_ainode {
+            self.generate_ainode(uuid);
+        }
+        #[cfg(not(feature = "jobs"))]
+        let _ = deferred_generate_ainode;
+    }
+
+    /// Submit a fresh `Generation` for the AINode with `ainode_uuid`.
+    /// Reads the current attrs (provider, params_template, input_refs),
+    /// resolves the seed to a concrete `u64` (random if absent), builds
+    /// a `Generation` record with input_snapshots, dispatches the
+    /// linked `JobQueue::submit`, and pushes the record onto the
+    /// AINode's history (making it active).
+    ///
+    /// The submit's params verbatim include the params_template plus
+    /// `ainode_uuid` and `gen_uuid` strings — the on-Completed listener
+    /// (registered in `register_ainode_completion_listener`) reads
+    /// those back to update the Generation's `result_path` when the
+    /// provider finishes.
+    #[cfg(feature = "jobs")]
+    pub fn generate_ainode(&mut self, ainode_uuid: uuid::Uuid) {
+        use playa_engine::entities::{Generation, sha256_hex};
+
+        let Some(queue) = self.job_queue.as_ref().map(std::sync::Arc::clone) else {
+            log::warn!("generate_ainode: JobQueue not initialised");
+            return;
+        };
+
+        // Snapshot the AINode's attrs (provider + params + refs).
+        let snapshot = self.project.with_node(ainode_uuid, |node| {
+            node.as_ai().map(|ai| {
+                (
+                    ai.provider(),
+                    ai.params_template(),
+                    ai.input_refs(),
+                )
+            })
+        });
+        let Some(Some((provider, params_template, input_refs))) = snapshot else {
+            log::warn!("generate_ainode: {ainode_uuid} not found or not an AINode");
+            return;
+        };
+
+        // Resolve auto-fields. Right now `seed` is the only one — if
+        // params_template has it set use it verbatim, otherwise pick
+        // a fresh u64. Result is stored in the Generation's params so
+        // "Regenerate exact" reproduces the same bytes.
+        let mut params = match params_template {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        let resolved_seed = params
+            .get("seed")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(rand::random::<u64>);
+        params.insert("seed".into(), serde_json::Value::from(resolved_seed));
+
+        // Build input snapshots — best-effort content hashing of each
+        // input ref's resolved target. Each RefNode points at a
+        // FileNode / CompNode / etc.; we hash whatever bytes are
+        // immediately available without a worker thread round-trip.
+        // For Phase 9 we hash an empty buffer when the target's
+        // content is not yet decoded — produces a stable but
+        // uninformative hash; Phase 9.1 can upgrade.
+        let mut snapshots = Vec::with_capacity(input_refs.len());
+        for &ref_uuid in &input_refs {
+            let resolved = self.project.with_node(ref_uuid, |node| {
+                node.as_ref_node().map(|r| {
+                    (
+                        r.target().unwrap_or_else(uuid::Uuid::nil),
+                        r.channel(),
+                    )
+                })
+            });
+            if let Some(Some((target_uuid, channel))) = resolved {
+                let hash = sha256_hex(b""); // placeholder until v9.1
+                snapshots.push(playa_engine::entities::RefSnapshot {
+                    ref_uuid,
+                    target_uuid,
+                    target_content_hash: hash,
+                    channel,
+                });
+            }
+        }
+
+        let gen_uuid = uuid::Uuid::new_v4();
+        let timestamp_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        // Inject linkage so the on-Completed listener finds us.
+        params.insert(
+            "ainode_uuid".into(),
+            serde_json::Value::String(ainode_uuid.to_string()),
+        );
+        params.insert(
+            "gen_uuid".into(),
+            serde_json::Value::String(gen_uuid.to_string()),
+        );
+        let params_value = serde_json::Value::Object(params);
+
+        let submit_params = params_value.clone();
+        match queue.submit(provider.clone(), submit_params) {
+            Ok(job_id) => {
+                let generation = Generation {
+                    uuid: gen_uuid,
+                    timestamp_secs,
+                    provider: provider.clone(),
+                    provider_version: None,
+                    params: params_value,
+                    input_snapshots: snapshots,
+                    job_id: job_id.0,
+                    request_id: None,
+                    result_path: std::path::PathBuf::new(),
+                    cost_usd: None,
+                    parent_gen_uuid: None,
+                };
+                let added = self.project.modify_node(ainode_uuid, |node| {
+                    if let Some(ai) = node.as_ai_mut() {
+                        ai.add_generation(generation);
+                    }
+                });
+                if !added {
+                    log::warn!(
+                        "generate_ainode: AINode {ainode_uuid} disappeared between snapshot and add_generation"
+                    );
+                }
+                log::info!(
+                    "Submitted AINode {ainode_uuid} gen {gen_uuid} as job {} (provider={provider})",
+                    job_id.0
+                );
+            }
+            Err(e) => {
+                log::warn!("generate_ainode submit failed: {e}");
+            }
         }
     }
 

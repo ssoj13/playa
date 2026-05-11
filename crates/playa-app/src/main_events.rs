@@ -240,6 +240,11 @@ pub struct EventResult {
     pub show_open_dialog: bool,
     /// Update AE panel focus (SelectionFocusEvent)
     pub ae_focus_update: Option<Vec<Uuid>>,
+    /// AINode uuid to submit a fresh Generation for. Deferred because
+    /// the JobQueue lives on `PlayaApp` (not in `AppEventContext`) and
+    /// the submit flow needs to read AINode attrs + resolve seed +
+    /// push a `Generation` record + call `queue.submit`.
+    pub generate_ainode: Option<Uuid>,
 }
 
 impl EventResult {
@@ -504,6 +509,43 @@ pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Op
     }
     if let Some(e) = downcast_event::<AddTextEvent>(event) {
         result.new_text = Some((e.name.clone(), e.text.clone()));
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<AddAINodeEvent>(event) {
+        use playa_engine::entities::{AINode, NodeKind};
+        let mut ai = AINode::new(&e.name, &e.provider);
+        let uuid = ai.uuid();
+        // Clear-dirty so we don't immediately re-emit attrs-changed
+        // for a freshly-created node; subsequent attr edits go through
+        // the standard AttrEditor dispatch.
+        ai.clear_dirty();
+        project.add_node(NodeKind::AI(ai));
+        log::info!("Created new AINode: {} (provider={})", uuid, e.provider);
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<GenerateAINodeEvent>(event) {
+        // Defer to PlayaApp's events.rs loop where the JobQueue lives.
+        result.generate_ainode = Some(e.0);
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<SetActiveGenerationEvent>(event) {
+        let ainode_uuid = e.ainode_uuid;
+        let gen_uuid = e.gen_uuid;
+        project.modify_node(ainode_uuid, |node| {
+            if let Some(ai) = node.as_ai_mut() {
+                ai.set_active_generation(gen_uuid);
+            }
+        });
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<DeleteGenerationEvent>(event) {
+        let ainode_uuid = e.ainode_uuid;
+        let gen_uuid = e.gen_uuid;
+        project.modify_node(ainode_uuid, |node| {
+            if let Some(ai) = node.as_ai_mut() {
+                ai.remove_generation(gen_uuid);
+            }
+        });
         return Some(result);
     }
     if let Some(e) = downcast_event::<SaveProjectEvent>(event) {

@@ -4049,6 +4049,7 @@ dependencies = [
  "playa-jobs",
  "playa-prefs",
  "playa-ui",
+ "rand",
  "regex",
  "rfd",
  "rouille",
