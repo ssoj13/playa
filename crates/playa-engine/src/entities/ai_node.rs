@@ -295,11 +295,52 @@ impl Node for AINode {
         self.input_refs()
     }
 
-    /// Phase 6 stub: returns `None` so comps fall back to placeholder.
-    /// Phase 8 wires this to load the active generation's `result_path`
-    /// via the existing `FileNode` decoding path / worker pool.
-    fn compute(&self, _frame: i32, _ctx: &ComputeContext) -> Option<Frame> {
-        None
+    /// Load the active generation's `result_path` as a `Frame`. Held
+    /// for any `frame_idx` — Phase 8a treats AINode outputs as
+    /// single-frame stills (works for inpaint PNGs immediately).
+    /// Per-frame MP4 mapping (text-to-video / image-to-video) lands
+    /// in v2 — current behaviour returns the first decoded frame
+    /// regardless of `frame_idx`.
+    ///
+    /// Returns `None` when no active generation or the result file is
+    /// missing / empty path — comp's compose loop then skips this
+    /// layer (best-effort, matches `FileNode`'s behaviour for missing
+    /// files).
+    fn compute(&self, frame_idx: i32, ctx: &ComputeContext) -> Option<Frame> {
+        let active = self.active_generation()?;
+        if active.result_path.as_os_str().is_empty() {
+            return None;
+        }
+        if !active.result_path.exists() {
+            log::trace!(
+                "AINode {}: result_path {} does not exist (job still running?)",
+                self.uuid(),
+                active.result_path.display()
+            );
+            return None;
+        }
+
+        let my_uuid = self.uuid();
+        // Use frame_idx=0 as the cache key — single-frame held output.
+        // When v2 lands MP4 frame mapping, this becomes the actual idx.
+        let cache_key = 0;
+        if let Some(frame) = ctx.cache.get(my_uuid, cache_key) {
+            let _ = frame_idx; // suppress unused warning until v2
+            return Some(frame);
+        }
+
+        let frame = Frame::new_unloaded(active.result_path.clone());
+        if let Err(e) = frame.load() {
+            log::warn!(
+                "AINode {}: failed to load result {}: {:?}",
+                my_uuid,
+                active.result_path.display(),
+                e
+            );
+            return None;
+        }
+        ctx.cache.insert(my_uuid, cache_key, frame.clone());
+        Some(frame)
     }
 
     fn is_dirty(&self, _ctx: Option<&ComputeContext>) -> bool {
