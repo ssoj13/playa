@@ -58,6 +58,16 @@ pub struct ViewportRenderer {
     tex_w: u32,
     tex_h: u32,
     tex_format: PixelFormat,
+    /// Native wgpu format of `image_tex`. Tracked so `apply_staged` can
+    /// recreate the texture when the staged data's format diverges
+    /// from the current texture's format — a real case at scrub
+    /// boundaries where the comp's compose can return a black base
+    /// frame in `Rgba8` after a stretch of `RgbaF16/F32` HDR frames at
+    /// the same dimensions. Without this check `write_texture` would
+    /// emit `bytes_per_row = 4*w` into an `Rgba32Float` texture
+    /// (16 bytes per block) and wgpu's validator panics with
+    /// "bytes_per_row less than the number of bytes in a complete row".
+    tex_native_format: Option<wgpu::TextureFormat>,
     tonemap_mode: u32,
     current_shader_label: String,
     f16_scratch: Vec<u16>,
@@ -93,6 +103,7 @@ impl ViewportRenderer {
             tex_w: 0,
             tex_h: 0,
             tex_format: PixelFormat::Rgba8,
+            tex_native_format: None,
             tonemap_mode: 0,
             current_shader_label: sm.current_shader.clone(),
             f16_scratch: Vec::new(),
@@ -379,6 +390,7 @@ impl ViewportRenderer {
         self.image_view = Some(view);
         self.tex_w = w;
         self.tex_h = h;
+        self.tex_native_format = Some(native);
     }
 
     fn rebuild_bind_group(&mut self, device: &wgpu::Device) {
@@ -418,7 +430,11 @@ impl ViewportRenderer {
         let native = Self::wgpu_tex_format(self.tex_format);
         match st {
             StagedUpload::Rgba8 { pixels, w, h } => {
-                if w != self.tex_w || h != self.tex_h || self.image_tex.is_none() {
+                if w != self.tex_w
+                    || h != self.tex_h
+                    || self.image_tex.is_none()
+                    || self.tex_native_format != Some(native)
+                {
                     self.recreate_texture(device, w, h, native);
                     self.rebuild_bind_group(device);
                 }
@@ -445,7 +461,11 @@ impl ViewportRenderer {
                 }
             }
             StagedUpload::Rgba16F { half_bytes, w, h } => {
-                if w != self.tex_w || h != self.tex_h || self.image_tex.is_none() {
+                if w != self.tex_w
+                    || h != self.tex_h
+                    || self.image_tex.is_none()
+                    || self.tex_native_format != Some(native)
+                {
                     self.recreate_texture(device, w, h, native);
                     self.rebuild_bind_group(device);
                 }
@@ -472,7 +492,11 @@ impl ViewportRenderer {
                 }
             }
             StagedUpload::Rgba32F { pixels, w, h } => {
-                if w != self.tex_w || h != self.tex_h || self.image_tex.is_none() {
+                if w != self.tex_w
+                    || h != self.tex_h
+                    || self.image_tex.is_none()
+                    || self.tex_native_format != Some(native)
+                {
                     self.recreate_texture(device, w, h, native);
                     self.rebuild_bind_group(device);
                 }
@@ -544,6 +568,7 @@ impl ViewportRenderer {
         self.quad_vbo = None;
         self.tex_w = 0;
         self.tex_h = 0;
+        self.tex_native_format = None;
         trace!("ViewportRenderer GPU resources destroyed");
     }
 }
