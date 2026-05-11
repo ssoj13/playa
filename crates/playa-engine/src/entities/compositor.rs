@@ -72,8 +72,10 @@ impl Clone for CompositorType {
 /// Identity transform matrix (no transformation).
 /// Column-major 3x3 for OpenGL: `[m00, m10, 0, m01, m11, 0, tx, ty, 1]`
 ///
-/// Used when layer has no transform (position=0, rotation=0, scale=1).
-/// See `transform::build_inverse_matrix_3x3()` for non-identity transforms.
+/// Used when layer has no transform (position=0, rotation=0, scale=1)
+/// AND src_size == canvas_size (no centering required).
+/// See `transform::build_inverse_canvas_to_src_3x3()` for non-identity
+/// transforms or for any case where src and canvas dimensions differ.
 pub const IDENTITY_TRANSFORM: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
 
 impl CompositorType {

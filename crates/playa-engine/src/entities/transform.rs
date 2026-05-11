@@ -253,20 +253,30 @@ pub fn build_inverse_mvp(model: Mat4, view_projection: Mat4) -> Mat4 {
     mvp.inverse()
 }
 
-/// Build inverse transform as column-major 3x3 matrix for OpenGL/GPU (2D only).
+/// Build inverse transform as column-major 3x3 matrix for the GPU
+/// compositor shader (2D path only — no camera, no X/Y rotation).
 ///
-/// Same as `build_inverse_transform` but returns `[f32; 9]` in column-major
-/// order suitable for `glUniformMatrix3fv`. Only uses Z rotation.
+/// Returns `[f32; 9]` column-major suitable for direct upload as a `mat3`
+/// uniform. The matrix maps **canvas buffer pixels** (top-left, Y-down)
+/// → **src buffer pixels** (top-left, Y-down). The shader applies it to
+/// `vec3(canvas_pixel, 1.0)` and divides by `top_size` to get UV.
 ///
-/// The matrix maps comp-space pixels (Y-up) to source image pixels (Y-down).
-pub fn build_inverse_matrix_3x3(
+/// Composition (right-to-left application):
+///   `object_to_src_affine(src) * layer_inverse * image_to_frame_affine(canvas)`
+///
+/// Where `layer_inverse` is the AE-style frame-space transform inverse
+/// (translate by pivot, rotate by -rot_z, inv-scale, translate by -pos).
+///
+/// For an identity layer with `src_size == canvas_size`, the chain
+/// collapses to identity (verified by `playa_coord` round-trip test).
+pub fn build_inverse_canvas_to_src_3x3(
     position: [f32; 3],
     rotation_z: f32,
     scale: [f32; 3],
     pivot: [f32; 3],
+    canvas_size: (usize, usize),
     src_size: (usize, usize),
 ) -> [f32; 9] {
-    // Use 2D path for backwards compatibility
     use glam::Affine2;
 
     let pos = Vec2::new(position[0], position[1]);
@@ -289,7 +299,9 @@ pub fn build_inverse_matrix_3x3(
         * Affine2::from_scale(inv_scale)
         * Affine2::from_translation(-pos);
 
-    let total = space::object_to_src_affine(src_size) * inv;
+    let total = space::object_to_src_affine(src_size)
+        * inv
+        * space::image_to_frame_affine(canvas_size);
 
     let m = total.matrix2;
     let t = total.translation;

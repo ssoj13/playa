@@ -33,7 +33,7 @@
 
 pub use playa_coord::{
     flip_y, frame_to_image, frame_to_natural, frame_to_ndc, frame_to_viewport, from_math_rot,
-    image_to_frame, image_to_natural, natural_to_frame, natural_to_image, ndc_to_frame,
-    object_to_src, object_to_src_affine, screen_ndc_from_frame_ndc, screen_to_viewport,
-    to_math_rot, viewport_to_frame, viewport_to_screen,
+    image_to_frame, image_to_frame_affine, image_to_natural, natural_to_frame, natural_to_image,
+    ndc_to_frame, object_to_src, object_to_src_affine, screen_ndc_from_frame_ndc,
+    screen_to_viewport, to_math_rot, viewport_to_frame, viewport_to_screen,
 };

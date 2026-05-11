@@ -1357,9 +1357,15 @@ impl CompNode {
                 ];
                 let src_size = (frame.width(), frame.height());
 
-                // Apply CPU transform with optional camera projection.
-                // Camera enables perspective/ortho 3D; without camera uses 2D ortho.
-                // Always transform if source size != comp size (frame space centering).
+                // CPU pre-render of layer transform + camera projection.
+                //
+                // Today: both backends consume pre-rendered (canvas-sized)
+                // frames + identity matrix. The matrix bundle is wired
+                // through the API but unused — see
+                // `.bughunt/gpu_compositor_unification.md` for the plan to
+                // skip pre-render on the GPU path (Phase B) and unify the
+                // CPU compositor on a matrix-aware resample-blend
+                // (Phase C).
                 let canvas = self.dim();
                 let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt)
                     || view_projection.is_some()
@@ -1377,14 +1383,12 @@ impl CompNode {
                     );
                 }
 
-                // Build inverse transform matrix for GPU compositor (WIP - not used yet)
-                // Matrix is passed through API but CPU compositor ignores it.
-                // GPU path still uses Z-only rotation until shader is updated.
-                let inv_matrix = if transform::is_identity(pos, rot_rad, scl, pvt) {
-                    identity_matrix
-                } else {
-                    transform::build_inverse_matrix_3x3(pos, rot_rad[2], scl, pvt, src_size)
-                };
+                // Identity matrix until Phase B re-introduces the
+                // canvas-to-src matrix on the GPU path. `build_inverse_canvas_to_src_3x3`
+                // exists and is tested but is dead code until then —
+                // intentionally so, to land matrix infrastructure
+                // ahead of the consumer.
+                let inv_matrix = identity_matrix;
 
                 // Track matte: if this layer references a RefNode via
                 // mask_ref_uuid, resolve it and multiply the per-pixel

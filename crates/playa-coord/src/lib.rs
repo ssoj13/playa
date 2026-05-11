@@ -233,6 +233,20 @@ pub fn object_to_src_affine(src_size: (usize, usize)) -> Affine2 {
     Affine2::from_translation(half) * Affine2::from_scale(Vec2::new(1.0, -1.0))
 }
 
+/// Affine matrix that maps buffer space (top-left, Y-down) → frame space
+/// (center, Y-up). Matrix form of [`image_to_frame`].
+///
+/// Inverse of [`object_to_src_affine`] when `size` matches.
+///
+/// Decomposes as: scale (1, -1) to flip Y, then translate by (-w/2, +h/2)
+/// to move origin from top-left to center.
+#[inline]
+pub fn image_to_frame_affine(size: (usize, usize)) -> Affine2 {
+    let half = Vec2::new(size.0 as f32 * 0.5, size.1 as f32 * 0.5);
+    Affine2::from_translation(Vec2::new(-half.x, half.y))
+        * Affine2::from_scale(Vec2::new(1.0, -1.0))
+}
+
 // ---------------------------------------------------------------------------
 // Y-flip (glam Vec2)
 // ---------------------------------------------------------------------------
@@ -644,6 +658,42 @@ mod tests {
                 via_matrix,
                 via_helper
             );
+        }
+    }
+
+    #[test]
+    fn image_to_frame_affine_matches_point_helper() {
+        let size = (1280, 720);
+        let m = image_to_frame_affine(size);
+        for p in [
+            Vec2::ZERO,
+            Vec2::new(640.0, 360.0),
+            Vec2::new(1280.0, 720.0),
+            Vec2::new(100.0, 50.0),
+        ] {
+            let via_matrix = m.transform_point2(p);
+            let via_helper = image_to_frame(p, size);
+            assert!(
+                approx_eq(via_matrix, via_helper),
+                "p={:?} matrix={:?} helper={:?}",
+                p,
+                via_matrix,
+                via_helper
+            );
+        }
+    }
+
+    /// `object_to_src_affine(s) * image_to_frame_affine(s) == identity` —
+    /// they're true inverses when sizes match. Important load-bearing
+    /// invariant: `canvas_to_src` chain (used by GPU shader for an
+    /// identity-transformed layer with src == canvas) collapses to no-op.
+    #[test]
+    fn affine_pair_inverses_when_sizes_match() {
+        let size = (800, 600);
+        let m = object_to_src_affine(size) * image_to_frame_affine(size);
+        for p in [Vec2::ZERO, Vec2::new(123.0, 456.0), Vec2::new(800.0, 600.0)] {
+            let q = m.transform_point2(p);
+            assert!(approx_eq(q, p), "expected identity, p={:?} -> q={:?}", p, q);
         }
     }
 }
