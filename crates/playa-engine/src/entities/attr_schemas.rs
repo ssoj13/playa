@@ -357,7 +357,17 @@ pub static REF_SCHEMA: LazyLock<AttrSchema> =
 /// they're nested types serialised via `serde_json`.
 const AI_SPECIFIC: &[AttrDef] = &[
     AttrDef::with_order("prompt", AttrType::String, DAG_DISP, 60.0),
-    AttrDef::with_order("provider", AttrType::String, DAG_DISP, 60.1),
+    AttrDef::with_ui_order(
+        "provider",
+        AttrType::String,
+        DAG_DISP,
+        &[
+            "seedance.text_to_video",
+            "seedance.image_to_video",
+            "inpaint.flux_pro_v1_1",
+        ],
+        60.1,
+    ),
     AttrDef::with_order("params_template", AttrType::Json, DAG_DISP, 60.2),
     AttrDef::with_order("input_refs", AttrType::Json, DAG_DISP, 60.3),
     AttrDef::with_order("generations", AttrType::Json, INT, 60.4),

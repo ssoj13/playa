@@ -488,14 +488,20 @@ fn read_fal_key() -> Option<String> {
 
 #[cfg(feature = "jobs")]
 fn register_seedance_provider(queue: &JobQueue) {
-    let Some(key) = read_fal_key() else {
+    // Register providers UNCONDITIONALLY so `JobQueue::submit` recognises
+    // their kind strings even when no FAL_KEY is set. Missing-key runs
+    // then fail with a useful "unauthorised" HTTP error at submit time —
+    // visible to the user through the Jobs panel's error column — rather
+    // than the opaque "unknown provider kind" rejection that happens
+    // BEFORE the job is even created.
+    let key = read_fal_key().unwrap_or_default();
+    if key.is_empty() {
         log::info!(
-            "Seedance providers NOT registered: set FAL_KEY (or PLAYA_FAL_KEY / FAL_API_KEY) env var or place it in a .env file at the repo root"
+            "Seedance providers registered with EMPTY key — set FAL_KEY \
+             (or PLAYA_FAL_KEY / FAL_API_KEY) env var or place it in a .env \
+             file at the repo root for submissions to succeed"
         );
-        return;
-    };
-    // Register both fal.ai Seedance endpoints. `kind()` distinguishes them in
-    // `JobQueue::submit`. Same key serves both.
+    }
     queue.register_provider(playa_jobs::seedance::SeedanceProvider::image_to_video(key.clone()));
     queue.register_provider(playa_jobs::seedance::SeedanceProvider::text_to_video(key));
     log::info!(
@@ -534,11 +540,9 @@ fn parse_uuid(params: &serde_json::Value, key: &str) -> Option<Uuid> {
 
 #[cfg(feature = "jobs")]
 fn register_inpaint_provider(queue: &JobQueue) {
-    let Some(key) = read_fal_key() else {
-        // Seedance registration already logged the missing-key info — skip
-        // a second info! to avoid duplicate noise.
-        return;
-    };
+    // Same rationale as Seedance — register unconditionally so the kind
+    // resolves even without a key (HTTP layer surfaces the auth error).
+    let key = read_fal_key().unwrap_or_default();
     queue.register_provider(playa_jobs::inpaint::InpaintProvider::flux_pro_v1_1(key));
     log::info!(
         "Inpaint provider registered (kind=`{}`)",
