@@ -225,43 +225,52 @@ impl ViewportState {
     }
 
     /// Convert image space coordinates (0..image_size) to screen space.
-    /// Uses frame space (centered, pixel coords) as intermediate — matches space.rs.
+    ///
+    /// The Y-flip happens TWICE on purpose: image space is Y-down,
+    /// `self.pan` is stored in viewport Y-UP convention (see
+    /// `coords::screen_delta_to_viewport` which flips deltas). Without
+    /// flipping image → frame and frame → screen, applying pan in
+    /// Y-down space subtracts what should be added — causing the
+    /// selection-bracket / gizmo overlays to move OPPOSITE to the
+    /// pan direction.
     pub fn image_to_screen(&self, image_pos: egui::Vec2) -> egui::Vec2 {
-        // image -> frame (centered pixel space)
+        // image (top-left, Y-down) -> frame (centered, Y-up). Same as
+        // playa_time::coord::image_to_frame's math.
         let frame = egui::vec2(
             image_pos.x - self.image_size.x * 0.5,
-            image_pos.y - self.image_size.y * 0.5,
+            self.image_size.y * 0.5 - image_pos.y,
         );
-        // frame -> viewport (apply view: zoom + pan)
+        // frame -> viewport (centered, Y-up): apply zoom + pan.
         let viewport = egui::vec2(
             frame.x * self.zoom + self.pan.x,
             frame.y * self.zoom + self.pan.y,
         );
-        // viewport -> screen
+        // viewport (centered, Y-up) -> screen (top-left, Y-down).
         egui::vec2(
             viewport.x + self.viewport_size.x * 0.5,
-            viewport.y + self.viewport_size.y * 0.5,
+            self.viewport_size.y * 0.5 - viewport.y,
         )
     }
 
     /// Convert screen space coordinates to image space (0..image_size).
-    /// Returns None if position is outside the image bounds.
+    /// Inverse of [`Self::image_to_screen`] — symmetric Y-flip both
+    /// times. Returns None if position is outside the image bounds.
     #[allow(dead_code)]
     pub fn screen_to_image(&self, screen_pos: egui::Vec2) -> Option<egui::Vec2> {
-        // screen -> viewport
+        // screen (top-left, Y-down) -> viewport (centered, Y-up).
         let viewport = egui::vec2(
             screen_pos.x - self.viewport_size.x * 0.5,
-            screen_pos.y - self.viewport_size.y * 0.5,
+            self.viewport_size.y * 0.5 - screen_pos.y,
         );
-        // viewport -> frame (inverse view)
+        // viewport -> frame (inverse view).
         let frame = egui::vec2(
             (viewport.x - self.pan.x) / self.zoom,
             (viewport.y - self.pan.y) / self.zoom,
         );
-        // frame -> image
+        // frame (centered, Y-up) -> image (top-left, Y-down).
         let image = egui::vec2(
             frame.x + self.image_size.x * 0.5,
-            frame.y + self.image_size.y * 0.5,
+            self.image_size.y * 0.5 - frame.y,
         );
         // bounds check
         if image.x >= 0.0
