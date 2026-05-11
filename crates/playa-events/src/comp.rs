@@ -112,6 +112,20 @@ pub struct LayerAttributesChangedEvent {
     pub speed: f32,
 }
 
+/// User picked / cleared a track-matte source for a layer in the
+/// timeline outline. The handler resolves `target_layer_uuid` to a
+/// `RefNode` (creating one if needed) and sets the layer's
+/// `mask_ref_uuid` attr. `None` clears the mask.
+///
+/// Channel is fixed to `Alpha` for v1 — finer control (Luma / per-channel)
+/// goes through the Attribute Editor on the `RefNode` itself.
+#[derive(Clone, Debug)]
+pub struct LayerMaskRefChangedEvent {
+    pub comp_uuid: Uuid,
+    pub layer_uuid: Uuid,
+    pub target_layer_uuid: Option<Uuid>,
+}
+
 /// Generic layer attribute batch (Attribute Editor).
 /// Payload is JSON to keep this crate independent of `AttrValue` in the engine.
 #[derive(Clone, Debug)]

@@ -496,6 +496,63 @@ pub fn render_outline(
                         },
                     );
 
+                    // Track matte: dropdown of other layers in this comp.
+                    // "None" clears the mask. Picking a layer dispatches
+                    // `LayerMaskRefChangedEvent`; the host creates a
+                    // `RefNode` (channel=Alpha) and links it. Resolved
+                    // ref name display is deferred — combo shows "Set" /
+                    // "None" based on the layer's mask_ref_uuid attr.
+                    row_ui.allocate_ui_with_layout(
+                        egui::Vec2::new(110.0, config.layer_height),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            let has_mask = attrs
+                                .get_uuid("mask_ref_uuid")
+                                .map(|u| !u.is_nil())
+                                .unwrap_or(false);
+                            let label = if has_mask { "Mask: ● Set" } else { "Mask: None" };
+                            egui::ComboBox::from_id_salt(
+                                egui::Id::new("mask_outline").with(child_uuid),
+                            )
+                            .width(100.0)
+                            .selected_text(label)
+                            .show_ui(ui, |ui| {
+                                // None entry
+                                if ui.selectable_label(!has_mask, "None").clicked() {
+                                    dispatch(Box::new(
+                                        playa_engine::entities::comp_events::LayerMaskRefChangedEvent {
+                                            comp_uuid: comp_id,
+                                            layer_uuid: child_uuid,
+                                            target_layer_uuid: None,
+                                        },
+                                    ));
+                                }
+                                // Every OTHER layer in the comp is a
+                                // candidate matte source.
+                                for other in &comp.layers {
+                                    let other_uuid = other.uuid();
+                                    if other_uuid == child_uuid {
+                                        continue;
+                                    }
+                                    let other_name = other
+                                        .attrs
+                                        .get_str("name")
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_else(|| other_uuid.to_string());
+                                    if ui.selectable_label(false, other_name).clicked() {
+                                        dispatch(Box::new(
+                                            playa_engine::entities::comp_events::LayerMaskRefChangedEvent {
+                                                comp_uuid: comp_id,
+                                                layer_uuid: child_uuid,
+                                                target_layer_uuid: Some(other_uuid),
+                                            },
+                                        ));
+                                    }
+                                }
+                            });
+                        },
+                    );
+
                     if dirty {
                         // Apply to all selected layers if this layer is selected
                         let targets = if comp.layer_selection.contains(&child_uuid) {

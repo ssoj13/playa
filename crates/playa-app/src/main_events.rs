@@ -1018,6 +1018,40 @@ pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Op
 
         return Some(result);
     }
+    // Track-matte source picked from the timeline outline. Create a
+    // RefNode (channel=Alpha) if a target is given, then store the
+    // ref's uuid on the layer's mask_ref_uuid. None clears the mask.
+    if let Some(e) = downcast_event::<LayerMaskRefChangedEvent>(event) {
+        use playa_engine::entities::{AttrValue, Channel, NodeKind, RefNode};
+        let ref_uuid = if let Some(target) = e.target_layer_uuid {
+            let target_name = project
+                .with_comp(e.comp_uuid, |comp| {
+                    comp.get_layer(target)
+                        .and_then(|l| l.attrs.get_str("name").map(|s| s.to_string()))
+                })
+                .flatten()
+                .unwrap_or_else(|| "Layer".to_string());
+            let ref_node = RefNode::new(
+                &format!("{target_name}.alpha"),
+                target,
+                Channel::Alpha,
+            );
+            let r_uuid = ref_node.uuid();
+            project.add_node(NodeKind::Ref(ref_node));
+            r_uuid
+        } else {
+            Uuid::nil()
+        };
+        project.modify_comp(e.comp_uuid, |comp| {
+            if let Some(layer) = comp.get_layer_mut(e.layer_uuid) {
+                layer
+                    .attrs
+                    .set("mask_ref_uuid", AttrValue::Uuid(ref_uuid));
+                comp.mark_dirty();
+            }
+        });
+        return Some(result);
+    }
     // Generic layer attrs change (from Attribute Editor)
     if let Some(e) = downcast_event::<SetLayerAttrsEvent>(event) {
         log::trace!(
