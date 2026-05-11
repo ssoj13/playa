@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::mpsc;
 
+use super::effects::EffectsRunner;
 use crate::entities::compositor::{BlendMode, CpuCompositor, IDENTITY_MAT4, LayerPayload};
 use crate::entities::frame::{CropAlign, Frame, FrameStatus, PixelBuffer, PixelFormat};
 use log::warn;
@@ -46,6 +47,10 @@ pub struct WgpuCompositor {
     blend_shader: wgpu::ShaderModule,
     blend_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
     uniform_buf: wgpu::Buffer,
+    /// Per-layer GPU effect chain runner. Built once per compositor;
+    /// `apply_chain` invoked between layer upload and blend pass when
+    /// the layer has any [`LayerPayload::effects`].
+    effects: EffectsRunner,
 }
 
 impl std::fmt::Debug for WgpuCompositor {
@@ -155,6 +160,7 @@ impl WgpuCompositor {
             blend_shader,
             blend_pipelines: HashMap::new(),
             uniform_buf,
+            effects: EffectsRunner::new(device, queue),
         }
     }
 
@@ -613,9 +619,15 @@ impl WgpuCompositor {
         let w_u32 = width as u32;
         let h_u32 = height as u32;
 
+        // Upload each layer's raw frame to its own texture, then run
+        // the layer's GPU effect chain (Phase E) before that layer
+        // participates in the blend pass.
         let uploads: Vec<wgpu::Texture> = layers
             .iter()
-            .map(|l| self.upload_frame(&l.frame, wf))
+            .map(|l| {
+                let tex = self.upload_frame(&l.frame, wf)?;
+                Ok(self.effects.apply_chain(tex, &l.effects, wf))
+            })
             .collect::<Result<_, String>>()?;
 
         let mut uploads = uploads.into_iter();

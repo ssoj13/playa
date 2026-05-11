@@ -1339,10 +1339,34 @@ impl CompNode {
                 // - Key: (source_uuid, source_frame, effects_hash)
                 // - Transform changes reuse cached effected frame
                 // - Effect changes invalidate only that layer's effect cache
+                // Split layer effects between GPU and CPU paths.
+                //
+                // When the GPU compositor is active, every effect that
+                // has a `to_gpu()` mapping moves to `gpu_effects` and
+                // runs in the compositor's `EffectsRunner` between
+                // layer upload and blend. Effects without a GPU port
+                // (HSV, blur for now) run on CPU via the legacy path.
+                //
+                // When the CPU compositor is active, everything runs
+                // on CPU as before.
+                let on_gpu_path = ctx.gpu_blend_bridge.is_some();
+                let mut gpu_effects: Vec<super::compositor::GpuEffect> = Vec::new();
                 if !layer.effects.is_empty() {
-                    if let Some(fx_frame) = super::effects::apply_all(frame.clone(), &layer.effects)
-                    {
-                        frame = fx_frame;
+                    for fx in &layer.effects {
+                        if !fx.enabled {
+                            continue;
+                        }
+                        if on_gpu_path
+                            && let Some(g) = fx.to_gpu()
+                        {
+                            gpu_effects.push(g);
+                            continue;
+                        }
+                        // CPU fallback for this effect: run a single
+                        // `apply` and update the in-flight frame.
+                        if let Some(fx_frame) = super::effects::apply(&frame, fx) {
+                            frame = fx_frame;
+                        }
                     }
                 }
 
@@ -1470,6 +1494,10 @@ impl CompNode {
                     // Populated above for GPU+camera paths; None
                     // otherwise (2D shader path or CPU pre-render).
                     camera_path,
+                    // GPU-runnable effects (Phase E). Empty when on
+                    // CPU path or when the layer has no GPU-supported
+                    // effects.
+                    effects: gpu_effects,
                     // Layer Z (depth-buffer / OIT in Phase D).
                     z_position: pos[2],
                     // Phase A: track matte still pre-multiplied above.

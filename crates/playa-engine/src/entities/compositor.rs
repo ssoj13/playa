@@ -111,6 +111,37 @@ pub struct MaskInfo {
     pub channel: MaskChannel,
 }
 
+/// GPU-renderable effect attached to a layer.
+///
+/// Closed-set enum (rather than `Box<dyn Trait>`) so `LayerPayload`
+/// remains `Clone + Debug` without ceremony. Adding a new effect is
+/// a one-variant + one-WGSL + one-Rust-module change.
+///
+/// CPU compositor and `compose_internal` keep using the legacy
+/// `entities::effects::apply_all` for non-supported effect types and
+/// when running the CPU backend. The GPU compositor's effect runner
+/// consumes this enum directly.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GpuEffect {
+    /// Brightness + contrast adjustment. Matches `entities::effects::brightness`.
+    BrightnessContrast { brightness: f32, contrast: f32 },
+    /// Hue/Saturation/Value. Matches `entities::effects::hsv`.
+    AdjustHsv { hue_shift: f32, saturation: f32, value: f32 },
+    /// Gaussian blur (separable, 2-pass). Matches `entities::effects::blur`.
+    GaussianBlur { radius: f32 },
+}
+
+impl GpuEffect {
+    /// One-line human label for debug / logs / future UI.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::BrightnessContrast { .. } => "BrightnessContrast",
+            Self::AdjustHsv { .. } => "AdjustHsv",
+            Self::GaussianBlur { .. } => "GaussianBlur",
+        }
+    }
+}
+
 /// Per-layer camera-projection bundle used by the GPU shader's
 /// camera-path branch (Phase B-camera).
 ///
@@ -187,6 +218,13 @@ pub struct LayerPayload {
     /// pre-render (kept indefinitely as the small-fraction edge
     /// case).
     pub layer_is_tilted: bool,
+    /// GPU-side per-layer effect chain. Empty when CPU compositor is
+    /// active (CPU runs effects via `entities::effects::apply_all`
+    /// before the layer reaches the compositor) or when no effects
+    /// have GPU implementations yet. The GPU compositor's
+    /// `EffectsRunner` consumes this between the layer upload and
+    /// the blend pass.
+    pub effects: Vec<GpuEffect>,
 }
 
 impl LayerPayload {
@@ -203,6 +241,7 @@ impl LayerPayload {
             z_position: 0.0,
             mask: None,
             layer_is_tilted: false,
+            effects: Vec::new(),
         }
     }
 }

@@ -217,6 +217,30 @@ impl Effect {
     pub fn name(&self) -> &'static str {
         self.effect_type.display_name()
     }
+
+    /// Convert this CPU [`Effect`] to a [`GpuEffect`] for the wgpu
+    /// compositor's effect chain. Returns `None` when:
+    /// - the effect is `disabled` (skipped equivalently on either path)
+    /// - this effect type has no GPU implementation yet — caller falls
+    ///   back to the CPU `apply()` path
+    pub fn to_gpu(&self) -> Option<crate::entities::compositor::GpuEffect> {
+        if !self.enabled {
+            return None;
+        }
+        use crate::entities::compositor::GpuEffect;
+        match self.effect_type {
+            EffectType::BrightnessContrast => {
+                let brightness = self.attrs.get_float("brightness").unwrap_or(0.0);
+                let contrast = self.attrs.get_float("contrast").unwrap_or(0.0);
+                Some(GpuEffect::BrightnessContrast {
+                    brightness,
+                    contrast,
+                })
+            }
+            // hsv + blur not yet ported to GPU — caller runs CPU apply().
+            EffectType::AdjustHSV | EffectType::GaussianBlur => None,
+        }
+    }
 }
 
 // ============================================================================
