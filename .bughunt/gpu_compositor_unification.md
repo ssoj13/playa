@@ -10,19 +10,29 @@ data shape, faster, no logic loss.**
 | Infrastructure | ✅ canvas-to-src matrix, image_to_frame_affine helper, GPU double-transform fix | `a4863d0` |
 | A — LayerPayload type | ✅ unified data shape across CompositorType / GpuBlendBridge / both backends | `3a1d82b` |
 | B-2D — GPU skip pre-render (2D-flat) | ✅ raw frame + canvas-to-src matrix on GPU path for layers without camera or X/Y rot | `97a1e3c` |
-| B-camera — GPU shader camera VP | ⏳ next | — |
-| C — CPU compositor matrix-aware | ⏳ pending | — |
+| B-camera — GPU shader camera VP | ✅ per-pixel ray-plane unproject in layer_blend.wgsl, comp_node populates CameraPathInfo | `123c6c4` |
+| C — CPU compositor matrix-aware | ⏳ next session | — |
 | D — GPU depth + OIT | ⏳ pending | — |
 | E — Effects framework + ports | ⏳ pending | — |
 
 Shipped tooling (separate from compositor work): `playa-coord`
 crate (`df1bf38`), screen_ndc Mat4 + flip_y (`ba1f09d`).
 
-**Next step**: Phase B-camera. Add `camera_vp_inv: mat4x4` uniform
-to layer_blend.wgsl + per-pixel ray-plane unproject for camera-projected
-2D-flat layers. comp_node populates `LayerPayload.camera_vp_inv`
-when camera active. Removes CPU pre-render for the camera-projected
-case (currently only no-camera 2D-flat skips). Estimated 1 day.
+**Result of Phases A + B**: GPU compositor backend now skips CPU
+pre-render for **all non-tilted layers** (covers ≥95% of typical
+layer transforms — only X/Y rotated layers still pre-render). The
+~33 GB/s memory bandwidth burn from the canvas-sized resample on
+heavy comps is gone on the GPU path.
+
+**Next step (Phase C)**: rewrite `CpuCompositor::blend_with_dim` as
+a matrix-aware single-pass resample-blend. For each output canvas
+pixel: iterate layers bottom-to-top, apply each layer's `inv_matrix`
+(or `camera_path` ray-plane) → src pixel, bilinear sample, blend with
+mode + opacity. Removes CPU pre-render from the CPU backend too,
+unifying both backends on one data shape. Then drop `gpu_inline`
+gate in comp_node — both backends consume raw frames + matrices for
+non-tilted layers. Estimated 2-3 days; recommend starting in fresh
+session for focus + rayon-parallelization decisions.
 
 ## 1. Current state of the world
 
