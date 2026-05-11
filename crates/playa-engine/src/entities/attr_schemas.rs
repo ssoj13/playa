@@ -338,6 +338,25 @@ const REF_SPECIFIC: &[AttrDef] = &[
 pub static REF_SCHEMA: LazyLock<AttrSchema> =
     LazyLock::new(|| AttrSchema::from_slices("RefNode", &[IDENTITY, REF_SPECIFIC]));
 
+// ============================================================================
+// AINode Schema
+// ============================================================================
+
+/// `AINode`-specific attributes: prompt, provider, refs, generation
+/// history. Most rich-structure fields use [`AttrType::Json`] since
+/// they're nested types serialised via `serde_json`.
+const AI_SPECIFIC: &[AttrDef] = &[
+    AttrDef::with_order("prompt", AttrType::String, DAG_DISP, 60.0),
+    AttrDef::with_order("provider", AttrType::String, DAG_DISP, 60.1),
+    AttrDef::with_order("params_template", AttrType::Json, DAG_DISP, 60.2),
+    AttrDef::with_order("input_refs", AttrType::Json, DAG_DISP, 60.3),
+    AttrDef::with_order("generations", AttrType::Json, INT, 60.4),
+    AttrDef::with_order("active_generation", AttrType::Uuid, DAG_DISP, 60.5),
+];
+
+pub static AI_SCHEMA: LazyLock<AttrSchema> =
+    LazyLock::new(|| AttrSchema::from_slices("AINode", &[IDENTITY, AI_SPECIFIC]));
+
 pub static TEXT_SCHEMA: LazyLock<AttrSchema> = LazyLock::new(|| {
     AttrSchema::from_slices("TextNode", &[IDENTITY, TEXT_SPECIFIC, TIMING, OPACITY])
 });

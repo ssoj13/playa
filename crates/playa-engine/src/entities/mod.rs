@@ -2,6 +2,7 @@
 //! Data flow: UI/EventBus drives mutations on `Project`/`Comp`/`Attrs`; loaders
 //! and compositor produce `Frame` data that UI/encoding consume.
 
+pub mod ai_node;
 pub mod attr_schemas;
 pub mod attrs;
 pub mod camera_node;
@@ -37,6 +38,7 @@ pub use node::{ComputeContext, Node};
 pub use node_kind::NodeKind;
 pub use project::{NodeIter, NodeIterItem, Project};
 
+pub use ai_node::{AINode, Generation, RefSnapshot, sha256_hex};
 pub use camera_node::CameraNode;
 pub use effects::{Effect, EffectType};
 pub use playa_io::{SourceImage, pick_display_layer};

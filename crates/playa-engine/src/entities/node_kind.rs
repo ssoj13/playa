@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::ai_node::AINode;
 use super::attrs::Attrs;
 use super::camera_node::CameraNode;
 use super::comp_node::CompNode;
@@ -27,6 +28,7 @@ pub enum NodeKind {
     Camera(CameraNode),
     Text(TextNode),
     Ref(RefNode),
+    AI(AINode),
 }
 
 impl NodeKind {
@@ -54,6 +56,11 @@ impl NodeKind {
     /// node + channel selector).
     pub fn is_ref(&self) -> bool {
         matches!(self, NodeKind::Ref(_))
+    }
+
+    /// Check if this is an AI generation node.
+    pub fn is_ai(&self) -> bool {
+        matches!(self, NodeKind::AI(_))
     }
 
     /// Check if this node type can be rendered as a layer.
@@ -181,6 +188,22 @@ impl NodeKind {
     pub fn as_ref_node_mut(&mut self) -> Option<&mut RefNode> {
         match self {
             NodeKind::Ref(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// Get as `AINode` reference.
+    pub fn as_ai(&self) -> Option<&AINode> {
+        match self {
+            NodeKind::AI(n) => Some(n),
+            _ => None,
+        }
+    }
+
+    /// Get as mutable `AINode` reference.
+    pub fn as_ai_mut(&mut self) -> Option<&mut AINode> {
+        match self {
+            NodeKind::AI(n) => Some(n),
             _ => None,
         }
     }

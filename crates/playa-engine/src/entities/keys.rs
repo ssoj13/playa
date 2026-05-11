@@ -85,6 +85,27 @@ pub const A_HEIGHT: &str = "height";
 /// Source length in frames (invariant, doesn't change with speed)
 pub const A_SRC_LEN: &str = "src_len";
 
+// === AINode attributes ===
+/// On `AINode`: free-form prompt template (provider-agnostic).
+pub const A_PROMPT: &str = "prompt";
+/// On `AINode`: provider kind string (e.g. "seedance.text_to_video").
+pub const A_PROVIDER: &str = "provider";
+/// On `AINode`: editable params snapshot (JSON object). Acts as a
+/// template — submit reads it, resolves auto-fields (e.g. seed), and
+/// produces a `Generation` record carrying the resolved params.
+pub const A_PARAMS_TEMPLATE: &str = "params_template";
+/// On `AINode`: ordered list of `RefNode` uuids supplying inputs to
+/// the provider. Stored as a JSON array via `AttrValue::Json`.
+pub const A_INPUT_REFS: &str = "input_refs";
+/// On `AINode`: `Vec<Generation>` history serialised to JSON. Each
+/// Generation captures resolved params + provider response metadata
+/// + content hashes of input refs at submit time, enabling
+/// reproducible regeneration.
+pub const A_GENERATIONS: &str = "generations";
+/// On `AINode`: uuid of the active `Generation` in the history. Comp
+/// composes from this generation's `result_path`. Nil = none yet.
+pub const A_ACTIVE_GENERATION: &str = "active_generation";
+
 // === Reference / track-matte attributes ===
 /// On `Layer`: UUID of a `RefNode` in `project.media`. Resolving the
 /// ref's target + channel yields the mask source for this layer's
