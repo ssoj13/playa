@@ -28,7 +28,7 @@
 //! **Still asymmetric:** the Cpu path ignores the matrix bundle — transforms are baked into pixels
 //! earlier in compose. Skipping Cpu transform there while feeding raw mats only to Gpu is future work.
 
-use crate::entities::frame::{Frame, FrameStatus, PixelBuffer};
+use crate::entities::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
 use crate::render_gpu::WgpuCompositor;
 
 /// Supported blend modes for layer compositing.
@@ -346,24 +346,52 @@ impl CpuCompositor {
     }
 
     /// Blend layers onto a fixed-size canvas (width, height).
-    /// See [`Self::blend`] for Phase A field-usage notes.
+    ///
+    /// Dispatches to one of two internal implementations:
+    ///
+    /// - **Legacy pre-rendered path**: when every layer has identity
+    ///   `inv_matrix` AND no `camera_path` (i.e. all layers are
+    ///   pre-rendered canvas-sized buffers — what comp_node still
+    ///   produces for the CPU backend until `gpu_inline` is dropped).
+    ///   Two-buffer ping-pong, format-specific blend macros. Fast.
+    ///
+    /// - **Matrix-aware path** (Phase C): when any layer has a
+    ///   non-identity `inv_matrix` or a `camera_path`. Per-pixel
+    ///   resample + blend in F32 accumulator; converts to output
+    ///   format at end. Mirrors the wgpu shader's `canvas_to_src`
+    ///   chain so CPU and GPU produce equivalent output (modulo
+    ///   bilinear-sample rounding tolerance).
     pub(crate) fn blend_with_dim(
         &self,
         layers: Vec<LayerPayload>,
         dim: (usize, usize),
     ) -> Option<Frame> {
+        if layers.is_empty() {
+            return None;
+        }
+        let needs_resample = layers
+            .iter()
+            .any(|l| l.inv_matrix != IDENTITY_TRANSFORM || l.camera_path.is_some());
+        if needs_resample {
+            Self::blend_matrix_aware(layers, dim)
+        } else {
+            Self::blend_legacy_pre_rendered(layers, dim)
+        }
+    }
+
+    /// Pre-rendered fast path: all layers come in canvas-sized with
+    /// identity matrices. Two-buffer ping-pong, format-specific.
+    fn blend_legacy_pre_rendered(
+        layers: Vec<LayerPayload>,
+        dim: (usize, usize),
+    ) -> Option<Frame> {
         use log::trace;
         trace!(
-            "CpuCompositor::blend_with_dim() called with {} layers into {}x{}",
+            "CpuCompositor::blend_legacy_pre_rendered() called with {} layers into {}x{}",
             layers.len(),
             dim.0,
             dim.1
         );
-
-        if layers.is_empty() {
-            trace!("  -> empty layers, returning None");
-            return None;
-        }
 
         // Calculate minimum status from all input frames
         // Composition is only as good as its worst component
@@ -477,6 +505,199 @@ impl CpuCompositor {
             Buf::U8(v) => Frame::from_u8_buffer_with_status(v, width, height, min_status),
         };
 
+        Some(result)
+    }
+
+    // -----------------------------------------------------------------
+    // Phase C — matrix-aware single-pass resample-blend
+    // -----------------------------------------------------------------
+
+    /// Multiply a column-major mat4 by a vec4: `out = M * v`.
+    ///
+    /// `m[col][row]` matches the layout produced by `glam::Mat4::to_cols_array_2d`.
+    #[inline]
+    fn mat4_mul_vec4(m: &[[f32; 4]; 4], v: [f32; 4]) -> [f32; 4] {
+        [
+            m[0][0] * v[0] + m[1][0] * v[1] + m[2][0] * v[2] + m[3][0] * v[3],
+            m[0][1] * v[0] + m[1][1] * v[1] + m[2][1] * v[2] + m[3][1] * v[3],
+            m[0][2] * v[0] + m[1][2] * v[1] + m[2][2] * v[2] + m[3][2] * v[3],
+            m[0][3] * v[0] + m[1][3] * v[1] + m[2][3] * v[2] + m[3][3] * v[3],
+        ]
+    }
+
+    /// Mirror of `canvas_to_src` in `layer_blend.wgsl`: from a canvas
+    /// pixel (top-left, Y-down), compute the src buffer pixel that the
+    /// layer should be sampled at — via 2D inverse matrix OR camera
+    /// ray-plane unproject.
+    ///
+    /// Returns `(-1, -1)` (out of bounds, will short-circuit to
+    /// transparent in the sampler) when the camera ray is parallel
+    /// to the layer plane.
+    #[inline]
+    fn canvas_to_src_cpu(
+        cx: f32,
+        cy: f32,
+        layer: &LayerPayload,
+        canvas_w: f32,
+        canvas_h: f32,
+    ) -> (f32, f32) {
+        if let Some(cam) = &layer.camera_path {
+            // Camera path: unproject NDC → world ray → intersect z=layer_z.
+            let ndc_x = cx / canvas_w * 2.0 - 1.0;
+            let ndc_y = 1.0 - cy / canvas_h * 2.0;
+            let near4 = Self::mat4_mul_vec4(&cam.camera_vp_inv, [ndc_x, ndc_y, -1.0, 1.0]);
+            let far4 = Self::mat4_mul_vec4(&cam.camera_vp_inv, [ndc_x, ndc_y, 1.0, 1.0]);
+            let p_near = [near4[0] / near4[3], near4[1] / near4[3], near4[2] / near4[3]];
+            let p_far = [far4[0] / far4[3], far4[1] / far4[3], far4[2] / far4[3]];
+            let dir = [p_far[0] - p_near[0], p_far[1] - p_near[1], p_far[2] - p_near[2]];
+            let denom = dir[2];
+            if denom.abs() < 1.0e-6 {
+                return (-1.0, -1.0); // edge-on, treat as out-of-bounds
+            }
+            let t = (cam.layer_z - p_near[2]) / denom;
+            let world = [
+                p_near[0] + dir[0] * t,
+                p_near[1] + dir[1] * t,
+                p_near[2] + dir[2] * t,
+            ];
+            let obj = Self::mat4_mul_vec4(&cam.layer_inv, [world[0], world[1], world[2], 1.0]);
+            // object (center, Y-up) → src buffer pixel (top-left, Y-down)
+            let layer_w = layer.frame.width() as f32;
+            let layer_h = layer.frame.height() as f32;
+            (obj[0] + layer_w * 0.5, layer_h * 0.5 - obj[1])
+        } else {
+            // 2D path: column-major 3×3 inverse transform.
+            let m = &layer.inv_matrix;
+            let sx = m[0] * cx + m[3] * cy + m[6];
+            let sy = m[1] * cx + m[4] * cy + m[7];
+            (sx, sy)
+        }
+    }
+
+    /// Sample the layer's raw buffer at a sub-pixel location, decoding
+    /// to f32 RGBA regardless of the underlying format. Out-of-bounds
+    /// returns transparent black.
+    #[inline]
+    fn sample_layer(layer: &LayerPayload, sx: f32, sy: f32) -> [f32; 4] {
+        let w = layer.frame.width();
+        let h = layer.frame.height();
+        let buffer = layer.frame.buffer();
+        match &*buffer {
+            PixelBuffer::F32(b) => crate::entities::transform::sample_bilinear(
+                b, w, h, sx, sy, |v| v,
+            ),
+            PixelBuffer::F16(b) => crate::entities::transform::sample_bilinear(
+                b, w, h, sx, sy, |v| v.to_f32(),
+            ),
+            PixelBuffer::U8(b) => crate::entities::transform::sample_bilinear(
+                b, w, h, sx, sy, |v| v as f32 / 255.0,
+            ),
+        }
+    }
+
+    /// Matrix-aware single-pass resample-blend.
+    ///
+    /// Iterates layers bottom-to-top. For each canvas pixel, computes
+    /// the src pixel via the layer's transform (2D inverse matrix or
+    /// camera ray-plane unproject), bilinear-samples, and blends into
+    /// an F32 accumulator using the layer's blend mode + opacity.
+    /// At the end, converts the accumulator to the first-layer's
+    /// pixel format.
+    ///
+    /// First layer is treated as REPLACE (mirrors the legacy path
+    /// where source_frames[0] is the canvas-sized base — comp_node
+    /// always inserts a black canvas there).
+    fn blend_matrix_aware(layers: Vec<LayerPayload>, dim: (usize, usize)) -> Option<Frame> {
+        use log::trace;
+        use rayon::prelude::*;
+        trace!(
+            "CpuCompositor::blend_matrix_aware() called with {} layers into {}x{}",
+            layers.len(),
+            dim.0,
+            dim.1
+        );
+
+        let min_status = layers
+            .iter()
+            .map(|l| l.frame.status())
+            .min_by_key(|s| match s {
+                FrameStatus::Error => 0,
+                FrameStatus::Placeholder => 1,
+                FrameStatus::Header => 2,
+                FrameStatus::Loading | FrameStatus::Composing | FrameStatus::Expired => 3,
+                FrameStatus::Loaded => 4,
+            })
+            .unwrap_or(FrameStatus::Placeholder);
+
+        let (width, height) = dim;
+        let canvas_w = width as f32;
+        let canvas_h = height as f32;
+        let canvas_pixels = width * height * 4;
+        let mut acc = vec![0.0f32; canvas_pixels];
+
+        // Output format = first layer's format (matches comp_node's
+        // promote_frame which has already promoted all layers to the
+        // target format).
+        let target_format = layers[0].frame.pixel_format();
+
+        for (idx, layer) in layers.iter().enumerate() {
+            let opacity = layer.opacity;
+            let mode = &layer.blend_mode;
+
+            // Per-row parallelization. sample_layer reads only from
+            // layer.frame's buffer (immutable), accumulator row is
+            // exclusive to each task.
+            acc.par_chunks_mut(width * 4)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    let cy = y as f32 + 0.5;
+                    for x in 0..width {
+                        let cx = x as f32 + 0.5;
+                        let (sx, sy) =
+                            Self::canvas_to_src_cpu(cx, cy, layer, canvas_w, canvas_h);
+                        let sample = Self::sample_layer(layer, sx, sy);
+
+                        let pix = &mut row[x * 4..x * 4 + 4];
+                        if idx == 0 {
+                            // First layer = base, replace.
+                            pix[0] = sample[0];
+                            pix[1] = sample[1];
+                            pix[2] = sample[2];
+                            pix[3] = sample[3];
+                        } else {
+                            // Blend over accumulator.
+                            let top_alpha = sample[3] * opacity;
+                            let inv_alpha = 1.0 - top_alpha;
+                            let r_blended = apply_blend(pix[0], sample[0], mode);
+                            let g_blended = apply_blend(pix[1], sample[1], mode);
+                            let b_blended = apply_blend(pix[2], sample[2], mode);
+                            pix[0] = pix[0] * inv_alpha + r_blended * top_alpha;
+                            pix[1] = pix[1] * inv_alpha + g_blended * top_alpha;
+                            pix[2] = pix[2] * inv_alpha + b_blended * top_alpha;
+                            pix[3] = pix[3] * inv_alpha + top_alpha;
+                        }
+                    }
+                });
+        }
+
+        // Convert F32 accumulator → output format.
+        let result = match target_format {
+            PixelFormat::Rgba8 => {
+                let buf: Vec<u8> = acc
+                    .iter()
+                    .map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)
+                    .collect();
+                Frame::from_u8_buffer_with_status(buf, width, height, min_status)
+            }
+            PixelFormat::RgbaF16 => {
+                let buf: Vec<half::f16> =
+                    acc.iter().map(|v| half::f16::from_f32(*v)).collect();
+                Frame::from_f16_buffer_with_status(buf, width, height, min_status)
+            }
+            PixelFormat::RgbaF32 => {
+                Frame::from_f32_buffer_with_status(acc, width, height, min_status)
+            }
+        };
         Some(result)
     }
 }

@@ -1359,23 +1359,20 @@ impl CompNode {
                 ];
                 let src_size = (frame.width(), frame.height());
 
-                // Decide between CPU pre-render and GPU inline transform.
+                // Phase C: unified path for both CPU and GPU backends.
+                // For non-tilted layers, hand the raw frame + matrix
+                // (and camera_path when active) to the compositor,
+                // which resamples inline (CpuCompositor matrix-aware
+                // path or wgpu shader). Both backends consume the
+                // same data shape — see CompositorType::blend_with_dim.
                 //
-                // Phase B: when the GPU compositor is active AND the
-                // layer is NOT tilted (no X/Y rotation), skip the CPU
-                // pre-render — pass the raw layer frame to the shader
-                // along with either:
-                //   - a canvas-to-src 3×3 (no camera), OR
-                //   - camera_vp_inv + layer_inv + layer_z (camera path)
-                // The wgpu shader resamples inline. Saves a full
-                // canvas-sized memory read+write per layer per frame
-                // (the dominant CPU cost in heavy comps).
-                //
-                // CPU path and GPU+tilted keep the legacy pre-render
-                // until Phase C / kept indefinitely respectively.
+                // Tilted layers (X/Y rotation) keep the CPU pre-render
+                // indefinitely — ray-plane intersection is cheap on
+                // CPU for the small fraction of comps with tilted
+                // layers, and avoids the per-pixel ray-march cost in
+                // the shader.
                 let canvas = self.dim();
                 let layer_is_tilted_local = rot_rad[0] != 0.0 || rot_rad[1] != 0.0;
-                let gpu_inline = ctx.gpu_blend_bridge.is_some() && !layer_is_tilted_local;
 
                 let needs_transform = !transform::is_identity(pos, rot_rad, scl, pvt)
                     || view_projection.is_some()
@@ -1385,13 +1382,14 @@ impl CompNode {
 
                 let inv_matrix = if !needs_transform {
                     identity_matrix
-                } else if gpu_inline {
+                } else if !layer_is_tilted_local {
                     if let Some(vp) = view_projection {
-                        // GPU camera path: shader unprojects per-pixel
-                        // through camera_vp_inv, intersects layer plane
-                        // at layer_z, then applies layer_inv to reach
-                        // object space. inv_matrix is unused in this
-                        // path (use_camera flag selects camera branch).
+                        // Camera path: compositor (CPU or GPU) unprojects
+                        // per-pixel through camera_vp_inv, intersects
+                        // layer plane at layer_z, then applies layer_inv
+                        // to reach object space. inv_matrix is unused
+                        // here — `camera_path.is_some()` selects the
+                        // camera branch on both backends.
                         use glam::{Mat4, Vec3};
                         let inv_scale = Vec3::new(
                             if scl[0].abs() > f32::EPSILON {
@@ -1424,15 +1422,18 @@ impl CompNode {
                         });
                         identity_matrix
                     } else {
-                        // GPU 2D path: shader resamples raw src via
+                        // 2D path: compositor resamples raw src via
                         // canvas→src 3×3. Frame stays at src dimensions.
                         transform::build_inverse_canvas_to_src_3x3(
                             pos, rot_rad[2], scl, pvt, canvas, src_size,
                         )
                     }
                 } else {
-                    // CPU path or tilted: pre-render CPU-side, hand
-                    // identity matrix to the compositor.
+                    // Tilted layer (X/Y rot): keep CPU pre-render via
+                    // ray-plane intersection in transform_frame_with_camera.
+                    // Cheap on CPU for the small minority of comps that
+                    // use tilted layers; not worth the per-pixel
+                    // ray-march cost in either backend's main loop.
                     frame = transform::transform_frame_with_camera(
                         &frame,
                         canvas,

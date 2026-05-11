@@ -317,8 +317,12 @@ pub fn build_inverse_canvas_to_src_3x3(
 ///
 /// `decode` converts a single stored element to f32 (e.g. identity, `.to_f32()`, `/ 255.0`).
 /// Returns `[R, G, B, A]` normalized to the decoded range, or `[0,0,0,0]` if outside bounds.
+///
+/// `pub(crate)` so the matrix-aware CPU compositor (`compositor.rs`)
+/// can reuse this — single source of truth for bilinear sampling
+/// across pre-render and resample-blend paths.
 #[inline]
-fn sample_bilinear<T: Copy>(
+pub(crate) fn sample_bilinear<T: Copy>(
     buffer: &[T],
     width: usize,
     height: usize,
