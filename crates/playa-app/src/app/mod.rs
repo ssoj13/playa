@@ -252,6 +252,26 @@ pub struct PlayaApp {
     #[serde(skip)]
     pub auto_attach_rx: Mutex<Option<std::sync::mpsc::Receiver<std::path::PathBuf>>>,
 
+    /// Producer end of the AINode-completion hand-off. The
+    /// `JobEvent::Completed` listener inspects each job's params for
+    /// `ainode_uuid` + `gen_uuid` and, when present, sends an
+    /// [`AINodeCompletion`] record through this channel. `update()`
+    /// drains and applies updates to the project's AINodes on the UI
+    /// thread (where project mutators are safe).
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub ainode_completion_tx: Option<std::sync::mpsc::Sender<AINodeCompletion>>,
+
+    /// Consumer end of the AINode-completion hand-off.
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub ainode_completion_rx: Mutex<Option<std::sync::mpsc::Receiver<AINodeCompletion>>>,
+
+    /// Idempotency latch for [`Self::register_ainode_completion_listener`].
+    #[cfg(feature = "jobs")]
+    #[serde(skip)]
+    pub ainode_completion_subscribed: bool,
+
     /// Pluggable preferences registry. Each module exposes a `pub fn render`
     /// for its slice of settings; the host registers an entry that calls
     /// that fn with `&mut SliceSettings` extracted from `AppSettings`.
@@ -371,6 +391,12 @@ impl Default for PlayaApp {
             auto_attach_tx: None,
             #[cfg(feature = "jobs")]
             auto_attach_rx: Mutex::new(None),
+            #[cfg(feature = "jobs")]
+            ainode_completion_tx: None,
+            #[cfg(feature = "jobs")]
+            ainode_completion_rx: Mutex::new(None),
+            #[cfg(feature = "jobs")]
+            ainode_completion_subscribed: false,
             prefs_registry: {
                 let mut registry = playa_prefs::PrefsRegistry::<AppSettings>::new();
                 #[cfg(feature = "jobs")]
@@ -479,6 +505,33 @@ fn register_seedance_provider(queue: &JobQueue) {
     );
 }
 
+/// Hand-off record from a `JobEvent::Completed` listener (which runs on
+/// any worker thread) to the UI thread's `drain_ainode_completion_queue`.
+/// Carries everything needed to update the AINode without re-reading
+/// the queue.
+#[cfg(feature = "jobs")]
+#[derive(Debug, Clone)]
+pub struct AINodeCompletion {
+    pub ainode_uuid: Uuid,
+    pub gen_uuid: Uuid,
+    pub job_id: Uuid,
+    pub result_path: std::path::PathBuf,
+    pub cost_usd: Option<f64>,
+}
+
+/// Read an `ainode_uuid` / `gen_uuid` field out of a job's params JSON.
+/// Accepts both string and direct Uuid values — playa-app's submit
+/// flow emits Strings (serde_json doesn't have a native UUID type) so
+/// the string path is the primary one.
+#[cfg(feature = "jobs")]
+fn parse_uuid(params: &serde_json::Value, key: &str) -> Option<Uuid> {
+    params.get(key).and_then(|v| {
+        v.as_str()
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .filter(|u| !u.is_nil())
+    })
+}
+
 #[cfg(feature = "jobs")]
 fn register_inpaint_provider(queue: &JobQueue) {
     let Some(key) = read_fal_key() else {
@@ -515,6 +568,122 @@ impl PlayaApp {
         // the queue emits through. Idempotent — see auto_attach_subscribed
         // doc.
         self.register_auto_attach_listener();
+        self.register_ainode_completion_listener();
+    }
+
+    /// Subscribe a `JobEvent::Completed` listener that inspects the
+    /// finishing job's params for `ainode_uuid` + `gen_uuid`. When
+    /// both are present and resolve to a real AINode in the project,
+    /// the listener emits an [`AINodeCompletion`] message that
+    /// `update()` drains and applies — mutating the AINode's matching
+    /// `Generation` with the produced `result_path` + `cost_usd`.
+    ///
+    /// Without those params in the job (current default flow that
+    /// produces naked `FileNode` imports via auto-attach), the
+    /// listener no-ops. Phase 8b user-facing flow / Phase 9 AttrEditor
+    /// will be the producer of the linkage.
+    ///
+    /// Threading: same `mpsc::channel` pattern as the auto-attach
+    /// listener — `EventBus` callbacks fire on worker threads, project
+    /// mutators run on the UI thread.
+    #[cfg(feature = "jobs")]
+    fn register_ainode_completion_listener(&mut self) {
+        if self.ainode_completion_subscribed {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<AINodeCompletion>();
+        self.ainode_completion_tx = Some(tx.clone());
+        *self
+            .ainode_completion_rx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(rx);
+
+        // Capture an Arc<JobQueue> so the closure can read job params
+        // out of the queue on the worker thread. The queue is the
+        // only place params live after submission.
+        let queue = self.job_queue.as_ref().map(Arc::clone);
+        self.event_bus
+            .subscribe::<playa_jobs::JobEvent, _>(move |event| {
+                let playa_jobs::JobEvent::Completed(job_id, result) = event else {
+                    return;
+                };
+                let Some(q) = queue.as_ref() else { return };
+                let Some(job) = q.get(*job_id) else { return };
+                let Some(ainode_uuid) = parse_uuid(&job.params, "ainode_uuid")
+                else {
+                    return;
+                };
+                let Some(gen_uuid) = parse_uuid(&job.params, "gen_uuid") else {
+                    return;
+                };
+                // Result envelope: providers use distinct keys per output
+                // type — `mp4_path` (Seedance) / `png_path` (Inpaint).
+                // Either is acceptable; check both.
+                let result_path = result
+                    .get("mp4_path")
+                    .or_else(|| result.get("png_path"))
+                    .and_then(|v| v.as_str())
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_default();
+                let cost_usd = job.cost_usd;
+                let msg = AINodeCompletion {
+                    ainode_uuid,
+                    gen_uuid,
+                    job_id: job_id.0,
+                    result_path,
+                    cost_usd,
+                };
+                let _ = tx.send(msg);
+            });
+        self.ainode_completion_subscribed = true;
+    }
+
+    /// Drain queued AINode completions and apply them to the project.
+    /// Called once per frame from `update()` — same UI-thread
+    /// convention as `drain_auto_attach_queue`.
+    #[cfg(feature = "jobs")]
+    pub fn drain_ainode_completion_queue(&mut self) {
+        let msgs: Vec<AINodeCompletion> = {
+            let guard = self
+                .ainode_completion_rx
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let Some(rx) = guard.as_ref() else {
+                return;
+            };
+            std::iter::from_fn(|| rx.try_recv().ok()).collect()
+        };
+        for msg in msgs {
+            let applied = self.project.modify_node(msg.ainode_uuid, |node| {
+                let Some(ai) = node.as_ai_mut() else { return };
+                // Resolve the matching generation, build an updated copy.
+                let Some(mut g) = ai
+                    .generations()
+                    .into_iter()
+                    .find(|g| g.uuid == msg.gen_uuid)
+                else {
+                    return;
+                };
+                g.result_path = msg.result_path.clone();
+                if g.cost_usd.is_none() {
+                    g.cost_usd = msg.cost_usd;
+                }
+                ai.update_generation(g);
+            });
+            if applied {
+                log::info!(
+                    "AINode {} updated with completion of gen {} (path={})",
+                    msg.ainode_uuid,
+                    msg.gen_uuid,
+                    msg.result_path.display()
+                );
+            } else {
+                log::warn!(
+                    "AINode completion ignored: ainode_uuid {} not found in project",
+                    msg.ainode_uuid
+                );
+            }
+        }
     }
 
     /// Subscribe a `JobEvent::Completed` listener that auto-attaches the

@@ -256,6 +256,12 @@ impl eframe::App for PlayaApp {
         #[cfg(feature = "jobs")]
         self.drain_auto_attach_queue();
 
+        // Drain AINode completions queued from worker threads. Applies
+        // `result_path` + `cost_usd` to the matching Generation record
+        // on the linked AINode (best-effort; missing AINode logs warn).
+        #[cfg(feature = "jobs")]
+        self.drain_ainode_completion_queue();
+
         // Render the Submit dialog modal (jobs subsystem). Sits on top of the
         // dock so the form covers the panel that opened it. The dialog state
         // machine handles Submit/Cancel internally; on Submit we route to the
