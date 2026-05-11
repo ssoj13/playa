@@ -34,6 +34,7 @@ impl PlayaApp {
         let mut deferred_quick_save = false;
         let mut deferred_show_open = false;
         let mut deferred_generate_ainode: Option<uuid::Uuid> = None;
+        let mut deferred_iterate_generation: Option<(uuid::Uuid, uuid::Uuid)> = None;
 
         // Poll all events from the bus
         let events = self.event_bus.poll();
@@ -184,6 +185,9 @@ impl PlayaApp {
                 if let Some(uuid) = result.generate_ainode {
                     deferred_generate_ainode = Some(uuid);
                 }
+                if let Some(pair) = result.iterate_generation {
+                    deferred_iterate_generation = Some(pair);
+                }
                 // Update AE panel focus (immediate, not deferred)
                 if let Some(focus) = result.ae_focus_update {
                     self.ae_focus = focus;
@@ -276,8 +280,107 @@ impl PlayaApp {
         if let Some(uuid) = deferred_generate_ainode {
             self.generate_ainode(uuid);
         }
+        #[cfg(feature = "jobs")]
+        if let Some((ainode_uuid, parent_gen_uuid)) = deferred_iterate_generation {
+            self.iterate_generation(ainode_uuid, parent_gen_uuid);
+        }
         #[cfg(not(feature = "jobs"))]
-        let _ = deferred_generate_ainode;
+        let _ = (deferred_generate_ainode, deferred_iterate_generation);
+    }
+
+    /// Iterate from a past Generation: copy its params verbatim, swap
+    /// the seed for a fresh random u64, set `parent_gen_uuid` to the
+    /// source's uuid, and submit. Produces a reproducibility-linked
+    /// variation in one click.
+    #[cfg(feature = "jobs")]
+    pub fn iterate_generation(
+        &mut self,
+        ainode_uuid: uuid::Uuid,
+        parent_gen_uuid: uuid::Uuid,
+    ) {
+        use playa_engine::entities::Generation;
+
+        let Some(queue) = self.job_queue.as_ref().map(std::sync::Arc::clone) else {
+            log::warn!("iterate_generation: JobQueue not initialised");
+            return;
+        };
+
+        // Snapshot the source Generation we're iterating from.
+        let parent = self.project.with_node(ainode_uuid, |node| {
+            node.as_ai().and_then(|ai| {
+                ai.generations()
+                    .into_iter()
+                    .find(|g| g.uuid == parent_gen_uuid)
+            })
+        });
+        let Some(Some(parent)) = parent else {
+            log::warn!("iterate_generation: parent gen {parent_gen_uuid} not found");
+            return;
+        };
+
+        // Copy params verbatim, swap seed + clean linkage fields (the
+        // submit path re-injects them with the NEW gen uuid).
+        let mut params = match parent.params.clone() {
+            serde_json::Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        let fresh_seed = rand::random::<u64>();
+        params.insert("seed".into(), serde_json::Value::from(fresh_seed));
+        params.remove("ainode_uuid");
+        params.remove("gen_uuid");
+
+        let gen_uuid = uuid::Uuid::new_v4();
+        let timestamp_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        params.insert(
+            "ainode_uuid".into(),
+            serde_json::Value::String(ainode_uuid.to_string()),
+        );
+        params.insert(
+            "gen_uuid".into(),
+            serde_json::Value::String(gen_uuid.to_string()),
+        );
+        let params_value = serde_json::Value::Object(params);
+
+        match queue.submit(parent.provider.clone(), params_value.clone()) {
+            Ok(job_id) => {
+                let generation = Generation {
+                    uuid: gen_uuid,
+                    timestamp_secs,
+                    provider: parent.provider.clone(),
+                    provider_version: parent.provider_version.clone(),
+                    params: params_value,
+                    // Inherit the source's input snapshots — these
+                    // captured the inputs at the parent's submit time
+                    // and are the right anchor for "what was the
+                    // parent based on" comparisons in regen review.
+                    input_snapshots: parent.input_snapshots.clone(),
+                    job_id: job_id.0,
+                    request_id: None,
+                    result_path: std::path::PathBuf::new(),
+                    cost_usd: None,
+                    parent_gen_uuid: Some(parent_gen_uuid),
+                };
+                let added = self.project.modify_node(ainode_uuid, |node| {
+                    if let Some(ai) = node.as_ai_mut() {
+                        ai.add_generation(generation);
+                    }
+                });
+                if !added {
+                    log::warn!("iterate_generation: AINode {ainode_uuid} disappeared mid-submit");
+                }
+                log::info!(
+                    "Iterated AINode {ainode_uuid}: parent={parent_gen_uuid} → new={gen_uuid} as job {} (seed={fresh_seed})",
+                    job_id.0
+                );
+            }
+            Err(e) => {
+                log::warn!("iterate_generation submit failed: {e}");
+            }
+        }
     }
 
     /// Submit a fresh `Generation` for the AINode with `ainode_uuid`.
@@ -330,13 +433,16 @@ impl PlayaApp {
             .unwrap_or_else(rand::random::<u64>);
         params.insert("seed".into(), serde_json::Value::from(resolved_seed));
 
-        // Build input snapshots — best-effort content hashing of each
-        // input ref's resolved target. Each RefNode points at a
-        // FileNode / CompNode / etc.; we hash whatever bytes are
-        // immediately available without a worker thread round-trip.
-        // For Phase 9 we hash an empty buffer when the target's
-        // content is not yet decoded — produces a stable but
-        // uninformative hash; Phase 9.1 can upgrade.
+        // Build input snapshots. For each RefNode in input_refs:
+        // - Resolve target uuid + channel.
+        // - If target is a FileNode → hash the file content at the
+        //   active frame (frame 0 for single-frame stills, the
+        //   sequence start otherwise). This is the canonical
+        //   reproducibility signal: regen with the same file bytes
+        //   yields the same output.
+        // - Other target kinds (CompNode, AINode, RefNode-chain) fall
+        //   back to hashing the empty string. v9.2 can do a render +
+        //   pixel-buffer hash here when justified.
         let mut snapshots = Vec::with_capacity(input_refs.len());
         for &ref_uuid in &input_refs {
             let resolved = self.project.with_node(ref_uuid, |node| {
@@ -348,7 +454,18 @@ impl PlayaApp {
                 })
             });
             if let Some(Some((target_uuid, channel))) = resolved {
-                let hash = sha256_hex(b""); // placeholder until v9.1
+                let hash = self
+                    .project
+                    .with_node(target_uuid, |node| {
+                        if let Some(file) = node.as_file()
+                            && let Some(path) = file.resolve_frame_path(0)
+                            && let Ok(bytes) = std::fs::read(&path)
+                        {
+                            return sha256_hex(&bytes);
+                        }
+                        sha256_hex(b"")
+                    })
+                    .unwrap_or_else(|| sha256_hex(b""));
                 snapshots.push(playa_engine::entities::RefSnapshot {
                     ref_uuid,
                     target_uuid,

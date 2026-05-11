@@ -245,6 +245,10 @@ pub struct EventResult {
     /// the submit flow needs to read AINode attrs + resolve seed +
     /// push a `Generation` record + call `queue.submit`.
     pub generate_ainode: Option<Uuid>,
+    /// (ainode_uuid, parent_gen_uuid) — iterate from a past Generation
+    /// with a fresh seed + parent_gen_uuid linkage. Same deferred
+    /// rationale as `generate_ainode`.
+    pub iterate_generation: Option<(Uuid, Uuid)>,
 }
 
 impl EventResult {
@@ -536,6 +540,13 @@ pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Op
                 ai.set_active_generation(gen_uuid);
             }
         });
+        return Some(result);
+    }
+    if let Some(e) = downcast_event::<IterateGenerationEvent>(event) {
+        // Bundle into the same deferred slot — events.rs decides
+        // whether to run a fresh Generate or an Iterate based on which
+        // field is set. Iterate carries the source uuid in `gen_uuid`.
+        result.iterate_generation = Some((e.ainode_uuid, e.gen_uuid));
         return Some(result);
     }
     if let Some(e) = downcast_event::<DeleteGenerationEvent>(event) {

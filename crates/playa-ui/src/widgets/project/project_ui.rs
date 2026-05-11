@@ -169,6 +169,18 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                         egui::Color32::from_rgb(200, 150, 255),
                         comp.name().to_string(),
                     ) // Purple for text
+                } else if comp.is_ai() {
+                    (
+                        "[AI]",
+                        egui::Color32::from_rgb(255, 150, 150),
+                        comp.name().to_string(),
+                    ) // Pink for AINode
+                } else if comp.is_ref() {
+                    (
+                        "[R]",
+                        egui::Color32::from_rgb(180, 180, 180),
+                        comp.name().to_string(),
+                    ) // Grey for ref (utility)
                 } else {
                     // Comp
                     (
@@ -343,9 +355,37 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 }
 
+                // Right-click context menu — item actions on top,
+                // Create submenu below in the same popup. AINode gets
+                // an extra Generate entry (action surface duplicate of
+                // the AttrEditor footer's button, useful when the
+                // user is in the project tree and doesn't want to
+                // switch focus).
+                let is_ai = comp.is_ai();
+                let comp_uuid_clone = *comp_uuid;
+                response.context_menu(|ui| {
+                    if is_ai && ui.button("⚡ Generate").clicked() {
+                        actions.events.push(Box::new(GenerateAINodeEvent(comp_uuid_clone)));
+                        ui.close_menu();
+                    }
+                    if ui.button("Delete").clicked() {
+                        actions.send(RemoveMediaEvent(comp_uuid_clone));
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    render_create_submenu(ui, &mut actions);
+                });
+
                 ui.add_space(1.0);
             }
         });
+
+    // Empty-area right-click → Create-only submenu. Per-item context
+    // menus take precedence (egui's response.context_menu binds to the
+    // smaller widget first).
+    panel_response.context_menu(|ui| {
+        render_create_submenu(ui, &mut actions);
+    });
 
     // Double-click on empty area opens file dialog (same as Add Clip button)
     if panel_response.double_clicked()
@@ -404,4 +444,54 @@ fn compute_selection(
     }
 
     (selection, new_anchor)
+}
+
+/// Render the "Create" submenu used by both the per-item and the
+/// empty-area context menus. Same entries as the top-bar +Buttons,
+/// but in a menu-friendly layout. Each click closes the popup.
+fn render_create_submenu(ui: &mut egui::Ui, actions: &mut ProjectActions) {
+    ui.menu_button("Create", |ui| {
+        if ui.button("+ Clip…").clicked()
+            && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
+            && !paths.is_empty()
+        {
+            actions.send(AddClipsEvent(paths));
+            ui.close_menu();
+        }
+        if ui.button("+ Folder…").clicked()
+            && let Some(folder) = rfd::FileDialog::new()
+                .set_title("Add Media Folder")
+                .pick_folder()
+        {
+            actions.send(AddFolderEvent(folder));
+            ui.close_menu();
+        }
+        if ui.button("+ Comp").clicked() {
+            actions.send(AddCompEvent {
+                name: "New Comp".to_string(),
+                fps: 30.0,
+            });
+            ui.close_menu();
+        }
+        if ui.button("+ Text").clicked() {
+            actions.send(AddTextEvent {
+                name: "New Text".to_string(),
+                text: "Hello World".to_string(),
+            });
+            ui.close_menu();
+        }
+        if ui.button("+ Camera").clicked() {
+            actions.send(AddCameraEvent {
+                name: "Camera 1".to_string(),
+            });
+            ui.close_menu();
+        }
+        if ui.button("+ AI Node").clicked() {
+            actions.send(AddAINodeEvent {
+                name: "AI Generation".to_string(),
+                provider: "seedance.text_to_video".to_string(),
+            });
+            ui.close_menu();
+        }
+    });
 }

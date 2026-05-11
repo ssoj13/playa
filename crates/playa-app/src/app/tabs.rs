@@ -421,7 +421,9 @@ impl PlayaApp {
         g: &playa_engine::entities::Generation,
         active: Option<uuid::Uuid>,
     ) {
-        use playa_events::project_media::{DeleteGenerationEvent, SetActiveGenerationEvent};
+        use playa_events::project_media::{
+            DeleteGenerationEvent, IterateGenerationEvent, SetActiveGenerationEvent,
+        };
 
         let is_active = active == Some(g.uuid);
         ui.horizontal(|ui| {
@@ -457,6 +459,21 @@ impl PlayaApp {
             {
                 self.event_bus
                     .emit_boxed(Box::new(SetActiveGenerationEvent {
+                        ainode_uuid: node_uuid,
+                        gen_uuid: g.uuid,
+                    }));
+            }
+            if ui
+                .small_button("↺ Iterate")
+                .on_hover_text(
+                    "Submit a new generation with this run's params verbatim\n\
+                     but a fresh random seed. parent_gen_uuid links the new\n\
+                     generation back to this one (visible in the lineage chain).",
+                )
+                .clicked()
+            {
+                self.event_bus
+                    .emit_boxed(Box::new(IterateGenerationEvent {
                         ainode_uuid: node_uuid,
                         gen_uuid: g.uuid,
                     }));

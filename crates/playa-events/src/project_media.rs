@@ -62,6 +62,15 @@ pub struct DeleteGenerationEvent {
     pub gen_uuid: Uuid,
 }
 
+/// Submit a new Generation seeded from a past Generation's params
+/// (verbatim) but with a fresh seed and `parent_gen_uuid` linkage —
+/// produces a "variation" that's reproducibly linked to its source.
+#[derive(Clone, Debug)]
+pub struct IterateGenerationEvent {
+    pub ainode_uuid: Uuid,
+    pub gen_uuid: Uuid,
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoveMediaEvent(pub Uuid);
 
