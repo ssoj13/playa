@@ -1,7 +1,7 @@
 //! Viewport widget - UI rendering
 
 use eframe::egui;
-use glam::{EulerRot, Mat4, Quat, Vec3, Vec4};
+use glam::{EulerRot, Mat4, Quat, Vec2, Vec3, Vec4};
 use log::info;
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +14,7 @@ use crate::widgets::actions::ActionQueue;
 use crate::widgets::file_dialogs::create_media_dialog;
 use playa_engine::core::event_bus::BoxedEvent;
 use playa_engine::core::player::Player;
+use playa_engine::entities::space;
 use playa_engine::entities::Project;
 use playa_engine::entities::comp_events::{CompSelectionChangedEvent, HoverLayerEvent};
 use playa_engine::entities::frame::{Frame, FrameStatus};
@@ -690,32 +691,36 @@ fn draw_hover_highlight(
 
             // Project to screen based on whether camera is active
             let screen_pos = if let Some(vp) = camera_vp {
-                // 3D mode: project through camera VP, then apply viewport transform
+                // 3D mode: project through camera VP, then chain
+                // ndc → frame → viewport → screen via canonical helpers.
                 let clip = vp * Vec4::new(world_pt.x, world_pt.y, world_pt.z, 1.0);
                 if clip.w.abs() < 1e-6 {
                     continue; // Behind camera
                 }
                 let ndc = Vec3::new(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
 
-                // NDC [-1,1] -> frame space -> screen
-                // frame_x = ndc_x * comp_w/2, frame_y = ndc_y * comp_h/2
-                let comp_w = viewport_state.image_size.x;
-                let comp_h = viewport_state.image_size.y;
-                let frame_x = ndc.x * comp_w * 0.5;
-                let frame_y = ndc.y * comp_h * 0.5;
+                let comp_size = (
+                    viewport_state.image_size.x as usize,
+                    viewport_state.image_size.y as usize,
+                );
+                let pan = Vec2::new(viewport_state.pan.x, viewport_state.pan.y);
+                let vp_sz =
+                    Vec2::new(viewport_state.viewport_size.x, viewport_state.viewport_size.y);
 
-                // Frame -> viewport (zoom + pan) -> screen
-                let vp_x = frame_x * viewport_state.zoom + viewport_state.pan.x;
-                let vp_y = frame_y * viewport_state.zoom + viewport_state.pan.y;
-                let screen_x = vp_x + viewport_state.viewport_size.x * 0.5;
-                let screen_y = viewport_state.viewport_size.y * 0.5 - vp_y; // Y flip for screen
+                let frame = space::ndc_to_frame(Vec2::new(ndc.x, ndc.y), comp_size);
+                let viewport = space::frame_to_viewport(frame, viewport_state.zoom, pan);
+                let screen = space::viewport_to_screen(viewport, vp_sz);
 
-                panel_rect.left_top() + egui::vec2(screen_x, screen_y)
+                panel_rect.left_top() + egui::vec2(screen.x, screen.y)
             } else {
-                // 2D mode: simple frame -> image -> screen
-                let image_x = world_pt.x + viewport_state.image_size.x * 0.5;
-                let image_y = viewport_state.image_size.y * 0.5 - world_pt.y;
-                let screen = viewport_state.image_to_screen(egui::vec2(image_x, image_y));
+                // 2D mode: world is already in frame space — chain
+                // frame → image → screen.
+                let image_size = (
+                    viewport_state.image_size.x as usize,
+                    viewport_state.image_size.y as usize,
+                );
+                let image = space::frame_to_image(Vec2::new(world_pt.x, world_pt.y), image_size);
+                let screen = viewport_state.image_to_screen(egui::vec2(image.x, image.y));
                 panel_rect.left_top() + screen
             };
 

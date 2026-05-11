@@ -17,7 +17,10 @@
 //!   NTSC fractional rates over long durations.
 //! - **Speed**: [`Speed`] f32 with explicit sign (negative = reverse playback) and
 //!   magnitude floored at `0.001` to prevent div-by-zero.
-//! - **Coordinate space**: see [`coord`] — image / frame / object-space transforms.
+//!
+//! Coordinate-space transforms previously lived here as a `coord` module;
+//! they were extracted to the sibling `playa-coord` crate to keep this
+//! crate scoped to time / rate.
 //!
 //! # Conversions are explicit about rounding
 //!
@@ -30,14 +33,12 @@
 #![forbid(unsafe_code)]
 
 pub mod conversion;
-pub mod coord;
 pub mod fps;
 pub mod round;
 pub mod speed;
 pub mod timecode;
 
 pub use conversion::{frames_to_seconds, seconds_to_frames};
-pub use coord::{frame_to_image, from_math_rot, image_to_frame, object_to_src, to_math_rot};
 pub use fps::Fps;
 pub use round::Round;
 pub use speed::Speed;

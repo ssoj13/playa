@@ -25,13 +25,15 @@
 //! Source pixel (for texture sampling)
 //! ```
 //!
-//! The actual implementation lives in [`playa_time::coord`]; this module is a
-//! thin re-export so existing call sites (`playa_engine::entities::space::foo`)
+//! The actual implementation lives in the `playa-coord` crate; this module
+//! is a thin re-export so existing call sites (`playa_engine::entities::space::foo`)
 //! continue to compile while playa-ui, playa-engine, and any future crate share
-//! a single source. See `playa-time` crate docs for the rationale (audit found
-//! `frame_to_image` and `object_to_src` were bit-exact duplicates in the
-//! previous code path).
+//! a single source. The crate split was to keep coord transforms independent
+//! of time/rate primitives in `playa-time`.
 
-pub use playa_time::coord::{
-    frame_to_image, from_math_rot, image_to_frame, object_to_src, to_math_rot,
+pub use playa_coord::{
+    frame_to_image, frame_to_natural, frame_to_ndc, frame_to_viewport, from_math_rot,
+    image_to_frame, image_to_natural, natural_to_frame, natural_to_image, ndc_to_frame,
+    object_to_src, object_to_src_affine, screen_to_viewport, to_math_rot, viewport_to_frame,
+    viewport_to_screen,
 };

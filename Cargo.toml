@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/playa-app",
+    "crates/playa-coord",
     "crates/playa-engine",
     "crates/playa-events",
     "crates/playa-ffmpeg",
@@ -37,6 +38,7 @@ serde_json = "1.0"
 sha2 = "0.10"
 uuid = { version = "1.22", features = ["v4", "serde"] }
 wgpu = "27"
+playa-coord = { path = "crates/playa-coord" }
 playa-ffmpeg = { path = "crates/playa-ffmpeg", features = ["static"] }
 playa-time = { path = "crates/playa-time" }
 

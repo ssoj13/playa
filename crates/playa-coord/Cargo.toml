@@ -1,0 +1,10 @@
+[package]
+name = "playa-coord"
+version = "0.1.142"
+edition = "2024"
+authors = ["joss13@gmail.com"]
+description = "Coordinate-space transforms for playa: image/natural/frame/object/NDC/viewport/screen + Affine helpers."
+license = "MIT"
+
+[dependencies]
+glam = { workspace = true }

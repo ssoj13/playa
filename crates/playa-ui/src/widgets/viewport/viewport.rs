@@ -19,6 +19,7 @@
 
 use eframe::egui;
 use log::{info, trace};
+use playa_engine::entities::space;
 
 use super::coords;
 
@@ -224,61 +225,45 @@ impl ViewportState {
         self.screen_to_image(screen_pos).is_some()
     }
 
-    /// Convert image space coordinates (0..image_size) to screen space.
+    /// Convert buffer-space image coordinates (top-left, Y-down,
+    /// 0..image_size) to egui screen space (top-left, Y-down).
     ///
-    /// The Y-flip happens TWICE on purpose: image space is Y-down,
-    /// `self.pan` is stored in viewport Y-UP convention (see
-    /// `coords::screen_delta_to_viewport` which flips deltas). Without
-    /// flipping image → frame and frame → screen, applying pan in
-    /// Y-down space subtracts what should be added — causing the
-    /// selection-bracket / gizmo overlays to move OPPOSITE to the
-    /// pan direction.
+    /// Chains `image → frame → viewport → screen`, all canonical helpers
+    /// from the `playa-coord` crate (re-exported through
+    /// `playa_engine::entities::space`). The Y-flip happens TWICE on purpose
+    /// (`image_to_frame` flips into Y-up; `viewport_to_screen` flips back
+    /// into Y-down) because pan is stored in viewport Y-up convention.
     pub fn image_to_screen(&self, image_pos: egui::Vec2) -> egui::Vec2 {
-        // image (top-left, Y-down) -> frame (centered, Y-up). Same as
-        // playa_time::coord::image_to_frame's math.
-        let frame = egui::vec2(
-            image_pos.x - self.image_size.x * 0.5,
-            self.image_size.y * 0.5 - image_pos.y,
-        );
-        // frame -> viewport (centered, Y-up): apply zoom + pan.
-        let viewport = egui::vec2(
-            frame.x * self.zoom + self.pan.x,
-            frame.y * self.zoom + self.pan.y,
-        );
-        // viewport (centered, Y-up) -> screen (top-left, Y-down).
-        egui::vec2(
-            viewport.x + self.viewport_size.x * 0.5,
-            self.viewport_size.y * 0.5 - viewport.y,
-        )
+        let img_sz = (self.image_size.x as usize, self.image_size.y as usize);
+        let pan = glam::Vec2::new(self.pan.x, self.pan.y);
+        let vp_sz = glam::Vec2::new(self.viewport_size.x, self.viewport_size.y);
+
+        let frame = space::image_to_frame(glam::Vec2::new(image_pos.x, image_pos.y), img_sz);
+        let viewport = space::frame_to_viewport(frame, self.zoom, pan);
+        let screen = space::viewport_to_screen(viewport, vp_sz);
+        egui::vec2(screen.x, screen.y)
     }
 
-    /// Convert screen space coordinates to image space (0..image_size).
-    /// Inverse of [`Self::image_to_screen`] — symmetric Y-flip both
-    /// times. Returns None if position is outside the image bounds.
+    /// Convert egui screen space coordinates to buffer-space image
+    /// coordinates. Inverse of [`Self::image_to_screen`].
+    /// Returns `None` if position is outside the image bounds.
     #[allow(dead_code)]
     pub fn screen_to_image(&self, screen_pos: egui::Vec2) -> Option<egui::Vec2> {
-        // screen (top-left, Y-down) -> viewport (centered, Y-up).
-        let viewport = egui::vec2(
-            screen_pos.x - self.viewport_size.x * 0.5,
-            self.viewport_size.y * 0.5 - screen_pos.y,
-        );
-        // viewport -> frame (inverse view).
-        let frame = egui::vec2(
-            (viewport.x - self.pan.x) / self.zoom,
-            (viewport.y - self.pan.y) / self.zoom,
-        );
-        // frame (centered, Y-up) -> image (top-left, Y-down).
-        let image = egui::vec2(
-            frame.x + self.image_size.x * 0.5,
-            self.image_size.y * 0.5 - frame.y,
-        );
-        // bounds check
+        let img_sz = (self.image_size.x as usize, self.image_size.y as usize);
+        let pan = glam::Vec2::new(self.pan.x, self.pan.y);
+        let vp_sz = glam::Vec2::new(self.viewport_size.x, self.viewport_size.y);
+
+        let viewport =
+            space::screen_to_viewport(glam::Vec2::new(screen_pos.x, screen_pos.y), vp_sz);
+        let frame = space::viewport_to_frame(viewport, self.zoom, pan);
+        let image = space::frame_to_image(frame, img_sz);
+
         if image.x >= 0.0
             && image.x <= self.image_size.x
             && image.y >= 0.0
             && image.y <= self.image_size.y
         {
-            Some(image)
+            Some(egui::vec2(image.x, image.y))
         } else {
             None
         }

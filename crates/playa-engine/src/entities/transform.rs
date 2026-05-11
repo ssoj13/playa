@@ -289,13 +289,7 @@ pub fn build_inverse_matrix_3x3(
         * Affine2::from_scale(inv_scale)
         * Affine2::from_translation(-pos);
 
-    let src_half = Vec2::new(src_size.0 as f32 * 0.5, src_size.1 as f32 * 0.5);
-
-    // object -> src (image space, Y-down): x' = x + w/2, y' = h/2 - y
-    let object_to_src = Affine2::from_translation(Vec2::new(src_half.x, src_half.y))
-        * Affine2::from_scale(Vec2::new(1.0, -1.0));
-
-    let total = object_to_src * inv;
+    let total = space::object_to_src_affine(src_size) * inv;
 
     let m = total.matrix2;
     let t = total.translation;

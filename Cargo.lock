@@ -4061,6 +4061,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "playa-coord"
+version = "0.1.142"
+dependencies = [
+ "glam 0.32.1",
+]
+
+[[package]]
 name = "playa-engine"
 version = "0.1.142"
 dependencies = [
@@ -4075,6 +4082,7 @@ dependencies = [
  "lazy_static",
  "log",
  "lru",
+ "playa-coord",
  "playa-events",
  "playa-io",
  "playa-time",
