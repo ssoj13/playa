@@ -60,7 +60,7 @@ use uuid::Uuid;
 
 use super::attr_schemas::{COMP_SCHEMA, LAYER_SCHEMA};
 use super::attrs::{AttrValue, Attrs};
-use super::compositor::{BlendMode, CpuCompositor};
+use super::compositor::{BlendMode, CpuCompositor, LayerPayload};
 use super::effects::Effect;
 use super::frame::{Frame, FrameStatus, PixelBuffer, PixelFormat};
 use super::gpu_blend_bridge::GpuBlendReport;
@@ -1209,8 +1209,10 @@ impl CompNode {
             return Some(self.placeholder_frame());
         }
 
-        // New API: (frame, opacity, blend_mode, inverse_transform_matrix)
-        let mut source_frames: Vec<(Frame, f32, BlendMode, [f32; 9])> = Vec::new();
+        // Unified layer payload — single shape consumed by both
+        // CpuCompositor and WgpuCompositor. See `LayerPayload` doc for
+        // per-phase field semantics.
+        let mut source_frames: Vec<LayerPayload> = Vec::new();
         let identity_matrix = super::compositor::IDENTITY_TRANSFORM;
         // Seed target_format with the comp's locked depth so scrubbing
         // past every layer (empty source_frames) keeps the same
@@ -1406,12 +1408,28 @@ impl CompNode {
                 let opacity = layer.opacity();
                 let blend = layer.blend_mode();
 
-                source_frames.push((frame, opacity, blend, inv_matrix));
+                source_frames.push(LayerPayload {
+                    frame,
+                    opacity,
+                    blend_mode: blend,
+                    inv_matrix,
+                    // Phase B will populate when camera is active.
+                    camera_vp_inv: None,
+                    // Layer Z (depth-buffer / OIT in Phase D).
+                    z_position: pos[2],
+                    // Phase A: track matte still pre-multiplied above.
+                    // Phase E will move it into the compositor.
+                    mask: None,
+                    // Tilted layers (X/Y rot) keep CPU pre-render
+                    // indefinitely (see audit). Flag is informational
+                    // for Phase B/C dispatch.
+                    layer_is_tilted: rot_rad[0] != 0.0 || rot_rad[1] != 0.0,
+                });
 
                 // Track highest precision
                 target_format = match (
                     target_format,
-                    source_frames.last().unwrap().0.pixel_format(),
+                    source_frames.last().unwrap().frame.pixel_format(),
                 ) {
                     (PixelFormat::RgbaF32, _) | (_, PixelFormat::RgbaF32) => PixelFormat::RgbaF32,
                     (PixelFormat::RgbaF16, _) | (_, PixelFormat::RgbaF16) => PixelFormat::RgbaF16,
@@ -1424,13 +1442,17 @@ impl CompNode {
         let dim = self.get_first_size().unwrap_or_else(|| self.dim());
 
         // Promote frames to target format
-        for (frame, _, _, _) in source_frames.iter_mut() {
-            *frame = promote_frame(frame, target_format);
+        for layer in source_frames.iter_mut() {
+            layer.frame = promote_frame(&layer.frame, target_format);
         }
 
         // Add black base with identity transform
         let base = create_base_frame(dim, target_format);
-        source_frames.insert(0, (base, 1.0, BlendMode::Normal, identity_matrix));
+        source_frames.insert(0, LayerPayload::pre_rendered(base, 1.0, BlendMode::Normal));
+        // identity_matrix is the default — kept as a binding for
+        // call-site consistency (other Phase B-or-later code may
+        // reference it).
+        let _ = identity_matrix;
 
         trace!(
             "CompNode::compose {} frames, dim={}x{}, all_loaded={}",
@@ -1455,11 +1477,11 @@ impl CompNode {
                     );
                     None
                 }
-                GpuBlendReport::NotQueued(frames) => {
+                GpuBlendReport::NotQueued(layers) => {
                     log::warn!(
-                        "GPU blend bridge queue closed — blending stacked frames with worker CpuCompositor"
+                        "GPU blend bridge queue closed — blending stacked layers with worker CpuCompositor"
                     );
-                    THREAD_COMPOSITOR.with(|comp| comp.borrow_mut().blend_with_dim(frames, dim))
+                    THREAD_COMPOSITOR.with(|comp| comp.borrow_mut().blend_with_dim(layers, dim))
                 }
                 GpuBlendReport::ReplyDisconnected => {
                     log::error!(

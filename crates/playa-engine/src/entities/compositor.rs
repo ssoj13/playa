@@ -78,25 +78,118 @@ impl Clone for CompositorType {
 /// transforms or for any case where src and canvas dimensions differ.
 pub const IDENTITY_TRANSFORM: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
 
+/// Channel of a mask source to use for a track matte.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaskChannel {
+    Red,
+    Green,
+    Blue,
+    Alpha,
+    Luminance,
+}
+
+/// Track matte information attached to a layer.
+///
+/// Phase A: always `None` — track mattes are still pre-multiplied into
+/// the layer alpha by `apply_track_matte` before the layer reaches the
+/// compositor. Phase C will populate this so CPU/GPU compositors can
+/// sample the mask in their resample-blend pass instead.
+#[derive(Clone, Debug)]
+pub struct MaskInfo {
+    pub frame: Frame,
+    pub channel: MaskChannel,
+}
+
+/// One layer's full payload to the compositor.
+///
+/// Both [`CpuCompositor`] and [`WgpuCompositor`] consume `Vec<LayerPayload>`.
+/// The struct is the **single source of truth** for what data crosses
+/// the compositor boundary — no more 4-tuple drift between
+/// `comp_node`, `gpu_blend_bridge`, and the two backends.
+///
+/// During the GPU-first unification (see
+/// `.bughunt/gpu_compositor_unification.md`):
+/// - **Phase A** (this commit): all fields exist, but only `frame`,
+///   `opacity`, `blend_mode`, `inv_matrix` are populated by
+///   `compose_internal`. Behavior is byte-identical to the previous
+///   tuple-based API.
+/// - **Phase B**: `inv_matrix` becomes the canvas-to-src 3×3 for
+///   layers GPU can resample inline (skips CPU pre-render).
+///   `camera_vp_inv` populated for camera-projected layers.
+/// - **Phase C**: CPU compositor becomes matrix-aware; pre-render
+///   stops on CPU path too.
+/// - **Phase D**: `z_position` consumed by GPU depth buffer + OIT.
+/// - **Phase E**: `mask` populated; compositors apply it inline.
+#[derive(Clone, Debug)]
+pub struct LayerPayload {
+    /// Layer pixel data — raw source after Phase B; pre-rendered
+    /// canvas-sized in Phase A.
+    pub frame: Frame,
+    /// Layer opacity multiplier `[0.0, 1.0]`.
+    pub opacity: f32,
+    /// Blend mode against the accumulator below.
+    pub blend_mode: BlendMode,
+    /// Inverse 3×3 column-major matrix mapping canvas-buffer pixels
+    /// (top-left, Y-down) to src-buffer pixels (top-left, Y-down).
+    /// `IDENTITY_TRANSFORM` when the frame is already pre-rendered
+    /// at canvas size.
+    pub inv_matrix: [f32; 9],
+    /// Inverse 4×4 view-projection matrix when a camera is active on
+    /// the comp. `None` for 2D ortho (the common case). Phase B
+    /// consumer: GPU shader unprojects through this for 3D-flat layers.
+    pub camera_vp_inv: Option<[f32; 16]>,
+    /// Layer Z position for depth-buffer / OIT (Phase D). 0.0 = comp
+    /// plane; positive = closer to camera.
+    pub z_position: f32,
+    /// Track matte mask. Phase A: always `None` (pre-applied to alpha).
+    /// Phase E: populated; compositors sample inline.
+    pub mask: Option<MaskInfo>,
+    /// True when layer has X or Y rotation that makes its plane
+    /// non-orthogonal to the comp Z axis. Tilted layers need
+    /// ray-plane intersection for accurate sampling — handled by CPU
+    /// pre-render (kept indefinitely as the small-fraction edge
+    /// case).
+    pub layer_is_tilted: bool,
+}
+
+impl LayerPayload {
+    /// Construct a payload for a pre-rendered canvas-sized layer with
+    /// no transform, camera, or mask metadata. The shape used by
+    /// Phase A `compose_internal` after `transform_frame_with_camera`.
+    pub fn pre_rendered(frame: Frame, opacity: f32, blend_mode: BlendMode) -> Self {
+        Self {
+            frame,
+            opacity,
+            blend_mode,
+            inv_matrix: IDENTITY_TRANSFORM,
+            camera_vp_inv: None,
+            z_position: 0.0,
+            mask: None,
+            layer_is_tilted: false,
+        }
+    }
+}
+
 impl CompositorType {
-    /// Blend frames using the selected compositor backend.
-    /// Each frame has: (pixels, opacity, blend_mode, inverse_transform_matrix)
-    pub fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
+    /// Blend layers using the selected compositor backend.
+    /// Each layer carries its own transform / blend / opacity — see
+    /// [`LayerPayload`].
+    pub fn blend(&mut self, layers: Vec<LayerPayload>) -> Option<Frame> {
         match self {
-            CompositorType::Cpu(cpu) => cpu.blend(frames),
-            CompositorType::Wgpu(gpu) => gpu.blend(frames),
+            CompositorType::Cpu(cpu) => cpu.blend(layers),
+            CompositorType::Wgpu(gpu) => gpu.blend(layers),
         }
     }
 
-    /// Blend frames into a canvas with explicit dimensions.
+    /// Blend layers into a canvas with explicit dimensions.
     pub fn blend_with_dim(
         &mut self,
-        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
+        layers: Vec<LayerPayload>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         match self {
-            CompositorType::Cpu(cpu) => cpu.blend_with_dim(frames, dim),
-            CompositorType::Wgpu(gpu) => gpu.blend_with_dim(frames, dim),
+            CompositorType::Cpu(cpu) => cpu.blend_with_dim(layers, dim),
+            CompositorType::Wgpu(gpu) => gpu.blend_with_dim(layers, dim),
         }
     }
 }
@@ -198,55 +291,48 @@ impl CpuCompositor {
         }
     }
 
-    /// Blend frames bottom-to-top with opacity.
-    /// Blend frames using CPU.
+    /// Blend layers bottom-to-top with opacity.
     ///
-    /// Each frame: (pixels, opacity, blend_mode, inverse_transform_matrix)
-    ///
-    /// **Note:** Transform matrix is IGNORED by CPU compositor.
-    /// For CPU path, transforms are applied beforehand via `transform::transform_frame()`
-    /// in `compose_internal`. The matrix is passed for API compatibility with GPU compositor.
-    pub(crate) fn blend(&self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
+    /// **Note:** [`LayerPayload::inv_matrix`], `camera_vp_inv`, `z_position`,
+    /// and `mask` are **ignored** by CPU compositor in Phase A.
+    /// For CPU path, transforms are applied beforehand via
+    /// `transform::transform_frame_with_camera()` in `compose_internal`,
+    /// and track mattes are pre-multiplied into alpha. Phase C will
+    /// rewrite this to a matrix-aware single-pass resample-blend.
+    pub(crate) fn blend(&self, layers: Vec<LayerPayload>) -> Option<Frame> {
         // Default to using first frame size
-        if let Some((first, _, _, _)) = frames.first() {
-            let dim = (first.width(), first.height());
-            return self.blend_with_dim(frames, dim);
+        if let Some(first) = layers.first() {
+            let dim = (first.frame.width(), first.frame.height());
+            return self.blend_with_dim(layers, dim);
         }
         None
     }
 
-    /// Blend frames onto a fixed-size canvas (width, height).
-    ///
-    /// **CPU path:** Transform matrix `[f32; 9]` is ignored here.
-    /// Transforms are pre-applied in `compose_internal` via `transform::transform_frame()`.
-    /// This is less efficient than GPU (transforms pixels twice) but works in worker threads.
-    ///
-    /// **TODO for GPU compositing:**
-    /// When GPU compositor is used, transforms should NOT be pre-applied.
-    /// Instead, pass original frames + matrices, let GPU shader handle transforms.
+    /// Blend layers onto a fixed-size canvas (width, height).
+    /// See [`Self::blend`] for Phase A field-usage notes.
     pub(crate) fn blend_with_dim(
         &self,
-        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
+        layers: Vec<LayerPayload>,
         dim: (usize, usize),
     ) -> Option<Frame> {
         use log::trace;
         trace!(
-            "CpuCompositor::blend_with_dim() called with {} frames into {}x{}",
-            frames.len(),
+            "CpuCompositor::blend_with_dim() called with {} layers into {}x{}",
+            layers.len(),
             dim.0,
             dim.1
         );
 
-        if frames.is_empty() {
-            trace!("  -> empty frames, returning None");
+        if layers.is_empty() {
+            trace!("  -> empty layers, returning None");
             return None;
         }
 
         // Calculate minimum status from all input frames
         // Composition is only as good as its worst component
-        let min_status = frames
+        let min_status = layers
             .iter()
-            .map(|(f, _, _, _)| f.status())
+            .map(|l| l.frame.status())
             .min_by_key(|s| match s {
                 FrameStatus::Error => 0,
                 FrameStatus::Placeholder => 1,
@@ -260,10 +346,11 @@ impl CpuCompositor {
 
         let (width, height) = dim;
         // Start with first frame cropped to canvas
-        let mut iter = frames.iter();
-        let (base_frame, _, _, _) = iter.next().unwrap(); // safe: frames non-empty
-        let base_cropped =
-            base_frame.crop_copy(width, height, crate::entities::frame::CropAlign::LeftTop);
+        let mut iter = layers.iter();
+        let base = iter.next().unwrap(); // safe: layers non-empty
+        let base_cropped = base
+            .frame
+            .crop_copy(width, height, crate::entities::frame::CropAlign::LeftTop);
 
         let canvas_pixels = width * height * 4;
 
@@ -288,11 +375,15 @@ impl CpuCompositor {
             Buf::U8(_) => Buf::U8(vec![0u8; canvas_pixels]),
         };
 
-        // Blend each subsequent layer on top
-        // Note: _transform is ignored - CPU path applies transform beforehand
-        // in compose_internal via transform::transform_frame()
-        // GPU path would use this matrix in shader instead
-        for (layer_frame, opacity, mode, _transform) in iter {
+        // Blend each subsequent layer on top.
+        // Phase A: inv_matrix / camera_vp_inv / mask / z_position / layer_is_tilted
+        // are ignored — the CPU path consumes pre-rendered canvas-sized
+        // frames with track mattes already pre-applied. Phase C
+        // rewrites this loop as a matrix-aware single-pass resampler.
+        for layer in iter {
+            let layer_frame = &layer.frame;
+            let opacity = layer.opacity;
+            let mode = &layer.blend_mode;
             let layer_buffer = layer_frame.buffer();
 
             let lw = layer_frame.width();
@@ -313,7 +404,7 @@ impl CpuCompositor {
                         let base_slice = &$curr[b_off..b_off + overlap_w * 4];
                         let layer_slice = &$layer[l_off..l_off + overlap_w * 4];
                         let out_slice = &mut $out[b_off..b_off + overlap_w * 4];
-                        Self::$blend_fn(base_slice, layer_slice, *opacity, mode, out_slice);
+                        Self::$blend_fn(base_slice, layer_slice, opacity, mode, out_slice);
                     }
                 }};
             }

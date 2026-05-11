@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
-use super::compositor::BlendMode;
+use super::compositor::LayerPayload;
 use super::frame::Frame;
 
 /// Payload moved from worker → UI for one finalized layer stack blend.
@@ -42,8 +42,8 @@ use super::frame::Frame;
 /// when several workers spike while the UI is busy—memory is the throttle, latency is amortized via
 /// `drain` each frame.
 pub struct GpuBlendRequest {
-    /// Raster stack after layer transforms/effects—the same shape [`CompositorType`] expects.
-    pub frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
+    /// Layer stack after per-layer prep — same shape [`CompositorType`] expects.
+    pub layers: Vec<LayerPayload>,
     /// Output canvas `(width_px, height_px)`.
     pub dim: (usize, usize),
     /// One-shot ack channel so workers resume after [`GpuBlendBridge::drain_into_compositor`].
@@ -64,9 +64,9 @@ pub enum GpuBlendReport {
     Completed(Option<Frame>),
     /// `Receiver<GpuBlendRequest>` is gone—the job never left the worker.
     ///
-    /// Return value is untouched `frames`; pass them to the worker `thread_local!` Cpu compositor in
+    /// Return value is untouched `layers`; pass them to the worker `thread_local!` Cpu compositor in
     /// [`comp_node`](crate::entities::comp_node) (same path encoding uses—no preemptive clones).
-    NotQueued(Vec<(Frame, f32, BlendMode, [f32; 9])>),
+    NotQueued(Vec<LayerPayload>),
     /// Reply channel died after the enqueue (UI crash, teardown race). Raster stack may linger on UI
     /// queue—worker cannot salvage buffers.
     ReplyDisconnected,
@@ -119,7 +119,7 @@ impl GpuBlendBridge {
     /// another pattern match arm.
     pub fn delegate_blend_blocking(
         &self,
-        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
+        layers: Vec<LayerPayload>,
         dim: (usize, usize),
     ) -> GpuBlendReport {
         // 100 ms tick keeps shutdown latency bounded without burning CPU on a hot poll.
@@ -127,13 +127,13 @@ impl GpuBlendBridge {
 
         let (reply_tx, reply_rx) = mpsc::channel();
         let req = GpuBlendRequest {
-            frames,
+            layers,
             dim,
             reply: reply_tx,
         };
 
         match self.tx.send(req) {
-            Err(send_err) => GpuBlendReport::NotQueued(send_err.0.frames),
+            Err(send_err) => GpuBlendReport::NotQueued(send_err.0.layers),
             Ok(()) => loop {
                 match reply_rx.recv_timeout(POLL) {
                     Ok(frame) => break GpuBlendReport::Completed(frame),
@@ -174,11 +174,11 @@ impl GpuBlendBridge {
             match rx.try_recv() {
                 Ok(req) => {
                     let GpuBlendRequest {
-                        frames,
+                        layers,
                         dim,
                         reply,
                     } = req;
-                    let out = compositor.blend_with_dim(frames, dim);
+                    let out = compositor.blend_with_dim(layers, dim);
                     let _ = reply.send(out);
                     n += 1;
                 }
@@ -201,14 +201,14 @@ mod tests {
     use super::{GpuBlendBridge, GpuBlendReport, GpuBlendRequest};
     use crate::entities::CompositorType;
     use crate::entities::Frame;
-    use crate::entities::compositor::{BlendMode, CpuCompositor, IDENTITY_TRANSFORM};
+    use crate::entities::compositor::{BlendMode, CpuCompositor, LayerPayload};
 
     #[test]
     fn delegate_not_queued_when_ui_receiver_dropped() {
         let (bridge, rx) = GpuBlendBridge::pair();
         drop(rx);
         let f = Frame::placeholder(4, 4);
-        let stack = vec![(f, 1.0, BlendMode::Normal, IDENTITY_TRANSFORM)];
+        let stack = vec![LayerPayload::pre_rendered(f, 1.0, BlendMode::Normal)];
         match bridge.delegate_blend_blocking(stack, (4, 4)) {
             GpuBlendReport::NotQueued(v) => assert_eq!(v.len(), 1),
             other => panic!("expected NotQueued, got {:?}", other),
@@ -219,17 +219,17 @@ mod tests {
     fn delegate_completed_after_drain_cpu() {
         let (bridge, rq_rx) = GpuBlendBridge::pair();
         let f = Frame::placeholder(2, 2);
-        let stack = vec![(f, 1.0, BlendMode::Normal, IDENTITY_TRANSFORM)];
+        let stack = vec![LayerPayload::pre_rendered(f, 1.0, BlendMode::Normal)];
 
         // Blocking `recv` so the producer can enqueue before we blend (try_recv drains are UI-frame ordered).
         let consumer = std::thread::spawn(move || {
             let GpuBlendRequest {
-                frames,
+                layers,
                 dim,
                 reply,
             } = rq_rx.recv().expect("enqueue");
             let mut compositor = CompositorType::Cpu(CpuCompositor);
-            let out = compositor.blend_with_dim(frames, dim);
+            let out = compositor.blend_with_dim(layers, dim);
             let _ = reply.send(out);
         });
 

@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::mpsc;
 
-use crate::entities::compositor::{BlendMode, CpuCompositor};
+use crate::entities::compositor::{BlendMode, CpuCompositor, LayerPayload};
 use crate::entities::frame::{CropAlign, Frame, FrameStatus, PixelBuffer, PixelFormat};
 use log::warn;
 use wgpu::util::DeviceExt;
@@ -560,34 +560,34 @@ impl WgpuCompositor {
         }
     }
 
-    pub(crate) fn blend(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Option<Frame> {
-        match self.blend_inner(frames.clone()) {
+    pub(crate) fn blend(&mut self, layers: Vec<LayerPayload>) -> Option<Frame> {
+        match self.blend_inner(layers.clone()) {
             Ok(r) => Some(r),
             Err(e) => {
                 warn!("WGPU compositor failed: {}, falling back to CPU", e);
-                CpuCompositor.blend(frames)
+                CpuCompositor.blend(layers)
             }
         }
     }
 
     pub(crate) fn blend_with_dim(
         &mut self,
-        frames: Vec<(Frame, f32, BlendMode, [f32; 9])>,
+        layers: Vec<LayerPayload>,
         dim: (usize, usize),
     ) -> Option<Frame> {
-        let out = self.blend(frames)?;
+        let out = self.blend(layers)?;
         out.crop(dim.0, dim.1, CropAlign::LeftTop);
         Some(out)
     }
 
-    fn blend_inner(&mut self, frames: Vec<(Frame, f32, BlendMode, [f32; 9])>) -> Result<Frame, String> {
-        if frames.is_empty() {
-            return Err("no frames".into());
+    fn blend_inner(&mut self, layers: Vec<LayerPayload>) -> Result<Frame, String> {
+        if layers.is_empty() {
+            return Err("no layers".into());
         }
 
-        let min_status = frames
+        let min_status = layers
             .iter()
-            .map(|(f, _, _, _)| f.status())
+            .map(|l| l.frame.status())
             .min_by_key(|s| match s {
                 FrameStatus::Error => 0,
                 FrameStatus::Placeholder => 1,
@@ -597,33 +597,35 @@ impl WgpuCompositor {
             })
             .unwrap_or(FrameStatus::Placeholder);
 
-        let width = frames[0].0.width();
-        let height = frames[0].0.height();
-        let pf = frames[0].0.pixel_format();
+        let width = layers[0].frame.width();
+        let height = layers[0].frame.height();
+        let pf = layers[0].frame.pixel_format();
         let wf = Self::texture_format(pf)?;
 
         let pipeline = self.pipeline_for_fmt(wf);
         let w_u32 = width as u32;
         let h_u32 = height as u32;
 
-        let uploads: Vec<wgpu::Texture> = frames
+        let uploads: Vec<wgpu::Texture> = layers
             .iter()
-            .map(|(f, _, _, _)| self.upload_frame(f, wf))
+            .map(|l| self.upload_frame(&l.frame, wf))
             .collect::<Result<_, String>>()?;
 
         let mut uploads = uploads.into_iter();
         let mut acc = uploads.next().ok_or_else(|| "no textures".to_string())?;
 
-        for (layer, top_tex) in frames.iter().skip(1).zip(uploads) {
-            let (top_layer, opacity, mode, xf) = layer;
+        // Phase A: only inv_matrix is consumed by the shader. Phase B
+        // adds camera_vp_inv. Phase D consumes z_position. Phase E
+        // consumes mask.
+        for (layer, top_tex) in layers.iter().skip(1).zip(uploads) {
             let u = Self::build_uniforms(
-                *opacity,
-                mode,
+                layer.opacity,
+                &layer.blend_mode,
                 width,
                 height,
-                top_layer.width(),
-                top_layer.height(),
-                xf,
+                layer.frame.width(),
+                layer.frame.height(),
+                &layer.inv_matrix,
             );
             let out =
                 self.blend_pass(&acc, &top_tex, u, w_u32, h_u32, wf, &pipeline, "playa_blend_step");
