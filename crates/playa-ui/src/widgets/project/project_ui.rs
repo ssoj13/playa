@@ -366,11 +366,11 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
                 response.context_menu(|ui| {
                     if is_ai && ui.button("⚡ Generate").clicked() {
                         actions.events.push(Box::new(GenerateAINodeEvent(comp_uuid_clone)));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Delete").clicked() {
                         actions.send(RemoveMediaEvent(comp_uuid_clone));
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     render_create_submenu(ui, &mut actions);
@@ -456,7 +456,7 @@ fn render_create_submenu(ui: &mut egui::Ui, actions: &mut ProjectActions) {
             && !paths.is_empty()
         {
             actions.send(AddClipsEvent(paths));
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("+ Folder…").clicked()
             && let Some(folder) = rfd::FileDialog::new()
@@ -464,34 +464,34 @@ fn render_create_submenu(ui: &mut egui::Ui, actions: &mut ProjectActions) {
                 .pick_folder()
         {
             actions.send(AddFolderEvent(folder));
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("+ Comp").clicked() {
             actions.send(AddCompEvent {
                 name: "New Comp".to_string(),
                 fps: 30.0,
             });
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("+ Text").clicked() {
             actions.send(AddTextEvent {
                 name: "New Text".to_string(),
                 text: "Hello World".to_string(),
             });
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("+ Camera").clicked() {
             actions.send(AddCameraEvent {
                 name: "Camera 1".to_string(),
             });
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("+ AI Node").clicked() {
             actions.send(AddAINodeEvent {
                 name: "AI Generation".to_string(),
                 provider: "seedance.text_to_video".to_string(),
             });
-            ui.close_menu();
+            ui.close();
         }
     });
 }

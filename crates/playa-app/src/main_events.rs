@@ -516,12 +516,14 @@ pub fn handle_app_event(event: &BoxedEvent, ctx: &mut AppEventContext<'_>) -> Op
         return Some(result);
     }
     if let Some(e) = downcast_event::<AddAINodeEvent>(event) {
+        use playa_engine::entities::node::Node;
         use playa_engine::entities::{AINode, NodeKind};
-        let mut ai = AINode::new(&e.name, &e.provider);
+        let ai = AINode::new(&e.name, &e.provider);
         let uuid = ai.uuid();
         // Clear-dirty so we don't immediately re-emit attrs-changed
         // for a freshly-created node; subsequent attr edits go through
-        // the standard AttrEditor dispatch.
+        // the standard AttrEditor dispatch. `clear_dirty` works through
+        // interior mutability so the binding does not need to be mut.
         ai.clear_dirty();
         project.add_node(NodeKind::AI(ai));
         log::info!("Created new AINode: {} (provider={})", uuid, e.provider);
