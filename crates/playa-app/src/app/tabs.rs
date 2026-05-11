@@ -636,6 +636,14 @@ impl PlayaApp {
 /// Holds mutable reference to PlayaApp for rendering tabs.
 pub struct DockTabs<'a> {
     pub app: &'a mut PlayaApp,
+    /// Tabs currently visible in the dock — populated by `run.rs`
+    /// before invoking `DockArea::show`. Used to grey out menu items
+    /// for already-open tabs in the right-click context menu.
+    pub open_tabs: std::collections::HashSet<DockTab>,
+    /// Tabs the user requested to open via the right-click context
+    /// menu this frame. `run.rs` drains this after `DockArea::show`
+    /// returns and calls `dock_state.push_to_focused_leaf` for each.
+    pub tabs_to_open: Vec<DockTab>,
 }
 
 impl<'a> TabViewer for DockTabs<'a> {
@@ -667,6 +675,53 @@ impl<'a> TabViewer for DockTabs<'a> {
                 }
             }
         }
+    }
+
+    fn context_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        _tab: &mut DockTab,
+        _surface: egui_dock::SurfaceIndex,
+        _node: egui_dock::NodeIndex,
+    ) {
+        // The right-click target is the specific tab the user clicked,
+        // but we present the same "Open tab" submenu regardless of
+        // which tab was clicked — discoverable from any tab header.
+        ui.menu_button("Open tab", |ui| {
+            // Enumerate every DockTab variant. `add_enabled` greys
+            // out items whose tab is already in the dock.
+            let mut all: Vec<DockTab> = vec![
+                DockTab::Viewport,
+                DockTab::Timeline,
+                DockTab::Project,
+                DockTab::Attributes,
+                DockTab::NodeEditor,
+            ];
+            #[cfg(feature = "jobs")]
+            all.push(DockTab::Jobs);
+
+            for variant in all {
+                let open = self.open_tabs.contains(&variant);
+                let label = match &variant {
+                    DockTab::Viewport => "Viewport",
+                    DockTab::Timeline => "Timeline",
+                    DockTab::Project => "Project",
+                    DockTab::Attributes => "Attributes",
+                    DockTab::NodeEditor => "Node Editor",
+                    #[cfg(feature = "jobs")]
+                    DockTab::Jobs => "Jobs",
+                };
+                let prefix = if open { "✓ " } else { "  " };
+                let resp = ui.add_enabled(
+                    !open,
+                    egui::Button::new(format!("{prefix}{label}")),
+                );
+                if resp.clicked() {
+                    self.tabs_to_open.push(variant);
+                    ui.close();
+                }
+            }
+        });
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut DockTab) {

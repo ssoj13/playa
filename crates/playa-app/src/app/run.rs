@@ -204,12 +204,33 @@ impl eframe::App for PlayaApp {
                 let mut dock_state =
                     std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
 
-                {
-                    let mut tabs = DockTabs { app: self };
+                // Snapshot which tabs are currently in the dock so the
+                // right-click context menu can grey out already-open
+                // ones.
+                let open_tabs: std::collections::HashSet<crate::app::DockTab> = dock_state
+                    .iter_all_tabs()
+                    .map(|(_loc, tab)| tab.clone())
+                    .collect();
+
+                let drained_tabs_to_open: Vec<crate::app::DockTab> = {
+                    let mut tabs = DockTabs {
+                        app: self,
+                        open_tabs,
+                        tabs_to_open: Vec::new(),
+                    };
                     DockArea::new(&mut dock_state)
                         .style(dock_style)
                         .show_inside(ui, &mut tabs);
+                    tabs.tabs_to_open
+                };
+
+                // Apply any tabs the user requested to re-open via the
+                // right-click context menu. `push_to_focused_leaf` puts
+                // the tab next to the most-recently-active node.
+                for tab in drained_tabs_to_open {
+                    dock_state.push_to_focused_leaf(tab);
                 }
+
                 self.dock_state = dock_state;
 
                 // Save split positions after DockArea rendering (only if changed by user)
