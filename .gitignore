@@ -8,9 +8,6 @@ target/
 !vcpkg.json
 !vcpkg-configuration.json
 *.svg
-*.cmd
-*.sh
-temp_log.txt
 
 # Manifest-mode vcpkg install root (FFmpeg + deps, multi-GB; per-machine)
 .vcpkg/
@@ -46,6 +43,7 @@ passwd.txt
 .env.*
 
 # AI
+
 .bughunt
 .claude
 .cursor
@@ -54,3 +52,5 @@ passwd.txt
 *.cmd
 *.sh
 *.log
+temp_log.txt
+__pycache__
