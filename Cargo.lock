@@ -4121,6 +4121,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "playa-job-inpaint"
+version = "0.1.142"
+dependencies = [
+ "log",
+ "playa-jobs-core",
+ "serde",
+ "serde_json",
+ "ureq",
+ "uuid",
+]
+
+[[package]]
 name = "playa-job-seedance"
 version = "0.1.142"
 dependencies = [
@@ -4137,6 +4149,7 @@ name = "playa-jobs"
 version = "0.1.142"
 dependencies = [
  "log",
+ "playa-job-inpaint",
  "playa-job-seedance",
  "playa-jobs-core",
  "playa-jobs-ui",

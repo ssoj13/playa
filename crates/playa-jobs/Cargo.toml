@@ -7,10 +7,11 @@ description = "All-in-one playa-jobs facade. Re-exports playa-jobs-core + (optio
 license = "MIT"
 
 [features]
-default = ["ui", "prefs", "seedance", "persist"]
+default = ["ui", "prefs", "seedance", "inpaint", "persist"]
 ui = ["dep:playa-jobs-ui", "dep:playa-prefs"]
 prefs = ["dep:playa-prefs"]
 seedance = ["dep:playa-job-seedance"]
+inpaint = ["dep:playa-job-inpaint"]
 persist = ["playa-jobs-core/persist"]
 
 [dependencies]
@@ -19,6 +20,7 @@ playa-jobs-core = { path = "../playa-jobs-core", default-features = false }
 playa-jobs-ui = { path = "../playa-jobs-ui", optional = true }
 playa-prefs = { path = "../playa-prefs", optional = true }
 playa-job-seedance = { path = "../playa-job-seedance", optional = true }
+playa-job-inpaint = { path = "../playa-job-inpaint", optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

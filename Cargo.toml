@@ -6,6 +6,7 @@ members = [
     "crates/playa-events",
     "crates/playa-ffmpeg",
     "crates/playa-io",
+    "crates/playa-job-inpaint",
     "crates/playa-job-seedance",
     "crates/playa-jobs",
     "crates/playa-jobs-core",

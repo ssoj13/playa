@@ -1,0 +1,17 @@
+[package]
+name = "playa-job-inpaint"
+version = "0.1.142"
+edition = "2024"
+authors = ["joss13@gmail.com"]
+description = "playa-jobs provider: image inpainting via fal.ai flux-pro v1.1 inpainting (https://fal.ai/models/fal-ai/flux-pro/v1.1/inpainting)."
+license = "MIT"
+
+[dependencies]
+playa-jobs-core = { path = "../playa-jobs-core" }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+
+[dev-dependencies]
+uuid = { workspace = true }

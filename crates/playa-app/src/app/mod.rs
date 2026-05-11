@@ -435,9 +435,11 @@ fn build_default_job_queue(event_bus: Arc<playa_jobs::EventBus>) -> Option<Arc<J
     // any other consumer (status bar, jobs panel) does the same.
     event_bus.subscribe::<JobEvent, _>(|event| log::debug!("[jobs] {event:?}"));
 
-    // Register the Seedance provider iff a key is present. Lookup order:
-    //   PLAYA_FAL_KEY env > FAL_KEY env > .env file in CWD or one parent.
+    // Register the Seedance + Inpaint providers iff a fal key is present.
+    // Lookup order: PLAYA_FAL_KEY env > FAL_KEY env > .env in CWD or parent.
+    // Both share the same fal account / key.
     register_seedance_provider(&queue);
+    register_inpaint_provider(&queue);
 
     Some(Arc::new(queue))
 }
@@ -474,6 +476,20 @@ fn register_seedance_provider(queue: &JobQueue) {
         "Seedance providers registered (kinds=`{}`, `{}`)",
         playa_jobs::seedance::kinds::IMAGE_TO_VIDEO,
         playa_jobs::seedance::kinds::TEXT_TO_VIDEO
+    );
+}
+
+#[cfg(feature = "jobs")]
+fn register_inpaint_provider(queue: &JobQueue) {
+    let Some(key) = read_fal_key() else {
+        // Seedance registration already logged the missing-key info — skip
+        // a second info! to avoid duplicate noise.
+        return;
+    };
+    queue.register_provider(playa_jobs::inpaint::InpaintProvider::flux_pro_v1_1(key));
+    log::info!(
+        "Inpaint provider registered (kind=`{}`)",
+        playa_jobs::inpaint::kinds::FLUX_PRO_V1_1_INPAINTING
     );
 }
 

@@ -57,6 +57,12 @@ pub mod seedance {
     pub use playa_job_seedance::*;
 }
 
+#[cfg(feature = "inpaint")]
+pub mod inpaint {
+    //! Re-export of [`playa_job_inpaint`].
+    pub use playa_job_inpaint::*;
+}
+
 // =============================================================================
 // Setup helpers
 // =============================================================================
