@@ -12,25 +12,33 @@ data shape, faster, no logic loss.**
 | B-2D — GPU skip pre-render (2D-flat) | ✅ raw frame + canvas-to-src matrix on GPU path for layers without camera or X/Y rot | `97a1e3c` |
 | B-camera — GPU shader camera VP | ✅ per-pixel ray-plane unproject in layer_blend.wgsl, comp_node populates CameraPathInfo | `123c6c4` |
 | C — CPU compositor matrix-aware | ✅ rayon-parallel resample-blend mirrors shader's canvas_to_src; gpu_inline gate dropped | `5a401c1` |
-| D — GPU depth + OIT | ⏳ pending | — |
-| E — Effects framework + ports | ⏳ in progress | — |
+| D — GPU depth + OIT | ⏳ deferred — needs single-pass multi-tex restructure | — |
+| E — Effects framework + ports | ✅ all 3 effects (brightness/HSV/blur) ported, Effect::to_gpu fully populated | `c7c69fe`, `55045ed`, `58676c9` |
 
 Shipped tooling (separate from compositor work): `playa-coord`
 crate (`df1bf38`), screen_ndc Mat4 + flip_y (`ba1f09d`).
 
-**Result of Phases A + B + C**: CPU and GPU compositors now sit on
-identical input data (`LayerPayload`). Both backends:
+**Result of Phases A + B + C + E**: CPU and GPU compositors now sit
+on identical input data (`LayerPayload`). Both backends:
 - Receive raw frames + matrices for non-tilted layers (no CPU
   pre-render on either backend).
 - Apply 2D affine OR camera ray-plane via the same algebra
   (`canvas_to_src`).
+- All 3 CPU effects (brightness/HSV/blur) run on GPU when the
+  wgpu compositor is active. Adding a new effect = 1 WGSL +
+  1 Rust module + 1 enum variant + 1 dispatch arm + 1 to_gpu arm.
 - Produce equivalent output (modulo 1-LSB bilinear tolerance).
 
 Tilted layers (X/Y rotation) still pre-render on CPU — pragmatic
 exception kept indefinitely.
 
-**Next**: Phase E (GpuEffect framework + port brightness/HSV/blur),
-then Phase D (depth buffer + OIT).
+**Phase D (depth + OIT) deferred** — the current N-pass blend
+approach (one render pass per layer reading both accumulator and
+top texture) doesn't compose cleanly with depth buffer / OIT
+semantics. Implementing it properly needs a single-pass
+multi-texture compositor (or compute-shader path) — that's a
+restructure of `blend_inner` itself, not a layered addition. Worth
+a dedicated session.
 
 ## 1. Current state of the world
 
