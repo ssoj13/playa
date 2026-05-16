@@ -1,1 +1,1 @@
-python bootstrap.py build
+python bootstrap.py b

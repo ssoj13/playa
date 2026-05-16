@@ -42,15 +42,16 @@ passwd.txt
 .env.local
 .env.*
 
-# AI
+# scripts
+*.cmd
+*.sh
+*.log
 
+# AI
 .bughunt
 .claude
 .cursor
 .omc
 .planning
-*.cmd
-*.sh
-*.log
 temp_log.txt
 __pycache__
