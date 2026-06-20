@@ -111,6 +111,24 @@ fn header_exr(_path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     ))
 }
 
+/// Map a `vfx_core::AttrValue` (the element type of `ImageSpec.attributes`) into
+/// the engine-facing [`AttrKv`]. 1:1 and lossless at this layer: `Float` keeps
+/// f64 precision until the engine bridge narrows it to f32 (EXR floats are f32 on
+/// disk, so the round-trip stays bit-exact). Arrays and matrices pass through.
+#[cfg(feature = "exr")]
+fn kv_from_core(v: &vfx_core::AttrValue) -> AttrKv {
+    use vfx_core::AttrValue as C;
+    match v {
+        C::Int(i) => AttrKv::Int64(*i),
+        C::Float(f) => AttrKv::Float(*f as f32),
+        C::String(s) => AttrKv::Str(s.clone()),
+        C::IntArray(a) => AttrKv::IntArray(a.clone()),
+        C::FloatArray(a) => AttrKv::FloatArray(a.clone()),
+        C::Matrix3(m) => AttrKv::Matrix3(*m),
+        C::Matrix4(m) => AttrKv::Matrix4(*m),
+    }
+}
+
 #[cfg(feature = "exr")]
 fn header_exr(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     trace!("Reading EXR header (vfx-io passthrough): {}", path.display());
@@ -169,6 +187,26 @@ fn header_exr(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     if layer_count > 1 {
         v.push(("layer_names".into(), AttrKv::Str(layer_names)));
     }
+
+    // Absorb the FULL authored attribute set from every part, namespaced under
+    // `exr:` (and `exr:<layer>:` for parts beyond the first) so nothing the file
+    // carries is dropped: chromaticities, smpte:TimeCode, FramesPerSecond, owner,
+    // comments, worldToCamera and any custom attr land here as typed `AttrKv`.
+    // `read_layers_passthrough` is the exhaustive TYPED source (vs `read()` which
+    // stringifies). Derived convenience keys above stay unprefixed for the UI.
+    for (li, layer) in layered.layers.iter().enumerate() {
+        let prefix = if li == 0 {
+            "exr".to_string()
+        } else if layer.name.is_empty() {
+            format!("exr:Layer{li}")
+        } else {
+            format!("exr:{}", layer.name)
+        };
+        for (name, val) in &layer.spec.attributes {
+            v.push((format!("{prefix}:{name}"), kv_from_core(val)));
+        }
+    }
+
     Ok(v)
 }
 
