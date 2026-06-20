@@ -5,6 +5,10 @@ use std::path::Path;
 
 use crate::IoError;
 
+// `AttrValue` is the type of `ImageSpec.attributes` — it lives in vfx-core, NOT
+// vfx-io (vfx-io has a separate, unrelated `AttrValue`). The encode dialog
+// inserts per-layer compression into `layer.spec.attributes` through this
+// re-export, so it must be exactly `vfx_core::AttrValue`.
 pub use vfx_core::AttrValue;
 pub use vfx_io::{
     ChannelKind, ChannelSampleType, ChannelSamples, ImageChannel, ImageLayer, LayeredImage,

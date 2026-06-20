@@ -3,7 +3,7 @@ name = "playa-io"
 version = "0.1.142"
 edition = "2024"
 publish = false
-description = "Playa media I/O — optional FFmpeg video, optional EXR (vfx-rs), generic images; WebCodecs scaffold for Wasm"
+description = "Playa media I/O — optional FFmpeg video, optional EXR (oiio-rs/vfx-io), generic images; WebCodecs scaffold for Wasm"
 
 [lib]
 name = "playa_io"
@@ -11,8 +11,11 @@ path = "src/lib.rs"
 
 [features]
 default = ["exr", "ffmpeg"]
-# Desk / full native stacks
-exr = ["dep:vfx-exr", "dep:vfx-io", "dep:vfx-core"]
+# Desk / full native stacks. EXR pixel/layer I/O goes through vfx-io (from
+# oiio-rs; it pulls in exr-core internally via its own `exr` feature). vfx-core
+# is needed only for `AttrValue` — the type of `ImageSpec.attributes`, which the
+# encode dialog writes per-layer compression into via `exr_layered::AttrValue`.
+exr = ["dep:vfx-io", "dep:vfx-core"]
 ffmpeg = ["dep:playa-ffmpeg"]
 # Future: wasm-bindgen + web_sys bindings for browser WebCodecs
 webcodecs = []
@@ -23,6 +26,9 @@ image = { workspace = true }
 log = { workspace = true }
 playa-ffmpeg = { workspace = true, optional = true }
 
-vfx-core = { git = "https://github.com/ssoj13/vfx-rs.git", branch = "main", optional = true }
-vfx-exr = { git = "https://github.com/ssoj13/vfx-rs.git", branch = "main", optional = true, features = ["htj2k"] }
-vfx-io = { git = "https://github.com/ssoj13/vfx-rs.git", branch = "main", optional = true, features = ["exr", "htj2k"] }
+# EXR via vfx-io from the consolidated oiio-rs repo (vfx-rs was decomposed; the
+# old in-tree vfx-core/vfx-exr/vfx-io were moved out — vfx-exr was retired and
+# replaced by exr-core, which vfx-io consumes internally). Single git-ref, ssh
+# (private repo; relies on net.git-fetch-with-cli = true).
+vfx-io = { git = "ssh://git@github.com/ssoj13/oiio-rs.git", branch = "main", optional = true, features = ["exr", "htj2k"] }
+vfx-core = { git = "ssh://git@github.com/ssoj13/oiio-rs.git", branch = "main", optional = true }

@@ -96,43 +96,43 @@ fn header_exr(_path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
 
 #[cfg(feature = "exr")]
 fn header_exr(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
-    trace!("Reading EXR header with vfx-exr: {}", path.display());
-    use std::io::Cursor;
+    trace!("Reading EXR header (vfx-io passthrough): {}", path.display());
 
-    let bytes =
-        std::fs::read(path).map_err(|e| IoError::Image(format!("EXR open error: {}", e)))?;
-    let meta = vfx_exr::meta::MetaData::read_from_buffered(Cursor::new(&bytes), false)
+    // Pass-through read parses every part header but does NOT decompress pixels,
+    // so it cheaply exposes dimensions / channels / compression / layer names
+    // (`spec` is fully populated; `channels` stays empty — pixels live in chunks).
+    let layered = vfx_io::exr::read_layers_passthrough(path)
         .map_err(|e| IoError::Exr(format!("EXR header error: {}", e)))?;
 
-    let first = meta
-        .headers
+    let first = layered
+        .layers
         .first()
         .ok_or_else(|| IoError::Exr("EXR has no layers".to_string()))?;
 
-    let width = first.layer_size.x() as u32;
-    let height = first.layer_size.y() as u32;
-    let channel_count = first.channels.list.len() as u32;
-    let layer_count = meta.headers.len() as u32;
-    let compression_str = vfx_io::exr::compression_str::format(&first.compression);
+    let width = first.width;
+    let height = first.height;
+    let channel_count = first.spec.channel_names.len() as u32;
+    let layer_count = layered.layers.len() as u32;
+    let compression_str = first
+        .spec
+        .attributes
+        .get("compression")
+        .and_then(|v| v.as_str())
+        .unwrap_or("zip")
+        .to_string();
 
-    let channel_names: String = first
-        .channels
-        .list
-        .iter()
-        .map(|c| c.name.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
+    let channel_names: String = first.spec.channel_names.join(",");
 
-    let layer_names: String = meta
-        .headers
+    let layer_names: String = layered
+        .layers
         .iter()
         .enumerate()
-        .map(|(i, h)| {
-            h.own_attributes
-                .layer_name
-                .as_ref()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| format!("Layer{}", i))
+        .map(|(i, l)| {
+            if l.name.is_empty() {
+                format!("Layer{}", i)
+            } else {
+                l.name.clone()
+            }
         })
         .collect::<Vec<_>>()
         .join(",");
@@ -164,66 +164,47 @@ fn decode_exr(_path: &Path) -> Result<DecodedRaster, IoError> {
 
 #[cfg(feature = "exr")]
 fn decode_exr(path: &Path) -> Result<DecodedRaster, IoError> {
-    trace!("Loading EXR with vfx-exr: {}", path.display());
+    trace!("Loading EXR (vfx-io): {}", path.display());
     use half::f16;
-    use vfx_exr::prelude::*;
 
-    let file = InputFile::open(path).map_err(|e| IoError::Exr(format!("EXR open error: {}", e)))?;
-    let header = file.header();
-    let is_float = header
-        .channels
-        .list
-        .iter()
-        .any(|ch| ch.name == *"R" && ch.sample_type == SampleType::F32);
-    drop(file);
-
-    if is_float {
-        let image = read_first_rgba_layer_from_file(
-            path,
-            |resolution, _channels| Vec::<f32>::with_capacity(resolution.x() * resolution.y() * 4),
-            |buffer, _pos, (r, g, b, a): (f32, f32, f32, f32)| {
-                buffer.push(r);
-                buffer.push(g);
-                buffer.push(b);
-                buffer.push(a);
-            },
-        )
+    // Canonical single-image read: vfx-io decodes the first RGBA layer and
+    // assembles interleaved RGBA f32 with the faithful OIIO fallbacks (missing
+    // G/B copy R, missing A = 1.0), also handling multi-part and subsampled
+    // luminance-chroma files. `img.format` reports the *authored* bit depth so we
+    // can keep half frames compact; the pixel buffer is always f32 in memory.
+    let img = vfx_io::exr::read(path)
         .map_err(|e| IoError::Exr(format!("EXR decode error: {}", e)))?;
 
-        let layer = &image.layer_data;
-        let width = layer.size.x();
-        let height = layer.size.y();
-        let buffer = &layer.channel_data.pixels;
+    let width = img.width as usize;
+    let height = img.height as usize;
+    let authored = img.format;
 
-        trace!("Loaded EXR FLOAT: {}x{} (f32)", width, height);
+    let rgba_f32: Vec<f32> = match img.data {
+        vfx_io::PixelData::F32(v) => v,
+        // `read()` always emits an f32 RGBA buffer; anything else is a contract break.
+        _ => {
+            return Err(IoError::Exr(
+                "EXR decode produced non-f32 pixel storage".to_string(),
+            ));
+        }
+    };
+
+    // Preserve the source precision: half EXRs round-trip f32→f16 losslessly
+    // (every f16 value is exactly representable in f32), keeping the cache compact.
+    if authored == vfx_io::PixelFormat::F16 {
+        let buffer: Vec<f16> = rgba_f32.iter().map(|&v| f16::from_f32(v)).collect();
+        trace!("Loaded EXR HALF: {}x{} (f16)", width, height);
         Ok(DecodedRaster {
-            buffer: RawPixelBuffer::F32(buffer.clone()),
-            format: RawPixelFormat::RgbaF32,
+            buffer: RawPixelBuffer::F16(buffer),
+            format: RawPixelFormat::RgbaF16,
             width,
             height,
         })
     } else {
-        let image = read_first_rgba_layer_from_file(
-            path,
-            |resolution, _channels| Vec::<f16>::with_capacity(resolution.x() * resolution.y() * 4),
-            |buffer, _pos, (r, g, b, a): (f16, f16, f16, f16)| {
-                buffer.push(r);
-                buffer.push(g);
-                buffer.push(b);
-                buffer.push(a);
-            },
-        )
-        .map_err(|e| IoError::Exr(format!("EXR decode error: {}", e)))?;
-
-        let layer = &image.layer_data;
-        let width = layer.size.x();
-        let height = layer.size.y();
-        let buffer = &layer.channel_data.pixels;
-
-        trace!("Loaded EXR HALF: {}x{} (f16)", width, height);
+        trace!("Loaded EXR FLOAT: {}x{} (f32)", width, height);
         Ok(DecodedRaster {
-            buffer: RawPixelBuffer::F16(buffer.clone()),
-            format: RawPixelFormat::RgbaF16,
+            buffer: RawPixelBuffer::F32(rgba_f32),
+            format: RawPixelFormat::RgbaF32,
             width,
             height,
         })
