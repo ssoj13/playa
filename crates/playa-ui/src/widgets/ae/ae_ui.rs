@@ -336,11 +336,31 @@ fn render_value_editor(
                         .changed();
                 });
             }
-            AttrValue::Mat3(_) => {
-                ui.label("(3x3 matrix - not editable)");
+            AttrValue::Mat3(m) => {
+                // Editable 3x3 grid (row-major) — e.g. an EXR chromaticity/transform.
+                ui.vertical(|ui| {
+                    for row in m.iter_mut() {
+                        ui.horizontal(|ui| {
+                            for c in row.iter_mut() {
+                                scope_changed |=
+                                    ui.add(egui::DragValue::new(c).speed(0.01)).changed();
+                            }
+                        });
+                    }
+                });
             }
-            AttrValue::Mat4(_) => {
-                ui.label("(4x4 matrix - not editable)");
+            AttrValue::Mat4(m) => {
+                // Editable 4x4 grid (row-major) — e.g. EXR worldToCamera/worldToNDC.
+                ui.vertical(|ui| {
+                    for row in m.iter_mut() {
+                        ui.horizontal(|ui| {
+                            for c in row.iter_mut() {
+                                scope_changed |=
+                                    ui.add(egui::DragValue::new(c).speed(0.01)).changed();
+                            }
+                        });
+                    }
+                });
             }
             AttrValue::Json(s) => {
                 ui.label(format!("JSON: {} chars", s.len()));
@@ -359,7 +379,34 @@ fn render_value_editor(
                 ui.label(format!("{}", u));
             }
             AttrValue::List(items) => {
-                ui.label(format!("List: {} items", items.len()));
+                // Editable inline row of scalars — covers EXR array attrs that the
+                // load bridge stores as a `List` (chromaticities[8], smpte:TimeCode,
+                // FramesPerSecond, keycode). Non-scalar elements stay read-only.
+                ui.horizontal_wrapped(|ui| {
+                    for item in items.iter_mut() {
+                        match item {
+                            AttrValue::Int(v) => {
+                                scope_changed |=
+                                    ui.add(egui::DragValue::new(v).speed(1.0)).changed();
+                            }
+                            AttrValue::Int64(v) => {
+                                scope_changed |=
+                                    ui.add(egui::DragValue::new(v).speed(1.0)).changed();
+                            }
+                            AttrValue::UInt(v) => {
+                                scope_changed |=
+                                    ui.add(egui::DragValue::new(v).speed(1.0)).changed();
+                            }
+                            AttrValue::Float(v) => {
+                                scope_changed |=
+                                    ui.add(egui::DragValue::new(v).speed(0.01)).changed();
+                            }
+                            other => {
+                                ui.label(format!("{:?}", other));
+                            }
+                        }
+                    }
+                });
             }
             AttrValue::Map(entries) => {
                 ui.label(format!("Map: {} entries", entries.len()));
