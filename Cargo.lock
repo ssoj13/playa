@@ -4170,7 +4170,7 @@ dependencies = [
 name = "playa-coord"
 version = "0.1.142"
 dependencies = [
- "glam 0.32.1",
+ "glam 0.33.1",
 ]
 
 [[package]]
@@ -4182,7 +4182,7 @@ dependencies = [
  "cosmic-text",
  "crossbeam",
  "enum_dispatch",
- "glam 0.32.1",
+ "glam 0.33.1",
  "glob",
  "half",
  "lazy_static",
@@ -4300,7 +4300,7 @@ dependencies = [
 name = "playa-time"
 version = "0.1.142"
 dependencies = [
- "glam 0.32.1",
+ "glam 0.33.1",
  "serde",
 ]
 
@@ -4319,7 +4319,7 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "egui_ltreeview",
- "glam 0.32.1",
+ "glam 0.33.1",
  "half",
  "image",
  "log",
