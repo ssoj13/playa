@@ -8,8 +8,8 @@ license = "MIT"
 
 [features]
 default = ["ui", "prefs", "seedance", "inpaint", "persist"]
-ui = ["dep:playa-jobs-ui", "dep:playa-prefs"]
-prefs = ["dep:playa-prefs"]
+ui = ["dep:playa-jobs-ui", "dep:egui-prefs"]
+prefs = ["dep:egui-prefs"]
 seedance = ["dep:playa-job-seedance"]
 inpaint = ["dep:playa-job-inpaint"]
 persist = ["playa-jobs-core/persist"]
@@ -18,7 +18,7 @@ persist = ["playa-jobs-core/persist"]
 log = { workspace = true }
 playa-jobs-core = { path = "../playa-jobs-core", default-features = false }
 playa-jobs-ui = { path = "../playa-jobs-ui", optional = true }
-playa-prefs = { path = "../playa-prefs", optional = true }
+egui-prefs = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main", optional = true }
 playa-job-seedance = { path = "../playa-job-seedance", optional = true }
 playa-job-inpaint = { path = "../playa-job-inpaint", optional = true }
 

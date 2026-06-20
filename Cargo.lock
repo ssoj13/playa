@@ -1551,6 +1551,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-phosphor"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb4e4b18e368ff336c8dd2102992e2631b118f29a2164b0d2be9d8889dcd367e"
+dependencies = [
+ "egui",
+]
+
+[[package]]
+name = "egui-prefs"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+dependencies = [
+ "egui",
+ "egui-phosphor",
+]
+
+[[package]]
 name = "egui-progressbar"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
@@ -4115,6 +4133,8 @@ dependencies = [
  "crossbeam-channel",
  "dirs-next",
  "eframe",
+ "egui-phosphor",
+ "egui-prefs",
  "egui_dock",
  "env_logger",
  "image",
@@ -4124,7 +4144,6 @@ dependencies = [
  "playa-engine",
  "playa-events",
  "playa-jobs",
- "playa-prefs",
  "playa-ui",
  "rand 0.8.6",
  "regex",
@@ -4233,12 +4252,12 @@ dependencies = [
 name = "playa-jobs"
 version = "0.1.142"
 dependencies = [
+ "egui-prefs",
  "log",
  "playa-job-inpaint",
  "playa-job-seedance",
  "playa-jobs-core",
  "playa-jobs-ui",
- "playa-prefs",
  "serde_json",
  "uuid",
 ]
@@ -4259,18 +4278,11 @@ name = "playa-jobs-ui"
 version = "0.1.142"
 dependencies = [
  "egui",
+ "egui-prefs",
  "egui_extras",
  "log",
  "playa-jobs-core",
- "playa-prefs",
  "serde_json",
-]
-
-[[package]]
-name = "playa-prefs"
-version = "0.1.142"
-dependencies = [
- "egui",
 ]
 
 [[package]]

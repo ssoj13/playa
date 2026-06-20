@@ -12,7 +12,6 @@ members = [
     "crates/playa-jobs",
     "crates/playa-jobs-core",
     "crates/playa-jobs-ui",
-    "crates/playa-prefs",
     "crates/playa-time",
     "crates/playa-ui",
     "crates/xtask",

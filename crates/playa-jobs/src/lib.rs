@@ -9,7 +9,7 @@
 //!
 //! - `ui` (default): includes [`playa_jobs_ui`] (egui widgets — JobsPanel,
 //!   SubmitDialog, prefs::render). Implies `prefs`.
-//! - `prefs` (default): includes [`playa_prefs`] (PrefsRegistry +
+//! - `prefs` (default): includes [`egui_prefs`] (PrefsRegistry +
 //!   PrefsTreeView).
 //! - `seedance` (default): includes [`playa_job_seedance`] (fal.ai
 //!   provider — image-to-video, text-to-video).
@@ -47,8 +47,8 @@ pub mod ui {
 
 #[cfg(feature = "prefs")]
 pub mod prefs {
-    //! Re-export of [`playa_prefs`].
-    pub use playa_prefs::*;
+    //! Re-export of [`egui_prefs`].
+    pub use egui_prefs::*;
 }
 
 #[cfg(feature = "seedance")]

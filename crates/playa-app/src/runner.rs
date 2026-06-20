@@ -114,6 +114,12 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         "Playa",
         native_options,
         Box::new(move |cc| {
+            // Register the Phosphor icon font so egui-widgets-rs widgets (the
+            // prefs search bar, etc.) render their glyphs instead of tofu boxes.
+            let mut fonts = eframe::egui::FontDefinitions::default();
+            egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+            cc.egui_ctx.set_fonts(fonts);
+
             // Load persisted app state if available, otherwise create default
             let mut app: PlayaApp = cc
                 .storage

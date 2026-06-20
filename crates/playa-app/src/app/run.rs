@@ -371,10 +371,10 @@ impl eframe::App for PlayaApp {
             .prefs_window
             .show(ctx, &mut self.prefs_registry, &mut self.settings)
         {
-            playa_prefs::PrefsResult::Applied => log::info!("Preferences applied"),
-            playa_prefs::PrefsResult::OkClosed => log::info!("Preferences applied (OK)"),
-            playa_prefs::PrefsResult::Cancelled => log::info!("Preferences cancelled"),
-            playa_prefs::PrefsResult::Open | playa_prefs::PrefsResult::Closed => {}
+            egui_prefs::PrefsResult::Applied => log::info!("Preferences applied"),
+            egui_prefs::PrefsResult::OkClosed => log::info!("Preferences applied (OK)"),
+            egui_prefs::PrefsResult::Cancelled => log::info!("Preferences cancelled"),
+            egui_prefs::PrefsResult::Open | egui_prefs::PrefsResult::Closed => {}
         }
 
         // Process keyboard input after hover states were updated by panel rendering

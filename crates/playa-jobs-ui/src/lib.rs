@@ -6,7 +6,7 @@
 //! - [`SubmitDialog`] — modal for composing a Seedance generation request
 //!   (text-to-video or image-to-video) with live cost preview.
 //! - [`prefs::render`] — preferences-panel renderer for
-//!   [`playa_jobs_core::JobsSettings`]; pluggable into a [`playa_prefs::PrefsRegistry`].
+//!   [`playa_jobs_core::JobsSettings`]; pluggable into a [`egui_prefs::PrefsRegistry`].
 //!
 //! This crate is optional: the host enables it via the `ui` feature on the
 //! `playa-jobs` facade. Standalone consumption is also fine — depend
