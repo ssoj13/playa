@@ -239,6 +239,9 @@ pub enum AttrValue {
     Str(String),
     Int8(i8),
     Int(i32),
+    /// 64-bit integer. Carries source/EXR integer attrs whose u32 flag bits
+    /// overflow i32 (EXR `TimeCode`/`KeyCode`); bridged from `playa_io::AttrKv`.
+    Int64(i64),
     UInt(u32),
     Float(f32),
     Vec3([f32; 3]),
@@ -267,6 +270,7 @@ impl std::hash::Hash for AttrValue {
             Str(v) => v.hash(state),
             Int8(v) => v.hash(state),
             Int(v) => v.hash(state),
+            Int64(v) => v.hash(state),
             UInt(v) => v.hash(state),
             Float(v) => v.to_bits().hash(state),
             Vec3(arr) => arr.iter().for_each(|f| f.to_bits().hash(state)),
@@ -324,6 +328,7 @@ impl PartialEq for AttrValue {
             (Str(a), Str(b)) => a == b,
             (Int8(a), Int8(b)) => a == b,
             (Int(a), Int(b)) => a == b,
+            (Int64(a), Int64(b)) => a == b,
             (UInt(a), UInt(b)) => a == b,
             (Float(a), Float(b)) => f32_bits_eq(*a, *b),
             (Vec3(a), Vec3(b)) => f32_slice_bits_eq(a, b),

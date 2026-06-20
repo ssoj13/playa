@@ -8,12 +8,29 @@ use crate::media;
 use crate::pixel::{DecodedRaster, RawPixelBuffer, RawPixelFormat};
 use crate::video;
 
-/// Serialized header field for engine Attrs bridging.
+/// Serialized header field for engine `Attrs` bridging.
+///
+/// Unified carrier for every header/metadata value a backend surfaces. The scalar
+/// arms (`Str`/`UInt`/`Float`) serve video + generic headers; the wider arms
+/// mirror `vfx_core::AttrValue` 1:1 so the full EXR attribute set (chromaticities,
+/// timecode, framesPerSecond, camera matrices, …) round-trips into the engine
+/// without loss. `Int64` carries integer attrs whose u32 flag bits overflow i32
+/// (EXR `TimeCode`/`KeyCode`).
 #[derive(Debug, Clone)]
 pub enum AttrKv {
     Str(String),
     UInt(u32),
     Float(f32),
+    /// 64-bit integer (`vfx_core::AttrValue::Int`).
+    Int64(i64),
+    /// Integer array (`vfx_core::AttrValue::IntArray` — e.g. SMPTE timecode).
+    IntArray(Vec<i64>),
+    /// Float array (`vfx_core::AttrValue::FloatArray` — e.g. chromaticities[8]).
+    FloatArray(Vec<f64>),
+    /// 3×3 matrix, row-major (`vfx_core::AttrValue::Matrix3`).
+    Matrix3([f32; 9]),
+    /// 4×4 matrix, row-major (`vfx_core::AttrValue::Matrix4` — e.g. worldToCamera).
+    Matrix4([f32; 16]),
 }
 
 enum FileKind {

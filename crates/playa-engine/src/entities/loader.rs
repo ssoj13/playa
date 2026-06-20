@@ -24,13 +24,37 @@ impl From<playa_io::IoError> for FrameError {
 fn attrs_from_io(entries: Vec<(String, AttrKv)>) -> Attrs {
     let mut attrs = Attrs::new();
     for (key, kv) in entries {
-        match kv {
-            AttrKv::Str(s) => attrs.set(key, AttrValue::Str(s)),
-            AttrKv::UInt(u) => attrs.set(key, AttrValue::UInt(u)),
-            AttrKv::Float(f) => attrs.set(key, AttrValue::Float(f)),
-        }
+        attrs.set(key, av_from_kv(kv));
     }
     attrs
+}
+
+/// Bridge one `playa_io::AttrKv` into the engine's `AttrValue`. Lossless: integer
+/// attrs land in `Int64`, arrays in `List`, matrices reshape row-major into
+/// `Mat3`/`Mat4`. f64 floats narrow to f32 — EXR authors floats as f32 on disk, so
+/// this stays bit-exact against the file.
+fn av_from_kv(kv: AttrKv) -> AttrValue {
+    match kv {
+        AttrKv::Str(s) => AttrValue::Str(s),
+        AttrKv::UInt(u) => AttrValue::UInt(u),
+        AttrKv::Float(f) => AttrValue::Float(f),
+        AttrKv::Int64(i) => AttrValue::Int64(i),
+        AttrKv::IntArray(v) => AttrValue::List(v.into_iter().map(AttrValue::Int64).collect()),
+        AttrKv::FloatArray(v) => {
+            AttrValue::List(v.into_iter().map(|f| AttrValue::Float(f as f32)).collect())
+        }
+        AttrKv::Matrix3(m) => AttrValue::Mat3([
+            [m[0], m[1], m[2]],
+            [m[3], m[4], m[5]],
+            [m[6], m[7], m[8]],
+        ]),
+        AttrKv::Matrix4(m) => AttrValue::Mat4([
+            [m[0], m[1], m[2], m[3]],
+            [m[4], m[5], m[6], m[7]],
+            [m[8], m[9], m[10], m[11]],
+            [m[12], m[13], m[14], m[15]],
+        ]),
+    }
 }
 
 fn pb_from_raw(b: RawPixelBuffer) -> PixelBuffer {

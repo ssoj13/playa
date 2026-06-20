@@ -280,6 +280,9 @@ fn render_value_editor(
             AttrValue::Int(v) => {
                 scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0)).changed();
             }
+            AttrValue::Int64(v) => {
+                scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0)).changed();
+            }
             AttrValue::UInt(v) => {
                 let mut temp = *v as i32;
                 if ui
