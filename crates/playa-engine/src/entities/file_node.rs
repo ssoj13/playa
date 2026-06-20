@@ -338,6 +338,12 @@ fn detect_sequence_from_pattern(pattern: &str, padding: usize) -> Result<FileNod
     let file_mask = format!("{}*.{}", prefix, ext);
     let mut node = FileNode::new(file_mask.clone(), min_frame as i32, max_frame as i32, 24.0);
 
+    // Absorb the FULL source metadata header (every `exr:*` attr: chromaticities,
+    // timecode, fps, owner, comments, camera matrices, …) so it reaches the
+    // attribute editor and persists with the project. Structural/derived keys
+    // below are re-set afterwards as the canonical values.
+    node.attrs.merge(attrs);
+
     // Store dimensions and padding
     node.attrs.set(A_WIDTH, AttrValue::UInt(width as u32));
     node.attrs.set(A_HEIGHT, AttrValue::UInt(height as u32));
@@ -371,6 +377,10 @@ fn create_single_file_node(path: &Path) -> Result<FileNode, FrameError> {
 
     let file_mask = path.to_string_lossy().to_string();
     let mut node = FileNode::new(file_mask.clone(), 0, 0, 24.0);
+
+    // Absorb the FULL source metadata header so it reaches the attribute editor
+    // and persists with the project (structural keys re-set as canonical below).
+    node.attrs.merge(attrs);
 
     node.attrs.set(A_WIDTH, AttrValue::UInt(width as u32));
     node.attrs.set(A_HEIGHT, AttrValue::UInt(height as u32));

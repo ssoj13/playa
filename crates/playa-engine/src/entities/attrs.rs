@@ -450,6 +450,16 @@ impl Attrs {
         }
     }
 
+    /// Merge every key/value pair from `other` into self, overwriting on key
+    /// collision. Absorbs a source file's full metadata header into a node
+    /// without dropping any of it. Routes through `set` so dirty-tracking and
+    /// schema rules apply uniformly to the merged-in keys.
+    pub fn merge(&mut self, other: Attrs) {
+        for (k, v) in other.map {
+            self.set(k, v);
+        }
+    }
+
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
         self.map.get(key)
     }
