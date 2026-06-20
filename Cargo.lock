@@ -1581,6 +1581,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-statusbar"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+dependencies = [
+ "egui",
+ "serde",
+]
+
+[[package]]
 name = "egui-wgpu"
 version = "0.34.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4281,6 +4290,7 @@ dependencies = [
  "egui-help-overlay",
  "egui-progressbar",
  "egui-snarl",
+ "egui-statusbar",
  "egui-wgpu",
  "egui_dnd",
  "egui_dock",
