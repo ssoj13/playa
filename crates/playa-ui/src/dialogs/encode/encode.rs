@@ -2311,13 +2311,118 @@ fn pixel_buf_to_rgba8(buffer: &playa_engine::entities::frame::PixelBuffer) -> Ve
     }
 }
 
-/// Write frame to EXR file using vfx-io (pure Rust, all compressions)
+/// Reverse of the load-time attribute bridge: map a playa engine `AttrValue`
+/// back into the `vfx_core::AttrValue` the EXR writer persists. Only the shapes
+/// an absorbed `exr:` header attr can hold are handled (Str/Int/Int64/UInt/Float,
+/// homogeneous int/float `List` -> IntArray/FloatArray, Mat3/Mat4 row-major);
+/// anything else returns `None` and is skipped (it cannot be an EXR header attr).
+fn core_attr_from_engine(
+    v: &playa_engine::entities::AttrValue,
+) -> Option<playa_io::exr_layered::AttrValue> {
+    use playa_engine::entities::AttrValue as E;
+    use playa_io::exr_layered::AttrValue as C;
+    let out = match v {
+        E::Str(s) => C::String(s.clone()),
+        E::Int(i) => C::Int(*i as i64),
+        E::Int64(i) => C::Int(*i),
+        E::UInt(u) => C::Int(*u as i64),
+        E::Float(f) => C::Float(*f as f64),
+        E::Mat3(m) => C::Matrix3([
+            m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2],
+        ]),
+        E::Mat4(m) => C::Matrix4([
+            m[0][0], m[0][1], m[0][2], m[0][3], m[1][0], m[1][1], m[1][2], m[1][3], m[2][0],
+            m[2][1], m[2][2], m[2][3], m[3][0], m[3][1], m[3][2], m[3][3],
+        ]),
+        E::List(items)
+            if !items.is_empty()
+                && items
+                    .iter()
+                    .all(|x| matches!(x, E::Int(_) | E::Int64(_) | E::UInt(_))) =>
+        {
+            C::IntArray(
+                items
+                    .iter()
+                    .map(|x| match x {
+                        E::Int(i) => *i as i64,
+                        E::Int64(i) => *i,
+                        E::UInt(u) => *u as i64,
+                        _ => 0,
+                    })
+                    .collect(),
+            )
+        }
+        E::List(items)
+            if !items.is_empty() && items.iter().all(|x| matches!(x, E::Float(_))) =>
+        {
+            C::FloatArray(
+                items
+                    .iter()
+                    .map(|x| match x {
+                        E::Float(f) => *f as f64,
+                        _ => 0.0,
+                    })
+                    .collect(),
+            )
+        }
+        _ => return None,
+    };
+    Some(out)
+}
+
+/// Collect a source EXR `FileNode`'s absorbed header attributes (`exr:`-namespaced,
+/// part 0) reverse-mapped to `vfx_core::AttrValue` for write-back on encode — the
+/// user's edits in the attribute editor ride along on these. Skips `exr:compression`
+/// (the encoder sets compression itself) and multi-part `exr:<layer>:` keys (the
+/// display encode emits one layer). Uses the same "first EXR FileNode" rule as the
+/// pass-through path. Empty when no EXR source is present.
+fn source_exr_attrs_from_project(
+    project: &playa_engine::entities::Project,
+) -> Vec<(String, playa_io::exr_layered::AttrValue)> {
+    use playa_engine::entities::NodeKind;
+    let Ok(media) = project.media.read() else {
+        return Vec::new();
+    };
+    for node in media.values() {
+        if let NodeKind::File(fnode) = node.as_ref() {
+            if let Some(mask) = fnode.file_mask() {
+                let is_exr = std::path::Path::new(&mask)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.eq_ignore_ascii_case("exr"))
+                    .unwrap_or(false);
+                if is_exr {
+                    let mut out = Vec::new();
+                    for (key, val) in fnode.attrs.iter() {
+                        let Some(name) = key.strip_prefix("exr:") else {
+                            continue;
+                        };
+                        if name.contains(':') || name == "compression" {
+                            continue;
+                        }
+                        if let Some(core) = core_attr_from_engine(val) {
+                            out.push((name.to_string(), core));
+                        }
+                    }
+                    return out;
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Write frame to EXR file using vfx-io (pure Rust, all compressions).
+///
+/// `extra_attrs` carries the source EXR's absorbed (and possibly user-edited)
+/// header attributes for round-trip; empty for non-EXR sources.
 fn write_exr_frame(
     frame: &playa_engine::entities::Frame,
     path: &std::path::Path,
     settings: &ExrSequenceSettings,
     channels: ChannelMode,
     bit_depth: OutputBitDepth,
+    extra_attrs: &[(String, playa_io::exr_layered::AttrValue)],
 ) -> Result<(), EncodeError> {
     use playa_engine::entities::frame::PixelBuffer;
     use playa_io::exr_layered::{
@@ -2395,6 +2500,12 @@ fn write_exr_frame(
         channels: exr_channels,
         ..Default::default()
     };
+    // Round-trip the source EXR's absorbed (and possibly edited) header attrs
+    // onto the output layer so chromaticities/timecode/owner/worldToCamera/... are
+    // preserved across a display-encode. Compression below is authoritative.
+    for (name, val) in extra_attrs {
+        layer.spec.attributes.insert(name.clone(), val.clone());
+    }
     layer.spec.attributes.insert(
         "compression".to_string(),
         AttrValue::String(settings.compression.to_oiio_string(settings.dwa_quality)),
@@ -2858,6 +2969,11 @@ pub fn encode_image_sequence(
         return Err(EncodeError::Cancelled);
     }
 
+    // Source EXR header attributes (absorbed + user-edited) to round-trip onto each
+    // encoded EXR frame. Constant across frames — computed once. Empty for non-EXR
+    // sources or DisplayOnly with no EXR source present.
+    let source_exr_attrs = source_exr_attrs_from_project(project);
+
     for frame_idx in play_range.0..=play_range.1 {
         // Check for cancellation
         if cancel_flag.load(Ordering::Relaxed) {
@@ -2908,6 +3024,7 @@ pub fn encode_image_sequence(
                         exr_settings,
                         settings.channels,
                         settings.bit_depth,
+                        &source_exr_attrs,
                     )?;
                 }
             }
