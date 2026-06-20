@@ -107,9 +107,9 @@ impl JobsPanel {
             .any(|j| matches!(j.state, JobState::Failed | JobState::Cancelled));
 
         // Bottom action bar (shown only when something is selected).
-        egui::TopBottomPanel::bottom("jobs_actions")
+        egui::Panel::bottom("jobs_actions")
             .resizable(false)
-            .min_height(28.0)
+            .min_size(28.0)
             .show_inside(ui, |ui| {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {

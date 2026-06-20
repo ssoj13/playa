@@ -9,7 +9,7 @@ license = "MIT"
 [dependencies]
 playa-jobs-core = { path = "../playa-jobs-core" }
 playa-prefs = { path = "../playa-prefs" }
-egui = "0.33"
-egui_extras = "0.33"
+egui = "0.34"
+egui_extras = "0.34"
 log = { workspace = true }
 serde_json = { workspace = true }

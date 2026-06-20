@@ -19,7 +19,7 @@ bytemuck = { workspace = true }
 cosmic-text = "0.18"
 crossbeam = "0.8.4"
 enum_dispatch = "0.3"
-wgpu = "27"
+wgpu = "29"
 glam = { workspace = true }
 glob = "0.3"
 half = { workspace = true }

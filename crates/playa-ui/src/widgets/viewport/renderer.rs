@@ -292,8 +292,10 @@ impl ViewportRenderer {
             });
             self.pip_layout = Some(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("viewport_pip_layout"),
-                bind_group_layouts: &[&bgl],
-                push_constant_ranges: &[],
+                // wgpu 29: each bind group layout entry is now Option<&BindGroupLayout>.
+                bind_group_layouts: &[Some(&bgl)],
+                // wgpu 28+: push constant ranges replaced by `immediate_size` (byte count; 0 = none).
+                immediate_size: 0,
             }));
             self.bgl = Some(bgl);
         }
@@ -355,7 +357,8 @@ impl ViewportRenderer {
             },
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            // wgpu 29: `multiview` renamed to `multiview_mask`.
+            multiview_mask: None,
             cache: None,
         });
         trace!("viewport pipeline {:?} {:?}", target_fmt, img_native);

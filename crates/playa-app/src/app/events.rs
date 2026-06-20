@@ -561,7 +561,7 @@ impl PlayaApp {
         }
 
         // Priority 2: Keyboard focus (text fields) - don't process hotkeys
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return HotkeyWindow::Global; // Return Global but will be filtered later
         }
 
@@ -708,7 +708,7 @@ impl PlayaApp {
     /// Handle keyboard input and hotkeys.
     pub fn handle_keyboard_input(&mut self, ctx: &egui::Context) {
         // Don't process hotkeys when text input is active (typing in fields)
-        if ctx.wants_keyboard_input() {
+        if ctx.egui_wants_keyboard_input() {
             return;
         }
 

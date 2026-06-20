@@ -681,8 +681,10 @@ impl<'a> TabViewer for DockTabs<'a> {
         &mut self,
         ui: &mut egui::Ui,
         _tab: &mut DockTab,
-        _surface: egui_dock::SurfaceIndex,
-        _node: egui_dock::NodeIndex,
+        // egui_dock 0.19: the separate `surface`/`node` indices were merged into
+        // a single `NodePath`. We don't use the location here (the menu is the
+        // same for any tab), so it stays unused.
+        _path: egui_dock::NodePath,
     ) {
         // The right-click target is the specific tab the user clicked,
         // but we present the same "Open tab" submenu regardless of

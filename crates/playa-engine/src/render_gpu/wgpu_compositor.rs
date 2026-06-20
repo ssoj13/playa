@@ -70,7 +70,8 @@ impl WgpuCompositor {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            // wgpu 29: `mipmap_filter` now takes the dedicated `MipmapFilterMode` enum.
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
 
@@ -139,8 +140,10 @@ impl WgpuCompositor {
 
         let blend_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("playa_blend_pipeline_layout"),
-            bind_group_layouts: &[&blend_bind_group_layout],
-            push_constant_ranges: &[],
+            // wgpu 29: each bind group layout entry is now Option<&BindGroupLayout>.
+            bind_group_layouts: &[Some(&blend_bind_group_layout)],
+            // wgpu 28+: push constant ranges replaced by `immediate_size` (byte count; 0 = none).
+            immediate_size: 0,
         });
 
         let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -266,7 +269,8 @@ impl WgpuCompositor {
             },
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            // wgpu 29: `multiview` renamed to `multiview_mask`.
+            multiview_mask: None,
             cache: None,
         })
     }
@@ -430,6 +434,8 @@ impl WgpuCompositor {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                // wgpu 29: render passes require an explicit multiview mask.
+                multiview_mask: None,
             });
             rp.set_pipeline(pipeline);
             rp.set_bind_group(0, &bg, &[]);

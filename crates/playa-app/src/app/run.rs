@@ -22,7 +22,16 @@ impl eframe::App for PlayaApp {
     /// Each frame: API exit, lazy API start, wgpu output format + compositor sync, screenshot
     /// deliveries, GPU blend drain, settings/player/event loop, docked UI & dialogs; ends by
     /// scheduling any new screenshots for the compositor-backed capture path.
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // eframe 0.34: the App entry point moved from `update(&Context)` to
+        // `ui(&mut Ui)`. All `Panel::show(ctx, ..)` calls were converted to
+        // `Panel::show_inside(ui, ..)` (a panel must attach to the given root
+        // `ui`, not the context, under `ui()`); only floating `egui::Window`
+        // dialogs still take `ctx` (correct — Windows are top-level Areas). The
+        // local `ctx` binding (cheap Arc clone) serves the non-panel, ctx-level
+        // input/event/state logic below, which is unchanged from the old body.
+        let ctx_owned = ui.ctx().clone();
+        let ctx: &egui::Context = &ctx_owned;
         // Reset node editor flags each frame - will be set if tab is rendered
         // Handle exit request from REST API
         if self.exit_requested {
@@ -79,11 +88,11 @@ impl eframe::App for PlayaApp {
 
         // Apply font size from settings - skip if unchanged (cloning style is expensive)
         if (self.settings.font_size - self.last_applied_font_size).abs() > f32::EPSILON {
-            let mut style = (*ctx.style()).clone();
+            let mut style = (*ctx.global_style()).clone();
             for (_, font_id) in style.text_styles.iter_mut() {
                 font_id.size = self.settings.font_size;
             }
-            ctx.set_style(style);
+            ctx.set_global_style(style);
             self.last_applied_font_size = self.settings.font_size;
         }
 
@@ -175,7 +184,7 @@ impl eframe::App for PlayaApp {
         if !self.is_fullscreen {
             let cache_mgr = self.project.cache_manager().map(Arc::clone);
             self.status_bar.render(
-                ctx,
+                ui,
                 self.frame.as_ref(),
                 &self.player,
                 &self.project,
@@ -194,14 +203,14 @@ impl eframe::App for PlayaApp {
             );
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             if self.is_fullscreen {
                 self.render_viewport_tab(ui);
             } else {
                 // Remove hidden tabs before rendering
                 self.sync_dock_tabs_visibility();
 
-                let dock_style = egui_dock::Style::from_egui(ctx.style().as_ref());
+                let dock_style = egui_dock::Style::from_egui(ctx.global_style().as_ref());
                 let mut dock_state =
                     std::mem::replace(&mut self.dock_state, PlayaApp::default_dock_state());
 

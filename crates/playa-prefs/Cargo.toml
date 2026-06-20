@@ -7,4 +7,4 @@ description = "Pluggable Preferences registry + tree-view modal window for egui 
 license = "MIT"
 
 [dependencies]
-egui = "0.33"
+egui = "0.34"

@@ -79,7 +79,8 @@ impl EffectsRunner {
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            // wgpu 29: `mipmap_filter` now takes the dedicated `MipmapFilterMode` enum.
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
         let quad_vbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

@@ -1545,7 +1545,8 @@ pub fn render_canvas(
     // Handle zoom controls when timeline is hovered
     if timeline_hovered {
         // Ctrl+scroll wheel
-        let scroll_delta = ui.ctx().input(|i| i.raw_scroll_delta.y);
+        // egui 0.34: `raw_scroll_delta` removed; use `smooth_scroll_delta` for wheel input.
+        let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta.y);
         if scroll_delta != 0.0 && ui.ctx().input(|i| i.modifiers.ctrl) {
             let zoom_factor = if scroll_delta > 0.0 { 1.1 } else { 0.9 };
             state.zoom = (state.zoom * zoom_factor).clamp(0.1, 20.0);

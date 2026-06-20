@@ -295,9 +295,9 @@ where
                 let visible = registry.filtered_indices(&self.search_text);
 
                 // Bottom bar — Apply / Cancel / OK.
-                egui::TopBottomPanel::bottom("prefs_actions")
+                egui::Panel::bottom("prefs_actions")
                     .resizable(false)
-                    .min_height(32.0)
+                    .min_size(32.0)
                     .show_inside(ui, |ui| {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
@@ -333,9 +333,9 @@ where
                     });
 
                 // Sidebar — tree-view grouped by category.
-                egui::SidePanel::left("prefs_tree")
+                egui::Panel::left("prefs_tree")
                     .resizable(true)
-                    .default_width(200.0)
+                    .default_size(200.0)
                     .show_inside(ui, |ui| {
                         ScrollArea::vertical().show(ui, |ui| {
                             // Group visible entries by category, preserving

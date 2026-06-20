@@ -87,8 +87,10 @@ impl BlurRunner {
             let bgl = self.bgl.as_ref().unwrap();
             self.pip_layout = Some(device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("playa_effect_blur_layout"),
-                bind_group_layouts: &[bgl],
-                push_constant_ranges: &[],
+                // wgpu 29: each bind group layout entry is now Option<&BindGroupLayout>.
+                bind_group_layouts: &[Some(bgl)],
+                // wgpu 28+: push constant ranges replaced by `immediate_size` (byte count; 0 = none).
+                immediate_size: 0,
             }));
         }
         if self.uniform_buf_h.is_none() {
@@ -142,7 +144,8 @@ impl BlurRunner {
                 },
                 depth_stencil: None,
                 multisample: Default::default(),
-                multiview: None,
+                // wgpu 29: `multiview` renamed to `multiview_mask`.
+                multiview_mask: None,
                 cache: None,
             });
             self.pipelines.insert(format, pipeline);
@@ -217,6 +220,8 @@ impl BlurRunner {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                // wgpu 29: render passes require an explicit multiview mask.
+                multiview_mask: None,
             });
             rp.set_pipeline(pipeline);
             rp.set_bind_group(0, &bg, &[]);

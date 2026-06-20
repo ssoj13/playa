@@ -25,8 +25,8 @@ default-members = ["."]
 anyhow = "1.0"
 bytemuck = "1.25"
 clap = { version = "4.6", features = ["derive"] }
-egui-wgpu = "0.33"
-egui_dock = { version = "0.18", features = ["serde"] }
+egui-wgpu = "0.34"
+egui_dock = { version = "0.19", features = ["serde"] }
 env_logger = "0.11"
 glam = "0.32"
 half = { version = "2.7", features = ["bytemuck"] }
@@ -37,7 +37,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 uuid = { version = "1.22", features = ["v4", "serde"] }
-wgpu = "27"
+wgpu = "29"
 playa-coord = { path = "crates/playa-coord" }
 playa-ffmpeg = { path = "crates/playa-ffmpeg", features = ["static"] }
 playa-time = { path = "crates/playa-time" }
@@ -72,7 +72,10 @@ env_logger = { workspace = true }
 log = { workspace = true }
 
 puffin = { version = "0.20", optional = true }
-puffin_egui = { version = "0.30", optional = true }
+# Patched puffin_egui (egui 0.34) — crates.io 0.30 still pins egui ^0.33, so we
+# consume our extracted copy via git-ref. Keeps the `profiler` feature working
+# on egui 0.34 and avoids a duplicate egui 0.33 in the lock.
+puffin_egui = { git = "ssh://git@github.com/ssoj13/puffin-egui-rs.git", branch = "main", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 playa-io = { path = "crates/playa-io", features = ["exr", "ffmpeg"] }

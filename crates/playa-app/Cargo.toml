@@ -25,7 +25,7 @@ playa-ui = { path = "../playa-ui" }
 anyhow = { workspace = true }
 clap = { workspace = true }
 env_logger = { workspace = true }
-eframe = { version = "0.33", default-features = false, features = [
+eframe = { version = "0.34", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "wgpu",

@@ -174,10 +174,10 @@ pub fn render_timeline_panel(
                         // Ensure outline_width is at least 400px (default) if it's too small
                         // This prevents the splitter from being too narrow after loading saved state
                         let saved_width = timeline_state.outline_width.max(400.0);
-                        let outline_response = egui::SidePanel::left("timeline_outline")
+                        let outline_response = egui::Panel::left("timeline_outline")
                             .resizable(true)
-                            .min_width(100.0)
-                            .default_width(saved_width)
+                            .min_size(100.0)
+                            .default_size(saved_width)
                             .frame(egui::Frame::NONE) // Remove default frame to align with canvas
                             .show_inside(ui, |ui| {
                                 // Lock panel to exact height to prevent vertical scrollbar.

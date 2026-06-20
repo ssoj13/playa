@@ -279,7 +279,8 @@ fn handle_viewport_input(
         return;
     }
 
-    let scroll_delta = ctx.input(|i| i.raw_scroll_delta);
+    // egui 0.34: `raw_scroll_delta` removed; use `smooth_scroll_delta` for wheel input.
+    let scroll_delta = ctx.input(|i| i.smooth_scroll_delta);
     if scroll_delta.y.abs() > 0.1 {
         let cursor_pos = ctx.input(|i| i.pointer.hover_pos());
         if let Some(cursor_pos) = cursor_pos

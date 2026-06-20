@@ -16,7 +16,7 @@ playa-io = { path = "../playa-io", default-features = false }
 playa-time = { workspace = true }
 playa-jobs-core = { path = "../playa-jobs-core", default-features = false }
 bytemuck = { workspace = true }
-eframe = { version = "0.33", default-features = false, features = [
+eframe = { version = "0.34", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "wgpu",
@@ -27,11 +27,11 @@ eframe = { version = "0.33", default-features = false, features = [
 ] }
 egui-wgpu = { workspace = true }
 wgpu = { workspace = true }
-egui_dnd = "0.14"
+egui_dnd = "0.15"
 egui_dock = { workspace = true }
-egui_extras = "0.33"
-egui_ltreeview = { version = "0.6.1", features = ["persistence"] }
-egui-snarl = { version = "0.9", features = ["serde"] }
+egui_extras = "0.34"
+egui_ltreeview = { version = "0.7", features = ["persistence"] }
+egui-snarl = { version = "0.10", features = ["serde"] }
 glam = { workspace = true }
 half = { workspace = true }
 image = { workspace = true }
@@ -39,7 +39,7 @@ log = { workspace = true }
 rfd = "0.17"
 serde = { workspace = true }
 serde_json = { workspace = true }
-transform-gizmo-egui = "0.8"
+transform-gizmo-egui = "0.9"
 uuid = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

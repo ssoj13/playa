@@ -24,7 +24,7 @@ impl StatusBar {
     /// Render status bar at bottom of screen
     pub fn render(
         &self,
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         frame: Option<&Frame>,
         player: &Player,
         project: &Project,
@@ -33,7 +33,7 @@ impl StatusBar {
         cache_manager: Option<&Arc<CacheManager>>,
         mut dispatch: impl FnMut(BoxedEvent),
     ) {
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+        egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 // Filename
                 if let Some(frame) = frame {
