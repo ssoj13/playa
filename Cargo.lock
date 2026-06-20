@@ -1551,6 +1551,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-jobs-table"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+dependencies = [
+ "egui",
+ "egui-phosphor",
+ "egui_extras",
+]
+
+[[package]]
 name = "egui-phosphor"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4278,6 +4288,7 @@ name = "playa-jobs-ui"
 version = "0.1.142"
 dependencies = [
  "egui",
+ "egui-jobs-table",
  "egui-prefs",
  "egui_extras",
  "log",

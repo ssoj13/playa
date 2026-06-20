@@ -97,8 +97,8 @@ fn facade_seedance_provider_constructor_compiles() {
 #[test]
 fn facade_jobs_panel_constructible() {
     let p = playa_jobs::ui::JobsPanel::new();
-    assert!(!p.filter_active_only);
-    assert!(p.filter_search.is_empty());
+    assert!(p.table.selected.is_empty());
+    assert!(p.table.filter_text.is_empty());
 }
 
 #[cfg(feature = "ui")]

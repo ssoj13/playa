@@ -19,4 +19,4 @@ pub mod panel;
 pub mod prefs;
 
 pub use dialog::{SubmitDialog, SubmitDialogResult, SubmitEndpoint};
-pub use panel::{JobsAction, JobsPanel, JobsSortColumn};
+pub use panel::{JobsAction, JobsPanel};
