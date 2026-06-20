@@ -1543,6 +1543,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-progressbar"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "egui-scale"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4262,6 +4270,7 @@ version = "0.1.142"
 dependencies = [
  "bytemuck",
  "eframe",
+ "egui-progressbar",
  "egui-snarl",
  "egui-wgpu",
  "egui_dnd",

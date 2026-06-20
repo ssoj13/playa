@@ -16,7 +16,7 @@ use crate::dialogs::encode::{
     EncoderSettings, ExportMode, ExrCompression, OutputBitDepth, ProResProfile, SequenceFormat,
     SequenceSettings, TiffCompression, VideoCodec,
 };
-use crate::widgets::status::progress_bar::ProgressBar;
+use egui_progressbar::ProgressBar;
 use playa_engine::entities::{Comp, Project};
 
 /// Encoding dialog state
