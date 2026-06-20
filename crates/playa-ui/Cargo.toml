@@ -33,6 +33,7 @@ egui_extras = "0.34"
 # Reusable widgets extracted from playa, consumed via git-ref (single egui 0.34
 # pin shared with eframe). See egui-widgets-rs.
 egui-progressbar = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-help-overlay = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 egui_ltreeview = { version = "0.7", features = ["persistence"] }
 egui-snarl = { version = "0.10", features = ["serde"] }
 glam = { workspace = true }
