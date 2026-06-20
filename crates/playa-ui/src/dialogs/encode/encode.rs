@@ -680,7 +680,7 @@ pub enum ExrCompression {
     /// Per-scanline ZIP (smaller blocks, slightly faster random access)
     Zips,
     #[default]
-    /// 16-scanline ZIP (vfx-exr `ZIP16`, the OpenEXR default)
+    /// 16-scanline ZIP (exr-core `Zip`, the OpenEXR default)
     Zip,
     Piz,
     /// Lossless for f16/u32, lossy for f32 (drops 8 bits of mantissa)
@@ -693,7 +693,7 @@ pub enum ExrCompression {
     Dwaa,
     /// 256-scanline DCT, lossy. Faster full-frame decode than DWAA
     Dwab,
-    /// 32-scanline HTJ2K (requires `vfx-exr/htj2k` feature, enabled in Cargo.toml)
+    /// 32-scanline HTJ2K (requires `vfx-io/htj2k` feature, enabled in Cargo.toml)
     HtJ2k32,
     /// 256-scanline HTJ2K
     HtJ2k256,
@@ -741,7 +741,7 @@ impl ExrCompression {
     /// level after a colon: `"dwaa:45"`. HTJ2K variants always carry an
     /// explicit `:32` / `:256` suffix to avoid ambiguity. Format matches
     /// `vfx_io::exr::compression_str::format` so vfx-io reads it back to
-    /// the right vfx-exr compression enum.
+    /// the right exr-core compression enum.
     pub fn to_oiio_string(self, dwa_quality: f32) -> String {
         match self {
             ExrCompression::None => "none".to_string(),
@@ -2311,7 +2311,7 @@ fn pixel_buf_to_rgba8(buffer: &playa_engine::entities::frame::PixelBuffer) -> Ve
     }
 }
 
-/// Write frame to EXR file using vfx-exr (pure Rust, all compressions)
+/// Write frame to EXR file using vfx-io (pure Rust, all compressions)
 fn write_exr_frame(
     frame: &playa_engine::entities::Frame,
     path: &std::path::Path,
@@ -2459,9 +2459,9 @@ fn write_exr_pass_through(
         return Ok(false);
     }
 
-    // Byte-exact pass-through (Phase E in vfx-rs): read every chunk's raw
-    // compressed_block payload via vfx_exr::block::read, write it back via
-    // vfx_exr::block::write. No decompress + recompress, so DWAA / DWAB /
+    // Byte-exact pass-through: read every chunk's raw compressed_block payload
+    // and write it back verbatim via vfx_io::exr::{read,write}_layers_passthrough.
+    // No decompress + recompress, so DWAA / DWAB /
     // B44 / HTJ2K survive transcode without quality loss. Custom header
     // attrs (chromaticities, timecode, owner, …) preserved automatically
     // because the source Header is reused verbatim.

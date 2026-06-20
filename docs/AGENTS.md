@@ -4,7 +4,7 @@ Architecture guide for developers and AI assistants. Compiled from facts —
 from module rustdocs and code tracing — not from rumors or the old README.
 
 > Version: **0.1.142** · Rust **edition 2024** · `target/release/playa[.exe]`
-> EXR backend: **vfx-exr** (pure Rust, all compressions including DWAA/DWAB/HTJ2K).
+> EXR backend: **vfx-io / exr-core** (pure Rust, all compressions including DWAA/DWAB/HTJ2K).
 > Video: **playa-ffmpeg 8.0** (statically linked FFmpeg, vendored under `crates/playa-ffmpeg/`).
 
 ---
@@ -312,7 +312,7 @@ the inverse affine matrix.
 
 | Type | Backend | Extensions |
 |------|---------|-----------|
-| EXR | `vfx-exr` (path-dep, pure Rust) | `.exr` — all compressions including DWAA/DWAB/HTJ2K |
+| EXR | `vfx-io` / `exr-core` (oiio-rs git-ref, pure Rust) | `.exr` — all compressions including DWAA/DWAB/HTJ2K |
 | Generic | `image` 0.25 | `.png .jpg .jpeg .tif .tiff .tga .hdr` |
 | Video | `playa-ffmpeg` 8.0 (static) | `.mp4 .mov .avi .mkv` |
 
@@ -542,7 +542,7 @@ the code reads them as ENV-fallback for worker configuration.
 Version (`-V`):
 ```
 0.1.142
-EXR:    vfx-exr (pure Rust, all compressions)
+EXR:    vfx-io / exr-core (pure Rust, all compressions)
 Video:  playa-ffmpeg 8.0 (static)
 Target: x86_64-windows
 ```

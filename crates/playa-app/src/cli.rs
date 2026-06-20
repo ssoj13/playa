@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-const EXR_BACKEND: &str = "vfx-exr (pure Rust, all compressions)";
+const EXR_BACKEND: &str = "vfx-io / exr-core (pure Rust, all compressions)";
 
 // Build version with backend info
 const VERSION_INFO: &str = const_format::concatcp!(

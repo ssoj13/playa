@@ -209,7 +209,7 @@ fn cmd_build(release: bool, features: Option<&str>) -> Result<()> {
     println!("========================================");
     println!("Building playa");
     println!("Profile: {}", if release { "release" } else { "debug" });
-    println!("Backend: vfx-exr (pure Rust, all compressions)");
+    println!("Backend: vfx-io / exr-core (pure Rust, all compressions)");
     if let Some(f) = features {
         println!("Features: {f}");
     }
@@ -236,7 +236,7 @@ fn cmd_build(release: bool, features: Option<&str>) -> Result<()> {
     }
 
     println!();
-    println!("✓ Build complete (vfx-exr backend, no external dependencies)");
+    println!("✓ Build complete (vfx-io EXR backend, pure Rust)");
 
     Ok(())
 }

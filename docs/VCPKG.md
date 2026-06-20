@@ -182,12 +182,14 @@ You re-enabled `avfilter` somewhere. Check:
 
 ### `Cargo.lock` re-resolves vfx-rs from a different revision
 
-`vfx-rs` is a public github HTTPS dep declared in
-`crates/playa-io/Cargo.toml`. There's no `[patch]` block; Cargo uses
-whatever's in `Cargo.lock`. If you need to bump:
+`vfx-io` + `vfx-core` are git deps on `oiio-rs` (ssh, branch `main`) declared
+in `crates/playa-io/Cargo.toml` — the old in-tree `vfx-rs` crates were moved to
+`oiio-rs` and `vfx-exr` was retired (replaced by `exr-core`, consumed by
+`vfx-io`). There's no `[patch]` block; Cargo uses whatever's in `Cargo.lock`.
+If you need to bump:
 
 ```powershell
-cargo update -p vfx-exr -p vfx-io -p vfx-core
+cargo update -p vfx-io -p vfx-core
 ```
 
 ---

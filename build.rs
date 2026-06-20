@@ -1,6 +1,6 @@
 //! Minimal Cargo build script — only notifies Cargo when **`build.rs`** itself changes.
 //!
-//! FFmpeg (vcpkg → **`playa-ffmpeg`**), EXR (**`playa-io`** / **`vfx-exr`**), and other natives are
+//! FFmpeg (vcpkg → **`playa-ffmpeg`**), EXR (**`playa-io`** / **`vfx-io`**), and other natives are
 //! configured through normal crate dependencies — see **`DEVELOP.md`**. Maintainer automation lives in
 //! **`crates/xtask`** (`cargo xtask …`).
 

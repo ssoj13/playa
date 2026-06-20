@@ -54,7 +54,7 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         info!("No input file provided, starting with empty state (drag-and-drop supported)");
     }
 
-    const BACKEND: &str = "vfx-exr";
+    const BACKEND: &str = "vfx-io";
 
     // Request `FLOAT32_FILTERABLE` so the viewport can linearly sample
     // Rgba32Float textures (EXR float frames). All Vulkan/DX12/Metal

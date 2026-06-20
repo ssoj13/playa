@@ -30,7 +30,7 @@ REST api, multithreaded composing with LRU cache and more.
 - **JKL shuttle** - Industry-standard transport with speed ramping
 
 ### Format Support
-- **EXR** — **`vfx-exr`** (pure Rust; DWAA/DWAB/HTJ2K-capable pipelines used by Playa)
+- **EXR** — **`vfx-io`** / **`exr-core`** (pure Rust; DWAA/DWAB/HTJ2K-capable pipelines used by Playa)
 - **Images** - PNG, JPEG, TIFF, TGA, HDR
 - **Video** - MP4, MOV, AVI, MKV via FFmpeg
 - **Pixel formats** - 8-bit, 16-bit half-float, 32-bit float
@@ -67,7 +67,7 @@ Download from [Releases](https://github.com/ssoj13/playa/releases/latest):
 | **macOS** | `playa-x.x.x*.dmg` | Code-signed DMG bundles |
 | **Linux** | `playa-x.x.x*.AppImage` | `.deb` package |
 
-Names on the Releases page may include legacy `exrs` tags; current default engine is **vfx-exr** (pure Rust, DWAA/DWAB-capable).
+Names on the Releases page may include legacy `exrs`/`vfx-exr` tags; current default engine is **vfx-io / exr-core** (pure Rust, DWAA/DWAB-capable).
 
 **macOS**: All DMG releases are code-signed and notarized.
 
@@ -117,7 +117,7 @@ playa -f sequence.exr --frame 50 -a -F    # Frame 50, autoplay, fullscreen
 **Version info** (`-V`):
 ```
 playa 0.1.142
-EXR:    vfx-exr (pure Rust, all compressions)
+EXR:    vfx-io / exr-core (pure Rust, all compressions)
 Video:  playa-ffmpeg 8.0 (static)
 Target: x86_64-windows
 ```
@@ -288,7 +288,7 @@ For detailed architecture, see [AGENTS.md](AGENTS.md).
 
 ## About
 
-Built with Rust. Powered by **vfx-exr**, **playa-ffmpeg**, **egui**, and the Rust ecosystem.
+Built with Rust. Powered by **vfx-io** (oiio-rs), **playa-ffmpeg**, **egui**, and the Rust ecosystem.
 
 **Icon**: [Flaticon by Yasashii std](http://flaticon.com/packs/halloween-18020037)
 
