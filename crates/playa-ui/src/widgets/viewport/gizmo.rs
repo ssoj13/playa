@@ -103,15 +103,13 @@ impl GizmoState {
         let frame_idx = player.current_frame(project);
         let camera_matrices = get_camera_matrices(project, comp_uuid, frame_idx, ui.clip_rect());
 
-        // 2D vs 3D handle curation follows the projection type: a perspective
-        // camera comp is full 3D (all axes/rings); a flat ortho comp is 2D (the
-        // Z translate/scale handles and X/Y rotation rings are auto-hidden by the
-        // gizmo). This mirrors how `build_gizmo_matrices` builds the projection.
-        let space = if camera_matrices.is_some() {
-            GizmoSpace::ThreeD
-        } else {
-            GizmoSpace::TwoD
-        };
+        // Preserve the pre-migration behavior: always expose the full 3D handle
+        // set. The retired transform-gizmo-egui gizmo did NOT curate handles by
+        // projection type, so a flat ortho comp still showed Z translate/scale +
+        // X/Y rotation rings. egui-gizmo CAN curate to `GizmoSpace::TwoD` (hiding
+        // those for ortho comps) — switch here if 2D-curated handles are desired;
+        // left at `ThreeD` to avoid a (runtime-only, unverifiable) UX regression.
+        let space = GizmoSpace::ThreeD;
 
         // Build matrices (uses camera for 3D, ortho for 2D)
         let (view, proj) = build_gizmo_matrices(viewport_state, ui.clip_rect(), camera_matrices);
