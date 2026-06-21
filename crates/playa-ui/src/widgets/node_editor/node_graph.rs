@@ -1,500 +1,296 @@
-//! Node graph implementation using egui-snarl.
+//! Node Editor widget — visual graph of the comp hierarchy on the `nodes-rs`
+//! wgpu graph engine.
 //!
-//! # Purpose
+//! The heavy lifting (GPU viewport, camera, pan/zoom/select, layout) lives in
+//! `nodes-egui` / `nodes-view`. This module is the thin playa shell:
 //!
-//! Visual representation of composition hierarchy as a node network.
-//! Each Comp becomes a node, child relationships become wire connections.
-//! Shows FULL TREE depth - recursively traverses all children.
+//! 1. Build a `nodes_core::Subnet` from the comp DAG (one node per comp/layer,
+//!    child→parent wires) — a *view* of playa's comp engine, which stays the
+//!    source of truth.
+//! 2. Implement [`GraphViewportHost`] over that subnet + registries.
+//! 3. Drive [`GraphViewportState::ui`] each frame (read-only `DIAGRAM` config:
+//!    pan/zoom/select/drag, no graph editing).
 //!
-//! # Architecture
+//! The GPU device is wired once at startup via
+//! [`NodeEditorState::configure_wgpu_render_state`] (called from the app's
+//! eframe creation closure). Until then the tab shows a placeholder.
 //!
-//! ```text
-//! ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-//! │ Leaf Node   │────▶│ Parent Node │────▶│ Output Node │
-//! │ (file comp) │     │ (layer comp)│     │ (current)   │
-//! └─────────────┘     └─────────────┘     └─────────────┘
-//!       [F]                 [C]                [OUT]
-//!
-//! Full tree example:
-//!   [F] clip1 ──┐
-//!   [F] clip2 ──┼──▶ [C] precomp ──┐
-//!   [F] clip3 ──┘                  │
-//!   [F] clip4 ─────────────────────┼──▶ [OUT] main
-//!   [F] clip5 ─────────────────────┘
-//! ```
-//!
-//! # Crate Choice: egui-snarl 0.9.0
-//!
-//! Selected over alternatives because:
-//! - egui 0.33 compatible (matches our Cargo.toml)
-//! - Built-in serde support for save/load
-//! - Active maintenance (Jan 2025)
-//! - Professional wire rendering
-//!
-//! # Data Flow
-//!
-//! 1. `set_comp()` - called when user switches to different comp
-//! 2. `rebuild_from_comp()` - recursively reads Comp.children, creates nodes/wires
-//! 3. `render_node_editor()` - displays via egui-snarl with toolbar and returns hover flag
-//!
-//! # Toolbar
-//!
-//! - A (All) - zoom to fit all nodes
-//! - F (Fit) - zoom to fit selected nodes (or all if none selected)
-//! - L (Layout) - auto-arrange nodes in clean tree layout
-//!
-//! Currently READ-ONLY view. Future: edits in node graph sync back to Comp.
-//!
-//! # Dependencies
-//!
-//! - `egui-snarl` - node graph UI library
-//! - `Comp`, `Project` - data sources
-//! - Called from: timeline widget (as alternate tab)
+//! v1 is rudimentary + view-only; the previous egui-snarl editor was the same.
+//! KNOWN LIMITATION: a `PlayaNode` has a single `in` pin, so a parent with
+//! multiple children shows one wire (the model's input holds one source). Full
+//! multi-input wiring is a follow-up.
 
 use std::collections::HashMap;
 use std::sync::RwLockReadGuard;
 
-use eframe::egui::{Color32, Pos2, Ui};
-use egui_snarl::ui::{PinInfo, SnarlStyle, SnarlViewer};
-use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
+use eframe::egui::{Pos2, Ui};
+use nodes_core::{NodeId, NodeTypeRegistry, Subnet, ValueTypes};
+use nodes_egui::{GraphViewportConfig, GraphViewportExtras, GraphViewportHost, GraphViewportState};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use playa_engine::core::event_bus::BoxedEvent;
 use playa_engine::entities::node::Node;
-use playa_engine::entities::{AttrValue, Comp, Project};
-// Note: get_selected_nodes could be used for fit-selected in future
-use playa_engine::entities::Attrs;
+use playa_engine::entities::{AttrValue, Project};
 
-/// Node in the composition graph - just a UUID reference to Comp.
-/// All data (name, type, children) comes from project.media at render time.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CompNode {
-    /// Layer/instance UUID (unique per placement inside parent)
-    pub uuid: Uuid,
-    /// Source comp UUID (used for name and child resolution)
-    pub source_uuid: Uuid,
-}
+/// Fallback grid spacing when a node has no stored `node_pos`.
+const HORIZONTAL_SPACING: f32 = 220.0;
+const VERTICAL_SPACING: f32 = 120.0;
 
-/// SnarlViewer implementation for rendering CompNode.
-/// Holds reference to Project for resolving Comp data at render time.
-struct CompNodeViewer<'a> {
-    project: &'a Project,
-    output_uuid: Uuid, // current comp being viewed
-}
+/// The node type every comp/layer is instantiated as in the view graph. One
+/// generic input + output; the cook is a no-op (this graph never evaluates —
+/// playa's comp engine does the real work).
+const NODE_TYPE: &str = "PlayaNode";
 
-impl<'a> CompNodeViewer<'a> {
-    /// Get node by UUID. Returns Arc for cheap cloning.
-    fn get_node(
-        &self,
-        source_uuid: Uuid,
-    ) -> Option<std::sync::Arc<playa_engine::entities::NodeKind>> {
-        self.project.media.read().ok()?.get(&source_uuid).cloned()
-    }
-
-    /// Get comp by UUID. Clones CompNode (metadata only, frames stay in cache).
-    fn get_comp(&self, source_uuid: Uuid) -> Option<Comp> {
-        self.project
-            .media
-            .read()
-            .ok()?
-            .get(&source_uuid)
-            .and_then(|n| n.as_comp())
-            .cloned()
-    }
-}
-
-#[allow(refining_impl_trait)]
-impl<'a> SnarlViewer<CompNode> for CompNodeViewer<'a> {
-    fn title(&mut self, node: &CompNode) -> String {
-        self.get_node(node.source_uuid)
-            .map(|n| n.name().to_string())
-            .unwrap_or_else(|| "Unknown".to_string())
-    }
-
-    fn outputs(&mut self, _node: &CompNode) -> usize {
-        1
-    }
-
-    fn inputs(&mut self, node: &CompNode) -> usize {
-        // FileNodes have no inputs, CompNodes have layers as inputs
-        self.get_comp(node.source_uuid)
-            .map(|c| c.layers.len())
-            .unwrap_or(0)
-    }
-
-    fn show_input(&mut self, pin: &InPin, ui: &mut Ui, _snarl: &mut Snarl<CompNode>) -> PinInfo {
-        ui.label(format!("L{}", pin.id.input));
-        PinInfo::circle().with_fill(Color32::from_rgb(100, 180, 255))
-    }
-
-    fn show_output(&mut self, _pin: &OutPin, ui: &mut Ui, _snarl: &mut Snarl<CompNode>) -> PinInfo {
-        ui.label("Out");
-        PinInfo::circle().with_fill(Color32::from_rgb(180, 180, 180))
-    }
-
-    fn has_body(&mut self, _node: &CompNode) -> bool {
-        false
-    }
-
-    fn show_body(
-        &mut self,
-        _node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
-        _ui: &mut Ui,
-        _snarl: &mut Snarl<CompNode>,
-    ) {
-    }
-
-    fn show_header(
-        &mut self,
-        node: NodeId,
-        _inputs: &[InPin],
-        _outputs: &[OutPin],
-        ui: &mut Ui,
-        snarl: &mut Snarl<CompNode>,
-    ) {
-        let source_uuid = snarl[node].source_uuid;
-        let comp = self.get_comp(source_uuid);
-
-        let (icon, color, name) = match comp {
-            Some(c) => {
-                let is_output = source_uuid == self.output_uuid;
-                let is_file = c.is_file_mode();
-                let name = c.name().to_string();
-
-                if is_output {
-                    ("[OUT]", Color32::from_rgb(255, 100, 100), name)
-                } else if is_file {
-                    ("[F]", Color32::from_rgb(255, 180, 100), name)
-                } else {
-                    ("[C]", Color32::from_rgb(100, 255, 180), name)
-                }
-            }
-            None => ("[?]", Color32::GRAY, "Unknown".to_string()),
-        };
-
-        ui.horizontal(|ui| {
-            ui.colored_label(color, icon);
-            ui.label(name);
-        });
-    }
-}
-
-/// Layout constants for node positioning
-const HORIZONTAL_SPACING: f32 = 200.0;
-const VERTICAL_SPACING: f32 = 70.0;
-
-/// Persistent state for node editor panel.
-///
-/// Helper for serde default
 fn default_true() -> bool {
     true
 }
 
-/// # Serialization
-///
-/// Only `comp_uuid` is serialized. The `snarl` graph is rebuilt from Comp
-/// each time because:
-/// 1. Comp is the source of truth (node positions are not persisted)
-/// 2. Avoids sync issues between stored graph and actual Comp.children
-/// 3. Simpler than trying to merge external changes
-///
-/// # Rebuild Strategy
-///
-/// `needs_rebuild` flag triggers full graph reconstruction when:
-/// - User switches to different comp (`set_comp()`)
-/// - External change to comp children (via `mark_dirty()`)
-///
-/// This is efficient because comps typically have <100 nodes.
-#[derive(Clone, Default, Serialize, Deserialize)]
-pub struct NodeEditorState {
-    /// The egui-snarl graph containing nodes and wires.
-    /// Skipped from serde - rebuilt from Comp on demand.
-    #[serde(skip)]
-    pub snarl: Snarl<CompNode>,
-
-    /// UUID of the comp currently displayed in node view.
-    /// Not persisted - always syncs from player.active_comp() like timeline.
-    #[serde(skip)]
-    pub comp_uuid: Option<Uuid>,
-
-    /// Internal flag: true means graph needs rebuild from Comp.
-    /// Set by `set_comp()` or `mark_dirty()`, cleared by `rebuild_from_comp()`.
-    /// Defaults to true so graph rebuilds after deserialization (snarl is skipped).
-    #[serde(skip, default = "default_true")]
-    needs_rebuild: bool,
-
-    /// Flag to trigger fit-all on next frame
-    #[serde(skip)]
-    pub fit_all_requested: bool,
-
-    /// Flag to trigger fit-selected on next frame
-    #[serde(skip)]
-    pub fit_selected_requested: bool,
-
-    /// Flag to trigger re-layout on next frame
-    #[serde(skip)]
-    pub layout_requested: bool,
-
-    /// Counter to force viewport reset (changing snarl id forces re-init)
-    #[serde(skip)]
-    viewport_reset_counter: u64,
+/// The `nodes-core` graph model + registries that back the viewport. Kept
+/// separate from [`GraphViewportState`] so the viewport (`&mut gvs`) and the
+/// host (`&mut host`) can be borrowed disjointly in `gvs.ui(ui, &mut host, …)`.
+struct PlayaGraphHost {
+    subnet: Subnet,
+    registry: NodeTypeRegistry,
+    value_types: ValueTypes,
 }
 
-impl NodeEditorState {
-    pub fn new() -> Self {
+impl Default for PlayaGraphHost {
+    fn default() -> Self {
+        let mut value_types = ValueTypes::new();
+        nodes_core::register_builtin_types(&mut value_types);
+
+        let mut registry = NodeTypeRegistry::new();
+        nodes_core::node!(
+            registry,
+            "PlayaNode",
+            "Playa",
+            [nodes_core::prelude::any("in")] => [nodes_core::prelude::any("out")],
+            |_node, _graph, _registry, _types| Ok(())
+        );
+
         Self {
-            snarl: Snarl::new(),
+            subnet: Subnet::new(),
+            registry,
+            value_types,
+        }
+    }
+}
+
+impl GraphViewportHost for PlayaGraphHost {
+    fn subnet(&self) -> &Subnet {
+        &self.subnet
+    }
+    fn subnet_mut(&mut self) -> &mut Subnet {
+        &mut self.subnet
+    }
+    fn registry(&self) -> &NodeTypeRegistry {
+        &self.registry
+    }
+    fn value_types(&self) -> &ValueTypes {
+        &self.value_types
+    }
+}
+
+/// Persistent node-editor state. The GPU viewport + graph model are runtime-only
+/// (`#[serde(skip)]`); only the lightweight sync flags would persist, and they
+/// reset to a clean rebuild on load.
+#[derive(Serialize, Deserialize)]
+pub struct NodeEditorState {
+    /// GPU graph viewport (camera, render, input). Configured with the wgpu
+    /// device at startup; a fresh one is non-functional until then.
+    #[serde(skip)]
+    gvs: GraphViewportState,
+    /// The comp-derived graph model + registries the viewport renders.
+    #[serde(skip)]
+    host: PlayaGraphHost,
+    /// `true` once the wgpu device has been attached.
+    #[serde(skip)]
+    configured: bool,
+    /// Comp currently shown; syncs from the player like the timeline.
+    #[serde(skip)]
+    comp_uuid: Option<Uuid>,
+    /// Rebuild the subnet from the comp on the next frame.
+    #[serde(skip, default = "default_true")]
+    needs_rebuild: bool,
+    /// Fit-all viewport on the next frame (set by node-editor events / hotkeys).
+    #[serde(skip)]
+    pub fit_all_requested: bool,
+    /// Fit-selected viewport on the next frame.
+    #[serde(skip)]
+    pub fit_selected_requested: bool,
+    /// Auto-layout the subnet on the next frame.
+    #[serde(skip)]
+    pub layout_requested: bool,
+}
+
+impl Default for NodeEditorState {
+    fn default() -> Self {
+        Self {
+            gvs: GraphViewportState::default(),
+            host: PlayaGraphHost::default(),
+            configured: false,
             comp_uuid: None,
             needs_rebuild: true,
             fit_all_requested: false,
             fit_selected_requested: false,
             layout_requested: false,
-            viewport_reset_counter: 0,
         }
     }
+}
 
-    /// Mark graph as needing rebuild
+impl NodeEditorState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Attach the eframe/egui wgpu device so the GPU viewport can render. Call
+    /// once at startup with `CreationContext::wgpu_render_state`.
+    pub fn configure_wgpu_render_state(&mut self, render_state: eframe::egui_wgpu::RenderState) {
+        self.gvs.configure_wgpu_render_state(render_state);
+        self.configured = true;
+    }
+
+    /// Mark the graph as needing a rebuild from the comp.
     pub fn mark_dirty(&mut self) {
         self.needs_rebuild = true;
     }
 
-    /// Set the composition to display
+    /// Set the composition to display (triggers a rebuild when it changes).
     pub fn set_comp(&mut self, comp_uuid: Uuid) {
         if self.comp_uuid != Some(comp_uuid) {
             self.comp_uuid = Some(comp_uuid);
             self.needs_rebuild = true;
         }
     }
+}
 
-    /// Rebuild graph from composition hierarchy (FULL TREE).
-    ///
-    /// Creates a visual node graph by recursively traversing all children:
-    /// 1. Clear existing graph
-    /// 2. Recursively collect all nodes in the tree (DFS)
-    /// 3. Create nodes with proper types (Leaf/Intermediate/Output)
-    /// 4. Connect wires between parent-child relationships
-    /// 5. Apply tree layout (rightmost = output, leftmost = leaves)
-    ///
-    /// # Layout Algorithm
-    ///
-    /// Uses depth-first traversal to determine tree depth, then positions:
-    /// - X position based on depth (deeper = more left)
-    /// - Y position based on vertical slot within depth level
-    ///
-    /// # Cycle Detection
-    ///
-    /// Uses visited set to prevent infinite loops from cyclic references.
-    /// Rebuild graph from comp hierarchy. Takes comp_uuid to avoid holding locks.
-    pub fn rebuild_from_comp(&mut self, comp_uuid: Uuid, project: &Project) {
-        if !self.needs_rebuild {
-            return;
+/// Rebuild the host's subnet from the comp DAG: one `PlayaNode` per comp/layer,
+/// positioned from the stored `node_pos` (else a depth grid), wired child→parent.
+fn rebuild_subnet(host: &mut PlayaGraphHost, project: &Project, comp_uuid: Uuid) {
+    host.subnet = Subnet::new();
+
+    let media = project.media.read().expect("media lock");
+    let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
+    let mut ancestors: Vec<Uuid> = Vec::new();
+    let mut max_depth = 0;
+    collect_tree_recursive(
+        comp_uuid,
+        comp_uuid,
+        0,
+        &media,
+        &mut node_info,
+        &mut ancestors,
+        &mut max_depth,
+    );
+    drop(media);
+
+    // Create nodes (positions: stored node_pos, else a depth/slot grid).
+    let mut depth_slots: HashMap<usize, usize> = HashMap::new();
+    let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
+    for info in node_info.values() {
+        let slot = *depth_slots.get(&info.depth).unwrap_or(&0);
+        depth_slots.insert(info.depth, slot + 1);
+        let default_x = (max_depth - info.depth) as f32 * HORIZONTAL_SPACING + 50.0;
+        let default_y = slot as f32 * VERTICAL_SPACING + 50.0;
+        let pos = load_node_pos(
+            project,
+            comp_uuid,
+            info.instance_uuid,
+            Pos2::new(default_x, default_y),
+        );
+        if let Ok(id) =
+            host.subnet
+                .create_node(NODE_TYPE, [pos.x, pos.y], &host.registry, &host.value_types)
+        {
+            uuid_to_node.insert(info.instance_uuid, id);
         }
-        self.needs_rebuild = false;
-
-        self.snarl = Snarl::new();
-
-        let root_uuid = comp_uuid;
-        let media = project.media.read().expect("media lock");
-
-        // Get comp name for logging (if available)
-        let comp_name = media
-            .get(&root_uuid)
-            .map(|n| n.name().to_string())
-            .unwrap_or_else(|| "Unknown".to_string());
-
-        log::trace!(
-            "NodeEditor: rebuilding for comp '{}' ({}), media has {} items",
-            comp_name,
-            root_uuid,
-            media.len()
-        );
-        log::trace!(
-            "NodeEditor: comp is in media? {}",
-            media.contains_key(&root_uuid)
-        );
-
-        // Phase 1: Collect all nodes recursively with their depth and children count
-        let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
-        let mut ancestors: Vec<Uuid> = Vec::new();
-        let mut max_depth = 0;
-
-        collect_tree_recursive(
-            root_uuid,
-            root_uuid,
-            0,
-            &media,
-            &mut node_info,
-            &mut ancestors,
-            &mut max_depth,
-        );
-
-        log::trace!(
-            "NodeEditor rebuild: root={}, nodes={}, max_depth={}",
-            root_uuid,
-            node_info.len(),
-            max_depth
-        );
-
-        // Drop media lock before Phase 2 - load_node_pos needs to acquire it
-        drop(media);
-
-        // Phase 2: Calculate Y positions for each depth level
-        let mut depth_slots: HashMap<usize, usize> = HashMap::new();
-        let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
-
-        // Create all nodes with layout positions (prefer stored positions)
-        for info in node_info.values() {
-            let depth = info.depth;
-            let slot = *depth_slots.get(&depth).unwrap_or(&0);
-            depth_slots.insert(depth, slot + 1);
-
-            // Default grid position
-            let default_x = (max_depth - depth) as f32 * HORIZONTAL_SPACING + 50.0;
-            let default_y = slot as f32 * VERTICAL_SPACING + 50.0;
-            let default_pos = Pos2::new(default_x, default_y);
-
-            let pos = load_node_pos(project, comp_uuid, info.instance_uuid, default_pos);
-
-            log::trace!(
-                "NodeEditor: creating node {} (src {}) at ({}, {})",
-                info.instance_uuid,
-                info.source_uuid,
-                pos.x,
-                pos.y
-            );
-            let node_id = self.snarl.insert_node(
-                pos,
-                CompNode {
-                    uuid: info.instance_uuid,
-                    source_uuid: info.source_uuid,
-                },
-            );
-            uuid_to_node.insert(info.instance_uuid, node_id);
-        }
-
-        // Phase 3: Create wires (child output -> parent input)
-        for (&parent_uuid, info) in &node_info {
-            if let Some(&parent_id) = uuid_to_node.get(&parent_uuid) {
-                for (input_idx, &(child_instance, _)) in info.children.iter().enumerate() {
-                    if let Some(&child_id) = uuid_to_node.get(&child_instance) {
-                        let out_pin = OutPinId {
-                            node: child_id,
-                            output: 0,
-                        };
-                        let in_pin = InPinId {
-                            node: parent_id,
-                            input: input_idx,
-                        };
-                        let _ = self.snarl.connect(out_pin, in_pin);
-                    }
-                }
-            }
-        }
-
-        // Request fit-all after rebuild
-        self.fit_all_requested = true;
     }
 
-    /// Re-layout existing nodes in a clean tree arrangement.
-    /// Persists new positions via EventBus so they survive comp switching.
-    pub fn relayout(&mut self, project: &Project, dispatch: &mut impl FnMut(BoxedEvent)) {
-        // Check if we have any nodes
-        if self.snarl.node_ids().next().is_none() {
-            return;
-        }
-
-        // Collect UUID -> NodeId mapping
-        let mut uuid_to_node: HashMap<Uuid, NodeId> = HashMap::new();
-        for (node_id, node) in self.snarl.node_ids() {
-            uuid_to_node.insert(node.uuid, node_id);
-        }
-
-        // Find root - use the comp_uuid from state
-        let Some(comp_uuid) = self.comp_uuid else {
-            return;
+    // Wire child output → parent input (single input per node — see module note).
+    for info in node_info.values() {
+        let Some(&parent) = uuid_to_node.get(&info.instance_uuid) else {
+            continue;
         };
-        let media = project.media.read().expect("media lock");
-
-        // Collect tree info
-        let mut node_info: HashMap<Uuid, NodeInfo> = HashMap::new();
-        let mut ancestors: Vec<Uuid> = Vec::new();
-        let mut max_depth = 0;
-
-        collect_tree_recursive(
-            comp_uuid,
-            comp_uuid,
-            0,
-            &media,
-            &mut node_info,
-            &mut ancestors,
-            &mut max_depth,
-        );
-        drop(media); // Release lock before dispatching events
-
-        // Build new positions map
-        let mut new_positions: HashMap<Uuid, Pos2> = HashMap::new();
-        let mut depth_slots: HashMap<usize, usize> = HashMap::new();
-
-        for (&instance_uuid, info) in &node_info {
-            let depth = info.depth;
-            let slot = *depth_slots.get(&depth).unwrap_or(&0);
-            depth_slots.insert(depth, slot + 1);
-
-            let x = (max_depth - depth) as f32 * HORIZONTAL_SPACING + 50.0;
-            let y = slot as f32 * VERTICAL_SPACING + 50.0;
-            new_positions.insert(instance_uuid, Pos2::new(x, y));
-        }
-
-        // Apply new positions to snarl nodes
-        for node in self.snarl.nodes_info_mut() {
-            if let Some(&new_pos) = new_positions.get(&node.value.uuid) {
-                node.pos = new_pos;
+        for (child_instance, _) in &info.children {
+            if let Some(&child) = uuid_to_node.get(child_instance) {
+                let _ = host
+                    .subnet
+                    .connect(child, "out", parent, "in", &host.registry);
             }
         }
-
-        // Persist positions (so they survive comp switching)
-        // Root node - direct modify (same as drag handling)
-        if let Some(&pos) = new_positions.get(&comp_uuid) {
-            project.modify_comp(comp_uuid, |c| {
-                set_node_pos(&mut c.attrs, pos);
-                c.attrs.clear_dirty(); // node_pos is UI-only
-            });
-        }
-
-        // Layer positions - via events
-        for (&instance_uuid, &pos) in &new_positions {
-            if instance_uuid != comp_uuid {
-                dispatch(Box::new(
-                    playa_engine::entities::comp_events::SetLayerAttrsEvent {
-                        comp_uuid,
-                        layer_uuids: vec![instance_uuid],
-                        attrs: vec![(
-                            "node_pos".to_string(),
-                            serde_json::to_value(AttrValue::Vec3([pos.x, pos.y, 0.0]))
-                                .unwrap_or(serde_json::Value::Null),
-                        )],
-                    },
-                ));
-            }
-        }
-
-        self.fit_all_requested = true;
     }
 }
 
-/// Info collected during tree traversal (only layout-relevant data)
+/// Render the node editor tab. Same signature as before so the caller is
+/// unchanged. Returns whether the pointer is over the panel.
+pub fn render_node_editor(
+    ui: &mut Ui,
+    state: &mut NodeEditorState,
+    project: &Project,
+    comp_uuid: Uuid,
+    _dispatch: impl FnMut(BoxedEvent),
+) -> bool {
+    state.set_comp(comp_uuid);
+
+    if !state.configured {
+        ui.centered_and_justified(|ui| {
+            ui.weak("Node editor: GPU viewport not initialised yet.");
+        });
+        return false;
+    }
+
+    if state.needs_rebuild {
+        rebuild_subnet(&mut state.host, project, comp_uuid);
+        state.needs_rebuild = false;
+    }
+
+    // Honor fit / layout requests (from hotkeys handled here or node events).
+    // `gvs.ui` also handles A/F/L while hovered; these cover programmatic requests.
+    if state.fit_all_requested || state.fit_selected_requested {
+        state.fit_all_requested = false;
+        state.fit_selected_requested = false;
+        state.gvs.request_initial_fit();
+    }
+    if state.layout_requested {
+        state.layout_requested = false;
+        state.gvs.layout_nodes(&mut state.host.subnet);
+    }
+
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        ui.weak("A: fit all · F: fit selected · L: layout · MMB/wheel: pan/zoom");
+        ui.separator();
+        ui.label(format!("{} nodes", state.host.subnet.nodes.len()));
+    });
+    ui.separator();
+
+    // `gvs` and `host` are disjoint fields, so both can be borrowed mutably.
+    state.gvs.ui(
+        ui,
+        &mut state.host,
+        &GraphViewportConfig::DIAGRAM,
+        GraphViewportExtras::default(),
+    );
+
+    ui.rect_contains_pointer(ui.max_rect())
+}
+
+// =============================================================================
+// Comp-DAG traversal helpers (independent of the rendering backend)
+// =============================================================================
+
+/// Info collected during tree traversal (only layout-relevant data).
 struct NodeInfo {
     depth: usize,
     instance_uuid: Uuid,
+    #[allow(dead_code)]
     source_uuid: Uuid,
     children: Vec<(Uuid, Uuid)>, // (instance_uuid, source_uuid)
 }
 
+/// Load a node's stored UI position from comp attrs (root) or layer attrs.
 fn load_node_pos(project: &Project, comp_uuid: Uuid, instance_uuid: Uuid, default: Pos2) -> Pos2 {
-    // Load node position from comp attrs (root) or layer attrs (children)
     let maybe_pos = project
         .with_comp(comp_uuid, |comp| {
             let maybe_attr = if instance_uuid == comp.uuid() {
@@ -510,26 +306,10 @@ fn load_node_pos(project: &Project, comp_uuid: Uuid, instance_uuid: Uuid, defaul
             }
         })
         .flatten();
-
     maybe_pos.unwrap_or(default)
 }
 
-fn set_node_pos(attrs: &mut Attrs, pos: Pos2) -> bool {
-    let new_val = [pos.x, pos.y, 0.0];
-    let mut changed = true;
-    if let Some(AttrValue::Vec3(current)) = attrs.get("node_pos") {
-        let dx = (current[0] - new_val[0]).abs();
-        let dy = (current[1] - new_val[1]).abs();
-        changed = dx > 0.001 || dy > 0.001;
-    }
-    if changed {
-        attrs.set("node_pos", AttrValue::Vec3(new_val));
-        attrs.clear_dirty(); // node_pos is UI-only; avoid cache invalidation
-    }
-    changed
-}
-
-/// Recursively collect all nodes in the composition tree
+/// Recursively collect all nodes in the composition tree.
 fn collect_tree_recursive(
     instance_uuid: Uuid,
     source_uuid: Uuid,
@@ -539,7 +319,7 @@ fn collect_tree_recursive(
     ancestors: &mut Vec<Uuid>,
     max_depth: &mut usize,
 ) {
-    // Cycle detection by source path (allows multiple instances of the same comp elsewhere)
+    // Cycle detection by source path (allows multiple instances of the same comp).
     if ancestors.contains(&source_uuid) {
         node_info.insert(
             instance_uuid,
@@ -553,11 +333,9 @@ fn collect_tree_recursive(
         return;
     }
     ancestors.push(source_uuid);
-
     *max_depth = (*max_depth).max(depth);
 
     let Some(comp) = media.get(&source_uuid).and_then(|n| n.as_comp()) else {
-        // Unknown comp or FileNode - add minimal info
         node_info.insert(
             instance_uuid,
             NodeInfo {
@@ -571,9 +349,7 @@ fn collect_tree_recursive(
         return;
     };
 
-    // Collect children UUIDs - use get_children_sources() for (layer_uuid, source_uuid) pairs
     let children: Vec<(Uuid, Uuid)> = comp.get_children_sources();
-
     node_info.insert(
         instance_uuid,
         NodeInfo {
@@ -584,7 +360,6 @@ fn collect_tree_recursive(
         },
     );
 
-    // Recurse into children
     for (child_instance, child_source) in children {
         collect_tree_recursive(
             child_instance,
@@ -597,170 +372,4 @@ fn collect_tree_recursive(
         );
     }
     ancestors.pop();
-}
-
-/// Render node editor widget.
-///
-/// Entry point for node graph UI. Call from timeline panel (as alternate tab).
-///
-/// # Arguments
-///
-/// - `ui` - egui Ui context for rendering
-/// - `state` - persistent node editor state (survives across frames)
-/// - `project` - for accessing media map to resolve comp names
-/// - `comp` - the composition to display as node graph
-/// - `_dispatch` - event emitter (unused for now, for future edit operations)
-///
-/// # Behavior
-///
-/// 1. Syncs state to current comp (triggers rebuild if comp changed)
-/// 2. Rebuilds graph from Comp.children if dirty
-/// 3. Renders toolbar with A/F/L buttons
-/// 4. Renders via egui-snarl with default styling
-///
-/// Currently read-only. Future: dispatch LayerAddedEvent etc on graph edits.
-///
-/// IMPORTANT: Takes comp_uuid instead of &Comp to avoid deadlock.
-/// This function calls modify_comp() internally which needs write lock,
-/// so caller must NOT hold a read lock (e.g., from with_comp).
-pub fn render_node_editor(
-    ui: &mut Ui,
-    state: &mut NodeEditorState,
-    project: &Project,
-    comp_uuid: Uuid,
-    mut dispatch: impl FnMut(BoxedEvent),
-) -> bool {
-    // widget_id could be used for get_selected_nodes in future
-    let _widget_id = ui.make_persistent_id("comp_node_editor");
-
-    // Sync to current comp (sets needs_rebuild if comp changed)
-    state.set_comp(comp_uuid);
-
-    // Rebuild graph from Comp.children if needed
-    if state.needs_rebuild {
-        state.rebuild_from_comp(comp_uuid, project);
-    }
-
-    // Handle fit requests - reset viewport by incrementing counter
-    // This changes the snarl widget id, forcing egui-snarl to recalculate viewport
-    // Note: This does NOT move nodes - just resets viewport to show all nodes
-    if state.fit_all_requested || state.fit_selected_requested {
-        state.fit_all_requested = false;
-        state.fit_selected_requested = false;
-
-        // Increment counter to force viewport reset (egui-snarl will auto-center on all nodes)
-        state.viewport_reset_counter += 1;
-        log::trace!(
-            "[NODE_EDITOR] fit viewport requested, reset_counter={}",
-            state.viewport_reset_counter
-        );
-    }
-
-    // Handle layout request
-    if state.layout_requested {
-        state.layout_requested = false;
-        state.relayout(project, &mut dispatch);
-    }
-
-    // Toolbar
-    ui.horizontal(|ui| {
-        ui.add_space(4.0);
-
-        // A - fit All nodes
-        if ui
-            .button("A")
-            .on_hover_text("Fit All - zoom to see all nodes")
-            .clicked()
-        {
-            state.fit_all_requested = true;
-        }
-
-        // F - fit selected (or all if none selected)
-        if ui
-            .button("F")
-            .on_hover_text("Fit Selected - zoom to selected nodes (or all)")
-            .clicked()
-        {
-            state.fit_selected_requested = true;
-        }
-
-        // L - Layout nodes
-        if ui
-            .button("L")
-            .on_hover_text("Layout - arrange nodes in tree")
-            .clicked()
-        {
-            state.layout_requested = true;
-        }
-
-        ui.separator();
-
-        // Node count info
-        let node_count = state.snarl.node_ids().count();
-        ui.label(format!("{} nodes", node_count));
-    });
-
-    ui.separator();
-
-    // Viewer with project reference for resolving comp data
-    let mut viewer = CompNodeViewer {
-        project,
-        output_uuid: comp_uuid,
-    };
-
-    // Render with centering enabled (double-click centers viewport)
-    let style = SnarlStyle {
-        centering: Some(true),
-        ..Default::default()
-    };
-    let before_positions: HashMap<NodeId, Pos2> = state
-        .snarl
-        .nodes_pos_ids()
-        .map(|(id, pos, _)| (id, pos))
-        .collect();
-
-    // Use counter in id to force viewport reset when fit is requested
-    let snarl_id = format!("comp_node_editor_{}", state.viewport_reset_counter);
-    state.snarl.show(&mut viewer, &style, &snarl_id, ui);
-
-    // Persist moved nodes via event bus (comp root uses direct attr update)
-    if let Some(comp_uuid) = state.comp_uuid {
-        let mut moved_layers = Vec::new();
-        let mut moved_root = None;
-        for (node_id, pos, node) in state.snarl.nodes_pos_ids() {
-            let was = before_positions.get(&node_id).copied();
-            if was.map(|p| p.distance(pos)).unwrap_or(f32::INFINITY) > 0.01 {
-                if node.uuid == comp_uuid {
-                    moved_root = Some(pos);
-                } else {
-                    moved_layers.push((node.uuid, pos));
-                }
-            }
-        }
-
-        if let Some(pos) = moved_root {
-            project.modify_comp(comp_uuid, |c| {
-                set_node_pos(&mut c.attrs, pos);
-                c.attrs.clear_dirty();
-            });
-        }
-
-        if !moved_layers.is_empty() {
-            // Per-layer positions; send separate events to keep per-node values
-            for (layer_uuid, pos) in moved_layers {
-                dispatch(Box::new(
-                    playa_engine::entities::comp_events::SetLayerAttrsEvent {
-                        comp_uuid,
-                        layer_uuids: vec![layer_uuid],
-                        attrs: vec![(
-                            "node_pos".to_string(),
-                            serde_json::to_value(AttrValue::Vec3([pos.x, pos.y, 0.0]))
-                                .unwrap_or(serde_json::Value::Null),
-                        )],
-                    },
-                ));
-            }
-        }
-    }
-    ui.rect_contains_pointer(ui.max_rect())
 }

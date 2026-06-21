@@ -191,6 +191,12 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
             // serde skips `GpuBlendBridge` channels — rebuild before any worker touches `CompNode::compute`.
             app.ensure_gpu_blend_initialized();
+
+            // Attach the wgpu device to the nodes-rs graph viewport so the Node
+            // editor tab can render (its offscreen texture is bridged into egui).
+            if let Some(rs) = cc.wgpu_render_state.clone() {
+                app.node_editor_state.configure_wgpu_render_state(rs);
+            }
             // serde also skips the long-running IO `JobQueue` (live thread handles).
             // Reconstruct so persisted jobs from prior sessions can be replayed once
             // providers register. Feature-gated under `jobs` (default on).
