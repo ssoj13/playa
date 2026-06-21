@@ -117,9 +117,8 @@ impl GizmoState {
         // Configure gizmo
         let gizmo_prefs = project.gizmo_prefs();
 
-        // Shift enables snapping (the facade uses the library's default snap
-        // increments — angle/distance/scale steps are not exposed on the public
-        // GizmoConfig).
+        // Shift enables snapping; the increments below restore playa's classic
+        // 5deg / 10px / 0.1 ladder (now settable via the egui-gizmo facade).
         let snapping = ui.input(|i| i.modifiers.shift);
 
         self.gizmo.update_config(GizmoConfig {
@@ -130,6 +129,9 @@ impl GizmoState {
             tool: gizmo_tool,
             orientation: GizmoOrientation::Local,
             snapping,
+            snap_angle: 5.0_f32.to_radians(),
+            snap_distance: 10.0,
+            snap_scale: 0.1,
             visuals: GizmoVisuals {
                 gizmo_size: gizmo_prefs.pref_manip_size,
                 stroke_width: gizmo_prefs.pref_manip_stroke_width,
