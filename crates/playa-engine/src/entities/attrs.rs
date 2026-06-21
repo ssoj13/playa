@@ -554,9 +554,14 @@ impl Attrs {
         self.map.get(key)
     }
 
+    /// String payload of a `Str` attr — or the raw JSON text of a
+    /// [`AttrValue::Json`] attr (JSON is string-backed). Returning the `Json`
+    /// text lets callers that persist JSON via `Json(..)` and read it back to
+    /// parse (e.g. `AINode::input_refs` / `generations` / `params_template`)
+    /// get their payload instead of `None`.
     pub fn get_str(&self, key: &str) -> Option<&str> {
         match self.map.get(key) {
-            Some(AttrValue::Str(s)) => Some(s),
+            Some(AttrValue::Str(s)) | Some(AttrValue::Json(s)) => Some(s),
             _ => None,
         }
     }
