@@ -32,6 +32,7 @@ egui_dock = { workspace = true }
 egui_extras = "0.34"
 # Reusable widgets extracted from playa, consumed via git-ref (single egui 0.34
 # pin shared with eframe). See egui-widgets-rs.
+egui-asset-browser = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 egui-progressbar = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 egui-help-overlay = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 egui-statusbar = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
