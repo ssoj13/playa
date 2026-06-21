@@ -48,6 +48,7 @@ egui-encode-dialog = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", 
 # Generic multi-track NLE-style timeline widget (move/trim/slide, zoom, pan,
 # playhead). Playa's timeline canvas is a thin host over this; see timeline_ui.rs.
 egui-track-timeline = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-timeline = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 # In-house transform gizmo (glam-f32 facade over a vendored transform-gizmo core).
 # Replaces the upstream transform-gizmo-egui 0.9; shares the workspace glam 0.33.
 egui-gizmo = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }

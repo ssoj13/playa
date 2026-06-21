@@ -1134,7 +1134,6 @@ fn draw_status_strip(
         return;
     }
 
-    let painter = ui.painter();
     // Use ruler's base_x to ensure alignment with ruler ticks and indicator
     let base_x = ruler_rect.min.x;
 
@@ -1145,73 +1144,30 @@ fn draw_status_strip(
     let visible_end_frame = (state.pan_offset + (ruler_rect.width() / effective_ppf))
         .min((comp_start + statuses.len() as i32) as f32) as i32;
 
-    let mut run_start_frame: Option<i32> = None;
-    let mut current_status: Option<FrameStatus> = None;
-
-    // Draw status runs for visible frames only
-    for frame in visible_start_frame..visible_end_frame {
-        let frame_offset = frame - comp_start;
-        if frame_offset < 0 || frame_offset >= statuses.len() as i32 {
-            continue;
-        }
-
-        let status = statuses[frame_offset as usize];
-
-        if let Some(ref current) = current_status {
-            if *current != status {
-                // Draw the previous run
-                if let (Some(start_frame), Some(prev_status)) = (run_start_frame, current_status) {
-                    let x_start = super::timeline_helpers::frame_to_screen_x(
-                        start_frame as f32,
-                        base_x,
-                        config,
-                        state,
-                    );
-                    let x_end = super::timeline_helpers::frame_to_screen_x(
-                        frame as f32,
-                        base_x,
-                        config,
-                        state,
-                    );
-                    // Clamp to visible rect
-                    let x_start = x_start.max(ruler_rect.min.x);
-                    let x_end = x_end.min(ruler_rect.max.x);
-                    if x_start < x_end {
-                        let run_rect = Rect::from_min_max(
-                            Pos2::new(x_start, rect.min.y),
-                            Pos2::new(x_end, rect.max.y),
-                        );
-                        painter.rect_filled(run_rect, 0.0, frame_status_paint_rgba(prev_status));
-                    }
-                }
-                // Start new run
-                run_start_frame = Some(frame);
-                current_status = Some(status);
-            }
-        } else {
-            // First frame
-            run_start_frame = Some(frame);
-            current_status = Some(status);
-        }
+    // The cache-fill runs are painted by egui_timeline::paint_tint_strip, which
+    // coalesces equal-colour runs; we drive it with the timeline's OWN frame->x
+    // mapping (zoom/pan) so the strip stays aligned with the ruler above it.
+    let start_off = (visible_start_frame - comp_start).max(0) as usize;
+    let end_off = (visible_end_frame - comp_start).clamp(0, statuses.len() as i32) as usize;
+    if start_off >= end_off {
+        return;
     }
-
-    // Draw the last run
-    if let (Some(start_frame), Some(status)) = (run_start_frame, current_status) {
-        let x_start =
-            super::timeline_helpers::frame_to_screen_x(start_frame as f32, base_x, config, state);
-        let x_end = super::timeline_helpers::frame_to_screen_x(
-            visible_end_frame as f32,
-            base_x,
-            config,
-            state,
-        );
-        // Clamp to visible rect
-        let x_start = x_start.max(ruler_rect.min.x);
-        let x_end = x_end.min(ruler_rect.max.x);
-        if x_start < x_end {
-            let run_rect =
-                Rect::from_min_max(Pos2::new(x_start, rect.min.y), Pos2::new(x_end, rect.max.y));
-            painter.rect_filled(run_rect, 0.0, frame_status_paint_rgba(status));
-        }
-    }
+    let strip_rect = Rect::from_min_max(
+        Pos2::new(ruler_rect.min.x, rect.min.y),
+        Pos2::new(ruler_rect.max.x, rect.max.y),
+    );
+    egui_timeline::paint_tint_strip(
+        ui.painter(),
+        strip_rect,
+        start_off..end_off,
+        |i| {
+            super::timeline_helpers::frame_to_screen_x(
+                (comp_start + i as i32) as f32,
+                base_x,
+                config,
+                state,
+            )
+        },
+        |i| Some(frame_status_paint_rgba(statuses[i])),
+    );
 }
