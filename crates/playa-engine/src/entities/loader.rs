@@ -5,7 +5,7 @@ use std::path::Path;
 use playa_io::{AttrKv, RawPixelBuffer, RawPixelFormat, decode_raster, header_attrs};
 
 use super::frame::{Frame, FrameError, PixelBuffer, PixelFormat};
-use crate::entities::{AttrValue, Attrs};
+use crate::entities::{AttrFlags, AttrValue, Attrs};
 
 /// Image loader with metadata support (`playa-io` backends).
 pub struct Loader;
@@ -21,10 +21,18 @@ impl From<playa_io::IoError> for FrameError {
     }
 }
 
+/// Build engine [`Attrs`] from a `playa_io` header. This is the single bridge
+/// point where file-derived metadata enters the engine, so it is also where every
+/// absorbed key is tagged [`AttrFlags::SOURCE`] (provenance): width/height/fps and
+/// the namespaced `exr:*` / `format:*` / `video:*` / `exif:*` attrs are all
+/// file-derived. The flags ride along through `Attrs::merge` onto the FileNode and
+/// are preserved when structural keys are re-set as canonical values. READONLY is
+/// deliberately NOT set — absorbed attrs stay editable and round-trip on encode.
 fn attrs_from_io(entries: Vec<(String, AttrKv)>) -> Attrs {
     let mut attrs = Attrs::new();
     for (key, kv) in entries {
-        attrs.set(key, av_from_kv(kv));
+        attrs.set(key.clone(), av_from_kv(kv));
+        attrs.add_flags(key, AttrFlags::SOURCE);
     }
     attrs
 }

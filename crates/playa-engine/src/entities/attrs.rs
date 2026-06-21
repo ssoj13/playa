@@ -31,7 +31,8 @@
 //! - `Attrs` hashing is used by `Comp::compute_comp_hash` to invalidate cached frames
 //!   when any child attribute changes.
 
-use serde::{Deserialize, Serialize};
+use bitflags::bitflags;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -45,20 +46,66 @@ use playa_time::{Round, Speed};
 // Attribute Schema System
 // ============================================================================
 
-/// Attribute flags (bitfield)
-/// Controls behavior and visibility of attributes
-pub type AttrFlags = u8;
+/// Schema-definition flags (bitfield).
+///
+/// These describe an attribute *kind* at the schema level (how every instance of
+/// that named attr behaves/displays). They are distinct from the per-instance
+/// [`AttrFlags`] below, which tag an individual key on a concrete [`Attrs`] map
+/// (e.g. provenance). Kept as a plain `u8` so the static `FLAG_*` composition in
+/// `attr_schemas.rs` stays `const`.
+pub type SchemaFlags = u8;
 
 /// Attribute affects DAG/render - changes invalidate cache
-pub const FLAG_DAG: AttrFlags = 1 << 0;
+pub const FLAG_DAG: SchemaFlags = 1 << 0;
 /// Attribute shown in Attribute Editor UI
-pub const FLAG_DISPLAY: AttrFlags = 1 << 1;
+pub const FLAG_DISPLAY: SchemaFlags = 1 << 1;
 /// Attribute can be keyframed for animation
-pub const FLAG_KEYABLE: AttrFlags = 1 << 2;
+pub const FLAG_KEYABLE: SchemaFlags = 1 << 2;
 /// Attribute is read-only (computed value)
-pub const FLAG_READONLY: AttrFlags = 1 << 3;
+pub const FLAG_READONLY: SchemaFlags = 1 << 3;
 /// Internal attribute, not shown to user
-pub const FLAG_INTERNAL: AttrFlags = 1 << 4;
+pub const FLAG_INTERNAL: SchemaFlags = 1 << 4;
+
+bitflags! {
+    /// Per-attribute (per-key) flags on a concrete [`Attrs`] map.
+    ///
+    /// Orthogonal to the schema-level [`SchemaFlags`]: these tag one specific key
+    /// on one entity instance, carrying *provenance* and edit policy rather than
+    /// the static definition of an attribute kind.
+    ///
+    /// - [`SOURCE`](AttrFlags::SOURCE): the value was absorbed from the media file
+    ///   header (chromaticities, EXIF, container tags, …) — i.e. file-derived
+    ///   provenance, as opposed to a user-authored attr.
+    /// - [`READONLY`](AttrFlags::READONLY): the editor must not mutate this key.
+    ///   Set deliberately by future UI; absorption does NOT imply read-only, so
+    ///   absorbed attrs stay editable and round-trip on encode.
+    ///
+    /// Serialized as the raw `u8` bits (see manual `Serialize`/`Deserialize`) so
+    /// the on-disk project format is stable regardless of flag naming.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct AttrFlags: u8 {
+        /// Absorbed from the media file (provenance).
+        const SOURCE = 1 << 0;
+        /// Editor must not mutate this attr.
+        const READONLY = 1 << 1;
+    }
+}
+
+impl Serialize for AttrFlags {
+    /// Serialize as the raw bits (`u8`) for a stable, name-independent format.
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u8(self.bits())
+    }
+}
+
+impl<'de> Deserialize<'de> for AttrFlags {
+    /// Deserialize from the raw bits; unknown bits are truncated so forward-saved
+    /// projects (with extra flags) still load on older builds.
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let bits = u8::deserialize(d)?;
+        Ok(AttrFlags::from_bits_truncate(bits))
+    }
+}
 
 /// Expected type of attribute value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +128,7 @@ pub enum AttrType {
 pub struct AttrDef {
     pub name: &'static str,
     pub attr_type: AttrType,
-    pub flags: AttrFlags,
+    pub flags: SchemaFlags,
     /// UI hints: combobox options or slider range ["min", "max", "step"]
     pub ui_options: &'static [&'static str],
     /// Display order in Attribute Editor (lower = higher in list)
@@ -90,7 +137,7 @@ pub struct AttrDef {
 
 impl AttrDef {
     /// Create new attribute definition (default: auto UI by type, order=99)
-    pub const fn new(name: &'static str, attr_type: AttrType, flags: AttrFlags) -> Self {
+    pub const fn new(name: &'static str, attr_type: AttrType, flags: SchemaFlags) -> Self {
         Self {
             name,
             attr_type,
@@ -104,7 +151,7 @@ impl AttrDef {
     pub const fn with_ui(
         name: &'static str,
         attr_type: AttrType,
-        flags: AttrFlags,
+        flags: SchemaFlags,
         ui_options: &'static [&'static str],
     ) -> Self {
         Self {
@@ -120,7 +167,7 @@ impl AttrDef {
     pub const fn with_order(
         name: &'static str,
         attr_type: AttrType,
-        flags: AttrFlags,
+        flags: SchemaFlags,
         order: f32,
     ) -> Self {
         Self {
@@ -136,7 +183,7 @@ impl AttrDef {
     pub const fn with_ui_order(
         name: &'static str,
         attr_type: AttrType,
-        flags: AttrFlags,
+        flags: SchemaFlags,
         ui_options: &'static [&'static str],
         order: f32,
     ) -> Self {
@@ -372,6 +419,12 @@ pub struct Attrs {
     #[serde(default)]
     map: HashMap<String, AttrValue>,
 
+    /// Per-key flags (provenance / edit policy). Sparse: only keys that carry a
+    /// non-empty flag set appear here. `#[serde(default)]` so projects saved
+    /// before this field existed still load (every key reads back as empty).
+    #[serde(default)]
+    flags: HashMap<String, AttrFlags>,
+
     /// Dirty flag: set when DAG attributes are modified
     /// Used for cache invalidation instead of recomputing hashes
     /// Thread-safe AtomicBool for Send+Sync (allows background composition)
@@ -399,6 +452,7 @@ impl Attrs {
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
+            flags: HashMap::new(),
             dirty: AtomicBool::new(false),
             schema: None,
         }
@@ -408,6 +462,7 @@ impl Attrs {
     pub fn with_schema(schema: &'static AttrSchema) -> Self {
         Self {
             map: HashMap::new(),
+            flags: HashMap::new(),
             dirty: AtomicBool::new(false),
             schema: Some(schema),
         }
@@ -458,6 +513,41 @@ impl Attrs {
         for (k, v) in other.map {
             self.set(k, v);
         }
+        // Carry provenance/policy: union `other`'s per-key flags onto ours so an
+        // absorbed source header keeps its SOURCE marks after the merge.
+        for (k, f) in other.flags {
+            self.add_flags(k, f);
+        }
+    }
+
+    // === Per-key flags (provenance / edit policy) ===
+
+    /// Replace the flag set for `key` (overwrites any existing flags). Use
+    /// [`add_flags`](Self::add_flags) to union instead.
+    pub fn set_flags(&mut self, key: impl Into<String>, flags: AttrFlags) {
+        self.flags.insert(key.into(), flags);
+    }
+
+    /// Union `flags` into `key`'s existing flag set (creating it if absent).
+    /// This is the absorption-friendly setter: tagging SOURCE never clears a
+    /// previously set READONLY and vice-versa.
+    pub fn add_flags(&mut self, key: impl Into<String>, flags: AttrFlags) {
+        self.flags.entry(key.into()).or_default().insert(flags);
+    }
+
+    /// Flags for `key` (empty set if the key carries none).
+    pub fn flags(&self, key: &str) -> AttrFlags {
+        self.flags.get(key).copied().unwrap_or_default()
+    }
+
+    /// True if `key` was absorbed from the source media header (provenance).
+    pub fn is_source(&self, key: &str) -> bool {
+        self.flags(key).contains(AttrFlags::SOURCE)
+    }
+
+    /// True if `key` is marked read-only (editor must not mutate it).
+    pub fn is_readonly(&self, key: &str) -> bool {
+        self.flags(key).contains(AttrFlags::READONLY)
     }
 
     pub fn get(&self, key: &str) -> Option<&AttrValue> {
@@ -724,8 +814,10 @@ impl Attrs {
         self.map.get_mut(key)
     }
 
-    /// Remove attribute by key
+    /// Remove attribute by key. Also drops the key's flag entry so stale
+    /// provenance never lingers after the value is gone.
     pub fn remove(&mut self, key: &str) -> Option<AttrValue> {
+        self.flags.remove(key);
         self.map.remove(key)
     }
 
@@ -838,8 +930,95 @@ impl Clone for Attrs {
     fn clone(&self) -> Self {
         Self {
             map: self.map.clone(),
+            flags: self.flags.clone(),
             dirty: AtomicBool::new(self.dirty.load(Ordering::Relaxed)),
             schema: self.schema,
         }
+    }
+}
+
+#[cfg(test)]
+mod flag_tests {
+    use super::*;
+
+    #[test]
+    fn attrflags_serde_roundtrips_as_bits() {
+        let f = AttrFlags::SOURCE | AttrFlags::READONLY;
+        let json = serde_json::to_string(&f).unwrap();
+        // Serialized as the raw u8 bits, not a name list.
+        assert_eq!(json, "3");
+        let back: AttrFlags = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, f);
+    }
+
+    #[test]
+    fn attrflags_empty_serde() {
+        let f = AttrFlags::empty();
+        let json = serde_json::to_string(&f).unwrap();
+        assert_eq!(json, "0");
+        assert_eq!(serde_json::from_str::<AttrFlags>(&json).unwrap(), f);
+    }
+
+    #[test]
+    fn set_preserves_existing_flags() {
+        let mut a = Attrs::new();
+        a.set("k", AttrValue::Int(1));
+        a.add_flags("k", AttrFlags::SOURCE);
+        // Editing the value must NOT wipe provenance.
+        a.set("k", AttrValue::Int(2));
+        assert!(a.is_source("k"));
+        assert_eq!(a.get_i32("k"), Some(2));
+    }
+
+    #[test]
+    fn get_mut_preserves_flags() {
+        let mut a = Attrs::new();
+        a.set("k", AttrValue::Int(1));
+        a.add_flags("k", AttrFlags::SOURCE);
+        if let Some(AttrValue::Int(v)) = a.get_mut("k") {
+            *v = 9;
+        }
+        assert!(a.is_source("k"));
+    }
+
+    #[test]
+    fn add_flags_unions_not_overwrites() {
+        let mut a = Attrs::new();
+        a.add_flags("k", AttrFlags::SOURCE);
+        a.add_flags("k", AttrFlags::READONLY);
+        assert!(a.is_source("k"));
+        assert!(a.is_readonly("k"));
+    }
+
+    #[test]
+    fn merge_carries_flags() {
+        let mut src = Attrs::new();
+        src.set("exr:owner", AttrValue::Str("vfx".into()));
+        src.add_flags("exr:owner", AttrFlags::SOURCE);
+
+        let mut dst = Attrs::new();
+        dst.merge(src);
+        assert!(dst.is_source("exr:owner"));
+        assert_eq!(dst.get_str("exr:owner"), Some("vfx"));
+    }
+
+    #[test]
+    fn remove_drops_flags() {
+        let mut a = Attrs::new();
+        a.set("k", AttrValue::Int(1));
+        a.add_flags("k", AttrFlags::SOURCE | AttrFlags::READONLY);
+        a.remove("k");
+        assert_eq!(a.flags("k"), AttrFlags::empty());
+        assert!(!a.is_source("k"));
+    }
+
+    #[test]
+    fn attrs_serde_roundtrips_flags() {
+        let mut a = Attrs::new();
+        a.set("exr:owner", AttrValue::Str("vfx".into()));
+        a.add_flags("exr:owner", AttrFlags::SOURCE);
+        let json = serde_json::to_string(&a).unwrap();
+        let back: Attrs = serde_json::from_str(&json).unwrap();
+        assert!(back.is_source("exr:owner"));
     }
 }

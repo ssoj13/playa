@@ -408,6 +408,15 @@ fn create_video_node(path: &Path) -> Result<FileNode, FrameError> {
         meta.fps as f32,
     );
 
+    // Absorb the FULL video header (container `format:*` tags + `video:*` codec
+    // facts), SOURCE-flagged via the same bridge as images, so they reach the
+    // attribute editor and persist. Best-effort: the canonical dims/fps below
+    // already succeeded, so a header probe failure only loses the rich tags.
+    match Loader::header(path) {
+        Ok(hattrs) => node.attrs.merge(hattrs),
+        Err(e) => info!("Video header metadata probe failed for {}: {}", path.display(), e),
+    }
+
     node.attrs.set(A_WIDTH, AttrValue::UInt(meta.width));
     node.attrs.set(A_HEIGHT, AttrValue::UInt(meta.height));
     node.attrs.set("padding", AttrValue::UInt(0));

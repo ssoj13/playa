@@ -90,9 +90,18 @@ fn render_impl(
                     )
                 })
                 .unwrap_or((999.0, Vec::new()));
+            // READONLY provenance attrs render as a non-editable Label (the grid
+            // never reports Label edits, and `from_widget` returns None for them,
+            // so there is no write-back). Editable attrs keep their typed widget,
+            // preserving the absorb→edit→encode round-trip.
+            let widget_value = if attrs.is_readonly(key) {
+                ag::AttrValue::Label(label_str(value))
+            } else {
+                to_widget(value)
+            };
             ag::AttrField {
                 key: key.clone(),
-                value: to_widget(value),
+                value: widget_value,
                 ui_options,
                 order,
             }
@@ -105,6 +114,29 @@ fn render_impl(
             attrs.set(key.clone(), value.clone());
             changed_out.push((key, value));
         }
+    }
+}
+
+/// Stringify an [`AttrValue`] for read-only Label display (READONLY attrs).
+/// Scalars print their value; aggregates print a compact summary.
+fn label_str(v: &AttrValue) -> String {
+    match v {
+        AttrValue::Bool(b) => b.to_string(),
+        AttrValue::Str(s) => s.clone(),
+        AttrValue::Int8(i) => i.to_string(),
+        AttrValue::Int(i) => i.to_string(),
+        AttrValue::Int64(i) => i.to_string(),
+        AttrValue::UInt(u) => u.to_string(),
+        AttrValue::Float(f) => f.to_string(),
+        AttrValue::Vec3(a) => format!("{a:?}"),
+        AttrValue::Vec4(a) => format!("{a:?}"),
+        AttrValue::Mat3(m) => format!("{m:?}"),
+        AttrValue::Mat4(m) => format!("{m:?}"),
+        AttrValue::Uuid(u) => u.to_string(),
+        AttrValue::List(items) => format!("[{} items]", items.len()),
+        AttrValue::Map(m) => format!("Map: {} entries", m.len()),
+        AttrValue::Set(s) => format!("Set: {} items", s.len()),
+        AttrValue::Json(s) => format!("JSON: {} chars", s.len()),
     }
 }
 

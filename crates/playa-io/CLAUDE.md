@@ -49,6 +49,17 @@ manifest-mode `VCPKG_ROOT` (`.vcpkg`, triplet `x64-windows-static-md-release`) +
 MSVC + pkg-config. A bare `cargo check -p playa-engine` fails: ffmpeg-sys-next
 can't find ffmpeg without that env.
 
+## Video + generic metadata absorption (B1/B2)
+- `header_video` now also emits, when present: `video:codec`, `video:bitrate`,
+  `video:pix_fmt`, `video:color_space/primaries/transfer/range`, container tags
+  `format:<tag>` (creation_time/encoder/title/…) and stream tags `video:tag:<k>`.
+  Source: extended `VideoMetadata` (ffmpeg_imp.rs) via `ictx.metadata()`,
+  `stream.metadata()`, decoder `codec()/bit_rate()/format()` + `color::*::name()`
+  (returns None for unspecified → key skipped). Stub mirrors the fields so the
+  shared dispatcher compiles without ffmpeg.
+- `header_generic` reads EXIF via `kamadak-exif` (lib `exif`): primary-IFD fields
+  as `exif:<TagName>` = display value. Best-effort: no EXIF / parse error → no
+  keys, never fails the probe.
+
 ## TODO
-- [ ] E5+.7: absorb full video/generic metadata too (header_video currently
-      emits only fps/frames/width/height).
+- [x] E5+.7: absorb full video/generic metadata (done — B1/B2 above).

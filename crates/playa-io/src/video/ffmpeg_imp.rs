@@ -21,6 +21,33 @@ pub struct VideoMetadata {
     pub width: u32,
     pub height: u32,
     pub fps: f64,
+    /// Container/format-level tags (`creation_time`, `encoder`, `title`,
+    /// `artist`, `comment`, `major_brand`, …) verbatim from the file. Empty if
+    /// the container carries none. Mirrors `ffmpeg -i` format metadata.
+    pub format_tags: Vec<(String, String)>,
+    /// Video stream's own tags (`language`, `handler_name`, `rotate`, …).
+    pub stream_tags: Vec<(String, String)>,
+    /// Codec short name (e.g. `h264`, `prores`). `None` if unknown.
+    pub codec: Option<String>,
+    /// Codec bit rate in bits/sec; `None` if the codec context reports 0.
+    pub bit_rate: Option<u64>,
+    /// Pixel format name (e.g. `yuv420p`). `None` if unknown/none.
+    pub pix_fmt: Option<String>,
+    /// Colour space name (e.g. `bt709`); `None` when unspecified.
+    pub color_space: Option<String>,
+    /// Colour primaries name; `None` when unspecified.
+    pub color_primaries: Option<String>,
+    /// Transfer characteristic (gamma/EOTF) name; `None` when unspecified.
+    pub color_transfer: Option<String>,
+    /// Colour range (`tv`/`pc`); `None` when unspecified.
+    pub color_range: Option<String>,
+}
+
+/// Collect an ffmpeg dictionary into owned `(key, value)` pairs.
+fn collect_dict(dict: ffmpeg::DictionaryRef<'_>) -> Vec<(String, String)> {
+    dict.iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 impl VideoMetadata {
@@ -30,10 +57,15 @@ impl VideoMetadata {
         let ictx = ffmpeg::format::input(path)
             .map_err(|e| IoError::LoadError(format!("Failed to open video: {}", e)))?;
 
+        // Container-level tags (read before the stream borrow so both can coexist).
+        let format_tags = collect_dict(ictx.metadata());
+
         let stream = ictx
             .streams()
             .best(ffmpeg::media::Type::Video)
             .ok_or_else(|| IoError::LoadError("No video stream found".to_string()))?;
+
+        let stream_tags = collect_dict(stream.metadata());
 
         let duration = stream.duration();
         let fps_rational = stream.avg_frame_rate();
@@ -58,11 +90,35 @@ impl VideoMetadata {
             .video()
             .map_err(|e| IoError::LoadError(format!("Failed to create video decoder: {}", e)))?;
 
+        // Codec / pixel / colour facts. `color::*::name()` already returns `None`
+        // for unspecified, so missing colour params are simply skipped downstream.
+        let codec = decoder.codec().map(|c| c.name().to_string());
+        let bit_rate = match decoder.bit_rate() {
+            0 => None,
+            n => Some(n as u64),
+        };
+        let pix_fmt = match decoder.format() {
+            ffmpeg::format::Pixel::None => None,
+            p => Some(format!("{:?}", p).to_lowercase()),
+        };
+
         Ok(VideoMetadata {
             frame_count,
             width: decoder.width(),
             height: decoder.height(),
             fps,
+            format_tags,
+            stream_tags,
+            codec,
+            bit_rate,
+            pix_fmt,
+            color_space: decoder.color_space().name().map(str::to_string),
+            color_primaries: decoder.color_primaries().name().map(str::to_string),
+            color_transfer: decoder
+                .color_transfer_characteristic()
+                .name()
+                .map(str::to_string),
+            color_range: decoder.color_range().name().map(str::to_string),
         })
     }
 }

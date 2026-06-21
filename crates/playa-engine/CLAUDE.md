@@ -30,6 +30,23 @@ system (`Attrs`/`AttrValue`), frame model, compositor, project (de)serialization
 4. Round-trip on encode lives in `playa-ui` (`encode.rs::write_exr_frame` reads
    the `exr:` keys back via `core_attr_from_engine`).
 
+## Per-attribute flags — provenance / readonly (B3)
+- `AttrFlags` (bitflags `u8`, in attrs.rs) — per-KEY flags, distinct from the
+  schema-level `SchemaFlags`/`FLAG_*` (the old `AttrFlags` u8 alias was renamed
+  `SchemaFlags`). Variants: `SOURCE` (absorbed from media header), `READONLY`
+  (editor must not mutate). Serde = raw `u8` bits (manual impl), stable on disk.
+- `Attrs.flags: HashMap<String, AttrFlags>` (`#[serde(default)]`). API:
+  `set_flags`/`add_flags`/`flags`/`is_source`/`is_readonly`. `set()`/`get_mut()`
+  do NOT touch flags (provenance survives edits); `merge()` unions other's flags;
+  `remove()` drops them.
+- SOURCE bridge: set in `loader.rs::attrs_from_io` (the single point where
+  `header_attrs` kvs become engine `Attrs`) — every absorbed key incl.
+  width/height/fps. Rides through `merge` onto the FileNode; `create_video_node`
+  now also merges `Loader::header` so video `format:/video:` tags get SOURCE too.
+  READONLY is never auto-set (keeps absorbed attrs editable + round-tripping).
+- AE enforcement (playa-ui ae_ui.rs): `attrs.is_readonly(key)` → field rendered
+  as `ag::AttrValue::Label` (read-only; `from_widget` returns None → no write).
+
 ## GOTCHA
 - `AttrValue::Int(i32)` vs `Int64(i64)`: absorbed EXR ints land in `Int64`
   (lossless for timecode/keycode). Don't narrow to `Int`.
@@ -43,7 +60,9 @@ Native build pulls ffmpeg → use `python bootstrap.py b --debug`
 `cargo check -p playa-engine` fails on ffmpeg-sys-next without that env.
 
 ## TODO
-- [ ] FLAG_READONLY is defined but never enforced in the UI — derived width/
-      height/fps are editable today (can desync). Wire `AttrDef::is_readonly()`.
-- [ ] Optional provenance flag to distinguish pristine source metadata from
-      user-edited overrides.
+- [x] Provenance flag distinguishing source metadata from user edits — done via
+      per-key `AttrFlags::SOURCE` (B3 above).
+- [x] Per-key READONLY enforcement in the AE — done (`is_readonly` → Label).
+- [ ] Schema-level `FLAG_READONLY` (SchemaFlags) on derived width/height/fps is
+      still not auto-mapped to the per-key READONLY flag; UI must set it
+      explicitly. Consider bridging schema READONLY → per-key on absorption.

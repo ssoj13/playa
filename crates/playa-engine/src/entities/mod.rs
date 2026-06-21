@@ -25,7 +25,7 @@ pub mod track_matte;
 pub mod traits;
 pub mod transform;
 
-pub use attrs::{AttrValue, Attrs};
+pub use attrs::{AttrFlags, AttrValue, Attrs};
 // Type alias for backwards compatibility
 pub type Comp = CompNode;
 pub use comp_node::{CompNode, Layer as NodeLayer};

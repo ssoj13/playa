@@ -15,6 +15,7 @@ playa-events = { path = "../playa-events" }
 playa-coord = { workspace = true }
 playa-time = { workspace = true }
 anyhow = { workspace = true }
+bitflags = "2"
 bytemuck = { workspace = true }
 cosmic-text = "0.18"
 crossbeam = "0.8.4"

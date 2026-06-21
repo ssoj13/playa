@@ -79,7 +79,9 @@ pub fn decode_raster(path: &Path) -> Result<DecodedRaster, IoError> {
 fn header_video(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     let (actual_path, _) = media::parse_video_path(path);
     let meta = video::VideoMetadata::from_file(&actual_path)?;
-    Ok(vec![
+
+    // Derived convenience keys (unprefixed, mirror the EXR/generic shape).
+    let mut v = vec![
         ("width".into(), AttrKv::UInt(meta.width)),
         ("height".into(), AttrKv::UInt(meta.height)),
         (
@@ -89,7 +91,41 @@ fn header_video(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
         ("channels".into(), AttrKv::UInt(3)),
         ("frames".into(), AttrKv::UInt(meta.frame_count as u32)),
         ("fps".into(), AttrKv::Float(meta.fps as f32)),
-    ])
+    ];
+
+    // Codec / stream facts, namespaced `video:` (only emit what exists).
+    if let Some(codec) = meta.codec {
+        v.push(("video:codec".into(), AttrKv::Str(codec)));
+    }
+    if let Some(bitrate) = meta.bit_rate {
+        v.push(("video:bitrate".into(), AttrKv::Int64(bitrate as i64)));
+    }
+    if let Some(pix_fmt) = meta.pix_fmt {
+        v.push(("video:pix_fmt".into(), AttrKv::Str(pix_fmt)));
+    }
+    if let Some(cs) = meta.color_space {
+        v.push(("video:color_space".into(), AttrKv::Str(cs)));
+    }
+    if let Some(cp) = meta.color_primaries {
+        v.push(("video:color_primaries".into(), AttrKv::Str(cp)));
+    }
+    if let Some(ct) = meta.color_transfer {
+        v.push(("video:color_transfer".into(), AttrKv::Str(ct)));
+    }
+    if let Some(cr) = meta.color_range {
+        v.push(("video:color_range".into(), AttrKv::Str(cr)));
+    }
+
+    // Container/format tags, namespaced `format:`; stream tags namespaced
+    // `video:tag:` to avoid colliding with the codec facts above.
+    for (k, val) in meta.format_tags {
+        v.push((format!("format:{k}"), AttrKv::Str(val)));
+    }
+    for (k, val) in meta.stream_tags {
+        v.push((format!("video:tag:{k}"), AttrKv::Str(val)));
+    }
+
+    Ok(v)
 }
 
 fn decode_video(path: &Path) -> Result<DecodedRaster, IoError> {
@@ -288,12 +324,42 @@ fn header_generic(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
         _ => 4,
     };
 
-    Ok(vec![
+    let mut v = vec![
         ("width".into(), AttrKv::UInt(img.width())),
         ("height".into(), AttrKv::UInt(img.height())),
         ("format".into(), AttrKv::Str(format!("{:?}", format))),
         ("channels".into(), AttrKv::UInt(channels)),
-    ])
+    ];
+
+    // Absorb EXIF (JPEG/TIFF/HEIF/…), namespaced `exif:<TagName>`. Optional and
+    // best-effort: a file without EXIF, or an unreadable EXIF block, simply adds
+    // no keys and never fails the header probe.
+    v.extend(read_exif(path));
+
+    Ok(v)
+}
+
+/// Read EXIF tags from the primary image IFD as namespaced `exif:<TagName>` →
+/// `AttrKv::Str` (human display value). Returns empty on any failure / no EXIF.
+/// Restricted to the primary IFD so thumbnail-IFD duplicates don't clobber keys.
+fn read_exif(path: &Path) -> Vec<(String, AttrKv)> {
+    let Ok(file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let exif = match exif::Reader::new().read_from_container(&mut reader) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    exif.fields()
+        .filter(|f| f.ifd_num == exif::In::PRIMARY)
+        .map(|f| {
+            (
+                format!("exif:{}", f.tag),
+                AttrKv::Str(f.display_value().to_string()),
+            )
+        })
+        .collect()
 }
 
 /// Radiance HDR — decode to linear RGBA f32 via `image`.
