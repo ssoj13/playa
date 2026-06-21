@@ -273,7 +273,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -284,7 +284,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1577,7 +1577,7 @@ dependencies = [
 [[package]]
 name = "egui-asset-browser"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
 ]
@@ -1585,7 +1585,7 @@ dependencies = [
 [[package]]
 name = "egui-attr-grid"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
  "egui-splitter-table",
@@ -1595,7 +1595,7 @@ dependencies = [
 [[package]]
 name = "egui-encode-dialog"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -1603,9 +1603,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-gizmo"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
+dependencies = [
+ "egui",
+ "enumset",
+ "glam",
+]
+
+[[package]]
 name = "egui-hdr-view"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1616,7 +1626,7 @@ dependencies = [
 [[package]]
 name = "egui-help-overlay"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
 ]
@@ -1624,7 +1634,7 @@ dependencies = [
 [[package]]
 name = "egui-jobs-table"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -1643,7 +1653,7 @@ dependencies = [
 [[package]]
 name = "egui-prefs"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -1652,7 +1662,7 @@ dependencies = [
 [[package]]
 name = "egui-progressbar"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
 ]
@@ -1660,7 +1670,7 @@ dependencies = [
 [[package]]
 name = "egui-splitter-table"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
  "serde",
@@ -1669,7 +1679,7 @@ dependencies = [
 [[package]]
 name = "egui-statusbar"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
  "serde",
@@ -1678,7 +1688,7 @@ dependencies = [
 [[package]]
 name = "egui-track-timeline"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#feaa7e150b43bec2142515bb3e28f53fa3bc3df3"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#473b70932adfc1a684e222920db9f261c30fcd8c"
 dependencies = [
  "egui",
  "serde",
@@ -2013,7 +2023,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2381,15 +2391,6 @@ dependencies = [
  "khronos_api",
  "log",
  "xml-rs",
-]
-
-[[package]]
-name = "glam"
-version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
-dependencies = [
- "mint",
 ]
 
 [[package]]
@@ -3365,12 +3366,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mint"
-version = "0.5.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
-
-[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3498,7 +3493,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui-wgpu",
- "glam 0.33.1",
+ "glam",
  "log",
  "nodes-core",
  "nodes-view",
@@ -3511,7 +3506,7 @@ version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/nodes-rs.git?branch=main#62741bcd76eb0728364a42013f1b61e053ba9943"
 dependencies = [
  "bytemuck",
- "glam 0.33.1",
+ "glam",
  "log",
  "nodes-core",
  "thiserror 2.0.18",
@@ -4311,7 +4306,7 @@ dependencies = [
 name = "playa-coord"
 version = "0.1.142"
 dependencies = [
- "glam 0.33.1",
+ "glam",
 ]
 
 [[package]]
@@ -4323,7 +4318,7 @@ dependencies = [
  "cosmic-text",
  "crossbeam",
  "enum_dispatch",
- "glam 0.33.1",
+ "glam",
  "glob",
  "half",
  "lazy_static",
@@ -4441,7 +4436,7 @@ dependencies = [
 name = "playa-time"
 version = "0.1.142"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "serde",
 ]
 
@@ -4454,6 +4449,7 @@ dependencies = [
  "egui-asset-browser",
  "egui-attr-grid",
  "egui-encode-dialog",
+ "egui-gizmo",
  "egui-hdr-view",
  "egui-help-overlay",
  "egui-progressbar",
@@ -4464,7 +4460,7 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "egui_ltreeview",
- "glam 0.33.1",
+ "glam",
  "half",
  "image",
  "log",
@@ -4478,7 +4474,6 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
- "transform-gizmo-egui",
  "uuid",
  "wgpu",
 ]
@@ -5156,7 +5151,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5673,7 +5668,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5896,32 +5891,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "transform-gizmo"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e52e45b2efe33a248468cabe2d32415f5695d28fd1282381cc000c178cdfc2f7"
-dependencies = [
- "ahash",
- "ecolor",
- "emath",
- "enum_dispatch",
- "enumset",
- "epaint",
- "glam 0.32.1",
- "mint",
-]
-
-[[package]]
-name = "transform-gizmo-egui"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd2514351ecd47ac9f85f2575b6ce2bb677ebd66a3e708435c2dd3fc3be4a98"
-dependencies = [
- "egui",
- "transform-gizmo",
-]
-
-[[package]]
 name = "transpose"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5984,7 +5953,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6230,7 +6199,7 @@ name = "vfx-math"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/oiio-rs.git?branch=main#94fa2d1193bad986778fad07f4161160b930b052"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "vfx-core",
  "wide",
 ]
@@ -6240,7 +6209,7 @@ name = "vfx-ocio"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/oiio-rs.git?branch=main#94fa2d1193bad986778fad07f4161160b930b052"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "glob",
  "half",
  "regex",
@@ -6261,7 +6230,7 @@ name = "vfx-primaries"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/oiio-rs.git?branch=main#94fa2d1193bad986778fad07f4161160b930b052"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "vfx-core",
  "vfx-math",
 ]
@@ -6720,7 +6689,7 @@ source = "git+ssh://git@github.com/ssoj13/wgpu-widgets-rs.git?branch=main#3dfe45
 dependencies = [
  "bytemuck",
  "etagere",
- "glam 0.33.1",
+ "glam",
  "glyphon",
  "lru",
  "rustc-hash 2.1.2",
@@ -6773,7 +6742,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
