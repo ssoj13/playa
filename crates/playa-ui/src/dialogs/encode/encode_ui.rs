@@ -1,6 +1,17 @@
-//! Encoding dialog UI
+//! Encode dialog UI
 //!
-//! Provides dialog for configuring and running video encoding.
+//! Configures and runs video / image-sequence encoding. The *settings* UI is the
+//! generic, data-driven [`egui_encode_dialog`] widget: this module builds an
+//! [`EncodeSchema`] from playa's codec/format tables, shows the widget, and maps
+//! the returned [`WidgetSettings`] back onto playa's model. Everything below the
+//! settings panel — the encode worker thread, the ffmpeg/EXR pipeline, the
+//! progress channel + progress bar, and the EXR metadata round-trip — stays in
+//! `encode.rs` and is kicked unchanged from [`EncodeDialog::start_encoding`].
+//!
+//! Data flow each frame (when idle):
+//!   model (this struct) -> `build_schema` + `model_to_widget` -> widget.show()
+//!   -> `apply_widget` -> model.  On Start the model feeds `build_encoder_settings`
+//!   / `sequence_settings` into the existing worker.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,14 +23,25 @@ use eframe::egui;
 use log::info;
 
 use crate::dialogs::encode::{
-    ChannelMode, CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage,
-    EncoderSettings, ExportMode, ExrCompression, OutputBitDepth, ProResProfile, SequenceFormat,
-    SequenceSettings, TiffCompression, VideoCodec,
+    ChannelMode, CodecSettings, Container, EncodeError, EncodeProgress, EncodeStage, EncoderImpl,
+    EncoderSettings, ExportMode, ExrCompression, ExrEncodeMode, OutputBitDepth, ProResProfile,
+    QualityMode, SequenceFormat, SequenceSettings, TiffBitDepth, TiffCompression, VideoCodec,
+};
+use egui_encode_dialog::{
+    Codec, EncodeDialog as EncodeWidget, EncodeDialogResult, EncodeOption, EncodeSchema,
+    EncodeSettings as WidgetSettings, Format, ShowConfig,
 };
 use egui_progressbar::ProgressBar;
+use playa_engine::entities::frame::TonemapMode;
 use playa_engine::entities::{Comp, Project};
 
-/// Encoding dialog state
+/// Encoding dialog state.
+///
+/// Holds the persisted *model* (output path / codec / per-codec + sequence
+/// settings) plus the live encode-worker state (cancel flag, progress channel,
+/// thread handles). The settings widget is rebuilt from this model each frame,
+/// so this struct remains the single source of truth that `load_from_settings`
+/// / `save_to_settings` persist.
 pub struct EncodeDialog {
     /// Output path and container settings
     pub output_path: PathBuf,
@@ -53,7 +75,7 @@ pub struct EncodeDialog {
     /// Progress bar widget
     progress_bar: ProgressBar,
 
-    /// Tonemapping mode for HDR→LDR conversion
+    /// Tonemapping mode for HDR→LDR conversion (video path)
     pub tonemap_mode: playa_engine::entities::frame::TonemapMode,
 
     /// Export mode (Video or Sequence)
@@ -64,83 +86,6 @@ pub struct EncodeDialog {
 }
 
 impl EncodeDialog {
-    /// Increment the last number in filename
-    /// Examples: aaa001.mp4 -> aaa002.mp4, test999.mp4 -> test1000.mp4
-    fn increment_filename(&mut self) {
-        let file_stem = self
-            .output_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("output");
-
-        let extension = self
-            .output_path
-            .extension()
-            .and_then(|s| s.to_str())
-            .unwrap_or("mp4");
-
-        // Find last number in filename using regex-like approach
-        let mut last_num_start = None;
-        let mut last_num_end = None;
-        let mut in_number = false;
-
-        for (i, c) in file_stem.chars().enumerate() {
-            if c.is_ascii_digit() {
-                if !in_number {
-                    last_num_start = Some(i);
-                    in_number = true;
-                }
-                last_num_end = Some(i + 1);
-            } else {
-                in_number = false;
-            }
-        }
-
-        let new_stem = if let (Some(start), Some(end)) = (last_num_start, last_num_end) {
-            let prefix = &file_stem[..start];
-            let num_str = &file_stem[start..end];
-            let suffix = &file_stem[end..];
-
-            // Parse number and increment
-            if let Ok(num) = num_str.parse::<u32>() {
-                let new_num = num + 1;
-                let old_width = num_str.len();
-
-                // Calculate how many digits the new number has (integer-based for precision)
-                let new_num_digits = match new_num {
-                    0 => 1,
-                    n => {
-                        let mut count = 0;
-                        let mut val = n;
-                        while val > 0 {
-                            count += 1;
-                            val /= 10;
-                        }
-                        count
-                    }
-                };
-
-                // Use original width if new number fits, otherwise use natural width
-                let width = old_width.max(new_num_digits);
-
-                format!("{}{:0width$}{}", prefix, new_num, suffix, width = width)
-            } else {
-                // If parse fails, just append 001
-                format!("{}001", file_stem)
-            }
-        } else {
-            // No number found, append 001
-            format!("{}001", file_stem)
-        };
-
-        // Update path with new filename
-        if let Some(parent) = self.output_path.parent() {
-            self.output_path = parent.join(format!("{}.{}", new_stem, extension));
-        } else {
-            self.output_path = PathBuf::from(format!("{}.{}", new_stem, extension));
-        }
-    }
-
     /// Load dialog state from AppSettings (called when opening dialog)
     pub fn load_from_settings(settings: &crate::dialogs::encode::EncodeDialogSettings) -> Self {
         log::trace!("========== LOADING ENCODE DIALOG SETTINGS ==========");
@@ -325,7 +270,10 @@ impl EncodeDialog {
         self.stop_encoding_keep_window();
     }
 
-    /// Render the encode dialog
+    /// Render the encode dialog.
+    ///
+    /// While idle, shows the generic settings widget (built from the model each
+    /// frame). While encoding, shows playa's own progress window instead.
     ///
     /// Returns: true if dialog should remain open, false if closed
     pub fn render(
@@ -334,8 +282,6 @@ impl EncodeDialog {
         project: &Project,
         active_comp: Option<&Comp>,
     ) -> bool {
-        let mut should_close = false;
-
         // Poll progress updates
         if let Some(rx) = &self.progress_rx {
             while let Ok(progress) = rx.try_recv() {
@@ -365,344 +311,539 @@ impl EncodeDialog {
             }
         }
 
+        let mut should_close = false;
+
+        if self.is_encoding {
+            // Progress / worker-status UI (kept as before, in its own window since the
+            // settings widget owns its modal and does not render progress).
+            self.render_progress_window(ctx, &mut should_close);
+        } else {
+            // Settings UI: build the schema + working settings from the model, show
+            // the generic widget, then mirror its result back into the model.
+            let schema = self.build_schema();
+            let mut widget = EncodeWidget::with_settings(schema, self.model_to_widget());
+            let cfg = ShowConfig {
+                title: "Export".to_string(),
+                width: 600.0,
+                show_browse: true,
+                // Frame range stays "use active Comp" (the worker derives it from the
+                // comp's play_range), so we hide the widget's range row.
+                show_frame_range: false,
+                start_label: "Encode".to_string(),
+            };
+            let result = widget.show(ctx, &cfg);
+
+            // Host-owned Browse: the widget only signals intent; we run rfd ourselves.
+            if widget.take_browse_request() {
+                let mut fd = rfd::FileDialog::new();
+                if let Some(name) = self.output_path.file_name().and_then(|s| s.to_str()) {
+                    fd = fd.set_file_name(name);
+                }
+                if let Some(path) = fd.save_file() {
+                    widget.set_output_path(path.display().to_string());
+                }
+            }
+
+            // Mirror the widget's working state into the model so persistence and the
+            // encode worker (build_encoder_settings / sequence_settings) see edits.
+            self.apply_widget(widget.settings());
+
+            match result {
+                EncodeDialogResult::Open => {}
+                EncodeDialogResult::Cancelled => should_close = true,
+                EncodeDialogResult::Start(settings) => {
+                    self.apply_widget(&settings);
+                    if let Some(comp) = active_comp {
+                        self.start_encoding(comp, project);
+                    } else {
+                        info!("Encode requested but there is no active comp to encode");
+                    }
+                }
+            }
+        }
+
+        // Return true if window should stay open
+        !should_close
+    }
+
+    /// Progress window shown while encoding (the widget renders no progress).
+    fn render_progress_window(&mut self, ctx: &egui::Context, should_close: &mut bool) {
         let window_title = match self.export_mode {
             ExportMode::Video => "Video Encoder",
             ExportMode::Sequence => "Image Sequence Export",
         };
         egui::Window::new(window_title)
-            .id(egui::Id::new("encode_dialog"))
+            .id(egui::Id::new("encode_progress"))
             .resizable(false)
             .collapsible(false)
             .show(ctx, |ui| {
-                ui.set_width(600.0);
-
-                // === Output Path ===
-                ui.horizontal(|ui| {
-                    ui.label("Output:");
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        let path_str = self.output_path.display().to_string();
-                        let mut edit_path = path_str.clone();
-                        if ui.text_edit_singleline(&mut edit_path).changed() {
-                            self.output_path = PathBuf::from(edit_path);
-                        }
-
-                        // Increment filename button
-                        if ui
-                            .button("+")
-                            .on_hover_text(
-                                "Increment number in filename (e.g., file001.mp4 → file002.mp4)",
-                            )
-                            .clicked()
-                        {
-                            self.increment_filename();
-                        }
-
-                        if ui.button("Browse").clicked()
-                            && let Some(path) = rfd::FileDialog::new()
-                                .set_file_name("output.mp4")
-                                .save_file()
-                        {
-                            self.output_path = path;
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-
-                // === Framerate ===
-                ui.horizontal(|ui| {
-                    ui.label("Framerate:");
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        ui.add(egui::Slider::new(&mut self.fps, 1.0..=960.0).text("fps"));
-                    });
-                });
-
-                ui.add_space(12.0);
-                ui.separator();
-                ui.add_space(4.0);
-
-                // === Export Mode Tabs (Video / Sequence) ===
-                ui.horizontal(|ui| {
-                    ui.add_enabled_ui(!self.is_encoding, |ui| {
-                        // Video mode button
-                        let video_btn = egui::Button::new("Video")
-                            .selected(self.export_mode == ExportMode::Video)
-                            .min_size(egui::vec2(80.0, 0.0));
-                        if ui.add(video_btn).clicked() {
-                            self.export_mode = ExportMode::Video;
-                            // Restore video extension
-                            self.output_path.set_extension(self.container.extension());
-                        }
-
-                        // Sequence mode button
-                        let seq_btn = egui::Button::new("Sequence")
-                            .selected(self.export_mode == ExportMode::Sequence)
-                            .min_size(egui::vec2(80.0, 0.0));
-                        if ui.add(seq_btn).clicked() {
-                            self.export_mode = ExportMode::Sequence;
-                            // Update extension and add padding pattern if needed
-                            let stem = self.output_path.file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("frame");
-                            // Add #### padding if not present
-                            let new_stem = if !stem.contains('#') && !stem.contains('%') && !stem.contains('@') {
-                                format!("{}.####", stem)
-                            } else {
-                                stem.to_string()
-                            };
-                            if let Some(parent) = self.output_path.parent() {
-                                self.output_path = parent.join(format!("{}.{}", new_stem, self.sequence_settings.format.extension()));
-                            } else {
-                                self.output_path = PathBuf::from(format!("{}.{}", new_stem, self.sequence_settings.format.extension()));
-                            }
-                        }
-                    });
-                });
-
-                ui.add_space(4.0);
-
-                // === Codec/Format Tabs based on mode ===
-                match self.export_mode {
-                    ExportMode::Video => {
-                        // Video codec tabs
-                        ui.horizontal(|ui| {
-                            ui.add_enabled_ui(!self.is_encoding, |ui| {
-                                for codec in VideoCodec::all() {
-                                    let is_available = codec.is_available();
-                                    let is_selected = self.selected_codec == *codec;
-
-                                    ui.add_enabled_ui(is_available, |ui| {
-                                        let button = egui::Button::new(codec.to_string())
-                                            .selected(is_selected)
-                                            .min_size(egui::vec2(90.0, 0.0));
-
-                                        if ui.add(button).clicked() {
-                                            self.selected_codec = *codec;
-                                            let preferred_container = codec.preferred_container();
-                                            self.container = preferred_container;
-                                            self.output_path.set_extension(preferred_container.extension());
-                                        }
-                                    });
-
-                                    if !is_available {
-                                        ui.label("✗").on_hover_text(format!("{} encoder not available", codec));
-                                    }
-                                }
-                            });
-                        });
-
-                        ui.separator();
-                        ui.add_space(8.0);
-
-                        // Per-Codec Settings
-                        ui.add_enabled_ui(!self.is_encoding, |ui| match self.selected_codec {
-                            VideoCodec::H264 => self.render_h264_settings(ui),
-                            VideoCodec::H265 => self.render_h265_settings(ui),
-                            VideoCodec::AV1 => self.render_av1_settings(ui),
-                            VideoCodec::ProRes => self.render_prores_settings(ui),
-                        });
-                    }
-                    ExportMode::Sequence => {
-                        let caps = self.sequence_settings.format.capabilities();
-
-                        // === Common settings (above format buttons) ===
-                        ui.add_enabled_ui(!self.is_encoding, |ui| {
-                            // Channels (RGB/RGBA)
-                            ui.horizontal(|ui| {
-                                ui.label("Channels:");
-                                for mode in ChannelMode::all() {
-                                    let enabled = caps.supports_alpha || *mode == ChannelMode::Rgb;
-                                    ui.add_enabled_ui(enabled, |ui| {
-                                        if ui.radio_value(
-                                            &mut self.sequence_settings.channels,
-                                            *mode,
-                                            mode.to_string(),
-                                        ).changed() {
-                                            self.sequence_settings.validate();
-                                        }
-                                    });
-                                }
-                                if !caps.supports_alpha {
-                                    ui.label("(no alpha)").on_hover_text("This format doesn't support alpha channel");
-                                }
-                            });
-
-                            // Bit Depth
-                            ui.horizontal(|ui| {
-                                ui.label("Bit Depth:");
-                                for depth in OutputBitDepth::all() {
-                                    let supported = self.sequence_settings.format.supports_depth(*depth);
-                                    ui.add_enabled_ui(supported, |ui| {
-                                        if ui.radio_value(
-                                            &mut self.sequence_settings.bit_depth,
-                                            *depth,
-                                            depth.to_string(),
-                                        ).changed() {
-                                            self.sequence_settings.validate();
-                                        }
-                                    });
-                                }
-                            });
-
-                            // Tonemapping
-                            ui.horizontal(|ui| {
-                                let needs_tonemap_hint = !caps.is_hdr;
-                                ui.checkbox(&mut self.sequence_settings.apply_tonemap, "Tonemapping");
-                                if self.sequence_settings.apply_tonemap {
-                                    egui::ComboBox::from_id_salt("seq_tonemap")
-                                        .selected_text(format!("{:?}", self.sequence_settings.tonemap_mode))
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(
-                                                &mut self.sequence_settings.tonemap_mode,
-                                                playa_engine::entities::frame::TonemapMode::ACES,
-                                                "ACES",
-                                            );
-                                            ui.selectable_value(
-                                                &mut self.sequence_settings.tonemap_mode,
-                                                playa_engine::entities::frame::TonemapMode::Reinhard,
-                                                "Reinhard",
-                                            );
-                                            ui.selectable_value(
-                                                &mut self.sequence_settings.tonemap_mode,
-                                                playa_engine::entities::frame::TonemapMode::Clamp,
-                                                "Clamp",
-                                            );
-                                        });
-                                }
-                                if needs_tonemap_hint && !self.sequence_settings.apply_tonemap {
-                                    ui.label("(auto for HDR input)").on_hover_text(
-                                        "HDR frames will be automatically tonemapped for this LDR format"
-                                    );
-                                }
-                            });
-                        });
-
-                        ui.add_space(8.0);
-
-                        // === Format buttons ===
-                        ui.horizontal(|ui| {
-                            ui.add_enabled_ui(!self.is_encoding, |ui| {
-                                for format in SequenceFormat::all() {
-                                    let is_selected = self.sequence_settings.format == *format;
-                                    let button = egui::Button::new(format.to_string())
-                                        .selected(is_selected)
-                                        .min_size(egui::vec2(70.0, 0.0));
-
-                                    if ui.add(button).clicked() {
-                                        self.sequence_settings.format = *format;
-                                        // Update file extension
-                                        self.output_path.set_extension(format.extension());
-                                        // Validate settings for new format
-                                        self.sequence_settings.validate();
-                                    }
-                                }
-                            });
-                        });
-
-                        ui.separator();
-                        ui.add_space(4.0);
-
-                        // === Format-specific settings ===
-                        ui.add_enabled_ui(!self.is_encoding, |ui| {
-                            self.render_sequence_format_settings(ui, project);
-                        });
-                    }
-                }
-
-                ui.add_space(12.0);
-
-                // === Frame Range Info ===
-                ui.label("Frame Range: (use active Comp)");
-
-                ui.add_space(12.0);
-
-                // === Progress (always visible to prevent dialog size jumping) ===
-                ui.separator();
+                ui.set_width(420.0);
                 ui.heading("Progress");
 
-                if self.is_encoding {
-                    if let Some(ref progress) = self.progress {
-                        // Stage description
-                        let stage_text = match &progress.stage {
-                            EncodeStage::Validating => "Validating frame sizes...",
-                            EncodeStage::Opening => "Opening encoder...",
-                            EncodeStage::Encoding => "Encoding frames...",
-                            EncodeStage::Flushing => "Flushing encoder...",
-                            EncodeStage::Complete => "Complete!",
-                            EncodeStage::Error(msg) => msg.as_str(),
-                        };
-                        ui.label(stage_text);
-
-                        // Progress bar
-                        self.progress_bar.set_progress(
-                            progress.current_frame.max(0) as usize,
-                            progress.total_frames.max(0) as usize,
-                        );
-                        self.progress_bar.render(ui);
-                    }
-                } else {
-                    // Not encoding: show empty progress bar to maintain dialog size
-                    ui.label("Ready to encode");
-                    let planned_total = active_comp
-                        .map(|c| {
-                            let (s, e) = c.play_range(true);
-                            (e - s + 1).max(0) as usize
-                        })
-                        .unwrap_or(0);
-                    self.progress_bar.set_progress(0, planned_total);
+                if let Some(ref progress) = self.progress {
+                    let stage_text = match &progress.stage {
+                        EncodeStage::Validating => "Validating frame sizes...",
+                        EncodeStage::Opening => "Opening encoder...",
+                        EncodeStage::Encoding => "Encoding frames...",
+                        EncodeStage::Flushing => "Flushing encoder...",
+                        EncodeStage::Complete => "Complete!",
+                        EncodeStage::Error(msg) => msg.as_str(),
+                    };
+                    ui.label(stage_text);
+                    self.progress_bar.set_progress(
+                        progress.current_frame.max(0) as usize,
+                        progress.total_frames.max(0) as usize,
+                    );
                     self.progress_bar.render(ui);
-                    ui.label(""); // Empty label for encoder name spacing
+                } else {
+                    ui.label("Starting...");
+                    self.progress_bar.render(ui);
                 }
 
                 ui.add_space(8.0);
-
                 ui.separator();
 
-                // === Readiness check ===
-                let ready_to_encode = active_comp.is_some();
-
-                if !ready_to_encode {
-                    ui.colored_label(
-                        egui::Color32::from_rgb(200, 150, 0),
-                        "No active comp to encode",
-                    );
-                }
-
-                // === Buttons ===
                 ui.horizontal(|ui| {
-                    // Close button (stops encoding if running, then closes window)
+                    // Close: stop the encode and close the dialog.
                     if ui.button("Close").clicked() {
-                        if self.is_encoding {
-                            self.stop_encoding_and_close();
-                        }
-                        should_close = true;
+                        self.stop_encoding_and_close();
+                        *should_close = true;
                     }
-
-                    // Encode/Stop button (toggles between Encode and Stop)
-                    if self.is_encoding {
-                        // During encoding: show "Stop" button
-                        if ui.button("Stop").clicked() {
-                            self.stop_encoding_keep_window();
-                        }
-                    } else {
-                        // Not encoding: show "Encode" button
-                        ui.add_enabled_ui(ready_to_encode, |ui| {
-                            let mut button = ui.button("Encode");
-                            if !ready_to_encode {
-                                button = button.on_disabled_hover_text("No active comp");
-                            }
-                            if button.clicked()
-                                && let Some(comp) = active_comp {
-                                    self.start_encoding(comp, project);
-                                }
-                        });
+                    // Stop: cancel the encode but keep the dialog open.
+                    if ui.button("Stop").clicked() {
+                        self.stop_encoding_keep_window();
                     }
                 });
             });
-
-        // Return true if window should stay open
-        !should_close
     }
+
+    // ===================================================================
+    // Schema construction (model -> widget) and result mapping (widget -> model)
+    // ===================================================================
+
+    /// The widget format/codec ids for the currently selected model target.
+    fn current_ids(&self) -> (&'static str, &'static str) {
+        match self.export_mode {
+            ExportMode::Video => match self.selected_codec {
+                VideoCodec::H264 => ("mp4", "h264"),
+                VideoCodec::H265 => ("mp4", "h265"),
+                VideoCodec::AV1 => ("mp4", "av1"),
+                VideoCodec::ProRes => ("mov", "prores"),
+            },
+            ExportMode::Sequence => match self.sequence_settings.format {
+                SequenceFormat::Exr => ("exr", "exr"),
+                SequenceFormat::Png => ("png", "png"),
+                SequenceFormat::Jpeg => ("jpeg", "jpeg"),
+                SequenceFormat::Tiff => ("tiff", "tiff"),
+                SequenceFormat::Tga => ("tga", "tga"),
+            },
+        }
+    }
+
+    /// Working settings handed to the widget. Only ids + path are set; the widget's
+    /// `with_settings` repair seeds every option value from the schema defaults,
+    /// which we build from the model — so the displayed values always equal the model.
+    fn model_to_widget(&self) -> WidgetSettings {
+        let (format_id, codec_id) = self.current_ids();
+        WidgetSettings {
+            format_id: format_id.to_string(),
+            codec_id: codec_id.to_string(),
+            output_path: self.output_path.display().to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Common image-sequence options (channels / bit depth / tonemapping), shared
+    /// by every sequence format. Choice lists are format-specific (alpha + depth
+    /// support), mirroring the source dialog's per-format validation.
+    fn seq_common_options(&self, fmt: SequenceFormat) -> Vec<EncodeOption> {
+        let seq = &self.sequence_settings;
+        vec![
+            EncodeOption::choice(
+                "channels",
+                "Channels",
+                seq_channel_labels(fmt),
+                seq_channel_to_idx(fmt, seq.channels),
+            ),
+            EncodeOption::choice(
+                "bitdepth",
+                "Bit Depth",
+                seq_depth_labels(fmt),
+                seq_depth_to_idx(fmt, seq.bit_depth),
+            ),
+            EncodeOption::boolean("tonemap", "Tonemapping", seq.apply_tonemap),
+            EncodeOption::choice(
+                "tonemap_mode",
+                "Tonemap mode",
+                TONEMAP_LABELS,
+                tonemap_to_idx(seq.tonemap_mode),
+            ),
+        ]
+    }
+
+    /// Build the encode schema mirroring playa's codec/format tables 1:1, seeding
+    /// every option default from the current model and codec availability from the
+    /// ffmpeg encoder probe.
+    fn build_schema(&self) -> EncodeSchema {
+        let cs = &self.codec_settings;
+
+        // --- Video: MP4 (H.264 / H.265 / AV1) ---
+        let mp4 = Format::new(
+            "mp4",
+            "MP4",
+            "mp4",
+            [
+                Codec::new(
+                    "h264",
+                    "H.264",
+                    [
+                        EncodeOption::float("fps", "Framerate", self.fps as f64, 1.0, 960.0),
+                        EncodeOption::choice(
+                            "impl",
+                            "Encoder",
+                            ENC_IMPL_LABELS,
+                            enc_impl_to_idx(cs.h264.encoder_impl),
+                        ),
+                        EncodeOption::choice(
+                            "qmode",
+                            "Quality Mode",
+                            QMODE_LABELS,
+                            qmode_to_idx(cs.h264.quality_mode),
+                        ),
+                        EncodeOption::int("value", "Value", cs.h264.quality_value as i64, 1, 10000),
+                        EncodeOption::choice(
+                            "preset",
+                            "Preset",
+                            H26X_PRESETS,
+                            list_idx(&H26X_PRESETS, &cs.h264.preset, 5),
+                        ),
+                        EncodeOption::choice(
+                            "profile",
+                            "Profile",
+                            H264_PROFILES,
+                            list_idx(&H264_PROFILES, &cs.h264.profile, 2),
+                        ),
+                    ],
+                )
+                .available(VideoCodec::H264.is_available())
+                .hint("18=best, 23=default, 28=fast"),
+                Codec::new(
+                    "h265",
+                    "H.265 (HEVC)",
+                    [
+                        EncodeOption::float("fps", "Framerate", self.fps as f64, 1.0, 960.0),
+                        EncodeOption::choice(
+                            "impl",
+                            "Encoder",
+                            ENC_IMPL_LABELS,
+                            enc_impl_to_idx(cs.h265.encoder_impl),
+                        ),
+                        EncodeOption::choice(
+                            "qmode",
+                            "Quality Mode",
+                            QMODE_LABELS,
+                            qmode_to_idx(cs.h265.quality_mode),
+                        ),
+                        EncodeOption::int("value", "Value", cs.h265.quality_value as i64, 1, 10000),
+                        EncodeOption::choice(
+                            "preset",
+                            "Preset",
+                            H26X_PRESETS,
+                            list_idx(&H26X_PRESETS, &cs.h265.preset, 5),
+                        ),
+                        EncodeOption::choice(
+                            "profile",
+                            "Profile",
+                            H265_PROFILES,
+                            list_idx(&H265_PROFILES, &cs.h265.profile, 0),
+                        ),
+                    ],
+                )
+                .available(VideoCodec::H265.is_available())
+                .hint("28=default (higher than H.264)"),
+                Codec::new(
+                    "av1",
+                    "AV1",
+                    [
+                        EncodeOption::float("fps", "Framerate", self.fps as f64, 1.0, 960.0),
+                        EncodeOption::choice(
+                            "impl",
+                            "Encoder",
+                            ENC_IMPL_LABELS,
+                            enc_impl_to_idx(cs.av1.encoder_impl),
+                        ),
+                        EncodeOption::choice(
+                            "qmode",
+                            "Quality Mode",
+                            QMODE_LABELS,
+                            qmode_to_idx(cs.av1.quality_mode),
+                        ),
+                        EncodeOption::int("value", "Value", cs.av1.quality_value as i64, 0, 10000),
+                        EncodeOption::choice(
+                            "preset",
+                            "Preset",
+                            AV1_PRESETS,
+                            list_idx(&AV1_PRESETS, &cs.av1.preset, 17),
+                        ),
+                    ],
+                )
+                .available(VideoCodec::AV1.is_available())
+                .hint("AV1: Best compression, slower encoding. HW: RTX 40xx/Arc/RDNA 3"),
+            ],
+        );
+
+        // --- Video: MOV (ProRes) ---
+        let mov = Format::new(
+            "mov",
+            "MOV",
+            "mov",
+            [Codec::new(
+                "prores",
+                "ProRes",
+                [
+                    EncodeOption::float("fps", "Framerate", self.fps as f64, 1.0, 960.0),
+                    EncodeOption::choice(
+                        "profile",
+                        "Profile",
+                        prores_labels(),
+                        prores_idx(cs.prores.profile),
+                    ),
+                ],
+            )
+            .available(VideoCodec::ProRes.is_available())
+            .hint("ProRes is always software-encoded (prores_ks)")],
+        );
+
+        // --- Image sequence formats (each its own widget Format/extension) ---
+        let seq = &self.sequence_settings;
+
+        let exr = Format::new(
+            "exr",
+            "EXR",
+            "exr",
+            [Codec::new("exr", "EXR", {
+                let mut o = self.seq_common_options(SequenceFormat::Exr);
+                o.extend([
+                    EncodeOption::choice(
+                        "mode",
+                        "Mode",
+                        EXR_MODE_LABELS,
+                        exr_mode_idx(seq.format_settings.exr.mode),
+                    ),
+                    EncodeOption::choice(
+                        "compression",
+                        "Compression",
+                        exr_comp_labels(),
+                        exr_comp_idx(seq.format_settings.exr.compression),
+                    ),
+                    EncodeOption::float(
+                        "dwa",
+                        "DWA loss level",
+                        seq.format_settings.exr.dwa_quality as f64,
+                        0.0,
+                        200.0,
+                    ),
+                ]);
+                o
+            })
+            .hint("EXR: HDR format, preserves full dynamic range")],
+        );
+
+        let png = Format::new(
+            "png",
+            "PNG",
+            "png",
+            [Codec::new("png", "PNG", {
+                let mut o = self.seq_common_options(SequenceFormat::Png);
+                o.push(EncodeOption::int(
+                    "compression",
+                    "Compression",
+                    seq.format_settings.png.compression as i64,
+                    0,
+                    9,
+                ));
+                o
+            })
+            .hint("PNG: Lossless, good for compositing")],
+        );
+
+        let jpeg = Format::new(
+            "jpeg",
+            "JPEG",
+            "jpg",
+            [Codec::new("jpeg", "JPEG", {
+                let mut o = self.seq_common_options(SequenceFormat::Jpeg);
+                o.push(EncodeOption::int(
+                    "quality",
+                    "Quality",
+                    seq.format_settings.jpeg.quality as i64,
+                    1,
+                    100,
+                ));
+                o
+            })
+            .hint("JPEG: Lossy, small files, no alpha")],
+        );
+
+        let tiff = Format::new(
+            "tiff",
+            "TIFF",
+            "tiff",
+            [Codec::new("tiff", "TIFF", {
+                let mut o = self.seq_common_options(SequenceFormat::Tiff);
+                o.push(EncodeOption::choice(
+                    "compression",
+                    "Compression",
+                    tiff_comp_labels(),
+                    tiff_comp_idx(seq.format_settings.tiff.compression),
+                ));
+                o
+            })
+            .hint("TIFF: Industry standard, lossless")],
+        );
+
+        let tga = Format::new(
+            "tga",
+            "TGA",
+            "tga",
+            [Codec::new("tga", "TGA", {
+                let mut o = self.seq_common_options(SequenceFormat::Tga);
+                o.push(EncodeOption::boolean(
+                    "rle",
+                    "RLE Compression",
+                    seq.format_settings.tga.rle_compression,
+                ));
+                o
+            })
+            .hint("TGA: Legacy format, game industry")],
+        );
+
+        EncodeSchema::new([mp4, mov, exr, png, jpeg, tiff, tga])
+    }
+
+    /// Map the widget's chosen settings back onto the model. Each option id is the
+    /// inverse of `build_schema`.
+    fn apply_widget(&mut self, s: &WidgetSettings) {
+        self.output_path = PathBuf::from(&s.output_path);
+        // Choice index helper (defaults to 0 if absent / wrong type).
+        let ci = |id: &str| s.get_choice(id).unwrap_or(0);
+
+        match s.codec_id.as_str() {
+            "h264" => {
+                self.export_mode = ExportMode::Video;
+                self.selected_codec = VideoCodec::H264;
+                self.container = Container::MP4;
+                self.fps = s.get_float("fps").unwrap_or(24.0) as f32;
+                let c = &mut self.codec_settings.h264;
+                c.encoder_impl = idx_to_enc_impl(ci("impl"));
+                c.quality_mode = idx_to_qmode(ci("qmode"));
+                c.quality_value = s.get_int("value").unwrap_or(23).max(0) as u32;
+                c.preset = H26X_PRESETS.get(ci("preset")).copied().unwrap_or("medium").to_string();
+                c.profile = H264_PROFILES.get(ci("profile")).copied().unwrap_or("high").to_string();
+            }
+            "h265" => {
+                self.export_mode = ExportMode::Video;
+                self.selected_codec = VideoCodec::H265;
+                self.container = Container::MP4;
+                self.fps = s.get_float("fps").unwrap_or(24.0) as f32;
+                let c = &mut self.codec_settings.h265;
+                c.encoder_impl = idx_to_enc_impl(ci("impl"));
+                c.quality_mode = idx_to_qmode(ci("qmode"));
+                c.quality_value = s.get_int("value").unwrap_or(28).max(0) as u32;
+                c.preset = H26X_PRESETS.get(ci("preset")).copied().unwrap_or("medium").to_string();
+                c.profile = H265_PROFILES.get(ci("profile")).copied().unwrap_or("main").to_string();
+            }
+            "av1" => {
+                self.export_mode = ExportMode::Video;
+                self.selected_codec = VideoCodec::AV1;
+                self.container = Container::MP4;
+                self.fps = s.get_float("fps").unwrap_or(24.0) as f32;
+                let c = &mut self.codec_settings.av1;
+                c.encoder_impl = idx_to_enc_impl(ci("impl"));
+                c.quality_mode = idx_to_qmode(ci("qmode"));
+                c.quality_value = s.get_int("value").unwrap_or(30).max(0) as u32;
+                c.preset = AV1_PRESETS.get(ci("preset")).copied().unwrap_or("p4").to_string();
+            }
+            "prores" => {
+                self.export_mode = ExportMode::Video;
+                self.selected_codec = VideoCodec::ProRes;
+                self.container = Container::MOV;
+                self.fps = s.get_float("fps").unwrap_or(24.0) as f32;
+                self.codec_settings.prores.profile = ProResProfile::all()
+                    .get(ci("profile"))
+                    .copied()
+                    .unwrap_or(ProResProfile::Standard);
+            }
+            "exr" => {
+                self.export_mode = ExportMode::Sequence;
+                self.apply_seq_common(s, SequenceFormat::Exr);
+                let e = &mut self.sequence_settings.format_settings.exr;
+                e.mode = idx_to_exr_mode(ci("mode"));
+                e.compression = ExrCompression::all()
+                    .get(ci("compression"))
+                    .copied()
+                    .unwrap_or(ExrCompression::Zip);
+                e.dwa_quality = s.get_float("dwa").unwrap_or(45.0) as f32;
+                self.sequence_settings.format = SequenceFormat::Exr;
+                self.sequence_settings.validate();
+            }
+            "png" => {
+                self.export_mode = ExportMode::Sequence;
+                self.apply_seq_common(s, SequenceFormat::Png);
+                self.sequence_settings.format_settings.png.compression =
+                    s.get_int("compression").unwrap_or(6).clamp(0, 9) as u8;
+                self.sequence_settings.format = SequenceFormat::Png;
+                self.sequence_settings.validate();
+            }
+            "jpeg" => {
+                self.export_mode = ExportMode::Sequence;
+                self.apply_seq_common(s, SequenceFormat::Jpeg);
+                self.sequence_settings.format_settings.jpeg.quality =
+                    s.get_int("quality").unwrap_or(90).clamp(1, 100) as u8;
+                self.sequence_settings.format = SequenceFormat::Jpeg;
+                self.sequence_settings.validate();
+            }
+            "tiff" => {
+                self.export_mode = ExportMode::Sequence;
+                self.apply_seq_common(s, SequenceFormat::Tiff);
+                let depth = self.sequence_settings.bit_depth;
+                let t = &mut self.sequence_settings.format_settings.tiff;
+                t.compression = TiffCompression::all()
+                    .get(ci("compression"))
+                    .copied()
+                    .unwrap_or(TiffCompression::Lzw);
+                t.bit_depth = if matches!(depth, OutputBitDepth::U16) {
+                    TiffBitDepth::Sixteen
+                } else {
+                    TiffBitDepth::Eight
+                };
+                self.sequence_settings.format = SequenceFormat::Tiff;
+                self.sequence_settings.validate();
+            }
+            "tga" => {
+                self.export_mode = ExportMode::Sequence;
+                self.apply_seq_common(s, SequenceFormat::Tga);
+                self.sequence_settings.format_settings.tga.rle_compression =
+                    s.get_bool("rle").unwrap_or(true);
+                self.sequence_settings.format = SequenceFormat::Tga;
+                self.sequence_settings.validate();
+            }
+            _ => {}
+        }
+    }
+
+    /// Apply the shared sequence options (channels / depth / tonemapping) for a format.
+    fn apply_seq_common(&mut self, s: &WidgetSettings, fmt: SequenceFormat) {
+        let seq = &mut self.sequence_settings;
+        seq.channels = idx_to_channel(fmt, s.get_choice("channels").unwrap_or(0));
+        seq.bit_depth = idx_to_seq_depth(fmt, s.get_choice("bitdepth").unwrap_or(0));
+        seq.apply_tonemap = s.get_bool("tonemap").unwrap_or(false);
+        seq.tonemap_mode = idx_to_tonemap(s.get_choice("tonemap_mode").unwrap_or(0));
+    }
+
+    // ===================================================================
+    // Worker control (unchanged: spawns the existing encode workers)
+    // ===================================================================
 
     /// Start encoding process
     fn start_encoding(&mut self, comp: &Comp, project: &Project) {
@@ -844,416 +985,6 @@ impl EncodeDialog {
             }
         }
     }
-
-    fn render_h264_settings(&mut self, ui: &mut egui::Ui) {
-        let profiles: &[&str] = &["baseline", "main", "high", "high10", "high422", "high444"];
-        render_h26x_settings(
-            ui,
-            &mut self.codec_settings.h264,
-            "h264",
-            "18=best, 23=default, 28=fast",
-            profiles,
-        );
-    }
-
-    fn render_h265_settings(&mut self, ui: &mut egui::Ui) {
-        let profiles: &[&str] = &["main", "main10"];
-        render_h26x_settings(
-            ui,
-            &mut self.codec_settings.h265,
-            "h265",
-            "28=default (higher than H.264)",
-            profiles,
-        );
-    }
-
-    /// Render ProRes settings
-    fn render_prores_settings(&mut self, ui: &mut egui::Ui) {
-        ui.label("Profile:");
-        ui.horizontal(|ui| {
-            for profile in ProResProfile::all() {
-                ui.radio_value(
-                    &mut self.codec_settings.prores.profile,
-                    *profile,
-                    profile.to_string(),
-                );
-            }
-        });
-
-        ui.add_space(4.0);
-        ui.label("ProRes is always software-encoded (prores_ks)");
-
-        // Empty lines for vertical alignment with H264 tab
-        ui.add_space(4.0);
-        ui.label("");
-        ui.add_space(4.0);
-        ui.label("");
-        ui.add_space(4.0);
-        ui.label("");
-        ui.add_space(4.0);
-        ui.label("");
-        ui.add_space(4.0);
-        ui.label("");
-    }
-
-    /// Render AV1 settings
-    fn render_av1_settings(&mut self, ui: &mut egui::Ui) {
-        use crate::dialogs::encode::{EncoderImpl, QualityMode};
-
-        ui.label("Encoder:");
-        ui.horizontal(|ui| {
-            for impl_type in EncoderImpl::all() {
-                ui.radio_value(
-                    &mut self.codec_settings.av1.encoder_impl,
-                    *impl_type,
-                    impl_type.to_string(),
-                );
-            }
-        });
-
-        ui.label("Quality Mode:");
-        ui.horizontal(|ui| {
-            for mode in QualityMode::all() {
-                ui.radio_value(
-                    &mut self.codec_settings.av1.quality_mode,
-                    *mode,
-                    mode.to_string(),
-                );
-            }
-        });
-
-        ui.horizontal(|ui| {
-            ui.label("Value:");
-            let hint = match self.codec_settings.av1.quality_mode {
-                QualityMode::CRF => "CRF (0-63, lower=better)",
-                QualityMode::Bitrate => "kbps",
-            };
-            ui.add(
-                egui::Slider::new(&mut self.codec_settings.av1.quality_value, 0..=10000).text(hint),
-            );
-        });
-
-        ui.horizontal(|ui| {
-            ui.label("Preset:");
-
-            // Determine available presets based on encoder
-            let (presets, descriptions): (Vec<&str>, Vec<&str>) =
-                match self.codec_settings.av1.encoder_impl {
-                    EncoderImpl::Hardware => {
-                        // NVENC/QSV/AMF: p1-p7 + named presets
-                        (
-                            vec![
-                                "p1", "p2", "p3", "p4", "p5", "p6", "p7", "default", "slow",
-                                "medium", "fast",
-                            ],
-                            vec![
-                                "P1 (fastest, lowest quality)",
-                                "P2 (faster, lower quality)",
-                                "P3 (fast, low quality)",
-                                "P4 (medium, default)",
-                                "P5 (slow, good quality)",
-                                "P6 (slower, better quality)",
-                                "P7 (slowest, best quality)",
-                                "Default",
-                                "Slow (HQ 2 passes)",
-                                "Medium (HQ 1 pass)",
-                                "Fast (HP 1 pass)",
-                            ],
-                        )
-                    }
-                    EncoderImpl::Software | EncoderImpl::Auto => {
-                        // SVT-AV1/libaom: numeric 0-13 presets
-                        (
-                            vec![
-                                "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12",
-                                "13",
-                            ],
-                            vec![
-                                "0 (slowest, best)",
-                                "1",
-                                "2",
-                                "3",
-                                "4",
-                                "5",
-                                "6 (balanced)",
-                                "7",
-                                "8",
-                                "9",
-                                "10",
-                                "11",
-                                "12",
-                                "13 (fastest)",
-                            ],
-                        )
-                    }
-                };
-
-            egui::ComboBox::from_id_salt("av1_preset")
-                .selected_text(&self.codec_settings.av1.preset)
-                .show_ui(ui, |ui| {
-                    for (preset, desc) in presets.iter().zip(descriptions.iter()) {
-                        ui.selectable_value(
-                            &mut self.codec_settings.av1.preset,
-                            preset.to_string(),
-                            format!("{} - {}", preset, desc),
-                        );
-                    }
-                });
-        });
-
-        ui.add_space(4.0);
-        ui.label("💡 AV1: Best compression, slower encoding. HW: RTX 40xx/Arc/RDNA 3");
-
-        // Empty line for vertical alignment with H264 tab
-        ui.add_space(4.0);
-        ui.label("");
-    }
-
-    /// Render format-specific settings for image sequence export
-    fn render_sequence_format_settings(&mut self, ui: &mut egui::Ui, project: &Project) {
-        // Used by EXR pass-through info panel below.
-        let _project = project;
-        // Per-format settings (compression, quality, etc.)
-        match self.sequence_settings.format {
-            SequenceFormat::Exr => {
-                // Encode mode (Display only vs Pass-through). Pass-through reads
-                // each source EXR via vfx-io and writes back preserving every
-                // layer + per-layer compression — the OIIO-aligned transcode path.
-                ui.horizontal(|ui| {
-                    ui.label("Mode:");
-                    egui::ComboBox::from_id_salt("exr_mode")
-                        .selected_text(
-                            self.sequence_settings
-                                .format_settings
-                                .exr
-                                .mode
-                                .to_string(),
-                        )
-                        .show_ui(ui, |ui| {
-                            for m in crate::dialogs::encode::ExrEncodeMode::all() {
-                                ui.selectable_value(
-                                    &mut self.sequence_settings.format_settings.exr.mode,
-                                    *m,
-                                    m.to_string(),
-                                )
-                                .on_hover_text(match m {
-                                    crate::dialogs::encode::ExrEncodeMode::DisplayOnly =>
-                                        "Single RGBA layer from compositor output. Standard EXR write.",
-                                    crate::dialogs::encode::ExrEncodeMode::PassThrough =>
-                                        "Read source EXR via vfx-io and preserve every layer + per-layer compression. Falls back to display-only if source isn't EXR.",
-                                });
-                            }
-                        });
-                });
-                // Compression / DWA controls only relevant for Display-only mode
-                // (Pass-through preserves source per-layer compression).
-                let pass_through = matches!(
-                    self.sequence_settings.format_settings.exr.mode,
-                    crate::dialogs::encode::ExrEncodeMode::PassThrough,
-                );
-                ui.add_enabled_ui(!pass_through, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Compression:");
-                        egui::ComboBox::from_id_salt("exr_compression")
-                            .selected_text(
-                                self.sequence_settings
-                                    .format_settings
-                                    .exr
-                                    .compression
-                                    .to_string(),
-                            )
-                            .show_ui(ui, |ui| {
-                                for comp in ExrCompression::all() {
-                                    ui.selectable_value(
-                                        &mut self
-                                            .sequence_settings
-                                            .format_settings
-                                            .exr
-                                            .compression,
-                                        *comp,
-                                        comp.to_string(),
-                                    );
-                                }
-                            });
-                    });
-                    // DWA loss level — only meaningful for DWAA/DWAB.
-                    // OpenEXR semantics: lower = less loss, 45 = visually lossless,
-                    // higher = smaller files / more loss. NOT the usual "quality 0-100".
-                    if self
-                        .sequence_settings
-                        .format_settings
-                        .exr
-                        .compression
-                        .has_quality_knob()
-                    {
-                        ui.horizontal(|ui| {
-                            ui.label("DWA loss level:").on_hover_text(
-                                "Lower = less loss / larger files. 45 = visually lossless (OpenEXR default).",
-                            );
-                            ui.add(
-                                egui::Slider::new(
-                                    &mut self
-                                        .sequence_settings
-                                        .format_settings
-                                        .exr
-                                        .dwa_quality,
-                                    0.0..=200.0,
-                                )
-                                .text("(45 default)"),
-                            );
-                        });
-                    }
-                });
-                ui.add_space(4.0);
-                if pass_through {
-                    self.render_exr_source_layer_info(ui, project);
-                } else {
-                    ui.label("EXR: HDR format, preserves full dynamic range");
-                }
-            }
-            SequenceFormat::Png => {
-                ui.horizontal(|ui| {
-                    ui.label("Compression:");
-                    ui.add(
-                        egui::Slider::new(
-                            &mut self.sequence_settings.format_settings.png.compression,
-                            0..=9,
-                        )
-                        .text("level"),
-                    );
-                });
-                ui.add_space(4.0);
-                ui.label("PNG: Lossless, good for compositing");
-            }
-            SequenceFormat::Jpeg => {
-                ui.horizontal(|ui| {
-                    ui.label("Quality:");
-                    ui.add(
-                        egui::Slider::new(
-                            &mut self.sequence_settings.format_settings.jpeg.quality,
-                            1..=100,
-                        )
-                        .text("%"),
-                    );
-                });
-                ui.add_space(4.0);
-                ui.label("JPEG: Lossy, small files, no alpha");
-            }
-            SequenceFormat::Tiff => {
-                ui.horizontal(|ui| {
-                    ui.label("Compression:");
-                    egui::ComboBox::from_id_salt("tiff_compression")
-                        .selected_text(
-                            self.sequence_settings
-                                .format_settings
-                                .tiff
-                                .compression
-                                .to_string(),
-                        )
-                        .show_ui(ui, |ui| {
-                            for comp in TiffCompression::all() {
-                                ui.selectable_value(
-                                    &mut self.sequence_settings.format_settings.tiff.compression,
-                                    *comp,
-                                    comp.to_string(),
-                                );
-                            }
-                        });
-                });
-                ui.add_space(4.0);
-                ui.label("TIFF: Industry standard, lossless");
-            }
-            SequenceFormat::Tga => {
-                ui.horizontal(|ui| {
-                    ui.checkbox(
-                        &mut self.sequence_settings.format_settings.tga.rle_compression,
-                        "RLE Compression",
-                    );
-                });
-                ui.add_space(4.0);
-                ui.label("TGA: Legacy format, game industry");
-            }
-        }
-
-        // Padding pattern hint
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(4.0);
-        ui.label("Padding patterns: #### (4 digits), %04d (printf), @ (no padding)");
-    }
-
-    /// Step 5: live source-layer info panel for EXR Pass-through mode.
-    ///
-    /// Walks the project for the first EXR `FileNode`, opens its first frame
-    /// via [`SourceImage::open_exr`] (one full read so we can list per-layer
-    /// compression strings), and renders layer count + names + compressions.
-    fn render_exr_source_layer_info(&mut self, ui: &mut egui::Ui, project: &Project) {
-        use playa_engine::entities::{NodeKind, SourceImage};
-
-        // Find first EXR FileNode source path (first frame).
-        let media = project.media.read().expect("media lock poisoned");
-        let mut first_path = None;
-        for node in media.values() {
-            if let NodeKind::File(fnode) = node.as_ref() {
-                if let Some(mask) = fnode.file_mask() {
-                    if std::path::Path::new(&mask)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|s| s.eq_ignore_ascii_case("exr"))
-                        .unwrap_or(false)
-                    {
-                        let start = fnode
-                            .attrs
-                            .get_i32(playa_engine::entities::keys::A_FILE_START)
-                            .unwrap_or(0);
-                        if let Some(p) = fnode.resolve_frame_path(start) {
-                            first_path = Some(p);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        drop(media);
-
-        let Some(path) = first_path else {
-            ui.colored_label(
-                egui::Color32::from_rgb(220, 180, 80),
-                "Pass-through: no EXR source in project — will fall back to display-only",
-            );
-            return;
-        };
-
-        match SourceImage::open_exr(&path) {
-            Ok(src) => {
-                ui.label(format!(
-                    "Pass-through source: {}  ({} layer{})",
-                    path.display(),
-                    src.layer_count(),
-                    if src.layer_count() == 1 { "" } else { "s" },
-                ));
-                let names = src.layer_names();
-                let compressions = src.layer_compressions();
-                ui.indent("exr_source_layers", |ui| {
-                    for (i, (name, comp)) in names.iter().zip(compressions.iter()).enumerate() {
-                        let marker = if i == src.display_layer_idx {
-                            "▶"
-                        } else {
-                            " "
-                        };
-                        ui.label(format!("{} {}  —  {}", marker, name, comp));
-                    }
-                });
-                ui.label("Pass-through preserves every layer + per-layer compression.");
-            }
-            Err(e) => {
-                ui.colored_label(
-                    egui::Color32::from_rgb(220, 80, 80),
-                    format!("Pass-through preview failed: {}", e),
-                );
-            }
-        }
-    }
 }
 
 impl Drop for EncodeDialog {
@@ -1273,93 +1004,163 @@ impl Drop for EncodeDialog {
     }
 }
 
-/// Render H.264/H.265 settings. Codec-specific differences are passed as parameters:
-/// - `id_prefix`: "h264" or "h265" — used as egui ComboBox id_salt to avoid conflicts
-/// - `crf_hint`: the CRF quality hint string shown next to the slider
-/// - `profiles`: available profile strings for the profile ComboBox
-fn render_h26x_settings(
-    ui: &mut egui::Ui,
-    settings: &mut dyn crate::dialogs::encode::H26xSettingsMut,
-    id_prefix: &str,
-    crf_hint: &str,
-    profiles: &[&str],
-) {
-    use crate::dialogs::encode::{EncoderImpl, QualityMode};
+// ========================================================================
+// Schema option label tables + index mappers (model <-> widget choice index)
+// ========================================================================
 
-    ui.label("Encoder:");
-    ui.horizontal(|ui| {
-        for impl_type in EncoderImpl::all() {
-            ui.radio_value(
-                settings.encoder_impl_mut(),
-                *impl_type,
-                impl_type.to_string(),
-            );
-        }
-    });
+/// Encoder-impl labels, indexed to match [`EncoderImpl`] order.
+const ENC_IMPL_LABELS: [&str; 3] = ["Auto (HW → CPU)", "Hardware only", "Software (CPU)"];
+/// Quality-mode labels, indexed to match [`QualityMode`] order.
+const QMODE_LABELS: [&str; 2] = ["CRF (Quality)", "Bitrate (kbps)"];
+/// Tonemap labels (order is fixed here, mapped explicitly — not enum order).
+const TONEMAP_LABELS: [&str; 3] = ["ACES", "Reinhard", "Clamp"];
+/// H.264/H.265 preset union (libx26x ladder + NVENC/QSV/AMF presets). Single list
+/// because the widget can't vary a choice list by another option; the chosen
+/// string is what the encoder consumes.
+const H26X_PRESETS: [&str; 18] = [
+    "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow",
+    "placebo", "default", "p1", "p2", "p3", "p4", "p5", "p6", "p7",
+];
+const H264_PROFILES: [&str; 6] = ["baseline", "main", "high", "high10", "high422", "high444"];
+const H265_PROFILES: [&str; 2] = ["main", "main10"];
+/// AV1 preset union (SVT-AV1/libaom 0..13 + NVENC/QSV/AMF p1..p7 + named). "p4" at idx 17.
+const AV1_PRESETS: [&str; 25] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "p1", "p2", "p3",
+    "p4", "p5", "p6", "p7", "default", "slow", "medium", "fast",
+];
+const EXR_MODE_LABELS: [&str; 2] = [
+    "Display only (single RGBA)",
+    "Pass-through (preserve all layers)",
+];
 
-    ui.add_space(4.0);
+fn enc_impl_to_idx(v: EncoderImpl) -> usize {
+    match v {
+        EncoderImpl::Auto => 0,
+        EncoderImpl::Hardware => 1,
+        EncoderImpl::Software => 2,
+    }
+}
+fn idx_to_enc_impl(i: usize) -> EncoderImpl {
+    match i {
+        1 => EncoderImpl::Hardware,
+        2 => EncoderImpl::Software,
+        _ => EncoderImpl::Auto,
+    }
+}
 
-    ui.label("Quality Mode:");
-    ui.horizontal(|ui| {
-        for mode in QualityMode::all() {
-            ui.radio_value(settings.quality_mode_mut(), *mode, mode.to_string());
-        }
-    });
+fn qmode_to_idx(v: QualityMode) -> usize {
+    match v {
+        QualityMode::CRF => 0,
+        QualityMode::Bitrate => 1,
+    }
+}
+fn idx_to_qmode(i: usize) -> QualityMode {
+    match i {
+        1 => QualityMode::Bitrate,
+        _ => QualityMode::CRF,
+    }
+}
 
-    ui.horizontal(|ui| {
-        ui.label("Value:");
-        let hint = match settings.quality_mode() {
-            QualityMode::CRF => crf_hint,
-            QualityMode::Bitrate => "kbps",
-        };
-        ui.add(egui::Slider::new(settings.quality_value_mut(), 1..=10000).text(hint));
-    });
+fn tonemap_to_idx(v: TonemapMode) -> usize {
+    match v {
+        TonemapMode::ACES => 0,
+        TonemapMode::Reinhard => 1,
+        TonemapMode::Clamp => 2,
+    }
+}
+fn idx_to_tonemap(i: usize) -> TonemapMode {
+    match i {
+        1 => TonemapMode::Reinhard,
+        2 => TonemapMode::Clamp,
+        _ => TonemapMode::ACES,
+    }
+}
 
-    ui.add_space(4.0);
+fn exr_mode_idx(m: ExrEncodeMode) -> usize {
+    match m {
+        ExrEncodeMode::DisplayOnly => 0,
+        ExrEncodeMode::PassThrough => 1,
+    }
+}
+fn idx_to_exr_mode(i: usize) -> ExrEncodeMode {
+    match i {
+        1 => ExrEncodeMode::PassThrough,
+        _ => ExrEncodeMode::DisplayOnly,
+    }
+}
 
-    ui.horizontal(|ui| {
-        ui.label("Preset:");
-        let presets: &[&str] = match settings.encoder_impl() {
-            // NVENC/QSV/AMF
-            EncoderImpl::Hardware => &[
-                "default", "slow", "medium", "fast", "p1", "p2", "p3", "p4", "p5", "p6", "p7",
-            ],
-            // libx264 / libx265 (identical preset ladder)
-            EncoderImpl::Software | EncoderImpl::Auto => &[
-                "ultrafast",
-                "superfast",
-                "veryfast",
-                "faster",
-                "fast",
-                "medium",
-                "slow",
-                "slower",
-                "veryslow",
-                "placebo",
-            ],
-        };
-        let preset_id = format!("{}_preset", id_prefix);
-        egui::ComboBox::from_id_salt(preset_id)
-            .selected_text(settings.preset())
-            .show_ui(ui, |ui| {
-                for &preset in presets {
-                    ui.selectable_value(settings.preset_mut(), preset.to_string(), preset);
-                }
-            });
-    });
+/// Index of `val` in `list`, or `fallback` when absent.
+fn list_idx(list: &[&str], val: &str, fallback: usize) -> usize {
+    list.iter().position(|&s| s == val).unwrap_or(fallback)
+}
 
-    ui.horizontal(|ui| {
-        ui.label("Profile:");
-        let profile_id = format!("{}_profile", id_prefix);
-        egui::ComboBox::from_id_salt(profile_id)
-            .selected_text(settings.profile())
-            .show_ui(ui, |ui| {
-                for &profile in profiles {
-                    ui.selectable_value(settings.profile_mut(), profile.to_string(), profile);
-                }
-            });
-    });
+fn prores_labels() -> Vec<String> {
+    ProResProfile::all().iter().map(|p| p.to_string()).collect()
+}
+fn prores_idx(p: ProResProfile) -> usize {
+    ProResProfile::all()
+        .iter()
+        .position(|&x| x == p)
+        .unwrap_or(2)
+}
 
-    ui.add_space(4.0);
-    ui.label(""); // Spacer for visual alignment with other codec tabs
+fn exr_comp_labels() -> Vec<String> {
+    ExrCompression::all().iter().map(|c| c.to_string()).collect()
+}
+fn exr_comp_idx(c: ExrCompression) -> usize {
+    ExrCompression::all()
+        .iter()
+        .position(|&x| x == c)
+        .unwrap_or(3) // ZIP
+}
+
+fn tiff_comp_labels() -> Vec<String> {
+    TiffCompression::all().iter().map(|c| c.to_string()).collect()
+}
+fn tiff_comp_idx(c: TiffCompression) -> usize {
+    TiffCompression::all()
+        .iter()
+        .position(|&x| x == c)
+        .unwrap_or(1) // LZW
+}
+
+fn seq_channel_labels(fmt: SequenceFormat) -> Vec<&'static str> {
+    if fmt.supports_alpha() {
+        vec!["RGB", "RGBA"]
+    } else {
+        vec!["RGB"]
+    }
+}
+fn seq_channel_to_idx(fmt: SequenceFormat, ch: ChannelMode) -> usize {
+    if fmt.supports_alpha() && matches!(ch, ChannelMode::Rgba) {
+        1
+    } else {
+        0
+    }
+}
+fn idx_to_channel(fmt: SequenceFormat, i: usize) -> ChannelMode {
+    if fmt.supports_alpha() && i == 1 {
+        ChannelMode::Rgba
+    } else {
+        ChannelMode::Rgb
+    }
+}
+
+fn seq_depth_labels(fmt: SequenceFormat) -> Vec<String> {
+    fmt.capabilities()
+        .supported_depths
+        .iter()
+        .map(|d| d.to_string())
+        .collect()
+}
+fn seq_depth_to_idx(fmt: SequenceFormat, d: OutputBitDepth) -> usize {
+    fmt.capabilities()
+        .supported_depths
+        .iter()
+        .position(|&x| x == d)
+        .unwrap_or(0)
+}
+fn idx_to_seq_depth(fmt: SequenceFormat, i: usize) -> OutputBitDepth {
+    let ds = fmt.capabilities().supported_depths;
+    ds.get(i).copied().unwrap_or(ds[0])
 }

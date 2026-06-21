@@ -42,6 +42,9 @@ nodes-core = { git = "ssh://git@github.com/ssoj13/nodes-rs.git", branch = "main"
 nodes-egui = { git = "ssh://git@github.com/ssoj13/nodes-rs.git", branch = "main", package = "nodes-egui" }
 egui-attr-grid = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 egui-hdr-view = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+# Generic data-driven export/encode settings modal (format → codec → options),
+# extracted from playa's hand-painted encode dialog. Consumed via git-ref.
+egui-encode-dialog = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 glam = { workspace = true }
 half = { workspace = true }
 image = { workspace = true }
