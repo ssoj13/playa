@@ -1575,9 +1575,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-attr-grid"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
+dependencies = [
+ "egui",
+ "egui-splitter-table",
+ "serde",
+]
+
+[[package]]
 name = "egui-help-overlay"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
 dependencies = [
  "egui",
 ]
@@ -1585,7 +1595,7 @@ dependencies = [
 [[package]]
 name = "egui-jobs-table"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -1604,7 +1614,7 @@ dependencies = [
 [[package]]
 name = "egui-prefs"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
 dependencies = [
  "egui",
  "egui-phosphor",
@@ -1613,15 +1623,24 @@ dependencies = [
 [[package]]
 name = "egui-progressbar"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
 dependencies = [
  "egui",
 ]
 
 [[package]]
+name = "egui-splitter-table"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
+dependencies = [
+ "egui",
+ "serde",
+]
+
+[[package]]
 name = "egui-statusbar"
 version = "0.1.0"
-source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#1b75bc15c7bfa7b23e4c8588888e121823e20569"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
 dependencies = [
  "egui",
  "serde",
@@ -4394,6 +4413,7 @@ version = "0.1.142"
 dependencies = [
  "bytemuck",
  "eframe",
+ "egui-attr-grid",
  "egui-help-overlay",
  "egui-progressbar",
  "egui-statusbar",

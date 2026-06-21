@@ -1,33 +1,17 @@
-//! Attribute Editor widget - UI rendering
+//! Attribute Editor — playa glue over the reusable `egui-attr-grid` widget.
 //!
-//! Provides a generic property editor for [`Attrs`] objects. Used in:
-//! - Attribute Editor panel (right dock) for layer and comp attributes
-//! - Potentially other places that need to edit key-value attribute sets
+//! The generic `[label | value]` grid (sorted rows, resizable splitter, typed
+//! editors, mixed-value dimming) now lives in `egui-attr-grid`. This module:
+//! - converts playa's [`Attrs`] / [`AttrValue`] to/from the widget's flat model,
+//! - keeps the layer **Effects** stack UI ([`render_effects`]), which is
+//!   app-specific (playa `Effect` / `EffectType`).
 //!
-//! # Change Tracking
-//! The editor tracks which attributes were modified during the frame:
-//! - [`render`] returns `bool` - true if any attribute changed
-//! - [`render_with_mixed`] populates `changed_out` vec with (key, value) pairs
-//!
-//! The caller is responsible for propagating changes via [`Comp::set_child_attrs`]
-//! or [`Comp::emit_attrs_changed`] to trigger cache invalidation.
-//!
-//! # Usage in main.rs
-//! ```ignore
-//! // Single layer: render_with_mixed tracks changes, apply via set_child_attrs
-//! let mut changed = Vec::new();
-//! render_with_mixed(ui, &mut temp_attrs, state, name, &HashSet::new(), &mut changed);
-//! if !changed.is_empty() {
-//!     comp.set_child_attrs(&layer_uuid, &values);  // auto-emits event
-//! }
-//!
-//! // Comp attrs: render returns bool, emit manually if changed
-//! if render(ui, &mut comp.attrs, state, name) {
-//!     comp.emit_attrs_changed();
-//! }
-//! ```
+//! Change tracking is unchanged: [`render`] returns `bool`, [`render_with_mixed`]
+//! fills a `(key, value)` vec. The caller propagates via
+//! `Comp::set_child_attrs` / `Comp::emit_attrs_changed`.
 
-use eframe::egui::{self, ComboBox, Pos2, Rect, Sense, Stroke, TextStyle, Ui};
+use eframe::egui::{self, ComboBox, Pos2, Stroke, TextStyle, Ui};
+use egui_attr_grid as ag;
 use egui_extras::{Column, TableBuilder};
 use playa_engine::entities::effects::{Effect, EffectType};
 use playa_engine::entities::{AttrValue, Attrs};
@@ -35,10 +19,15 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 /// Persistent UI state for the Attributes panel.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 pub struct AttributesState {
+    /// Splitter state for the main attribute grid (egui-attr-grid).
+    #[serde(default)]
+    pub grid: ag::AttrGridState,
+    /// Label-column width for the effects sub-tables (still hand-rolled).
+    #[serde(default = "default_effect_label_width")]
     pub name_column_width: f32,
-    /// Saved position of the split between Project and Attributes panels (0.0-1.0)
+    /// Saved position of the split between Project and Attributes panels (0..1).
     #[serde(default = "default_split_position")]
     pub project_attributes_split: f32,
 }
@@ -47,49 +36,20 @@ fn default_split_position() -> f32 {
     0.6
 }
 
-impl Default for AttributesState {
-    fn default() -> Self {
-        Self {
-            name_column_width: 180.0,
-            project_attributes_split: 0.6,
-        }
-    }
+fn default_effect_label_width() -> f32 {
+    180.0
 }
 
-/// Render generic attributes editor for a single object.
-///
-/// Displays all attributes with appropriate UI widgets for editing.
-/// Supports: Str, Int, UInt, Float, Vec3, Vec4, Mat3, Mat4
-///
-/// Returns `true` if any attribute was modified by user interaction.
-/// The caller should emit change events when this returns true.
-pub fn render(
-    ui: &mut Ui,
-    attrs: &mut Attrs,
-    state: &mut AttributesState,
-    display_name: &str,
-) -> bool {
+/// Render the attribute editor for a single object. Returns `true` if any
+/// attribute changed (caller should emit change events).
+pub fn render(ui: &mut Ui, attrs: &mut Attrs, state: &mut AttributesState, display_name: &str) -> bool {
     let mut changed = Vec::new();
-    render_impl(
-        ui,
-        attrs,
-        state,
-        display_name,
-        &HashSet::new(),
-        &mut changed,
-    );
+    render_impl(ui, attrs, state, display_name, &HashSet::new(), &mut changed);
     !changed.is_empty()
 }
 
-/// Render attribute editor with support for mixed values (multi-selection).
-///
-/// # Arguments
-/// - `mixed_keys` - attribute keys that have differing values across selected objects
-///   (rendered with dimmed values to indicate mixed state)
-/// - `changed_out` - populated with `(key, value)` pairs for attributes modified by user
-///
-/// Use this for multi-layer selection where you need to know exactly which
-/// attributes changed to apply them to all selected layers.
+/// Render with multi-selection support. `mixed_keys` render dimmed; `changed_out`
+/// collects `(key, value)` for every attribute the user edited.
 pub fn render_with_mixed(
     ui: &mut Ui,
     attrs: &mut Attrs,
@@ -113,315 +73,90 @@ fn render_impl(
         ui.label("(no attributes)");
         return;
     }
+    ui.label(format!("{display_name}: {} attrs", attrs.len()));
 
-    let attr_count = attrs.iter().count();
-    let attr_len = attrs.len();
-    debug_assert_eq!(attr_count, attr_len);
-    ui.label(format!("{display_name}: {attr_len} attrs"));
-
-    let row_height = ui
-        .text_style_height(&TextStyle::Body)
-        .max(ui.spacing().interact_size.y);
-
-    // Clamp width bounds
-    let available_width = ui.available_width();
-    let min_label = 100.0;
-    let max_label = (available_width - 120.0).max(min_label);
-    state.name_column_width = state.name_column_width.clamp(min_label, max_label);
-
-    // Track top to draw splitter across table height later
-    let table_top = ui.cursor().min;
-
-    // Get schema for UI hints and ordering
+    // Build the widget's flat field list from the attrs + schema (order + UI
+    // hints), then let egui-attr-grid render + report the edited rows.
     let schema = attrs.schema();
-
-    // Sort attributes by order field from schema (lower = higher in list)
-    let keys: Vec<String> = if let Some(schema) = schema {
-        let mut pairs: Vec<_> = attrs
-            .iter()
-            .map(|(k, _)| (k.clone(), schema.get(k).map(|d| d.order).unwrap_or(999.0)))
-            .collect();
-        pairs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        pairs.into_iter().map(|(k, _)| k).collect()
-    } else {
-        let mut keys: Vec<String> = attrs.iter().map(|(k, _)| k.clone()).collect();
-        keys.sort();
-        keys
-    };
-
-    TableBuilder::new(ui)
-        .id_salt("attrs_table")
-        .striped(true)
-        .column(
-            Column::initial(state.name_column_width)
-                .range(min_label..=max_label)
-                .resizable(false),
-        )
-        .column(Column::remainder())
-        .header(row_height, |mut header| {
-            header.col(|ui| {
-                ui.strong("Attribute");
-            });
-            header.col(|ui| {
-                ui.strong("Value");
-            });
-        })
-        .body(|mut body| {
-            for key in keys {
-                let Some(value) = attrs.get_mut(&key) else {
-                    continue;
-                };
-                // Get UI options from schema (combobox values or slider range)
-                let ui_options = schema
-                    .and_then(|s| s.get(&key))
-                    .map(|def| def.ui_options)
-                    .unwrap_or(&[]);
-
-                body.row(row_height, |mut row| {
-                    row.col(|ui| {
-                        ui.label(format!("{}:", key));
-                    });
-                    row.col(|ui| {
-                        let is_mixed = mixed_keys.contains(&key);
-                        let before = value.clone();
-                        let changed = render_value_editor(ui, &key, value, is_mixed, ui_options);
-                        if changed && &before != value {
-                            changed_out.push((key.clone(), value.clone()));
-                        }
-                    });
-                });
+    let mut fields: Vec<ag::AttrField> = attrs
+        .iter()
+        .map(|(key, value)| {
+            let (order, ui_options) = schema
+                .and_then(|s| s.get(key))
+                .map(|def| {
+                    (
+                        def.order,
+                        def.ui_options.iter().map(|o| o.to_string()).collect::<Vec<_>>(),
+                    )
+                })
+                .unwrap_or((999.0, Vec::new()));
+            ag::AttrField {
+                key: key.clone(),
+                value: to_widget(value),
+                ui_options,
+                order,
             }
-        });
+        })
+        .collect();
 
-    // Interactive splitter spanning header + body
-    let table_bottom = ui.cursor().min;
-    let x = table_top.x + state.name_column_width;
-    let splitter_rect = Rect::from_min_max(
-        Pos2::new(x - 4.0, table_top.y),
-        Pos2::new(x + 4.0, table_bottom.y),
-    );
-    let splitter_id = ui.make_persistent_id("attrs_splitter_drag");
-    let response = ui.interact(splitter_rect, splitter_id, Sense::click_and_drag());
-    if response.dragged() {
-        state.name_column_width =
-            (state.name_column_width + response.drag_delta().x).clamp(min_label, max_label);
+    let changed = ag::render_grid(ui, &mut fields, &mut state.grid, mixed_keys);
+    for (key, widget_value) in changed {
+        if let Some(value) = from_widget(&widget_value) {
+            attrs.set(key.clone(), value.clone());
+            changed_out.push((key, value));
+        }
     }
-    let stroke = if response.hovered() || response.dragged() {
-        Stroke::new(2.0, ui.visuals().strong_text_color())
-    } else {
-        Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color)
-    };
-    ui.painter().line_segment(
-        [Pos2::new(x, table_top.y), Pos2::new(x, table_bottom.y)],
-        stroke,
-    );
 }
 
-/// Render value editor widget based on type and UI options from schema.
-/// - String with ui_options -> combobox
-/// - Float with ui_options ["min", "max", "step"] -> slider
-/// - Otherwise -> default widget for type
-fn render_value_editor(
-    ui: &mut Ui,
-    key: &str,
-    value: &mut AttrValue,
-    mixed: bool,
-    ui_options: &[&str],
-) -> bool {
-    let mut changed = false;
-    let weak = ui.visuals().weak_text_color();
-    let mut scope_changed = false;
+/// Convert a playa [`AttrValue`] into the widget's value model. Non-editable
+/// kinds (uuid / map / set / json) become a read-only [`ag::AttrValue::Label`].
+fn to_widget(v: &AttrValue) -> ag::AttrValue {
+    match v {
+        AttrValue::Bool(b) => ag::AttrValue::Bool(*b),
+        AttrValue::Str(s) => ag::AttrValue::Str(s.clone()),
+        AttrValue::Int8(i) => ag::AttrValue::Int8(*i),
+        AttrValue::Int(i) => ag::AttrValue::Int(*i),
+        AttrValue::Int64(i) => ag::AttrValue::Int64(*i),
+        AttrValue::UInt(u) => ag::AttrValue::UInt(*u),
+        AttrValue::Float(f) => ag::AttrValue::Float(*f),
+        AttrValue::Vec3(a) => ag::AttrValue::Vec3(*a),
+        AttrValue::Vec4(a) => ag::AttrValue::Vec4(*a),
+        AttrValue::Mat3(m) => ag::AttrValue::Mat3(*m),
+        AttrValue::Mat4(m) => ag::AttrValue::Mat4(*m),
+        AttrValue::List(items) => ag::AttrValue::List(items.iter().map(to_widget).collect()),
+        AttrValue::Uuid(u) => ag::AttrValue::Label(u.to_string()),
+        AttrValue::Map(m) => ag::AttrValue::Label(format!("Map: {} entries", m.len())),
+        AttrValue::Set(s) => ag::AttrValue::Label(format!("Set: {} items", s.len())),
+        AttrValue::Json(s) => ag::AttrValue::Label(format!("JSON: {} chars", s.len())),
+    }
+}
 
-    // egui DragValue has built-in Shift support (slow mode)
-    // No custom speed_mult needed - egui handles it internally
-
-    ui.scope(|ui| {
-        if mixed {
-            ui.visuals_mut().override_text_color = Some(weak);
+/// Convert an edited widget value back to a playa [`AttrValue`]. Returns `None`
+/// for read-only [`ag::AttrValue::Label`] (those are never editable, so never
+/// appear in the change list) — and for a list containing one.
+fn from_widget(v: &ag::AttrValue) -> Option<AttrValue> {
+    Some(match v {
+        ag::AttrValue::Bool(b) => AttrValue::Bool(*b),
+        ag::AttrValue::Str(s) => AttrValue::Str(s.clone()),
+        ag::AttrValue::Int8(i) => AttrValue::Int8(*i),
+        ag::AttrValue::Int(i) => AttrValue::Int(*i),
+        ag::AttrValue::Int64(i) => AttrValue::Int64(*i),
+        ag::AttrValue::UInt(u) => AttrValue::UInt(*u),
+        ag::AttrValue::Float(f) => AttrValue::Float(*f),
+        ag::AttrValue::Vec3(a) => AttrValue::Vec3(*a),
+        ag::AttrValue::Vec4(a) => AttrValue::Vec4(*a),
+        ag::AttrValue::Mat3(m) => AttrValue::Mat3(*m),
+        ag::AttrValue::Mat4(m) => AttrValue::Mat4(*m),
+        ag::AttrValue::List(items) => {
+            let converted: Option<Vec<AttrValue>> = items.iter().map(from_widget).collect();
+            AttrValue::List(converted?)
         }
-
-        match value {
-            // String with options -> combobox
-            AttrValue::Str(current) if !ui_options.is_empty() => {
-                let mut selected = current.clone();
-                ComboBox::from_id_salt(format!("attr_{}", key))
-                    .selected_text(&selected)
-                    .show_ui(ui, |ui| {
-                        for opt in ui_options {
-                            ui.selectable_value(&mut selected, opt.to_string(), *opt);
-                        }
-                    });
-                if &selected != current {
-                    *current = selected;
-                    scope_changed = true;
-                }
-            }
-
-            // Float with options -> slider with range [min, max, step]
-            AttrValue::Float(v) if ui_options.len() >= 2 => {
-                let min: f32 = ui_options[0].parse().unwrap_or(0.0);
-                let max: f32 = ui_options[1].parse().unwrap_or(1.0);
-                let step: f64 = ui_options
-                    .get(2)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0.01);
-                scope_changed |= ui
-                    .add(egui::Slider::new(v, min..=max).step_by(step))
-                    .changed();
-            }
-
-            // Default widgets by type
-            AttrValue::Bool(v) => {
-                scope_changed |= ui.checkbox(v, "").changed();
-            }
-            AttrValue::Str(s) => {
-                scope_changed |= ui.text_edit_singleline(s).changed();
-            }
-            AttrValue::Int(v) => {
-                scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0)).changed();
-            }
-            AttrValue::Int64(v) => {
-                scope_changed |= ui.add(egui::DragValue::new(v).speed(1.0)).changed();
-            }
-            AttrValue::UInt(v) => {
-                let mut temp = *v as i32;
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut temp)
-                            .speed(1.0)
-                            .range(0..=i32::MAX),
-                    )
-                    .changed()
-                {
-                    *v = temp.max(0) as u32;
-                    scope_changed = true;
-                }
-            }
-            AttrValue::Float(v) => {
-                scope_changed |= ui.add(egui::DragValue::new(v).speed(0.1)).changed();
-            }
-            AttrValue::Vec3(arr) => {
-                ui.horizontal(|ui| {
-                    ui.label("X:");
-                    scope_changed |= ui
-                        .add(egui::DragValue::new(&mut arr[0]).speed(0.1))
-                        .changed();
-                    ui.label("Y:");
-                    scope_changed |= ui
-                        .add(egui::DragValue::new(&mut arr[1]).speed(0.1))
-                        .changed();
-                    ui.label("Z:");
-                    scope_changed |= ui
-                        .add(egui::DragValue::new(&mut arr[2]).speed(0.1))
-                        .changed();
-                });
-            }
-            AttrValue::Vec4(arr) => {
-                ui.horizontal(|ui| {
-                    ui.label("X:");
-                    scope_changed |= ui
-                        .add(egui::DragValue::new(&mut arr[0]).speed(0.1))
-                        .changed();
-                    ui.label("Y:");
-                    scope_changed |= ui
-                        .add(egui::DragValue::new(&mut arr[1]).speed(0.1))
-                        .changed();
-                    ui.label("Z:");
-                    scope_changed |= ui
-                        .add(egui::DragValue::new(&mut arr[2]).speed(0.1))
-                        .changed();
-                    ui.label("W:");
-                    scope_changed |= ui
-                        .add(egui::DragValue::new(&mut arr[3]).speed(0.1))
-                        .changed();
-                });
-            }
-            AttrValue::Mat3(m) => {
-                // Editable 3x3 grid (row-major) — e.g. an EXR chromaticity/transform.
-                ui.vertical(|ui| {
-                    for row in m.iter_mut() {
-                        ui.horizontal(|ui| {
-                            for c in row.iter_mut() {
-                                scope_changed |=
-                                    ui.add(egui::DragValue::new(c).speed(0.01)).changed();
-                            }
-                        });
-                    }
-                });
-            }
-            AttrValue::Mat4(m) => {
-                // Editable 4x4 grid (row-major) — e.g. EXR worldToCamera/worldToNDC.
-                ui.vertical(|ui| {
-                    for row in m.iter_mut() {
-                        ui.horizontal(|ui| {
-                            for c in row.iter_mut() {
-                                scope_changed |=
-                                    ui.add(egui::DragValue::new(c).speed(0.01)).changed();
-                            }
-                        });
-                    }
-                });
-            }
-            AttrValue::Json(s) => {
-                ui.label(format!("JSON: {} chars", s.len()));
-            }
-            AttrValue::Int8(v) => {
-                let mut temp = *v as i32;
-                if ui
-                    .add(egui::DragValue::new(&mut temp).speed(1.0).range(-128..=127))
-                    .changed()
-                {
-                    *v = temp.clamp(-128, 127) as i8;
-                    scope_changed = true;
-                }
-            }
-            AttrValue::Uuid(u) => {
-                ui.label(format!("{}", u));
-            }
-            AttrValue::List(items) => {
-                // Editable inline row of scalars — covers EXR array attrs that the
-                // load bridge stores as a `List` (chromaticities[8], smpte:TimeCode,
-                // FramesPerSecond, keycode). Non-scalar elements stay read-only.
-                ui.horizontal_wrapped(|ui| {
-                    for item in items.iter_mut() {
-                        match item {
-                            AttrValue::Int(v) => {
-                                scope_changed |=
-                                    ui.add(egui::DragValue::new(v).speed(1.0)).changed();
-                            }
-                            AttrValue::Int64(v) => {
-                                scope_changed |=
-                                    ui.add(egui::DragValue::new(v).speed(1.0)).changed();
-                            }
-                            AttrValue::UInt(v) => {
-                                scope_changed |=
-                                    ui.add(egui::DragValue::new(v).speed(1.0)).changed();
-                            }
-                            AttrValue::Float(v) => {
-                                scope_changed |=
-                                    ui.add(egui::DragValue::new(v).speed(0.01)).changed();
-                            }
-                            other => {
-                                ui.label(format!("{:?}", other));
-                            }
-                        }
-                    }
-                });
-            }
-            AttrValue::Map(entries) => {
-                ui.label(format!("Map: {} entries", entries.len()));
-            }
-            AttrValue::Set(items) => {
-                ui.label(format!("Set: {} items", items.len()));
-            }
-        }
-    });
-    changed |= scope_changed;
-    changed
+        ag::AttrValue::Label(_) => return None,
+    })
 }
 
 // ============================================================================
-// Effects UI
+// Effects UI (app-specific — playa Effect / EffectType)
 // ============================================================================
 
 /// Actions that can be performed on effects (returned from render_effects).
@@ -552,7 +287,7 @@ pub fn render_effects(
     actions
 }
 
-/// Render editable attributes for a single effect using same table layout as main attrs.
+/// Render editable attributes for a single effect using a compact table.
 fn render_effect_attrs(
     ui: &mut Ui,
     effect: &mut Effect,
@@ -580,7 +315,6 @@ fn render_effect_attrs(
         .text_style_height(&TextStyle::Body)
         .max(ui.spacing().interact_size.y);
 
-    // Use same column width as main attributes
     let available_width = ui.available_width();
     let min_label = 100.0;
     let max_label = (available_width - 120.0).max(min_label);
@@ -610,7 +344,7 @@ fn render_effect_attrs(
                                 .map(|def| {
                                     let opts = def.ui_options;
                                     let min = opts
-                                        .get(0)
+                                        .first()
                                         .and_then(|s| s.parse::<f64>().ok())
                                         .unwrap_or(0.0);
                                     let max = opts
@@ -670,7 +404,7 @@ fn render_effect_attrs(
             }
         });
 
-    // Draw splitter line (aligned with main attributes splitter)
+    // Draw splitter line (aligned with the effect label column)
     let table_bottom = ui.cursor().min;
     let x = table_top.x + state.name_column_width;
     let stroke = Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
