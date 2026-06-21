@@ -45,6 +45,9 @@ egui-hdr-view = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branc
 # Generic data-driven export/encode settings modal (format → codec → options),
 # extracted from playa's hand-painted encode dialog. Consumed via git-ref.
 egui-encode-dialog = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+# Generic multi-track NLE-style timeline widget (move/trim/slide, zoom, pan,
+# playhead). Playa's timeline canvas is a thin host over this; see timeline_ui.rs.
+egui-track-timeline = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 glam = { workspace = true }
 half = { workspace = true }
 image = { workspace = true }

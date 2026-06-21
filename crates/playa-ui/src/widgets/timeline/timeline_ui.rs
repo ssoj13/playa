@@ -31,38 +31,41 @@ use super::timeline_events::{
     TimelineFitAllEvent, TimelineLockWorkAreaChangedEvent, TimelinePanChangedEvent,
     TimelineSnapChangedEvent, TimelineZoomChangedEvent,
 };
-use super::timeline_helpers::{
-    RulerAction, detect_layer_tool_with_geom, draw_drop_preview, drop_preview_thumb_rect,
-    draw_frame_ruler, frame_to_screen_x, hash_color_str, row_to_y, screen_x_to_frame,
-};
+use super::timeline_helpers::{drop_preview_thumb_rect, hash_color_str};
 use super::{TimelineConfig, TimelineState};
 use crate::widgets::dnd::{
     GlobalDragState, ProjectDragSnapOverlay, global_drag_state_id, project_drag_snap_overlay_id,
 };
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_dnd::dnd;
-use playa_time::{Round, Speed};
+use egui_track_timeline::{
+    Clip, Fill, TimelineAction, TimelineConfig as TtConfig, TimelineModel, Track, TrackTimeline,
+    WorkArea,
+};
 use playa_engine::core::event_bus::BoxedEvent;
-
-/// Convert a horizontal drag delta (screen pixels) to a delta in timeline frames.
-/// Centralises the 4× copy-paste of `(delta_x / (ppf * zoom)).round() as i32`
-/// across the drag handlers below.
-#[inline]
-fn delta_px_to_frames(delta_px: f32, config: &TimelineConfig, state: &TimelineState) -> i32 {
-    let ppf = config.pixels_per_frame * state.zoom;
-    Round::Round.to_i32((delta_px / ppf) as f64)
-}
-use playa_events::project_media::{ProjectActiveChangedEvent, SelectionFocusEvent};
 use playa_engine::core::player_events::{
     JumpToEndEvent, JumpToStartEvent, SetFrameEvent, SetLoopEvent, StopEvent, TogglePlayPauseEvent,
 };
 use playa_engine::entities::comp_events::{
-    AddLayerEvent, CompSelectionChangedEvent, LayerAttributesChangedEvent,
+    AddLayerEvent, CompSelectionChangedEvent, HoverLayerEvent, LayerAttributesChangedEvent,
     MoveAndReorderLayerEvent, ReorderLayerEvent, SetLayerPlayEndEvent, SetLayerPlayStartEvent,
     SlideLayerEvent,
 };
-use playa_engine::entities::{Comp, Node, frame::FrameStatus};
+use playa_engine::entities::keys::{A_IN, A_SPEED, A_TRIM_IN, A_TRIM_OUT};
+use playa_engine::entities::{AttrValue, Comp, Node, frame::FrameStatus};
+use playa_events::project_media::{ProjectActiveChangedEvent, SelectionFocusEvent};
+use playa_time::{Round, Speed};
 use uuid::Uuid;
+
+/// Derive a stable `u64` clip id from a layer `Uuid` (first 8 bytes, LE).
+/// Matches `project_ui.rs::uuid_to_u64`; the per-frame `id_map` is the single
+/// source of truth for the reverse lookup, so head collisions are harmless.
+fn uuid_to_u64(uuid: &Uuid) -> u64 {
+    let bytes = uuid.as_bytes();
+    let mut head = [0u8; 8];
+    head.copy_from_slice(&bytes[0..8]);
+    u64::from_le_bytes(head)
+}
 
 #[inline]
 fn frame_status_paint_rgba(status: FrameStatus) -> Color32 {
@@ -646,7 +649,19 @@ pub fn render_outline(
     }
 }
 
-/// Render After Effects-style timeline (right canvas)
+/// Render the After Effects-style timeline canvas (right side) by consuming the
+/// generic [`egui_track_timeline`] widget.
+///
+/// Mapping: each playa layer becomes exactly **one widget track holding one clip**
+/// (track index == layer index). A fresh [`TimelineModel`] is built every frame;
+/// returned [`TimelineAction`]s and the [`TimelineResponse`] hooks (ruler/track
+/// rects, hover, double-click) are translated back into playa events.
+///
+/// The widget owns zoom/pan in [`egui_track_timeline::TimelineView`] (stored in
+/// `TimelineState::track_view`). We mirror playa's canonical `zoom`/`pan_offset`
+/// into it before `show` and read changes back after, re-emitting
+/// `TimelineZoom/PanChangedEvent`, so the toolbar slider, Fit, the ruler-aligned
+/// cache status strip, and persistence all keep working.
 pub fn render_canvas(
     ui: &mut Ui,
     comp_uuid: Uuid,
@@ -658,916 +673,385 @@ pub fn render_canvas(
     timeline_hover_highlight: bool,
     mut dispatch: impl FnMut(BoxedEvent),
 ) -> super::timeline::TimelineActions {
-    // Save canvas width for Fit button calculation
+    // The widget renders bars identically regardless of playa's split/canvas mode;
+    // the outline is a separate panel, so view_mode is not needed here.
+    let _ = view_mode;
+
+    // Save canvas width for the toolbar "Fit" button calculation.
     state.last_canvas_width = ui.available_width();
-
     let comp_id = comp_uuid;
-    // Calculate dimensions - timeline should show from 0 to end (not start to end)
-    // This allows negative starts and ensures ruler shows full range
-    let comp_start = comp._in();
-    let comp_end = comp._out();
+    let tab_rect = ui.max_rect();
 
-    // Get media for dynamic src_len lookups throughout the function
+    // Dynamic src_len lookups come from media.
     let media = project.media.read().expect("media lock");
 
-    // Calculate extended range to include all layer positions (even beyond comp bounds)
-    let (layers_min, layers_max) =
-        comp.layers
-            .iter()
-            .fold((comp_start, comp_end), |(min, max), layer| {
-                let start = layer.start();
-                let end = comp.get_layer_end(layer, &media);
-                (min.min(start), max.max(end))
-            });
-    // Large margin for smooth dragging - scales with visible area
-    let margin =
-        (ui.available_width() / (config.pixels_per_frame * state.zoom)).ceil() as i32 + 100;
-    let extended_min = layers_min.min(comp_start) - margin;
-    let extended_max = layers_max.max(comp_end) + margin;
-    let total_frames = (extended_max - extended_min + 1).max(100);
+    // --- Build the generic model: 1 layer => 1 track => 1 clip. ---
+    // `id_map` reverses the opaque u64 clip id (first 8 bytes of the layer uuid)
+    // back to the real uuid; unknown ids in returned actions are ignored.
+    let mut id_map: std::collections::HashMap<u64, Uuid> = std::collections::HashMap::new();
+    let mut tracks: Vec<Track> = Vec::with_capacity(comp.layers.len());
+    for layer in comp.layers.iter() {
+        let uuid = layer.uuid();
+        let id = uuid_to_u64(&uuid);
+        id_map.insert(id, uuid);
 
-    // Spammy per-frame log, use trace level
-    log::trace!(
-        "Comp '{}': start={}, end={}, layers={}..{}, total_frames={}",
-        comp.name(),
-        comp_start,
-        comp_end,
-        layers_min,
-        layers_max,
-        total_frames
-    );
+        let attrs = &layer.attrs;
+        let start = layer.start() as i64; // == A_IN
+        let end = comp.get_layer_end(layer, &media) as i64;
+        let duration = (end - start + 1).max(1);
+        let (play_start, play_end) = comp.get_layer_work_area(layer, &media);
+        let trim_in = play_start as i64 - start;
+        let trim_out = (start + duration) - (play_end as i64 + 1);
 
-    // In Split mode, use full width (outline is in separate panel)
-    let available_for_timeline = if matches!(view_mode, super::TimelineViewMode::Split) {
-        ui.available_width()
-    } else {
-        ui.available_width() - config.name_column_width
-    };
-    let timeline_width =
-        (total_frames as f32 * config.pixels_per_frame * state.zoom).max(available_for_timeline);
+        let name = attrs.get_str("name").unwrap_or("?").to_string();
+        let visible = attrs.get_bool("visible").unwrap_or(true);
+        // Preserve the exact old bar colour (hash of name, grey when hidden).
+        let color = if visible {
+            hash_color_str(&name)
+        } else {
+            Color32::from_gray(70)
+        };
+        // File-source layers get a diagonal hatch overlay, like the old bars.
+        let is_file = project
+            .with_node(layer.source_uuid(), |n| n.is_file())
+            .unwrap_or(false);
+        let fill = if is_file { Fill::Hatch } else { Fill::Solid };
 
-    // Note: row = layer index (simple 1:1 mapping, no packing)
+        let clip = Clip::new(id, start, duration, name.clone())
+            .with_trims(trim_in, trim_out)
+            .with_color(color)
+            .with_fill(fill);
+        tracks.push(Track::new(name, vec![clip]));
+    }
 
-    let ruler_width =
-        (total_frames as f32 * config.pixels_per_frame * state.zoom).max(ui.available_width());
+    let selection: Vec<u64> = comp.layer_selection.iter().map(uuid_to_u64).collect();
 
-    // Spammy per-frame log, use trace level
-    log::trace!(
-        "ruler_width={}, timeline_width={}, available_width={}",
-        ruler_width,
-        timeline_width,
-        ui.available_width()
-    );
-    let status_strip = comp.cache_frame_statuses(project.global_cache.as_ref());
-    let status_bar_height = 2.0; // Status strip is always shown
+    // Work-area (play range) overlay, in exclusive-end frames.
+    let (wa_start, wa_end) = comp.play_range(true);
+    let work_area = Some(WorkArea {
+        start: wa_start as i64,
+        end: wa_end as i64 + 1,
+    });
 
-    // Options + time ruler row (always visible)
-    let mut ruler_rect: Option<Rect> = None;
-    let mut timeline_rect_global: Option<Rect> = None;
-    let ruler_height = 20.0;
-    let mut timeline_hovered = false; // Track hover state for input routing
-    let tab_rect = ui.max_rect(); // Full tab rect for hover detection
-
-    // Draw ruler with proper layout sync
-    // Zero item_spacing to match outline panel alignment (kept zero for entire timeline)
-    ui.spacing_mut().item_spacing.y = 0.0;
-
-    ui.horizontal(|ui| {
-        // Add left spacer only in OutlineOnly mode (to align ruler with outline column)
-        // In CanvasOnly mode there's no outline, in Split mode outline is separate panel
-        if matches!(view_mode, super::TimelineViewMode::OutlineOnly) {
-            ui.allocate_exact_size(
-                Vec2::new(config.name_column_width, ruler_height),
-                Sense::hover(),
-            );
-        }
-
-        // Ruler (no ScrollArea; pan/zoom handled via state.pan_offset/state.zoom)
-        let (ruler_action, rect) =
-            draw_frame_ruler(ui, comp, config, state, ruler_width, total_frames);
-        ruler_rect = Some(rect);
-        match ruler_action {
-            Some(RulerAction::Scrub(frame)) => {
-                dispatch(Box::new(SetFrameEvent(frame)));
+    // Ruler bookmarks -> marker glyphs.
+    let mut markers: Vec<i64> = Vec::new();
+    if let Some(bookmarks) = comp.attrs.get_map("bookmarks") {
+        for value in bookmarks.values() {
+            if let AttrValue::Int(f) = value {
+                markers.push(*f as i64);
             }
-            Some(RulerAction::ClearBookmark { comp_uuid, slot }) => {
+        }
+    }
+
+    let mut model = TimelineModel::new(comp.fps(), tracks);
+    model.playhead = comp.frame() as i64;
+    model.selection = selection;
+    model.work_area = work_area;
+    model.markers = markers;
+
+    // Widget layout config derived from playa's TimelineConfig (8px edge handles,
+    // matching the old `edge_threshold`).
+    let ett_cfg = TtConfig {
+        row_height: config.layer_height,
+        pixels_per_frame: config.pixels_per_frame,
+        edge_threshold: 8.0,
+        show_work_area: true,
+    };
+
+    // Frame-cache status strip data; kept ruler-aligned, painted as an overlay
+    // just below the widget ruler (the widget draws no status strip).
+    let status_strip = comp.cache_frame_statuses(project.global_cache.as_ref());
+    let comp_start = comp._in();
+
+    // Mirror playa's canonical zoom/pan into the widget view before show.
+    state.track_view.zoom = state.zoom;
+    state.track_view.pan_offset = state.pan_offset;
+
+    // Run the widget inside the shared vertical scroll area so its bars stay
+    // vertically aligned with the left outline panel (same `id_salt`).
+    let response = egui::ScrollArea::vertical()
+        .id_salt("timeline_layers_scroll")
+        .max_height(ui.available_height())
+        .show(ui, |ui| {
+            let resp = TrackTimeline::new(ett_cfg).show(ui, &mut state.track_view, &model);
+
+            // Paint the cache status strip aligned to the widget ruler, using the
+            // pre-show zoom/pan still held in `state` (matches the ruler drawn
+            // this frame).
+            if let Some(statuses) = &status_strip {
+                let ruler = resp.ruler_rect;
+                let strip_height = 2.0;
+                let strip_rect = Rect::from_min_max(
+                    Pos2::new(ruler.min.x, ruler.max.y),
+                    Pos2::new(ruler.max.x, ruler.max.y + strip_height),
+                );
+                draw_status_strip(ui, strip_rect, statuses, comp_start, 0, ruler, config, state);
+            }
+            resp
+        })
+        .inner;
+
+    // --- Bookmark ruler input (reimplemented over the widget ruler) ---
+    // Ctrl+click clears the nearest bookmark (<=10px) and must NOT also scrub, so
+    // we suppress the widget's matching Seek this frame.
+    let modifiers = ui.input(|i| i.modifiers);
+    let pointer = ui.input(|i| i.pointer.interact_pos());
+    let primary_clicked = ui.input(|i| i.pointer.primary_clicked());
+    let mut suppress_seek = false;
+    if modifiers.ctrl
+        && primary_clicked
+        && let Some(pos) = pointer
+        && response.ruler_rect.contains(pos)
+    {
+        suppress_seek = true;
+        if let Some(bookmarks) = comp.attrs.get_map("bookmarks") {
+            const THRESHOLD: f32 = 10.0;
+            let mut candidates: Vec<(f32, u8)> = bookmarks
+                .iter()
+                .filter_map(|(slot_str, value)| {
+                    let bm_frame = match value {
+                        AttrValue::Int(f) => *f,
+                        _ => return None,
+                    };
+                    let slot: u8 = slot_str.parse().ok()?;
+                    let x = state
+                        .track_view
+                        .frame_to_x(bm_frame as f32, response.ruler_rect.min.x, &ett_cfg);
+                    let dist = (pos.x - x).abs();
+                    (dist <= THRESHOLD).then_some((dist, slot))
+                })
+                .collect();
+            candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            if let Some((_, slot)) = candidates.first() {
                 dispatch(Box::new(
                     playa_engine::entities::comp_events::SetBookmarkEvent {
                         comp_uuid,
-                        slot,
-                        frame: None, // None = clear bookmark
+                        slot: *slot,
+                        frame: None,
                     },
                 ));
             }
-            None => {}
         }
-
-        // Middle-drag pan on ruler - initialize only, processing is in main loop
-        if rect.contains(ui.ctx().pointer_hover_pos().unwrap_or(Pos2::ZERO))
-            && ui
-                .ctx()
-                .input(|i| i.pointer.button_down(egui::PointerButton::Middle))
-            && state.drag_state.is_none()
-            && let Some(pos) = ui.ctx().pointer_hover_pos()
-        {
-            state.drag_state = Some(GlobalDragState::TimelinePan {
-                drag_start_pos: pos,
-                initial_pan_offset: state.pan_offset,
-            });
-        }
-    });
-
-    // Status strip (if present) - draw inside horizontal layout to align with ruler
-    if let Some(statuses) = &status_strip
-        && let Some(ruler) = ruler_rect
-    {
-        ui.horizontal(|ui| {
-            // Add left spacer only in OutlineOnly mode (same as ruler)
-            if matches!(view_mode, super::TimelineViewMode::OutlineOnly) {
-                ui.allocate_exact_size(
-                    Vec2::new(config.name_column_width, status_bar_height),
-                    Sense::hover(),
-                );
-            }
-
-            // Allocate status strip with same width as ruler
-            let (status_rect, _) =
-                ui.allocate_exact_size(Vec2::new(ruler.width(), status_bar_height), Sense::hover());
-            // Pass ruler_rect to ensure alignment
-            draw_status_strip(
-                ui,
-                status_rect,
-                statuses,
-                comp_start,
-                total_frames,
-                ruler,
-                config,
-                state,
-            );
-        });
     }
 
-    ui.add_space(4.0);
-
-    // Layers area with vertical scroll (but horizontal pan via state.pan_offset)
-    // ScrollArea is needed here because layers can extend beyond visible area vertically
-    // NOTE: item_spacing stays 0 until INSIDE ScrollArea to match outline panel alignment
-    egui::ScrollArea::vertical()
-        .id_salt("timeline_layers_scroll")
-        // Constrain ScrollArea to visible space so the parent panel doesn't grow
-        .max_height(ui.available_height())
-        .show(ui, |ui| {
-        // Zero spacing kept for layer rows to match outline panel alignment
-
-        ui.push_id("timeline_layers", |ui| {
-            // child_order computed here, row = index (no smart packing)
-
-            // Simple row assignment: each layer gets its own row based on index
-            // No "smart" packing - layer order in children = visual row order
-            let child_order_inner: Vec<usize> = (0..comp.layers.len()).collect();
-            let num_layers = comp.layers.len();
-            let total_height_inner = (num_layers.max(1) as f32) * config.layer_height;
-
-            // Timeline bars - horizontal pan via state.pan_offset, vertical scroll via ScrollArea.
-            let (timeline_rect, timeline_response) = ui.allocate_exact_size(
-                Vec2::new(timeline_width, total_height_inner),
-                Sense::click_and_drag(),
-            );
-            let painter = ui.painter();
-
-        // Get interaction response for click/drag (ui.interact doesn't show hover highlight)
-        timeline_rect_global = Some(timeline_rect);
-        timeline_hovered = timeline_response.hovered();
-
-        // If mouse is over ruler or canvas rects, mark timeline hovered (hotkeys context)
-        if let Some(pos) = ui.ctx().pointer_hover_pos()
-            && (ruler_rect.map(|r| r.contains(pos)).unwrap_or(false)
-                || timeline_rect.contains(pos))
-            {
-                timeline_hovered = true;
-            }
-
-        // Middle-drag pan on canvas - initialize only if not already dragging
-        // Use tab_rect (entire timeline tab) instead of timeline_response to allow
-        // panning from empty area below layers
-        if let Some(pos) = ui.ctx().pointer_hover_pos()
-            && tab_rect.contains(pos)
-            && state.drag_state.is_none()
-            && ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-                    state.drag_state = Some(GlobalDragState::TimelinePan {
-                        drag_start_pos: pos,
-                        initial_pan_offset: state.pan_offset,
-                    });
+    // --- Translate widget actions into playa events ---
+    for action in &response.actions {
+        match *action {
+            TimelineAction::Seek { frame } => {
+                if !suppress_seek {
+                    dispatch(Box::new(SetFrameEvent(frame as i32)));
                 }
-
-        // Scroll wheel horizontal pan
-        let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
-        if scroll_delta.x.abs() > 0.0 {
-            let delta_frames = scroll_delta.x / (config.pixels_per_frame * state.zoom);
-            dispatch(Box::new(TimelinePanChangedEvent(state.pan_offset - delta_frames)));
+            }
+            TimelineAction::Select {
+                id,
+                additive,
+                range,
+            } => {
+                let Some(uuid) = id_map.get(&id).copied() else {
+                    continue;
+                };
+                let Some(idx) = comp.uuid_to_idx(uuid) else {
+                    continue;
+                };
+                let mods = egui::Modifiers {
+                    ctrl: additive,
+                    shift: range,
+                    ..Default::default()
+                };
+                let all = comp.layers_uuids_vec();
+                let (sel, anchor) = compute_layer_selection(
+                    &comp.layer_selection,
+                    comp.layer_selection_anchor,
+                    uuid,
+                    idx,
+                    mods,
+                    &all,
+                );
+                dispatch(Box::new(CompSelectionChangedEvent {
+                    comp_uuid,
+                    selection: sel.clone(),
+                    anchor,
+                }));
+                dispatch(Box::new(SelectionFocusEvent(sel)));
+            }
+            TimelineAction::ClearSelection => {
+                dispatch(Box::new(CompSelectionChangedEvent {
+                    comp_uuid,
+                    selection: vec![],
+                    anchor: None,
+                }));
+                dispatch(Box::new(SelectionFocusEvent(vec![])));
+            }
+            TimelineAction::MoveClip {
+                id,
+                new_start,
+                new_track,
+            } => {
+                let Some(uuid) = id_map.get(&id).copied() else {
+                    continue;
+                };
+                let Some(idx) = comp.uuid_to_idx(uuid) else {
+                    continue;
+                };
+                dispatch(Box::new(MoveAndReorderLayerEvent {
+                    comp_uuid,
+                    layer_idx: idx,
+                    new_start: new_start as i32,
+                    new_idx: new_track,
+                }));
+            }
+            TimelineAction::TrimStart { id, delta } => {
+                let Some(uuid) = id_map.get(&id).copied() else {
+                    continue;
+                };
+                let Some(idx) = comp.uuid_to_idx(uuid) else {
+                    continue;
+                };
+                // play_start is in timeline frames; widget TrimStart delta is too.
+                let new_play_start = comp.layers[idx].attrs.layer_start() + delta as i32;
+                dispatch(Box::new(SetLayerPlayStartEvent {
+                    comp_uuid,
+                    layer_idx: idx,
+                    new_play_start,
+                }));
+            }
+            TimelineAction::TrimEnd { id, delta } => {
+                let Some(uuid) = id_map.get(&id).copied() else {
+                    continue;
+                };
+                let Some(idx) = comp.uuid_to_idx(uuid) else {
+                    continue;
+                };
+                // SIGN FLIP: the widget already negates TrimEnd delta (positive =
+                // more trimmed off the tail => play_end decreases). playa's event
+                // wants `layer_end() + px_delta` with `px_delta = -delta`, hence
+                // `- delta`.
+                let new_play_end = comp.layers[idx].attrs.layer_end() - delta as i32;
+                dispatch(Box::new(SetLayerPlayEndEvent {
+                    comp_uuid,
+                    layer_idx: idx,
+                    new_play_end,
+                }));
+            }
+            TimelineAction::Slide { id, delta } => {
+                let Some(uuid) = id_map.get(&id).copied() else {
+                    continue;
+                };
+                let Some(idx) = comp.uuid_to_idx(uuid) else {
+                    continue;
+                };
+                let attrs = &comp.layers[idx].attrs;
+                let a_in = attrs.get_i32_or_zero(A_IN);
+                let a_trim_in = attrs.get_i32_or_zero(A_TRIM_IN);
+                let a_trim_out = attrs.get_i32_or_zero(A_TRIM_OUT);
+                let speed = Speed::new(attrs.get_float_or(A_SPEED, 1.0));
+                // Widget Slide.delta is timeline frames; playa trims are SOURCE
+                // frames, so speed-convert at apply time.
+                let trim_delta = speed.scale_timeline_to_src(delta as i32, Round::Round);
+                dispatch(Box::new(SlideLayerEvent {
+                    comp_uuid,
+                    layer_idx: idx,
+                    new_in: a_in + delta as i32,
+                    new_trim_in: (a_trim_in - trim_delta).max(0),
+                    new_trim_out: (a_trim_out + trim_delta).max(0),
+                }));
+            }
         }
-
-        // Draw layers (egui automatically clips to visible area inside ScrollArea)
-                        // Cache LayerGeom results to avoid recalculating in interaction pass
-                        let pan_offset = state.pan_offset;
-                        let zoom = state.zoom;
-                        state.geom_cache.clear();
-                        state.geom_cache.reserve(child_order_inner.len());
-
-                        // First pass: draw row backgrounds (alternating colors)
-                        for row in 0..num_layers {
-                            let row_y = row_to_y(row, config, timeline_rect);
-                            let row_rect = Rect::from_min_size(
-                                Pos2::new(timeline_rect.min.x, row_y),
-                                Vec2::new(timeline_width, config.layer_height),
-                            );
-                            let bg_color = if row % 2 == 0 {
-                                Color32::from_gray(30)
-                            } else {
-                                Color32::from_gray(35)
-                            };
-                            painter.rect_filled(row_rect, 0.0, bg_color);
-                        }
-
-                        // Second pass: draw layer bars
-                        for &original_idx in child_order_inner.iter() {
-                            let idx = original_idx;
-                            let layer = &comp.layers[idx];
-                            let child_uuid = layer.uuid();
-                            let attrs = &layer.attrs;
-
-                            // Get full bar start/end using dynamic src_len from source
-                            let child_start = layer.start();
-                            let child_end = comp.get_layer_end(layer, &media);
-
-                            // Get precomputed row from layout
-                            let row = idx;  // Simple: row = layer index
-                            let child_y = row_to_y(row, config, timeline_rect);
-                            let (play_start, play_end) = comp.get_layer_work_area(layer, &media);
-                            let is_visible = attrs.get_bool("visible").unwrap_or(true);
-
-                            // Calculate layer geometry and cache for interaction pass
-                            let geom = super::timeline::LayerGeom::calc(
-                                child_start, child_end, play_start, play_end,
-                                child_y, timeline_rect, config, pan_offset, zoom
-                            );
-                            state.geom_cache.insert(idx, geom);
-
-                            // Child bar color (use hash of name for stable color per clip)
-                            let child_name = attrs.get_str("name").unwrap_or("?");
-                            let base_color = if is_visible {
-                                hash_color_str(child_name)
-                            } else {
-                                Color32::from_gray(70)
-                            };
-                            let is_selected = comp.layer_selection.contains(&child_uuid);
-                            let is_hovered = timeline_hover_highlight && comp.hovered_layer == Some(child_uuid);
-                            let gray_color = if is_selected {
-                                // Slightly brighter grey with a blue tint when selected
-                                Color32::from_rgba_unmultiplied(110, 140, 190, 130)
-                            } else {
-                                Color32::from_rgba_unmultiplied(80, 80, 80, 100)
-                            };
-
-                            painter.rect_filled(geom.full_bar_rect, 4.0, gray_color);
-
-                            // Draw visible (trimmed) area with full color on top
-                            if let Some(visible_bar_rect) = geom.visible_bar_rect {
-                                // Check if source is file node (for hatching)
-                                let is_source_file = project.with_node(layer.source_uuid(), |n| n.is_file())
-                                    .unwrap_or(false);
-
-                                if is_source_file {
-                                    // File comp: draw with diagonal hatch pattern (texture * base_color)
-                                    let hatch_id = state.get_hatch_texture(ui.ctx());
-                                    let tex_size = 64.0; // Texture size in pixels
-                                    // UV relative to bar size for proper tiling
-                                    let uv = Rect::from_min_max(
-                                        Pos2::new(0.0, 0.0),
-                                        Pos2::new(visible_bar_rect.width() / tex_size, visible_bar_rect.height() / tex_size),
-                                    );
-                                    painter.image(hatch_id, visible_bar_rect, uv, base_color);
-                                } else {
-                                    // Layer comp: solid color
-                                    painter.rect_filled(visible_bar_rect, 4.0, base_color);
-                                }
-
-                                // Draw layer name centered on visible bar
-                                let text_color = Color32::WHITE;
-                                let font_id = egui::FontId::proportional(11.0);
-                                let galley = painter.layout_no_wrap(
-                                    child_name.to_string(),
-                                    font_id,
-                                    text_color,
-                                );
-                                // Only draw if bar is wide enough for text
-                                if visible_bar_rect.width() > galley.size().x + 8.0 {
-                                    let text_pos = visible_bar_rect.center() - galley.size() / 2.0;
-                                    painter.galley(text_pos, galley, text_color);
-                                }
-                            }
-
-                              // Draw outline around full bar (highlight for selected/hovered)
-                              let stroke_color = if is_selected {
-                                  Color32::from_rgb(180, 230, 255) // Blue for selected
-                              } else if is_hovered {
-                                  Color32::from_rgb(255, 200, 100) // Orange for hovered
-                              } else {
-                                  Color32::from_gray(150)
-                              };
-                              let stroke_width = if is_selected || is_hovered { 2.0 } else { 1.0 };
-                              painter.rect_stroke(
-                                  geom.full_bar_rect,
-                                  4.0,
-                                  egui::Stroke::new(stroke_width, stroke_color),
-                                  egui::epaint::StrokeKind::Middle,
-                              );
-                        }
-
-                        // Handle child bar interactions using proper response system
-                        // We need to do this in a second pass after drawing to ensure responses are on top
-                        for &original_idx in child_order_inner.iter() {
-                            let idx = original_idx;
-                            let layer = &comp.layers[idx];
-                            let child_uuid = layer.uuid();
-                            let attrs = &layer.attrs;
-
-                            // Use cached geometry from draw pass
-                            let Some(&geom) = state.geom_cache.get(&idx) else { continue };
-
-                            // Tool detection with full geometry support (including Slide in trim zones)
-                            let edge_threshold = 8.0;
-                            // Use interact_pos which is in local UI coordinates (accounts for scroll)
-                            if let Some(local_pos) = ui.input(|i| i.pointer.interact_pos()) {
-                                // Double-click: dive into source comp (check on full bar)
-                                if geom.full_bar_rect.contains(local_pos)
-                                    && ui.ctx().input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
-                                        // Convert parent frame to child comp frame
-                                        let parent_frame = comp.frame();
-                                        let local_frame = layer.parent_to_local(parent_frame);
-                                        dispatch(Box::new(ProjectActiveChangedEvent::with_frame(
-                                            layer.source_uuid(),
-                                            local_frame,
-                                        )));
-                                    }
-
-                                // Tool detection with geometry-aware function (supports Slide in trim zones)
-                                if state.drag_state.is_none()
-                                    && let Some(tool) = detect_layer_tool_with_geom(
-                                        local_pos,
-                                        geom.full_bar_rect,
-                                        geom.visible_bar_rect,
-                                        edge_threshold,
-                                    ) {
-                                        ui.ctx().set_cursor_icon(tool.cursor());
-
-                                        // On mouse press, create appropriate drag state
-                                        if ui.ctx().input(|i| i.pointer.primary_pressed()) {
-                                            log::trace!(
-                                                "[TIMELINE] Creating drag state: {:?} for layer {}",
-                                                tool, idx
-                                            );
-                                            // Ensure selection switches to dragged layer if it wasn't selected
-                                            {
-                                                let modifiers = ui.ctx().input(|i| i.modifiers);
-                                                let multi = modifiers.ctrl || modifiers.shift || modifiers.command;
-                                                if !multi && !comp.layer_selection.contains(&child_uuid) {
-                                                    dispatch(Box::new(CompSelectionChangedEvent {
-                                                        comp_uuid: comp_id,
-                                                        selection: vec![child_uuid],
-                                                        anchor: Some(child_uuid),
-                                                    }));
-                                                    dispatch(Box::new(SelectionFocusEvent(vec![child_uuid])));
-                                                }
-                                            }
-                                            {
-                                                state.drag_state =
-                                                    Some(tool.to_drag_state(idx, attrs, local_pos));
-                                                log::trace!(
-                                                    "[TIMELINE] Drag state created successfully"
-                                                );
-                                            }
-                                        }
-                                    }
-                            }
-                        }
-
-                        // Helper: find display index for a physical layer index
-                        let physical_to_display = |physical_idx: usize| -> Option<usize> {
-                            child_order_inner.iter().position(|&idx| idx == physical_idx)
-                        };
-
-                        // Process active drag operations
-                        // Use latest_pos() instead of hover_pos() to track cursor even outside window
-                        if let Some(drag) = state.drag_state.take() {
-                            let mut keep_drag = true;
-                            if let Some(current_pos) = ui.ctx().input(|i| i.pointer.latest_pos()) {
-                                match &drag {
-                                    GlobalDragState::TimelinePan { drag_start_pos, initial_pan_offset } => {
-                                        let delta_x = current_pos.x - drag_start_pos.x;
-                                        let delta_frames = delta_x / (config.pixels_per_frame * state.zoom);
-                                        let new_pan = initial_pan_offset - delta_frames;
-
-                                        // Update state directly to avoid frame delay
-                                        state.pan_offset = new_pan;
-                                        dispatch(Box::new(TimelinePanChangedEvent(new_pan)));
-
-                                        if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            keep_drag = false;
-                                        }
-                                    }
-                                    GlobalDragState::MovingLayer { layer_idx, initial_start, drag_start_x, drag_start_y, .. } => {
-                                        let delta_x = current_pos.x - drag_start_x;
-                                        let delta_y = current_pos.y - drag_start_y;
-                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
-                                        let new_start = *initial_start + delta_frames;  // Allow negative values
-
-                                        // Determine target child index from vertical position
-                                        // Calculate from display position, then convert to physical
-                                        let current_display_idx = physical_to_display(*layer_idx).unwrap_or(*layer_idx);
-                                        let delta_children = (delta_y / config.layer_height).round() as i32;
-                                        let target_display_idx = (current_display_idx as i32 + delta_children).max(0).min(comp.layers.len() as i32 - 1) as usize;
-                                        let target_child = child_order_inner.get(target_display_idx).copied().unwrap_or(*layer_idx);
-
-                                        // Visual feedback: draw ghost bars for all selected (or just dragged) layers
-                                        let dragged_uuid = comp.layers.get(*layer_idx).map(|l| l.uuid()).unwrap_or_default();
-                                        let selection = if comp.layer_selection.contains(&dragged_uuid) {
-                                            comp.layer_selection.clone()
-                                        } else {
-                                            vec![dragged_uuid]
-                                        };
-
-                                        for child_uuid in selection {
-                                            if comp.layers_attrs_get(&child_uuid).is_some() {
-                                                let idx_sel = comp.uuid_to_idx(child_uuid).unwrap_or(0);
-                                                let current_row = idx_sel;  // row = layer index
-                                                let target_row = (current_row as i32 + delta_children)
-                                                    .clamp(0, comp.layers.len().saturating_sub(1) as i32)
-                                                    as usize;
-
-                                                let ghost_child_y = row_to_y(target_row, config, timeline_rect);
-                                                let layer_sel = &comp.layers[idx_sel];
-                                                let child_start = layer_sel.start();
-                                                let child_end = comp.get_layer_end(layer_sel, &media);
-                                                let duration = (child_end - child_start + 1).max(1);
-
-                                                // Apply same delta to maintain relative offsets
-                                                let ghost_start = child_start + delta_frames;
-
-                                                draw_drop_preview(
-                                                    painter,
-                                                    ghost_start,
-                                                    ghost_child_y,
-                                                    duration,
-                                                    timeline_rect,
-                                                    config,
-                                                    state,
-                                                    false, // Not a cycle - moving existing layer
-                                                );
-                                            }
-                                        }
-
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-
-                                        // On release, commit both horizontal and vertical movements
-                                        if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            let has_horizontal_move = new_start != *initial_start;
-                                            let has_vertical_move = target_child != *layer_idx;
-
-                                            log::trace!("[TIMELINE] Layer drag released: h_move={}, v_move={}, layer_idx={}, new_start={}, new_idx={}",
-                                                has_horizontal_move, has_vertical_move, layer_idx, new_start, target_child);
-
-                                            if has_horizontal_move || has_vertical_move {
-                                                log::trace!(
-                                                    "[TIMELINE] DRAG: layer_idx={} -> new_start={}, new_idx={} (h={}, v={})",
-                                                    layer_idx, new_start, target_child, has_horizontal_move, has_vertical_move
-                                                );
-                                                dispatch(Box::new(MoveAndReorderLayerEvent {
-                                                    comp_uuid: comp_id,
-                                                    layer_idx: *layer_idx,
-                                                    new_start,
-                                                    new_idx: target_child,
-                                                }));
-                                            }
-                                            keep_drag = false;
-                                        }
-                                    }
-                                    GlobalDragState::AdjustPlayStart { layer_idx, initial_play_start, drag_start_x } => {
-                                        let delta_x = current_pos.x - drag_start_x;
-                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
-                                        let new_play_start = *initial_play_start + delta_frames;
-
-                                        // Visual feedback: draw ghost play range preview
-                                        if let Some(layer) = comp.layers.get(*layer_idx) {
-                                            // row = layer index
-                                            let target_row = *layer_idx;
-                                            let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let visual_start = new_play_start as f32;
-                                            let layer_end = comp.get_layer_end(layer, &media) as f32;
-                                            let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
-                                            let ghost_x_end = frame_to_screen_x(layer_end, timeline_rect.min.x, config, state);
-
-                                            let ghost_rect = Rect::from_min_max(
-                                                Pos2::new(ghost_x_start, layer_y + 4.0),
-                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
-                                            );
-                                            painter.rect_stroke(
-                                                ghost_rect,
-                                                4.0,
-                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
-                                                egui::epaint::StrokeKind::Middle,
-                                            );
-                                        }
-
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-
-                                        // On release, commit the play start adjustment
-                                        if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            dispatch(Box::new(SetLayerPlayStartEvent {
-                                                comp_uuid: comp_id,
-                                                layer_idx: *layer_idx,
-                                                new_play_start,
-                                            }));
-                                            keep_drag = false;
-                                        }
-                                    }
-                                    GlobalDragState::AdjustPlayEnd { layer_idx, initial_play_end, drag_start_x } => {
-                                        let delta_x = current_pos.x - drag_start_x;
-                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
-                                        // play_end is ABSOLUTE source frame, so drag right = increase
-                                        let new_play_end = *initial_play_end + delta_frames;
-
-                                        // Visual feedback: draw ghost play range preview
-                                        if let Some(layer) = comp.layers.get(*layer_idx) {
-                                            // row = layer index
-                                            let target_row = *layer_idx;
-                                            let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let play_start = layer.attrs.layer_start();
-                                            let visual_start = play_start as f32;
-                                            let visual_end = new_play_end as f32;
-                                            let ghost_x_start = frame_to_screen_x(visual_start, timeline_rect.min.x, config, state);
-                                            let ghost_x_end = frame_to_screen_x(visual_end, timeline_rect.min.x, config, state);
-
-                                            let ghost_rect = Rect::from_min_max(
-                                                Pos2::new(ghost_x_start, layer_y + 4.0),
-                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
-                                            );
-                                            painter.rect_stroke(
-                                                ghost_rect,
-                                                4.0,
-                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(100, 220, 255, 200)),
-                                                egui::epaint::StrokeKind::Middle,
-                                            );
-                                        }
-
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-
-                                        // On release, commit the play end adjustment
-                                        if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            dispatch(Box::new(SetLayerPlayEndEvent {
-                                                comp_uuid: comp_id,
-                                                layer_idx: *layer_idx,
-                                                new_play_end,
-                                            }));
-                                            keep_drag = false;
-                                        }
-                                    }
-                                    GlobalDragState::SlidingLayer {
-                                        layer_idx, initial_in, initial_trim_in, initial_trim_out, speed, drag_start_x
-                                    } => {
-                                        let delta_x = current_pos.x - drag_start_x;
-                                        let delta_frames = delta_px_to_frames(delta_x, config, state);
-
-                                        // Slide: move full bar while keeping visible content (layer_start & layer_end) in place
-                                        //
-                                        // Geometry:
-                                        //   layer_start = in + trim_in/speed
-                                        //   layer_end = layer_start + (src_len - trim_in - trim_out)/speed - 1
-                                        //
-                                        // When in changes by delta:
-                                        //   - To keep layer_start fixed: trim_in must change by -delta*speed
-                                        //   - To keep visible_src (and thus layer_end) fixed:
-                                        //     visible_src = src_len - trim_in - trim_out = const
-                                        //     If trim_in decreases by X, trim_out must increase by X
-                                        //
-                                        let new_in = *initial_in + delta_frames;
-                                        let speed_obj = Speed::new(*speed);
-                                        let trim_delta = speed_obj.scale_timeline_to_src(delta_frames, Round::Round);
-                                        // trim_in decreases when sliding right (delta > 0)
-                                        let new_trim_in = (*initial_trim_in - trim_delta).max(0);
-                                        // trim_out increases by same amount to keep visible_src constant
-                                        let new_trim_out = (*initial_trim_out + trim_delta).max(0);
-
-                                        // Visual feedback: draw ghost full bar at new position
-                                        if let Some(layer) = comp.layers.get(*layer_idx) {
-                                            let target_row = *layer_idx;  // row = layer index
-                                            let layer_y = row_to_y(target_row, config, timeline_rect);
-                                            let src_len = comp.get_layer_src_len(layer, &media);
-                                            // Round::Ceil matches attrs::full_bar_end so the ghost bar
-                                            // covers every source frame at non-integer speeds.
-                                            let new_full_bar_end =
-                                                new_in + speed_obj.scale_src_to_timeline(src_len, Round::Ceil) - 1;
-                                            let ghost_x_start = frame_to_screen_x(new_in as f32, timeline_rect.min.x, config, state);
-                                            let ghost_x_end = frame_to_screen_x((new_full_bar_end + 1) as f32, timeline_rect.min.x, config, state);
-
-                                            let ghost_rect = Rect::from_min_max(
-                                                Pos2::new(ghost_x_start, layer_y + 4.0),
-                                                Pos2::new(ghost_x_end, layer_y + config.layer_height - 4.0),
-                                            );
-                                            painter.rect_stroke(
-                                                ghost_rect,
-                                                4.0,
-                                                egui::Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 180, 100, 200)),
-                                                egui::epaint::StrokeKind::Middle,
-                                            );
-                                        }
-
-                                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
-
-                                        if ui.ctx().input(|i| i.pointer.any_released()) {
-                                            log::trace!(
-                                                "[SLIDE COMMIT] delta={}, in: {}→{}, trim_in: {}→{}, trim_out: {}→{}",
-                                                delta_frames, initial_in, new_in,
-                                                initial_trim_in, new_trim_in, initial_trim_out, new_trim_out
-                                            );
-                                            dispatch(Box::new(SlideLayerEvent {
-                                                comp_uuid: comp_id,
-                                                layer_idx: *layer_idx,
-                                                new_in,
-                                                new_trim_in,
-                                                new_trim_out,
-                                            }));
-                                            keep_drag = false;
-                                        }
-                                    }
-                                    // Other drag states are handled elsewhere (ProjectItem, TimelineScrub)
-                                    _ => {}
-                                }
-                            }
-
-                            // Cancel drag on escape
-                            if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-                                keep_drag = false;
-                            }
-
-                            if keep_drag {
-                                state.drag_state = Some(drag);
-                            }
-                        }
-
-                        // Draw work area overlay (darken regions outside play_range)
-                        let (play_start, play_end) = comp.play_range(true);
-
-                        // Spammy per-frame log, use trace level
-                        log::trace!("work_area: play=[{}..{}]", play_start, play_end);
-
-                        // Darken everything outside play_range across the full visible width.
-                        let left_edge = timeline_rect.min.x;
-                        let right_edge = timeline_rect.max.x;
-                        let play_start_x = frame_to_screen_x(play_start as f32, timeline_rect.min.x, config, state);
-                        let play_end_x = frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x, config, state);
-
-                        if play_start_x > left_edge {
-                            let overlay_rect = Rect::from_min_max(
-                                Pos2::new(left_edge, timeline_rect.min.y),
-                                Pos2::new(play_start_x, timeline_rect.max.y),
-                            );
-                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 100));
-                        }
-
-                        if play_end_x < right_edge {
-                            let overlay_rect = Rect::from_min_max(
-                                Pos2::new(play_end_x, timeline_rect.min.y),
-                                Pos2::new(right_edge, timeline_rect.max.y),
-                            );
-                            painter.rect_filled(overlay_rect, 0.0, Color32::from_rgba_unmultiplied(0, 0, 0, 100));
-                        }
-
-                        let global_drag: Option<GlobalDragState> =
-                            ui.ctx().data(|data| data.get_temp(global_drag_state_id()));
-
-                        match global_drag.as_ref() {
-                            Some(GlobalDragState::ProjectItem {
-                                source_uuid,
-                                duration,
-                                ..
-                            }) => {
-                                if let Some(hover_pos) =
-                                    ui.ctx().input(|i| i.pointer.hover_pos().or_else(|| i.pointer.latest_pos()))
-                                {
-                                    if timeline_rect.contains(hover_pos)
-                                    {
-                                        let raw_drop_frame = screen_x_to_frame(
-                                            hover_pos.x,
-                                            timeline_rect.min.x,
-                                            config,
-                                            state,
-                                        )
-                                            .round() as i32;
-                                        let dur = duration.unwrap_or(10).max(1);
-
-                                        // Calculate mouse row for visual positioning
-                                        let mouse_row_raw = ((hover_pos.y - timeline_rect.min.y)
-                                            / config.layer_height)
-                                            .floor() as i32;
-                                        let mouse_row = mouse_row_raw.max(0) as usize;
-
-                                        let drop_frame = raw_drop_frame;
-                                        let insert_idx = mouse_row.min(comp.layers.len());
-
-                                        let is_cycle = project.would_create_cycle(comp_id, *source_uuid);
-
-                                        let row_y = row_to_y(mouse_row, config, timeline_rect);
-
-                                        let thumb_rect = drop_preview_thumb_rect(
-                                            drop_frame,
-                                            row_y,
-                                            dur,
-                                            timeline_rect,
-                                            config,
-                                            state,
-                                        );
-                                        ui.ctx().data_mut(|data| {
-                                            data.insert_temp(
-                                                project_drag_snap_overlay_id(),
-                                                ProjectDragSnapOverlay {
-                                                    rect: thumb_rect,
-                                                    is_cycle,
-                                                },
-                                            );
-                                        });
-
-                                        if !is_cycle
-                                            && ui.ctx().input(|i| i.pointer.primary_released())
-                                        {
-                                            dispatch(Box::new(AddLayerEvent {
-                                                comp_uuid: comp_id,
-                                                source_uuid: *source_uuid,
-                                                start_frame: drop_frame,
-                                                insert_idx: Some(insert_idx),
-                                            }));
-                                            ui.ctx().data_mut(|data| {
-                                                data.remove::<GlobalDragState>(
-                                                    global_drag_state_id(),
-                                                );
-                                            });
-                                        } else if is_cycle
-                                            && ui.ctx().input(|i| i.pointer.primary_released())
-                                        {
-                                            ui.ctx().data_mut(|data| {
-                                                data.remove::<GlobalDragState>(
-                                                    global_drag_state_id(),
-                                                );
-                                            });
-                                            log::warn!(
-                                                "Blocked cyclic dependency: {} -> {}",
-                                                source_uuid,
-                                                comp_id
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-
-                        if state.drag_state.is_none() && global_drag.is_none() {
-                // Handle click/drag interaction only if no active drag state
-                // Use tab_rect instead of timeline_response to handle clicks in empty area
-                // Exclude ruler_rect to avoid interfering with ruler scrubbing
-                if let Some(pos) = ui.ctx().input(|i| i.pointer.interact_pos())
-                    && tab_rect.contains(pos)
-                    && !ruler_rect.map(|r| r.contains(pos)).unwrap_or(false)
-                    && ui.ctx().input(|i| i.pointer.primary_clicked() || i.pointer.primary_down())
-                    && !ui.ctx().input(|i| i.pointer.button_down(egui::PointerButton::Middle)) {
-                        // If click is within any layer row, select that layer;
-                        // otherwise treat it as a frame scrub on empty space.
-                        let mut clicked_layer: Option<usize> = None;
-
-                        // Only check layer rows if click is within timeline_rect
-                        if timeline_rect.contains(pos) {
-                            for &original_idx in child_order_inner.iter() {
-                                // row = layer index
-                                let row = original_idx;
-                                let layer_y = row_to_y(row, config, timeline_rect);
-
-                                let row_rect = Rect::from_min_max(
-                                    Pos2::new(timeline_rect.min.x, layer_y),
-                                    Pos2::new(timeline_rect.max.x, layer_y + config.layer_height),
-                                );
-                                if row_rect.contains(pos) {
-                                    clicked_layer = Some(original_idx);
-                                    break;
-                                }
-                            }
-                        }
-
-                        if let Some(idx) = clicked_layer {
-                            let modifiers = ui.input(|i| i.modifiers);
-                            if let Some(layer) = comp.layers.get(idx) {
-                                let children_uuids = comp.layers_uuids_vec();
-                                let (selection, anchor) = compute_layer_selection(
-                                    &comp.layer_selection,
-                                    comp.layer_selection_anchor,
-                                    layer.uuid(),
-                                    idx,
-                                    modifiers,
-                                    &children_uuids,
-                                );
-                                dispatch(Box::new(CompSelectionChangedEvent {
-                                    comp_uuid: comp_id,
-                                    selection: selection.clone(),
-                                    anchor,
-                                }));
-                                dispatch(Box::new(SelectionFocusEvent(selection)));
-                            }
-                        } else {
-                            // Click on empty space - clear selection
-                            // Only scrub frame if click is within timeline_rect horizontally
-                            if pos.x >= timeline_rect.min.x && pos.x <= timeline_rect.max.x {
-                                let frame = screen_x_to_frame(
-                                    pos.x,
-                                    timeline_rect.min.x,
-                                    config,
-                                    state,
-                                )
-                                .round() as i32;
-                                dispatch(Box::new(SetFrameEvent(
-                                    frame.min(total_frames.saturating_sub(1)),
-                                )));
-                            }
-
-                            // Clear selection when clicking empty area (below layers or outside timeline_rect)
-                            if !comp.layer_selection.is_empty() {
-                                log::trace!("Canvas: click in empty area at pos={:?}, clearing selection", pos);
-                                dispatch(Box::new(CompSelectionChangedEvent {
-                                    comp_uuid: comp_id,
-                                    selection: vec![],
-                                    anchor: None,
-                                }));
-                                dispatch(Box::new(SelectionFocusEvent(vec![])));
-                            }
-                        }
-                    }
-                        }
-        });
-    });
-
-    // Draw playhead once across ruler + entire tab (including empty area below layers)
-    if let Some(ruler_rect) = ruler_rect {
-        let painter = ui.painter();
-        let x = frame_to_screen_x(comp.frame() as f32, ruler_rect.min.x, config, state);
-        painter.line_segment(
-            [Pos2::new(x, ruler_rect.min.y), Pos2::new(x, tab_rect.max.y)],
-            (1.0, Color32::from_rgb(255, 220, 100)),
-        );
-        let triangle_size = 8.0;
-        let top_y = ruler_rect.min.y;
-        let points = [
-            Pos2::new(x, top_y),
-            Pos2::new(x - triangle_size / 2.0, top_y - triangle_size),
-            Pos2::new(x + triangle_size / 2.0, top_y - triangle_size),
-        ];
-        painter.add(egui::Shape::convex_polygon(
-            points.to_vec(),
-            Color32::from_rgb(255, 220, 100),
-            (0.0, Color32::TRANSPARENT),
-        ));
     }
 
-    // Treat entire tab rect as timeline hover for hotkey routing
-    if let Some(pointer) = ui.ctx().pointer_hover_pos()
-        && tab_rect.contains(pointer)
+    // --- Double-click a bar: dive into the layer's source comp ---
+    if let Some(id) = response.double_clicked
+        && let Some(uuid) = id_map.get(&id).copied()
+        && let Some(idx) = comp.uuid_to_idx(uuid)
     {
-        timeline_hovered = true;
+        let layer = &comp.layers[idx];
+        let local_frame = layer.parent_to_local(comp.frame());
+        dispatch(Box::new(ProjectActiveChangedEvent::with_frame(
+            layer.source_uuid(),
+            local_frame,
+        )));
     }
 
-    // Handle zoom controls when timeline is hovered
-    if timeline_hovered {
-        // Ctrl+scroll wheel
-        // egui 0.34: `raw_scroll_delta` removed; use `smooth_scroll_delta` for wheel input.
-        let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta.y);
-        if scroll_delta != 0.0 && ui.ctx().input(|i| i.modifiers.ctrl) {
-            let zoom_factor = if scroll_delta > 0.0 { 1.1 } else { 0.9 };
-            state.zoom = (state.zoom * zoom_factor).clamp(0.1, 20.0);
+    // --- Hover highlight: mirror the widget's hovered clip into comp.hovered_layer
+    // (only while the pointer is over the track area, so the viewport keeps owning
+    // hover elsewhere). ---
+    if timeline_hover_highlight
+        && let Some(p) = ui.ctx().pointer_hover_pos()
+        && response.track_rect.contains(p)
+    {
+        let want = response.hovered.and_then(|id| id_map.get(&id).copied());
+        if comp.hovered_layer != want {
+            dispatch(Box::new(HoverLayerEvent {
+                comp_uuid,
+                layer_uuid: want,
+            }));
         }
-        // +/- keys
-        ui.ctx().input(|i| {
-            if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
-                state.zoom = (state.zoom * 1.2).clamp(0.1, 20.0);
-            }
-            if i.key_pressed(egui::Key::Minus) {
-                state.zoom = (state.zoom / 1.2).clamp(0.1, 20.0);
-            }
-        });
     }
 
-    // Handle bookmark hotkeys when timeline is hovered
+    // --- Project -> timeline drop (GlobalDragState::ProjectItem) ---
+    let global_drag: Option<GlobalDragState> =
+        ui.ctx().data(|d| d.get_temp(global_drag_state_id()));
+    if let Some(GlobalDragState::ProjectItem {
+        source_uuid,
+        duration,
+    }) = global_drag.as_ref()
+        && let Some(hover_pos) = ui
+            .ctx()
+            .input(|i| i.pointer.hover_pos().or_else(|| i.pointer.latest_pos()))
+        && response.track_rect.contains(hover_pos)
+    {
+        let frame = state
+            .track_view
+            .x_to_frame(hover_pos.x, response.track_rect.left(), &ett_cfg)
+            .round()
+            .max(0.0) as i32;
+        let dur = duration.unwrap_or(10).max(1);
+        let row = ((hover_pos.y - response.track_rect.top()) / config.layer_height)
+            .floor()
+            .max(0.0) as usize;
+        let insert_idx = row.min(comp.layers.len());
+        let is_cycle = project.would_create_cycle(comp_id, *source_uuid);
+        let row_y = response.track_rect.top() + row as f32 * config.layer_height;
+        let thumb_rect =
+            drop_preview_thumb_rect(frame, row_y, dur, response.track_rect, config, state);
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(
+                project_drag_snap_overlay_id(),
+                ProjectDragSnapOverlay {
+                    rect: thumb_rect,
+                    is_cycle,
+                },
+            );
+        });
+        if ui.ctx().input(|i| i.pointer.primary_released()) {
+            if !is_cycle {
+                dispatch(Box::new(AddLayerEvent {
+                    comp_uuid,
+                    source_uuid: *source_uuid,
+                    start_frame: frame,
+                    insert_idx: Some(insert_idx),
+                }));
+            } else {
+                log::warn!("Blocked cyclic dependency: {} -> {}", source_uuid, comp_id);
+            }
+            ui.ctx()
+                .data_mut(|d| d.remove::<GlobalDragState>(global_drag_state_id()));
+        }
+    }
+
+    // --- Whole-tab hover gate for bookmark hotkeys + input routing ---
+    let timeline_hovered = ui
+        .ctx()
+        .pointer_hover_pos()
+        .map(|p| tab_rect.contains(p))
+        .unwrap_or(false);
+
+    // Bookmark set (Shift+digit) / jump (digit) hotkeys. Zoom hotkeys (Ctrl+wheel,
+    // +/-) and pan are handled inside the widget now, so they are not re-handled.
     if timeline_hovered {
         let current_frame = comp.frame();
         ui.ctx().input(|i| {
-            // Shift+0-9: set bookmark (via text input due to egui bug #3415)
-            // Shift+digits produce symbols on US layout: !@#$%^&*()
+            // Shift+0-9 set bookmark (Shift+digit yields symbols on US layouts).
             let shift_symbols = [
                 (')', 0u8),
                 ('!', 1),
@@ -1581,21 +1065,21 @@ pub fn render_canvas(
                 ('(', 9),
             ];
             for &(sym, slot) in &shift_symbols {
-                if i.events
+                if i
+                    .events
                     .iter()
                     .any(|e| matches!(e, egui::Event::Text(s) if s.chars().next() == Some(sym)))
                 {
                     dispatch(Box::new(
                         playa_engine::entities::comp_events::SetBookmarkEvent {
-                            comp_uuid: comp_uuid,
+                            comp_uuid,
                             slot,
                             frame: Some(current_frame),
                         },
                     ));
                 }
             }
-
-            // 0-9: jump to bookmark
+            // 0-9 jump to bookmark.
             let digit_keys = [
                 (egui::Key::Num0, 0u8),
                 (egui::Key::Num1, 1),
@@ -1612,7 +1096,7 @@ pub fn render_canvas(
                 if i.key_pressed(key) && !i.modifiers.shift {
                     dispatch(Box::new(
                         playa_engine::entities::comp_events::JumpToBookmarkEvent {
-                            comp_uuid: comp_uuid,
+                            comp_uuid,
                             slot,
                         },
                     ));
@@ -1621,7 +1105,16 @@ pub fn render_canvas(
         });
     }
 
-    // Return actions with hover state
+    // --- Read widget view changes back into playa's canonical state + notify ---
+    if state.track_view.zoom != state.zoom {
+        state.zoom = state.track_view.zoom;
+        dispatch(Box::new(TimelineZoomChangedEvent(state.zoom)));
+    }
+    if state.track_view.pan_offset != state.pan_offset {
+        state.pan_offset = state.track_view.pan_offset;
+        dispatch(Box::new(TimelinePanChangedEvent(state.pan_offset)));
+    }
+
     super::timeline::TimelineActions {
         hovered: timeline_hovered,
     }

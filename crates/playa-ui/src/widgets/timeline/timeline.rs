@@ -8,7 +8,6 @@ use crate::widgets::dnd::GlobalDragState;
 use eframe::egui;
 use playa_engine::entities::Attrs;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Clipboard entry for copied layers
@@ -61,6 +60,13 @@ impl TimelineConfig {
 pub struct TimelineState {
     pub zoom: f32,       // Zoom multiplier (1.0 = default, range 0.1..4.0)
     pub pan_offset: f32, // Horizontal scroll offset in frames
+    /// View state for the consumed `egui-track-timeline` widget. `zoom`/`pan_offset`
+    /// above remain playa's canonical values and are mirrored into this each frame
+    /// (so the toolbar slider, Fit, the ruler-aligned cache status strip, and
+    /// persistence keep working); the widget's transient `drag` is serde-skipped
+    /// inside `TimelineView`.
+    #[serde(default)]
+    pub track_view: egui_track_timeline::TimelineView,
     #[serde(skip)]
     pub drag_state: Option<GlobalDragState>, // Active drag operation (centralized for all drag types)
     pub snap_enabled: bool,
@@ -74,8 +80,6 @@ pub struct TimelineState {
     pub hatch_texture: Option<egui::TextureHandle>, // Diagonal hatch pattern for file comps
     #[serde(skip)]
     pub clipboard: Vec<ClipboardLayer>, // Copied layers for Ctrl-C/Ctrl-V
-    #[serde(skip)]
-    pub(super) geom_cache: HashMap<usize, LayerGeom>, // Cached layer geometry for interactions
 
     // === Layout rename dialog state ===
     /// Whether the layout rename dialog is currently open.
@@ -107,7 +111,7 @@ impl std::fmt::Debug for TimelineState {
                 &self.hatch_texture.as_ref().map(|_| "TextureHandle"),
             )
             .field("clipboard", &format!("{} layers", self.clipboard.len()))
-            .field("geom_cache", &format!("{} entries", self.geom_cache.len()))
+            .field("track_view", &self.track_view)
             .field("rename_dialog_open", &self.rename_dialog_open)
             .finish()
     }
@@ -127,7 +131,7 @@ impl Default for TimelineState {
             outline_width: 400.0,     // Default outline panel width
             hatch_texture: None,
             clipboard: Vec::new(),
-            geom_cache: HashMap::new(),
+            track_view: egui_track_timeline::TimelineView::default(),
             rename_dialog_open: false,
             rename_dialog_name: String::new(),
             rename_dialog_old_name: String::new(),
@@ -192,55 +196,3 @@ pub enum TimelineViewMode {
     OutlineOnly,
 }
 
-/// Precomputed layer geometry - shared between draw and interaction passes.
-/// Computed once in draw pass and reused in interaction pass to avoid duplicate calculations.
-#[derive(Clone, Copy)]
-pub(super) struct LayerGeom {
-    pub full_bar_rect: eframe::egui::Rect,
-    pub visible_bar_rect: Option<eframe::egui::Rect>,
-}
-
-impl LayerGeom {
-    /// Calculate layer geometry. play_start/play_end are absolute frames in parent timeline.
-    pub fn calc(
-        child_start: i32,
-        child_end: i32,
-        play_start: i32,
-        play_end: i32,
-        child_y: f32,
-        timeline_rect: eframe::egui::Rect,
-        config: &TimelineConfig,
-        pan_offset: f32,
-        zoom: f32,
-    ) -> Self {
-        use eframe::egui::{Pos2, Rect};
-
-        let frame_to_screen_x = |frame: f32, timeline_min_x: f32| -> f32 {
-            let frame_offset = frame - pan_offset;
-            timeline_min_x + (frame_offset * config.pixels_per_frame * zoom)
-        };
-
-        let full_bar_x_start = frame_to_screen_x(child_start as f32, timeline_rect.min.x);
-        let full_bar_x_end = frame_to_screen_x((child_end + 1) as f32, timeline_rect.min.x);
-        let full_bar_rect = Rect::from_min_max(
-            Pos2::new(full_bar_x_start, child_y + 4.0),
-            Pos2::new(full_bar_x_end, child_y + config.layer_height - 4.0),
-        );
-
-        let visible_bar_rect = if play_start <= play_end {
-            let visible_bar_x_start = frame_to_screen_x(play_start as f32, timeline_rect.min.x);
-            let visible_bar_x_end = frame_to_screen_x((play_end + 1) as f32, timeline_rect.min.x);
-            Some(Rect::from_min_max(
-                Pos2::new(visible_bar_x_start, child_y + 4.0),
-                Pos2::new(visible_bar_x_end, child_y + config.layer_height - 4.0),
-            ))
-        } else {
-            None
-        };
-
-        Self {
-            full_bar_rect,
-            visible_bar_rect,
-        }
-    }
-}
