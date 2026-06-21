@@ -13,6 +13,7 @@ pub mod viewport_events;
 mod viewport_ui;
 
 pub use renderer::{ViewportPaintCallback, ViewportRenderer};
+pub use renderer::{skip_upload, stage_frame, update_tonemap};
 pub use shaders::Shaders;
 pub use viewport::{ViewportMode, ViewportRenderState, ViewportState};
 pub use viewport_events::ViewportRefreshEvent;

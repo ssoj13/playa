@@ -1585,6 +1585,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui-hdr-view"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
+dependencies = [
+ "bytemuck",
+ "egui",
+ "egui-wgpu",
+ "wgpu",
+]
+
+[[package]]
 name = "egui-help-overlay"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#885b1b481694ea29af55d647d11fd5e23e9c06d6"
@@ -4414,6 +4425,7 @@ dependencies = [
  "bytemuck",
  "eframe",
  "egui-attr-grid",
+ "egui-hdr-view",
  "egui-help-overlay",
  "egui-progressbar",
  "egui-statusbar",

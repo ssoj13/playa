@@ -40,6 +40,7 @@ egui_ltreeview = { version = "0.7", features = ["persistence"] }
 nodes-core = { git = "ssh://git@github.com/ssoj13/nodes-rs.git", branch = "main", package = "nodes-core" }
 nodes-egui = { git = "ssh://git@github.com/ssoj13/nodes-rs.git", branch = "main", package = "nodes-egui" }
 egui-attr-grid = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-hdr-view = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 glam = { workspace = true }
 half = { workspace = true }
 image = { workspace = true }
