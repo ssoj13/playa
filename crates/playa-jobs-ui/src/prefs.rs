@@ -1,8 +1,8 @@
 //! Preferences-panel renderer for [`playa_jobs_core::JobsSettings`].
 //!
-//! Plug into a [`playa_prefs::PrefsRegistry`] like:
+//! Plug into a [`egui_prefs::PrefsRegistry`] like:
 //! ```ignore
-//! registry.add(playa_prefs::PrefsEntry {
+//! registry.add(egui_prefs::PrefsEntry {
 //!     id: "jobs",
 //!     label: "Jobs & Rendering",
 //!     category: "Integrations",

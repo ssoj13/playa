@@ -30,8 +30,28 @@ wgpu = { workspace = true }
 egui_dnd = "0.15"
 egui_dock = { workspace = true }
 egui_extras = "0.34"
+# Reusable widgets extracted from playa, consumed via git-ref (single egui 0.34
+# pin shared with eframe). See egui-widgets-rs.
+egui-asset-browser = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-progressbar = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-help-overlay = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-statusbar = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 egui_ltreeview = { version = "0.7", features = ["persistence"] }
-egui-snarl = { version = "0.10", features = ["serde"] }
+# Node editor: the nodes-rs wgpu graph engine (model + egui bridge) via git-ref.
+nodes-core = { git = "ssh://git@github.com/ssoj13/nodes-rs.git", branch = "main", package = "nodes-core" }
+nodes-egui = { git = "ssh://git@github.com/ssoj13/nodes-rs.git", branch = "main", package = "nodes-egui" }
+egui-attr-grid = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-hdr-view = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+# Generic data-driven export/encode settings modal (format → codec → options),
+# extracted from playa's hand-painted encode dialog. Consumed via git-ref.
+egui-encode-dialog = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+# Generic multi-track NLE-style timeline widget (move/trim/slide, zoom, pan,
+# playhead). Playa's timeline canvas is a thin host over this; see timeline_ui.rs.
+egui-track-timeline = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-timeline = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+# In-house transform gizmo (glam-f32 facade over a vendored transform-gizmo core).
+# Replaces the upstream transform-gizmo-egui 0.9; shares the workspace glam 0.33.
+egui-gizmo = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 glam = { workspace = true }
 half = { workspace = true }
 image = { workspace = true }
@@ -39,7 +59,6 @@ log = { workspace = true }
 rfd = "0.17"
 serde = { workspace = true }
 serde_json = { workspace = true }
-transform-gizmo-egui = "0.9"
 uuid = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

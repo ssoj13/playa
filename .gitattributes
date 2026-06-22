@@ -1,1 +1,12 @@
+# Canonical line endings. The repo stores text as LF; line endings stop drifting
+# regardless of the OS a contributor checks out on.
+
+# Default: auto-detect text, store + check out as LF.
+* text=auto eol=lf
+
+# Windows batch scripts must keep CRLF in the working tree to run correctly.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# EXR test assets are binary, handled by Git LFS — never touched as text.
 *.exr filter=lfs diff=lfs merge=lfs -text

@@ -114,6 +114,12 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         "Playa",
         native_options,
         Box::new(move |cc| {
+            // Register the Phosphor icon font so egui-widgets-rs widgets (the
+            // prefs search bar, etc.) render their glyphs instead of tofu boxes.
+            let mut fonts = eframe::egui::FontDefinitions::default();
+            egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+            cc.egui_ctx.set_fonts(fonts);
+
             // Load persisted app state if available, otherwise create default
             let mut app: PlayaApp = cc
                 .storage
@@ -185,6 +191,12 @@ pub fn run_app(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
             // serde skips `GpuBlendBridge` channels — rebuild before any worker touches `CompNode::compute`.
             app.ensure_gpu_blend_initialized();
+
+            // Attach the wgpu device to the nodes-rs graph viewport so the Node
+            // editor tab can render (its offscreen texture is bridged into egui).
+            if let Some(rs) = cc.wgpu_render_state.clone() {
+                app.node_editor_state.configure_wgpu_render_state(rs);
+            }
             // serde also skips the long-running IO `JobQueue` (live thread handles).
             // Reconstruct so persisted jobs from prior sessions can be replayed once
             // providers register. Feature-gated under `jobs` (default on).

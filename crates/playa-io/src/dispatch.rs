@@ -8,12 +8,29 @@ use crate::media;
 use crate::pixel::{DecodedRaster, RawPixelBuffer, RawPixelFormat};
 use crate::video;
 
-/// Serialized header field for engine Attrs bridging.
+/// Serialized header field for engine `Attrs` bridging.
+///
+/// Unified carrier for every header/metadata value a backend surfaces. The scalar
+/// arms (`Str`/`UInt`/`Float`) serve video + generic headers; the wider arms
+/// mirror `vfx_core::AttrValue` 1:1 so the full EXR attribute set (chromaticities,
+/// timecode, framesPerSecond, camera matrices, …) round-trips into the engine
+/// without loss. `Int64` carries integer attrs whose u32 flag bits overflow i32
+/// (EXR `TimeCode`/`KeyCode`).
 #[derive(Debug, Clone)]
 pub enum AttrKv {
     Str(String),
     UInt(u32),
     Float(f32),
+    /// 64-bit integer (`vfx_core::AttrValue::Int`).
+    Int64(i64),
+    /// Integer array (`vfx_core::AttrValue::IntArray` — e.g. SMPTE timecode).
+    IntArray(Vec<i64>),
+    /// Float array (`vfx_core::AttrValue::FloatArray` — e.g. chromaticities[8]).
+    FloatArray(Vec<f64>),
+    /// 3×3 matrix, row-major (`vfx_core::AttrValue::Matrix3`).
+    Matrix3([f32; 9]),
+    /// 4×4 matrix, row-major (`vfx_core::AttrValue::Matrix4` — e.g. worldToCamera).
+    Matrix4([f32; 16]),
 }
 
 enum FileKind {
@@ -62,7 +79,9 @@ pub fn decode_raster(path: &Path) -> Result<DecodedRaster, IoError> {
 fn header_video(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     let (actual_path, _) = media::parse_video_path(path);
     let meta = video::VideoMetadata::from_file(&actual_path)?;
-    Ok(vec![
+
+    // Derived convenience keys (unprefixed, mirror the EXR/generic shape).
+    let mut v = vec![
         ("width".into(), AttrKv::UInt(meta.width)),
         ("height".into(), AttrKv::UInt(meta.height)),
         (
@@ -72,7 +91,41 @@ fn header_video(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
         ("channels".into(), AttrKv::UInt(3)),
         ("frames".into(), AttrKv::UInt(meta.frame_count as u32)),
         ("fps".into(), AttrKv::Float(meta.fps as f32)),
-    ])
+    ];
+
+    // Codec / stream facts, namespaced `video:` (only emit what exists).
+    if let Some(codec) = meta.codec {
+        v.push(("video:codec".into(), AttrKv::Str(codec)));
+    }
+    if let Some(bitrate) = meta.bit_rate {
+        v.push(("video:bitrate".into(), AttrKv::Int64(bitrate as i64)));
+    }
+    if let Some(pix_fmt) = meta.pix_fmt {
+        v.push(("video:pix_fmt".into(), AttrKv::Str(pix_fmt)));
+    }
+    if let Some(cs) = meta.color_space {
+        v.push(("video:color_space".into(), AttrKv::Str(cs)));
+    }
+    if let Some(cp) = meta.color_primaries {
+        v.push(("video:color_primaries".into(), AttrKv::Str(cp)));
+    }
+    if let Some(ct) = meta.color_transfer {
+        v.push(("video:color_transfer".into(), AttrKv::Str(ct)));
+    }
+    if let Some(cr) = meta.color_range {
+        v.push(("video:color_range".into(), AttrKv::Str(cr)));
+    }
+
+    // Container/format tags, namespaced `format:`; stream tags namespaced
+    // `video:tag:` to avoid colliding with the codec facts above.
+    for (k, val) in meta.format_tags {
+        v.push((format!("format:{k}"), AttrKv::Str(val)));
+    }
+    for (k, val) in meta.stream_tags {
+        v.push((format!("video:tag:{k}"), AttrKv::Str(val)));
+    }
+
+    Ok(v)
 }
 
 fn decode_video(path: &Path) -> Result<DecodedRaster, IoError> {
@@ -92,6 +145,24 @@ fn header_exr(_path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     Err(IoError::UnsupportedFormat(
         "EXR decoding is disabled for this build (Wasm / stripped I/O)".to_string(),
     ))
+}
+
+/// Map a `vfx_core::AttrValue` (the element type of `ImageSpec.attributes`) into
+/// the engine-facing [`AttrKv`]. 1:1 and lossless at this layer: `Float` keeps
+/// f64 precision until the engine bridge narrows it to f32 (EXR floats are f32 on
+/// disk, so the round-trip stays bit-exact). Arrays and matrices pass through.
+#[cfg(feature = "exr")]
+fn kv_from_core(v: &vfx_core::AttrValue) -> AttrKv {
+    use vfx_core::AttrValue as C;
+    match v {
+        C::Int(i) => AttrKv::Int64(*i),
+        C::Float(f) => AttrKv::Float(*f as f32),
+        C::String(s) => AttrKv::Str(s.clone()),
+        C::IntArray(a) => AttrKv::IntArray(a.clone()),
+        C::FloatArray(a) => AttrKv::FloatArray(a.clone()),
+        C::Matrix3(m) => AttrKv::Matrix3(*m),
+        C::Matrix4(m) => AttrKv::Matrix4(*m),
+    }
 }
 
 #[cfg(feature = "exr")]
@@ -152,6 +223,26 @@ fn header_exr(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
     if layer_count > 1 {
         v.push(("layer_names".into(), AttrKv::Str(layer_names)));
     }
+
+    // Absorb the FULL authored attribute set from every part, namespaced under
+    // `exr:` (and `exr:<layer>:` for parts beyond the first) so nothing the file
+    // carries is dropped: chromaticities, smpte:TimeCode, FramesPerSecond, owner,
+    // comments, worldToCamera and any custom attr land here as typed `AttrKv`.
+    // `read_layers_passthrough` is the exhaustive TYPED source (vs `read()` which
+    // stringifies). Derived convenience keys above stay unprefixed for the UI.
+    for (li, layer) in layered.layers.iter().enumerate() {
+        let prefix = if li == 0 {
+            "exr".to_string()
+        } else if layer.name.is_empty() {
+            format!("exr:Layer{li}")
+        } else {
+            format!("exr:{}", layer.name)
+        };
+        for (name, val) in &layer.spec.attributes {
+            v.push((format!("{prefix}:{name}"), kv_from_core(val)));
+        }
+    }
+
     Ok(v)
 }
 
@@ -233,12 +324,42 @@ fn header_generic(path: &Path) -> Result<Vec<(String, AttrKv)>, IoError> {
         _ => 4,
     };
 
-    Ok(vec![
+    let mut v = vec![
         ("width".into(), AttrKv::UInt(img.width())),
         ("height".into(), AttrKv::UInt(img.height())),
         ("format".into(), AttrKv::Str(format!("{:?}", format))),
         ("channels".into(), AttrKv::UInt(channels)),
-    ])
+    ];
+
+    // Absorb EXIF (JPEG/TIFF/HEIF/…), namespaced `exif:<TagName>`. Optional and
+    // best-effort: a file without EXIF, or an unreadable EXIF block, simply adds
+    // no keys and never fails the header probe.
+    v.extend(read_exif(path));
+
+    Ok(v)
+}
+
+/// Read EXIF tags from the primary image IFD as namespaced `exif:<TagName>` →
+/// `AttrKv::Str` (human display value). Returns empty on any failure / no EXIF.
+/// Restricted to the primary IFD so thumbnail-IFD duplicates don't clobber keys.
+fn read_exif(path: &Path) -> Vec<(String, AttrKv)> {
+    let Ok(file) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let exif = match exif::Reader::new().read_from_container(&mut reader) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    exif.fields()
+        .filter(|f| f.ifd_num == exif::In::PRIMARY)
+        .map(|f| {
+            (
+                format!("exif:{}", f.tag),
+                AttrKv::Str(f.display_value().to_string()),
+            )
+        })
+        .collect()
 }
 
 /// Radiance HDR — decode to linear RGBA f32 via `image`.

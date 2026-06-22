@@ -1,28 +1,21 @@
-//! [`JobsPanel`] — sortable, filterable table view of a [`JobQueue`].
+//! [`JobsPanel`] — a [`JobQueue`] view built on the reusable `egui-jobs-table`
+//! widget.
 //!
-//! State (sort, filter, selection) lives on the panel struct; jobs are
-//! queried via [`JobQueue::list`] each frame. For real-time updates the
-//! host should wire `JobQueue::subscribe(|_| ctx.request_repaint())` at
-//! boot so events trigger a redraw.
+//! The generic widget renders the sortable/filterable rows (status badges,
+//! progress bars, per-row action buttons). This module is the thin playa shell
+//! around it: a "+ Generate" header that opens the submit dialog, a bulk action
+//! bar over the table's multi-selection, and a footer with active/total/cost
+//! stats. Jobs are queried via [`JobQueue::list`] each frame; for real-time
+//! updates wire `JobQueue::subscribe(|_| ctx.request_repaint())` at boot.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
-use egui::{Color32, Sense, Ui};
-use egui_extras::{Column, TableBuilder};
+use egui::Ui;
+use egui_jobs_table::{JobAction, JobRow, JobStatus, JobsTable, JobsTableState};
 
 use playa_jobs_core::{Job, JobId, JobQueue, JobState};
 
-/// Column the user can sort the table by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JobsSortColumn {
-    Submitted,
-    Elapsed,
-    Kind,
-    State,
-    Cost,
-}
-
-/// Action the panel emits per frame for the host to dispatch.
+/// Action the panel emits per frame for the host to dispatch to queue methods.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JobsAction {
     /// No action this frame.
@@ -33,278 +26,215 @@ pub enum JobsAction {
     Retry(Vec<JobId>),
     /// Host should call `JobQueue::remove` for each id.
     Delete(Vec<JobId>),
-    /// Host should open the OS file manager / explorer focused on the
-    /// `mp4_path` recorded in the job's result.
+    /// Host should reveal the `mp4_path` recorded in the job's result.
     RevealMp4(JobId),
     /// Host should open [`crate::SubmitDialog`].
     OpenSubmit,
 }
 
+/// Table view of a [`JobQueue`]. Sort / filter / selection live in the
+/// embedded [`JobsTableState`]; the panel owns no job state itself.
 #[derive(Debug, Default)]
 pub struct JobsPanel {
-    pub sort_column: Option<JobsSortColumn>,
-    pub sort_descending: bool,
-    pub filter_search: String,
-    pub filter_active_only: bool,
-    pub selected: HashSet<JobId>,
+    /// Sort, filter and multi-selection owned by the egui-jobs-table widget.
+    pub table: JobsTableState,
 }
 
 impl JobsPanel {
     pub fn new() -> Self {
+        // Column 0 (Submitted) descending → newest-first, matching the old panel.
         Self {
-            sort_column: Some(JobsSortColumn::Submitted),
-            sort_descending: true,
-            ..Default::default()
+            table: JobsTableState::new(),
         }
     }
 
     pub fn ui(&mut self, ui: &mut Ui, queue: &JobQueue) -> JobsAction {
         let mut action = JobsAction::None;
 
-        // Header bar.
+        // Header — launch the submit dialog.
         ui.horizontal(|ui| {
             if ui.button("+ Generate").clicked() {
                 action = JobsAction::OpenSubmit;
             }
-            ui.separator();
-            ui.label("🔍");
-            ui.text_edit_singleline(&mut self.filter_search);
-            ui.checkbox(&mut self.filter_active_only, "Active only");
         });
         ui.separator();
 
-        // Pull + filter + sort. Cheap unless thousands of jobs (HashMap walk).
-        let mut jobs = queue.list();
-        filter_jobs(&mut jobs, &self.filter_search, self.filter_active_only);
-        if let Some(col) = self.sort_column {
-            sort_jobs(&mut jobs, col, self.sort_descending);
+        // Snapshot the queue into the widget's flat row model. A stable u64 (the
+        // low 64 bits of the JobId Uuid) keys selection across frames; `id_map`
+        // recovers the full JobId for emitted actions. Collisions are negligible
+        // for a job queue and only ever scope a single user click.
+        let jobs = queue.list();
+        let now = playa_jobs_core::job::now_secs();
+        let mut id_map: HashMap<u64, JobId> = HashMap::with_capacity(jobs.len());
+        let mut rows: Vec<JobRow> = Vec::with_capacity(jobs.len());
+        for job in &jobs {
+            let rid = job_row_id(job.id);
+            id_map.insert(rid, job.id);
+            rows.push(build_row(rid, job, now));
         }
 
-        if jobs.is_empty() {
-            ui.add_space(20.0);
-            ui.vertical_centered(|ui| {
-                ui.weak("No jobs.");
-                ui.weak("Click `+ Generate` to start one, or set FAL_KEY in `.env`.");
-            });
-            return action;
-        }
-
-        // Build the action set we'll commit on bulk-action button click.
-        // (Computed before the bottom panel renders so button-enabled state
-        // reflects the current selection.)
-        let any_selected = !self.selected.is_empty();
-        let any_terminal_selected = jobs
-            .iter()
-            .filter(|j| self.selected.contains(&j.id))
-            .any(|j| j.state.is_terminal());
-        let any_non_terminal_selected = jobs
-            .iter()
-            .filter(|j| self.selected.contains(&j.id))
-            .any(|j| !j.state.is_terminal());
-        let any_failed_or_cancelled_selected = jobs
-            .iter()
-            .filter(|j| self.selected.contains(&j.id))
-            .any(|j| matches!(j.state, JobState::Failed | JobState::Cancelled));
-
-        // Bottom action bar (shown only when something is selected).
+        // Footer + bulk action bar over the table's multi-selection. The bulk
+        // buttons resolve the selected row ids back to live jobs to gate which
+        // actions are valid (only terminal jobs delete, only failed/cancelled
+        // retry, only running cancel).
+        let stats = compute_footer_stats(&jobs);
         egui::Panel::bottom("jobs_actions")
             .resizable(false)
             .min_size(28.0)
             .show_inside(ui, |ui| {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
-                    let stats = compute_footer_stats(&jobs);
                     ui.weak(format!(
                         "{} active · {} total · {:.2} USD est.",
                         stats.active_count, stats.total_count, stats.total_cost_usd,
                     ));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let selected: Vec<&Job> = jobs
+                            .iter()
+                            .filter(|j| self.table.is_selected(job_row_id(j.id)))
+                            .collect();
+                        let any_terminal = selected.iter().any(|j| j.state.is_terminal());
+                        let any_non_terminal = selected.iter().any(|j| !j.state.is_terminal());
+                        let any_failed_cancelled = selected
+                            .iter()
+                            .any(|j| matches!(j.state, JobState::Failed | JobState::Cancelled));
+
                         if ui
-                            .add_enabled(any_terminal_selected, egui::Button::new("Delete"))
+                            .add_enabled(any_terminal, egui::Button::new("Delete"))
                             .clicked()
                         {
-                            let ids: Vec<JobId> = jobs
-                                .iter()
-                                .filter(|j| {
-                                    self.selected.contains(&j.id) && j.state.is_terminal()
-                                })
-                                .map(|j| j.id)
-                                .collect();
-                            action = JobsAction::Delete(ids);
+                            action = JobsAction::Delete(
+                                selected
+                                    .iter()
+                                    .filter(|j| j.state.is_terminal())
+                                    .map(|j| j.id)
+                                    .collect(),
+                            );
                         }
                         if ui
-                            .add_enabled(
-                                any_failed_or_cancelled_selected,
-                                egui::Button::new("Retry"),
-                            )
+                            .add_enabled(any_failed_cancelled, egui::Button::new("Retry"))
                             .clicked()
                         {
-                            let ids: Vec<JobId> = jobs
-                                .iter()
-                                .filter(|j| {
-                                    self.selected.contains(&j.id)
-                                        && matches!(
-                                            j.state,
-                                            JobState::Failed | JobState::Cancelled
-                                        )
-                                })
-                                .map(|j| j.id)
-                                .collect();
-                            action = JobsAction::Retry(ids);
+                            action = JobsAction::Retry(
+                                selected
+                                    .iter()
+                                    .filter(|j| {
+                                        matches!(j.state, JobState::Failed | JobState::Cancelled)
+                                    })
+                                    .map(|j| j.id)
+                                    .collect(),
+                            );
                         }
                         if ui
-                            .add_enabled(any_non_terminal_selected, egui::Button::new("Cancel"))
+                            .add_enabled(any_non_terminal, egui::Button::new("Cancel"))
                             .clicked()
                         {
-                            let ids: Vec<JobId> = jobs
-                                .iter()
-                                .filter(|j| {
-                                    self.selected.contains(&j.id) && !j.state.is_terminal()
-                                })
-                                .map(|j| j.id)
-                                .collect();
-                            action = JobsAction::Cancel(ids);
+                            action = JobsAction::Cancel(
+                                selected
+                                    .iter()
+                                    .filter(|j| !j.state.is_terminal())
+                                    .map(|j| j.id)
+                                    .collect(),
+                            );
                         }
-                        ui.label(if any_selected {
-                            format!("{} selected", self.selected.len())
-                        } else {
-                            String::new()
-                        });
+                        if !selected.is_empty() {
+                            ui.label(format!("{} selected", selected.len()));
+                        }
                     });
                 });
             });
 
-        // Table view.
-        let table = TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .column(Column::exact(20.0)) // checkbox
-            .column(Column::auto().at_least(80.0)) // submitted
-            .column(Column::auto().at_least(60.0)) // elapsed
-            .column(Column::auto().at_least(120.0)) // kind
-            .column(Column::auto().at_least(80.0)) // state
-            .column(Column::auto().at_least(60.0)) // cost
-            .column(Column::remainder()); // error / progress
+        // The generic table: filter toolbar + sortable rows + per-row actions.
+        let headers = ["Submitted", "Elapsed", "Kind", "Size", "Detail"]
+            .map(String::from)
+            .to_vec();
+        let table_actions = JobsTable::new(headers).show(ui, &rows, &mut self.table);
 
-        table
-            .header(20.0, |mut header| {
-                header.col(|ui| {
-                    ui.label("");
-                });
-                header.col(|ui| {
-                    if ui.button("Submitted").clicked() {
-                        toggle_sort(self, JobsSortColumn::Submitted);
-                    }
-                });
-                header.col(|ui| {
-                    if ui.button("Elapsed").clicked() {
-                        toggle_sort(self, JobsSortColumn::Elapsed);
-                    }
-                });
-                header.col(|ui| {
-                    if ui.button("Kind").clicked() {
-                        toggle_sort(self, JobsSortColumn::Kind);
-                    }
-                });
-                header.col(|ui| {
-                    if ui.button("State").clicked() {
-                        toggle_sort(self, JobsSortColumn::State);
-                    }
-                });
-                header.col(|ui| {
-                    if ui.button("Cost").clicked() {
-                        toggle_sort(self, JobsSortColumn::Cost);
-                    }
-                });
-                header.col(|ui| {
-                    ui.label("Detail");
-                });
-            })
-            .body(|mut body| {
-                let now = playa_jobs_core::job::now_secs();
-                for job in &jobs {
-                    body.row(18.0, |mut row| {
-                        row.col(|ui| {
-                            let mut sel = self.selected.contains(&job.id);
-                            if ui.checkbox(&mut sel, "").changed() {
-                                if sel {
-                                    self.selected.insert(job.id);
-                                } else {
-                                    self.selected.remove(&job.id);
-                                }
-                            }
-                        });
-                        row.col(|ui| {
-                            ui.label(format_clock(job.created_at));
-                        });
-                        row.col(|ui| {
-                            ui.label(format_elapsed(now.saturating_sub(job.created_at)));
-                        });
-                        row.col(|ui| {
-                            ui.label(&job.kind);
-                        });
-                        row.col(|ui| {
-                            let (label, color) = state_pill(job.state);
-                            ui.colored_label(color, label);
-                        });
-                        row.col(|ui| match job.state {
-                            JobState::Complete => {
-                                if let Some(serde_json::Value::Number(n)) = job
-                                    .result
-                                    .as_ref()
-                                    .and_then(|v| v.get("bytes"))
-                                {
-                                    let bytes = n.as_u64().unwrap_or(0);
-                                    ui.label(format!("{:.1} MB", bytes as f64 / 1_048_576.0));
-                                } else {
-                                    ui.label("");
-                                }
-                            }
-                            _ => {
-                                ui.label("");
-                            }
-                        });
-                        row.col(|ui| {
-                            if let Some(err) = &job.error {
-                                ui.colored_label(Color32::from_rgb(220, 60, 60), err);
-                            } else if let Some(progress) = &job.progress {
-                                let label = progress.message.as_deref().unwrap_or(&progress.stage);
-                                if let Some(frac) = progress.fraction {
-                                    // Render a real progress bar when the
-                                    // provider supplied a fraction. fal
-                                    // status polls don't always include one
-                                    // — falls back to plain text below.
-                                    ui.add(
-                                        egui::ProgressBar::new(frac.clamp(0.0, 1.0))
-                                            .text(label.to_string())
-                                            .desired_width(ui.available_width().min(220.0)),
-                                    );
-                                } else {
-                                    ui.label(label);
-                                }
-                            } else if matches!(job.state, JobState::Complete) {
-                                if ui
-                                    .add(egui::Button::new("Reveal mp4").sense(Sense::click()))
-                                    .clicked()
-                                {
-                                    action = JobsAction::RevealMp4(job.id);
-                                }
-                            }
-                        });
-                    });
+        // Header / bulk-bar action wins; otherwise the first per-row action.
+        if matches!(action, JobsAction::None) {
+            for act in table_actions {
+                let mapped = act_to_jobs_action(act, &id_map);
+                if !matches!(mapped, JobsAction::None) {
+                    action = mapped;
+                    break;
                 }
-            });
+            }
+        }
 
         action
     }
 }
 
-fn toggle_sort(panel: &mut JobsPanel, col: JobsSortColumn) {
-    if panel.sort_column == Some(col) {
-        panel.sort_descending = !panel.sort_descending;
+/// Stable per-job table id: the low 64 bits of the JobId Uuid.
+fn job_row_id(id: JobId) -> u64 {
+    id.0.as_u128() as u64
+}
+
+/// Collapse playa's eight-state lifecycle onto the table's five status buckets.
+fn map_state(state: JobState) -> JobStatus {
+    match state {
+        JobState::Pending => JobStatus::Queued,
+        JobState::Submitting
+        | JobState::AwaitingProvider
+        | JobState::Downloading
+        | JobState::Staging => JobStatus::Running,
+        JobState::Complete => JobStatus::Done,
+        JobState::Failed => JobStatus::Failed,
+        JobState::Cancelled => JobStatus::Cancelled,
+    }
+}
+
+/// Build one table row from a job. Columns line up with the headers
+/// (Submitted / Elapsed / Kind / Size / Detail); status drives the badge and
+/// the default per-row action set; a known progress fraction renders a bar.
+fn build_row(rid: u64, job: &Job, now: u64) -> JobRow {
+    let submitted = format_clock(job.created_at);
+    let elapsed = format_elapsed(now.saturating_sub(job.created_at));
+    let kind = job.kind.clone();
+    let size = job
+        .result
+        .as_ref()
+        .and_then(|v| v.get("bytes"))
+        .and_then(|n| n.as_u64())
+        .map(|b| format!("{:.1} MB", b as f64 / 1_048_576.0))
+        .unwrap_or_default();
+    // Detail = error message (if failed) else the latest progress stage/message.
+    let detail = if let Some(err) = &job.error {
+        err.clone()
+    } else if let Some(p) = &job.progress {
+        p.message.clone().unwrap_or_else(|| p.stage.clone())
     } else {
-        panel.sort_column = Some(col);
-        panel.sort_descending = true;
+        String::new()
+    };
+
+    let status = map_state(job.state);
+    let mut row = JobRow::new(rid, vec![submitted, elapsed, kind, size, detail], status);
+    if status == JobStatus::Running
+        && let Some(frac) = job.progress.as_ref().and_then(|p| p.fraction)
+    {
+        row = row.with_progress(frac);
+    }
+    row
+}
+
+/// Map a per-row [`JobAction`] back to the host-facing [`JobsAction`]
+/// (single-id vecs). `Open` is playa's "reveal mp4"; `Select` is handled inside
+/// the widget's state, so it produces no host action.
+fn act_to_jobs_action(act: JobAction, id_map: &HashMap<u64, JobId>) -> JobsAction {
+    match act {
+        JobAction::Cancel { id } => id_map
+            .get(&id)
+            .map_or(JobsAction::None, |j| JobsAction::Cancel(vec![*j])),
+        JobAction::Retry { id } => id_map
+            .get(&id)
+            .map_or(JobsAction::None, |j| JobsAction::Retry(vec![*j])),
+        JobAction::Remove { id } => id_map
+            .get(&id)
+            .map_or(JobsAction::None, |j| JobsAction::Delete(vec![*j])),
+        JobAction::Open { id } => id_map
+            .get(&id)
+            .map_or(JobsAction::None, |j| JobsAction::RevealMp4(*j)),
+        JobAction::Select { .. } => JobsAction::None,
     }
 }
 
@@ -312,58 +242,8 @@ fn toggle_sort(panel: &mut JobsPanel, col: JobsSortColumn) {
 // Pure helpers (testable without egui)
 // =============================================================================
 
-pub(crate) fn filter_jobs(jobs: &mut Vec<Job>, search: &str, active_only: bool) {
-    let q = search.trim().to_ascii_lowercase();
-    jobs.retain(|j| {
-        if active_only && j.state.is_terminal() {
-            return false;
-        }
-        if q.is_empty() {
-            return true;
-        }
-        let id = j.id.to_string().to_ascii_lowercase();
-        let kind = j.kind.to_ascii_lowercase();
-        let prompt = j
-            .params
-            .get("prompt")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_ascii_lowercase())
-            .unwrap_or_default();
-        let err = j
-            .error
-            .as_ref()
-            .map(|e| e.to_ascii_lowercase())
-            .unwrap_or_default();
-        id.contains(&q) || kind.contains(&q) || prompt.contains(&q) || err.contains(&q)
-    });
-}
-
-pub(crate) fn sort_jobs(jobs: &mut [Job], column: JobsSortColumn, descending: bool) {
-    jobs.sort_by(|a, b| {
-        let order = match column {
-            JobsSortColumn::Submitted => a.created_at.cmp(&b.created_at),
-            JobsSortColumn::Elapsed => {
-                let ea = a.updated_at.saturating_sub(a.created_at);
-                let eb = b.updated_at.saturating_sub(b.created_at);
-                ea.cmp(&eb)
-            }
-            JobsSortColumn::Kind => a.kind.cmp(&b.kind),
-            JobsSortColumn::State => format!("{:?}", a.state).cmp(&format!("{:?}", b.state)),
-            JobsSortColumn::Cost => {
-                // Cost field will be populated in US-08; until then default 0.0.
-                let ac = job_cost_or_zero(a);
-                let bc = job_cost_or_zero(b);
-                ac.partial_cmp(&bc).unwrap_or(std::cmp::Ordering::Equal)
-            }
-        };
-        if descending { order.reverse() } else { order }
-    });
-}
-
 fn job_cost_or_zero(job: &Job) -> f64 {
-    // Cost is added as Job.cost_usd in US-08; until then we look in
-    // result["bytes"] as a stand-in proxy (just to make sort deterministic
-    // pre-US-08; the real field replaces this).
+    // Cost proxy until a real Job.cost_usd field lands: the result byte count.
     job.result
         .as_ref()
         .and_then(|v| v.get("bytes"))
@@ -379,8 +259,10 @@ pub(crate) struct FooterStats {
 }
 
 pub(crate) fn compute_footer_stats(jobs: &[Job]) -> FooterStats {
-    let mut s = FooterStats::default();
-    s.total_count = jobs.len();
+    let mut s = FooterStats {
+        total_count: jobs.len(),
+        ..FooterStats::default()
+    };
     for j in jobs {
         if !j.state.is_terminal() {
             s.active_count += 1;
@@ -388,19 +270,6 @@ pub(crate) fn compute_footer_stats(jobs: &[Job]) -> FooterStats {
         s.total_cost_usd += job_cost_or_zero(j);
     }
     s
-}
-
-fn state_pill(state: JobState) -> (&'static str, Color32) {
-    match state {
-        JobState::Pending => ("Pending", Color32::from_rgb(180, 180, 180)),
-        JobState::Submitting => ("Submitting", Color32::from_rgb(100, 150, 220)),
-        JobState::AwaitingProvider => ("Awaiting", Color32::from_rgb(220, 180, 60)),
-        JobState::Downloading => ("Downloading", Color32::from_rgb(120, 180, 240)),
-        JobState::Staging => ("Staging", Color32::from_rgb(180, 120, 220)),
-        JobState::Complete => ("Complete", Color32::from_rgb(80, 200, 120)),
-        JobState::Failed => ("Failed", Color32::from_rgb(220, 60, 60)),
-        JobState::Cancelled => ("Cancelled", Color32::from_rgb(160, 140, 80)),
-    }
 }
 
 fn format_clock(secs_since_epoch: u64) -> String {
@@ -430,98 +299,41 @@ fn format_elapsed(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use playa_jobs_core::job::{Job, JobId, JobState};
+    use playa_jobs_core::job::{Job, JobState};
     use serde_json::json;
 
-    fn fake_job(kind: &str, state: JobState, prompt: &str, err: Option<&str>) -> Job {
-        let mut j = Job::new(kind.to_string(), json!({"prompt": prompt}));
-        j.id = JobId::new();
+    fn fake_job(kind: &str, state: JobState) -> Job {
+        let mut j = Job::new(kind.to_string(), json!({"prompt": "p"}));
         j.state = state;
-        if let Some(e) = err {
-            j.error = Some(e.to_string());
-        }
         j
     }
 
     #[test]
-    fn filter_by_prompt_substring_case_insensitive() {
-        let mut jobs = vec![
-            fake_job("seedance.text_to_video", JobState::Complete, "cyberpunk wolf", None),
-            fake_job("seedance.text_to_video", JobState::Complete, "fluffy kitten", None),
-        ];
-        filter_jobs(&mut jobs, "WOLF", false);
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(
-            jobs[0].params.get("prompt").unwrap().as_str().unwrap(),
-            "cyberpunk wolf"
-        );
-    }
-
-    #[test]
-    fn filter_by_kind() {
-        let mut jobs = vec![
-            fake_job("seedance.text_to_video", JobState::Complete, "x", None),
-            fake_job("ffmpeg.encode", JobState::Complete, "x", None),
-        ];
-        filter_jobs(&mut jobs, "ffmpeg", false);
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].kind, "ffmpeg.encode");
-    }
-
-    #[test]
-    fn filter_active_only_drops_terminal() {
-        let mut jobs = vec![
-            fake_job("k", JobState::Pending, "p", None),
-            fake_job("k", JobState::Complete, "p", None),
-            fake_job("k", JobState::Failed, "p", Some("boom")),
-        ];
-        filter_jobs(&mut jobs, "", true);
-        assert_eq!(jobs.len(), 1);
-        assert_eq!(jobs[0].state, JobState::Pending);
-    }
-
-    #[test]
-    fn filter_by_error_message() {
-        let mut jobs = vec![
-            fake_job("k", JobState::Failed, "p", Some("401 unauthorized")),
-            fake_job("k", JobState::Failed, "p", Some("network reset")),
-        ];
-        filter_jobs(&mut jobs, "401", false);
-        assert_eq!(jobs.len(), 1);
-    }
-
-    #[test]
-    fn sort_by_submitted_descending() {
-        let mut a = fake_job("k", JobState::Pending, "p", None);
-        let mut b = fake_job("k", JobState::Pending, "p", None);
-        a.created_at = 100;
-        b.created_at = 200;
-        let mut jobs = vec![a.clone(), b.clone()];
-        sort_jobs(&mut jobs, JobsSortColumn::Submitted, true);
-        assert_eq!(jobs[0].created_at, 200);
-        assert_eq!(jobs[1].created_at, 100);
-    }
-
-    #[test]
-    fn sort_by_kind_alphabetical() {
-        let jobs_a = fake_job("a.alpha", JobState::Pending, "p", None);
-        let jobs_b = fake_job("b.beta", JobState::Pending, "p", None);
-        let mut jobs = vec![jobs_b.clone(), jobs_a.clone()];
-        sort_jobs(&mut jobs, JobsSortColumn::Kind, false);
-        assert_eq!(jobs[0].kind, "a.alpha");
-        assert_eq!(jobs[1].kind, "b.beta");
+    fn map_state_collapses_to_five_buckets() {
+        assert_eq!(map_state(JobState::Pending), JobStatus::Queued);
+        assert_eq!(map_state(JobState::Submitting), JobStatus::Running);
+        assert_eq!(map_state(JobState::Downloading), JobStatus::Running);
+        assert_eq!(map_state(JobState::Complete), JobStatus::Done);
+        assert_eq!(map_state(JobState::Failed), JobStatus::Failed);
+        assert_eq!(map_state(JobState::Cancelled), JobStatus::Cancelled);
     }
 
     #[test]
     fn footer_stats_count_active_and_total() {
         let jobs = vec![
-            fake_job("k", JobState::Pending, "p", None),
-            fake_job("k", JobState::AwaitingProvider, "p", None),
-            fake_job("k", JobState::Complete, "p", None),
+            fake_job("k", JobState::Pending),
+            fake_job("k", JobState::AwaitingProvider),
+            fake_job("k", JobState::Complete),
         ];
         let s = compute_footer_stats(&jobs);
         assert_eq!(s.total_count, 3);
         assert_eq!(s.active_count, 2);
+    }
+
+    #[test]
+    fn row_id_is_stable_per_job() {
+        let j = fake_job("k", JobState::Pending);
+        assert_eq!(job_row_id(j.id), job_row_id(j.id));
     }
 
     #[test]
@@ -532,12 +344,9 @@ mod tests {
     }
 
     #[test]
-    fn jobs_panel_default_starts_with_submitted_descending() {
+    fn jobs_panel_default_sorts_first_column_descending() {
         let p = JobsPanel::new();
-        assert_eq!(p.sort_column, Some(JobsSortColumn::Submitted));
-        assert!(p.sort_descending);
-        assert!(p.selected.is_empty());
-        assert!(!p.filter_active_only);
-        assert!(p.filter_search.is_empty());
+        assert!(p.table.sort_descending);
+        assert!(p.table.selected.is_empty());
     }
 }

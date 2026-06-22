@@ -8,7 +8,8 @@ license = "MIT"
 
 [dependencies]
 playa-jobs-core = { path = "../playa-jobs-core" }
-playa-prefs = { path = "../playa-prefs" }
+egui-prefs = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+egui-jobs-table = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
 egui = "0.34"
 egui_extras = "0.34"
 log = { workspace = true }

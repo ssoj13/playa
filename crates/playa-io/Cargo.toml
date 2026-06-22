@@ -23,6 +23,10 @@ webcodecs = []
 [dependencies]
 half = { workspace = true }
 image = { workspace = true }
+# EXIF metadata reader for generic images (JPEG/TIFF/HEIF/…). Crate is published
+# as `kamadak-exif` but its lib is imported as `exif`. Always on (cheap, pure
+# Rust, no extra system deps); EXIF is optional per-file and never fatal.
+kamadak-exif = "0.6"
 log = { workspace = true }
 playa-ffmpeg = { workspace = true, optional = true }
 

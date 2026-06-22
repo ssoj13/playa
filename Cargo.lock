@@ -147,6 +147,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
+ "const-random",
  "getrandom 0.3.4",
  "once_cell",
  "serde",
@@ -272,7 +273,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -283,7 +284,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -719,6 +720,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "box-rs"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/box-rs.git?branch=main#cb4a0e9e10fc829fe18ebc8766d84445ced714d0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "brotli"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1070,6 +1082,26 @@ dependencies = [
  "libc",
  "unicode-width",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "const-random"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87e00182fe74b066627d63b85fd550ac2998d4b0bd86bfed477a0ae4c7c71359"
+dependencies = [
+ "const-random-macro",
+]
+
+[[package]]
+name = "const-random-macro"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9d839f2a20b0aee515dc581a6172f2321f96cab76c1a38a4c584a194955390e"
+dependencies = [
+ "getrandom 0.2.17",
+ "once_cell",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -1543,25 +1575,139 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui-scale"
-version = "0.4.0"
+name = "egui-asset-browser"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-widgets-config",
+]
+
+[[package]]
+name = "egui-attr-grid"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-splitter-table",
+ "serde",
+]
+
+[[package]]
+name = "egui-encode-dialog"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-phosphor",
+ "serde",
+]
+
+[[package]]
+name = "egui-gizmo"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "enumset",
+ "glam",
+]
+
+[[package]]
+name = "egui-hdr-view"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "bytemuck",
+ "egui",
+ "egui-wgpu",
+ "wgpu",
+]
+
+[[package]]
+name = "egui-help-overlay"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-widgets-config",
+]
+
+[[package]]
+name = "egui-jobs-table"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-phosphor",
+ "egui-widgets-config",
+ "egui_extras",
+]
+
+[[package]]
+name = "egui-phosphor"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ce997efb2ffc1b52c36694dcf272e60f7ed918c27ea8a8e4df3ba512cf53f3c"
+checksum = "cb4e4b18e368ff336c8dd2102992e2631b118f29a2164b0d2be9d8889dcd367e"
 dependencies = [
  "egui",
 ]
 
 [[package]]
-name = "egui-snarl"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92c653b5af7844f50cc7a1f0e9b095845cee7c379702636f63ada519b8388a76"
+name = "egui-prefs"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
 dependencies = [
  "egui",
- "egui-scale",
+ "egui-phosphor",
+]
+
+[[package]]
+name = "egui-progressbar"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-widgets-config",
+]
+
+[[package]]
+name = "egui-splitter-table"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-widgets-config",
  "serde",
- "slab",
- "smallvec",
+]
+
+[[package]]
+name = "egui-statusbar"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-widgets-config",
+ "serde",
+]
+
+[[package]]
+name = "egui-timeline"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-widgets-config",
+]
+
+[[package]]
+name = "egui-track-timeline"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
+ "egui-widgets-config",
+ "serde",
 ]
 
 [[package]]
@@ -1582,6 +1728,14 @@ dependencies = [
  "web-time",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "egui-widgets-config"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
+dependencies = [
+ "egui",
 ]
 
 [[package]]
@@ -1893,7 +2047,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1901,6 +2055,15 @@ name = "error-code"
 version = "3.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
+
+[[package]]
+name = "etagere"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ecb5c40d5683a270e077688f53a99eac51c1cb1ae5ba63b55590370cb3536bf"
+dependencies = [
+ "euclid",
+]
 
 [[package]]
 name = "euclid"
@@ -2256,15 +2419,6 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
-dependencies = [
- "mint",
-]
-
-[[package]]
-name = "glam"
 version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "898f5a568a84989b6c0f8caa50a93074b97dbdc58fc6d9543157bb4562758933"
@@ -2354,6 +2508,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "glyphon"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68dde9640ec6f986f59a265b4c0a5177f61e87e3ba71983b2195dab119cda0fa"
+dependencies = [
+ "cosmic-text",
+ "etagere",
+ "lru",
+ "rustc-hash 2.1.2",
+ "wgpu",
+]
+
+[[package]]
 name = "gpu-allocator"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2386,6 +2553,11 @@ checksum = "fdf242682df893b86f33a73828fb09ca4b2d3bb6cc95249707fc684d27484b91"
 dependencies = [
  "bitflags 2.13.0",
 ]
+
+[[package]]
+name = "graph-layout"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/graph-layout-rs.git?branch=main#0d0cea79681830f1dc29de1981f7bce4b964bc97"
 
 [[package]]
 name = "gzip-header"
@@ -2914,6 +3086,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kamadak-exif"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1130d80c7374efad55a117d715a3af9368f0fa7a2c54573afc15a188cd984837"
+dependencies = [
+ "mutate_once",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3218,12 +3399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mint"
-version = "0.5.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
-
-[[package]]
 name = "moxcms"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3250,6 +3425,12 @@ dependencies = [
  "tempfile",
  "twoway",
 ]
+
+[[package]]
+name = "mutate_once"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13d2233c9842d08cfe13f9eac96e207ca6a2ea10b80259ebe8ad0268be27d2af"
 
 [[package]]
 name = "naga"
@@ -3326,6 +3507,50 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "418abd1b6d34fbf6cae440dc874771b0525a604428704c76e48b29a5e67b8003"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "nodes-core"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/nodes-rs.git?branch=main#62741bcd76eb0728364a42013f1b61e053ba9943"
+dependencies = [
+ "box-rs",
+ "graph-layout",
+ "log",
+ "rhai",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "nodes-egui"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/nodes-rs.git?branch=main#62741bcd76eb0728364a42013f1b61e053ba9943"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui-wgpu",
+ "glam",
+ "log",
+ "nodes-core",
+ "nodes-view",
+ "wgpu",
+]
+
+[[package]]
+name = "nodes-view"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/nodes-rs.git?branch=main#62741bcd76eb0728364a42013f1b61e053ba9943"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "log",
+ "nodes-core",
+ "thiserror 2.0.18",
+ "wgpu",
+ "wgpu-text",
 ]
 
 [[package]]
@@ -3809,6 +4034,9 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+dependencies = [
+ "portable-atomic",
+]
 
 [[package]]
 name = "once_cell_polyfill"
@@ -4090,6 +4318,8 @@ dependencies = [
  "crossbeam-channel",
  "dirs-next",
  "eframe",
+ "egui-phosphor",
+ "egui-prefs",
  "egui_dock",
  "env_logger",
  "image",
@@ -4099,7 +4329,6 @@ dependencies = [
  "playa-engine",
  "playa-events",
  "playa-jobs",
- "playa-prefs",
  "playa-ui",
  "rand 0.8.6",
  "regex",
@@ -4116,7 +4345,7 @@ dependencies = [
 name = "playa-coord"
 version = "0.1.142"
 dependencies = [
- "glam 0.32.1",
+ "glam",
 ]
 
 [[package]]
@@ -4124,11 +4353,12 @@ name = "playa-engine"
 version = "0.1.142"
 dependencies = [
  "anyhow",
+ "bitflags 2.13.0",
  "bytemuck",
  "cosmic-text",
  "crossbeam",
  "enum_dispatch",
- "glam 0.32.1",
+ "glam",
  "glob",
  "half",
  "lazy_static",
@@ -4174,6 +4404,7 @@ version = "0.1.142"
 dependencies = [
  "half",
  "image",
+ "kamadak-exif",
  "log",
  "playa-ffmpeg",
  "vfx-core",
@@ -4208,12 +4439,12 @@ dependencies = [
 name = "playa-jobs"
 version = "0.1.142"
 dependencies = [
+ "egui-prefs",
  "log",
  "playa-job-inpaint",
  "playa-job-seedance",
  "playa-jobs-core",
  "playa-jobs-ui",
- "playa-prefs",
  "serde_json",
  "uuid",
 ]
@@ -4234,25 +4465,19 @@ name = "playa-jobs-ui"
 version = "0.1.142"
 dependencies = [
  "egui",
+ "egui-jobs-table",
+ "egui-prefs",
  "egui_extras",
  "log",
  "playa-jobs-core",
- "playa-prefs",
  "serde_json",
-]
-
-[[package]]
-name = "playa-prefs"
-version = "0.1.142"
-dependencies = [
- "egui",
 ]
 
 [[package]]
 name = "playa-time"
 version = "0.1.142"
 dependencies = [
- "glam 0.32.1",
+ "glam",
  "serde",
 ]
 
@@ -4262,16 +4487,27 @@ version = "0.1.142"
 dependencies = [
  "bytemuck",
  "eframe",
- "egui-snarl",
+ "egui-asset-browser",
+ "egui-attr-grid",
+ "egui-encode-dialog",
+ "egui-gizmo",
+ "egui-hdr-view",
+ "egui-help-overlay",
+ "egui-progressbar",
+ "egui-statusbar",
+ "egui-timeline",
+ "egui-track-timeline",
  "egui-wgpu",
  "egui_dnd",
  "egui_dock",
  "egui_extras",
  "egui_ltreeview",
- "glam 0.32.1",
+ "glam",
  "half",
  "image",
  "log",
+ "nodes-core",
+ "nodes-egui",
  "playa-engine",
  "playa-events",
  "playa-io",
@@ -4280,7 +4516,6 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
- "transform-gizmo-egui",
  "uuid",
  "wgpu",
 ]
@@ -4815,6 +5050,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
 
 [[package]]
+name = "rhai"
+version = "1.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd4dd0f8c36625202a4ba553c416c19b719947cd2a31d1bda06126e4a5727daf"
+dependencies = [
+ "ahash",
+ "bitflags 2.13.0",
+ "num-traits",
+ "once_cell",
+ "rhai_codegen",
+ "smallvec",
+ "smartstring",
+ "thin-vec",
+ "web-time",
+]
+
+[[package]]
+name = "rhai_codegen"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cd3a7535e50bf36857e7be7bec276d334e8c2dfa469c2201226fd01638ea5ca"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4930,7 +5193,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5234,9 +5497,6 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "slotmap"
@@ -5254,6 +5514,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "smartstring"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fb72c633efbaa2dd666986505016c32c3044395ceaf881518399d2f4127ee29"
+dependencies = [
+ "autocfg",
+ "static_assertions",
+ "version_check",
 ]
 
 [[package]]
@@ -5439,7 +5710,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5450,6 +5721,12 @@ checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "thin-vec"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0f7e269b48f0a7dd0146680fa24b50cc67fc0373f086a5b2f99bd084639b482"
 
 [[package]]
 name = "thiserror"
@@ -5545,6 +5822,15 @@ checksum = "71c652a3727a9cbb9a02f707f530b618ce00d0ccd762009c8c23bd191df3c17d"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]
@@ -5647,32 +5933,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "transform-gizmo"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e52e45b2efe33a248468cabe2d32415f5695d28fd1282381cc000c178cdfc2f7"
-dependencies = [
- "ahash",
- "ecolor",
- "emath",
- "enum_dispatch",
- "enumset",
- "epaint",
- "glam 0.32.1",
- "mint",
-]
-
-[[package]]
-name = "transform-gizmo-egui"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bd2514351ecd47ac9f85f2575b6ce2bb677ebd66a3e708435c2dd3fc3be4a98"
-dependencies = [
- "egui",
- "transform-gizmo",
-]
-
-[[package]]
 name = "transpose"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5735,7 +5995,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5848,6 +6108,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 
@@ -5980,7 +6241,7 @@ name = "vfx-math"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/oiio-rs.git?branch=main#94fa2d1193bad986778fad07f4161160b930b052"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "vfx-core",
  "wide",
 ]
@@ -5990,7 +6251,7 @@ name = "vfx-ocio"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/oiio-rs.git?branch=main#94fa2d1193bad986778fad07f4161160b930b052"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "glob",
  "half",
  "regex",
@@ -6011,7 +6272,7 @@ name = "vfx-primaries"
 version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/oiio-rs.git?branch=main#94fa2d1193bad986778fad07f4161160b930b052"
 dependencies = [
- "glam 0.33.1",
+ "glam",
  "vfx-core",
  "vfx-math",
 ]
@@ -6464,6 +6725,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wgpu-text"
+version = "0.1.0"
+source = "git+ssh://git@github.com/ssoj13/wgpu-widgets-rs.git?branch=main#3dfe45b9981d9da7243b8616e81ef91e9ccf2b2f"
+dependencies = [
+ "bytemuck",
+ "etagere",
+ "glam",
+ "glyphon",
+ "lru",
+ "rustc-hash 2.1.2",
+ "wgpu",
+]
+
+[[package]]
 name = "wgpu-types"
 version = "29.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6509,7 +6784,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

@@ -111,12 +111,12 @@ pub fn render(
         }
         {
             let mut r = renderer_arc.lock().unwrap();
-            r.update_shader(shader_manager);
+            super::update_tonemap(&mut r, shader_manager);
             if needs_upload {
                 let buf = img.buffer();
-                r.stage_frame(&render_state, w, h, buf.as_ref(), img.pixel_format());
+                super::stage_frame(&mut r, &render_state, w, h, buf.as_ref(), img.pixel_format());
             } else {
-                r.skip_upload_this_frame(render_state);
+                super::skip_upload(&mut r, &render_state);
             }
         }
 
@@ -258,7 +258,7 @@ pub fn render(
     if shader_manager.current_shader != old_shader
         && let Ok(mut renderer) = viewport_renderer.lock()
     {
-        renderer.update_shader(shader_manager);
+        super::update_tonemap(&mut renderer, shader_manager);
     }
 
     // Track hover state for input routing

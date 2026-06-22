@@ -8,18 +8,11 @@
 
 use eframe::egui;
 
-/// Single help entry (key binding + description)
-#[derive(Clone, Debug)]
-pub struct HelpEntry {
-    pub key: &'static str,
-    pub desc: &'static str,
-}
-
-impl HelpEntry {
-    pub const fn new(key: &'static str, desc: &'static str) -> Self {
-        Self { key, desc }
-    }
-}
+// `HelpEntry` and the per-section row renderer (`help_section`) now live in the
+// reusable `egui-help-overlay` crate (extracted from playa). This module keeps
+// only the app-specific key tables and playa's overlay layout, delegating the
+// actual row rendering to the crate so there is a single source of truth.
+pub use egui_help_overlay::HelpEntry;
 
 // =============================================================================
 // LEFT COLUMN: Viewport, Playback, Navigation
@@ -122,40 +115,11 @@ pub const AE_HELP: &[HelpEntry] = &[
 // Rendering
 // =============================================================================
 
-/// Render main help overlay (two-column layout, top-left corner)
+/// Render main help overlay (two-column layout, top-left corner). Section rows
+/// are drawn by `egui_help_overlay::help_section`; this fn owns only the playa
+/// layout (positioned, background-less, fixed two-column split).
 pub fn render_main_help(ui: &mut egui::Ui, rect: egui::Rect) {
-    let font = egui::FontId::proportional(12.0);
-    let text_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 220);
-    let key_color = egui::Color32::from_rgb(255, 200, 100);
-    let section_color = egui::Color32::GRAY;
-
-    // Render one section
-    let render_section = |ui: &mut egui::Ui, title: &str, entries: &[HelpEntry]| {
-        ui.label(
-            egui::RichText::new(title)
-                .font(font.clone())
-                .color(section_color),
-        );
-        ui.add_space(2.0);
-        for e in entries {
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, 14.0],
-                    egui::Label::new(
-                        egui::RichText::new(e.key)
-                            .font(font.clone())
-                            .color(key_color),
-                    ),
-                );
-                ui.label(
-                    egui::RichText::new(e.desc)
-                        .font(font.clone())
-                        .color(text_color),
-                );
-            });
-        }
-        ui.add_space(6.0);
-    };
+    use egui_help_overlay::help_section;
 
     // Top-left corner, no background overlay
     let overlay_size = egui::vec2(520.0, 340.0);
@@ -168,9 +132,9 @@ pub fn render_main_help(ui: &mut egui::Ui, rect: egui::Rect) {
         // Left column: Viewport, Playback, Navigation
         ui.vertical(|ui| {
             ui.set_width(230.0);
-            render_section(ui, "VIEWPORT", VIEWPORT_HELP);
-            render_section(ui, "PLAYBACK", PLAYBACK_HELP);
-            render_section(ui, "NAVIGATION", NAVIGATION_HELP);
+            help_section(ui, "VIEWPORT", VIEWPORT_HELP);
+            help_section(ui, "PLAYBACK", PLAYBACK_HELP);
+            help_section(ui, "NAVIGATION", NAVIGATION_HELP);
         });
 
         ui.add_space(16.0);
@@ -178,45 +142,18 @@ pub fn render_main_help(ui: &mut egui::Ui, rect: egui::Rect) {
         // Right column: Timeline, Project, Global
         ui.vertical(|ui| {
             ui.set_width(230.0);
-            render_section(ui, "TIMELINE", TIMELINE_HELP);
-            render_section(ui, "PROJECT", PROJECT_HELP);
-            render_section(ui, "GLOBAL", GLOBAL_HELP);
+            help_section(ui, "TIMELINE", TIMELINE_HELP);
+            help_section(ui, "PROJECT", PROJECT_HELP);
+            help_section(ui, "GLOBAL", GLOBAL_HELP);
         });
     });
 }
 
-/// Render help overlay for a specific widget (context-sensitive)
+/// Render help overlay for a specific widget (context-sensitive). Rows are drawn
+/// by `egui_help_overlay::help_section`; this fn owns the translucent card and
+/// the optional context/global split.
 pub fn render_help_overlay(ui: &mut egui::Ui, entries: &[HelpEntry], include_global: bool) {
-    let font = egui::FontId::proportional(12.0);
-    let text_color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 200);
-    let key_color = egui::Color32::from_rgb(255, 200, 100);
-    let section_color = egui::Color32::GRAY;
-
-    let render_section = |ui: &mut egui::Ui, title: &str, entries: &[HelpEntry]| {
-        ui.label(
-            egui::RichText::new(title)
-                .font(font.clone())
-                .color(section_color),
-        );
-        ui.add_space(2.0);
-        for e in entries {
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [90.0, 14.0],
-                    egui::Label::new(
-                        egui::RichText::new(e.key)
-                            .font(font.clone())
-                            .color(key_color),
-                    ),
-                );
-                ui.label(
-                    egui::RichText::new(e.desc)
-                        .font(font.clone())
-                        .color(text_color),
-                );
-            });
-        }
-    };
+    use egui_help_overlay::help_section;
 
     egui::Frame::NONE
         .fill(egui::Color32::from_rgba_unmultiplied(0, 0, 0, 200))
@@ -224,11 +161,11 @@ pub fn render_help_overlay(ui: &mut egui::Ui, entries: &[HelpEntry], include_glo
         .corner_radius(6.0)
         .show(ui, |ui| {
             if !entries.is_empty() {
-                render_section(ui, "CONTEXT", entries);
+                help_section(ui, "CONTEXT", entries);
             }
             if include_global {
                 ui.add_space(8.0);
-                render_section(ui, "GLOBAL", GLOBAL_HELP);
+                help_section(ui, "GLOBAL", GLOBAL_HELP);
             }
         });
 }

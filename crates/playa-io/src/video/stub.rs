@@ -10,6 +10,18 @@ pub struct VideoMetadata {
     pub width: u32,
     pub height: u32,
     pub fps: f64,
+    // Mirror the ffmpeg build's richer fields so the shared `header_video`
+    // dispatcher compiles identically without FFmpeg. Never populated: the stub
+    // `from_file` always errors before constructing a value.
+    pub format_tags: Vec<(String, String)>,
+    pub stream_tags: Vec<(String, String)>,
+    pub codec: Option<String>,
+    pub bit_rate: Option<u64>,
+    pub pix_fmt: Option<String>,
+    pub color_space: Option<String>,
+    pub color_primaries: Option<String>,
+    pub color_transfer: Option<String>,
+    pub color_range: Option<String>,
 }
 
 impl VideoMetadata {

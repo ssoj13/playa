@@ -1,5 +1,6 @@
 use crate::widgets::viewport::ViewportState;
 use eframe::egui;
+use egui_statusbar::{Section, StatusBar as Bar, StatusBarLayout};
 use playa_engine::core::cache_man::CacheManager;
 use playa_engine::core::event_bus::BoxedEvent;
 use playa_engine::core::player::Player;
@@ -8,10 +9,13 @@ use playa_engine::entities::frame::{Frame, PixelFormat};
 use playa_engine::entities::node::Node;
 use std::sync::Arc;
 
-/// Status bar component (simplified, no cache progress)
+/// Bottom status bar built on the reusable `egui-statusbar` widget: fixed,
+/// drag-resizable sections (double-click a splitter to reset) with a flexing
+/// tail. `layout` holds the per-section widths and persists across frames.
 #[derive(Default)]
 pub struct StatusBar {
     pub current_message: String,
+    layout: StatusBarLayout,
 }
 
 impl StatusBar {
@@ -21,9 +25,12 @@ impl StatusBar {
 
     pub fn update(&mut self, _ctx: &egui::Context) {}
 
-    /// Render status bar at bottom of screen
+    /// Render the status bar at the bottom of `ui`. Section content is computed
+    /// up front into owned strings so the per-section draw closures stay free of
+    /// engine borrows; `egui_statusbar` lays them out with resizable splitters.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         frame: Option<&Frame>,
         player: &Player,
@@ -33,112 +40,101 @@ impl StatusBar {
         cache_manager: Option<&Arc<CacheManager>>,
         mut dispatch: impl FnMut(BoxedEvent),
     ) {
+        // Precompute display strings (decouples the section closures from the
+        // engine refs, keeping the borrow checker happy).
+        let file_text = frame
+            .and_then(Frame::file)
+            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+            .unwrap_or_else(|| "No file".to_string());
+
+        let res_text = match frame {
+            Some(img) => format!("{:>4}x{:<4}", img.width(), img.height()),
+            None => "   0x0   ".to_string(),
+        };
+
+        let fmt_text = match frame {
+            Some(img) => Self::format_pixel_format(img.pixel_format()),
+            None => "---",
+        };
+
+        let zoom_text = format!("{:>6.1}%", viewport_state.zoom * 100.0);
+        let time_text = format!("{:.1}ms", render_time_ms);
+
+        let mem_text = cache_manager.map(|manager| {
+            let (usage, limit) = manager.mem();
+            let usage_mb = usage / 1024 / 1024;
+            let limit_mb = limit / 1024 / 1024;
+            let percent = if limit > 0 {
+                (usage as f64 / limit as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            format!("Mem: {}/{}MB ({}%)", usage_mb, limit_mb, percent)
+        });
+
+        let mut loop_enabled = player.loop_enabled();
+        let fps_text = format!("{:.0}/{:.0} fps", player.fps_base(), player.fps_play());
+
+        // Comp/clip range: <start | play_start <current> play_end | end>
+        let range_text = player.active_comp().and_then(|comp_uuid| {
+            let media = project.media.read().unwrap_or_else(|e| e.into_inner());
+            media.get(&comp_uuid).map(|comp| {
+                let (play_start, play_end) = comp.play_range(true);
+                format!(
+                    "<{} | {} <{}> {} | {}>",
+                    comp._in(),
+                    play_start,
+                    comp.frame(),
+                    play_end,
+                    comp._out()
+                )
+            })
+        });
+
+        let msg = self.current_message.clone();
+
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                // Filename
-                if let Some(frame) = frame {
-                    if let Some(path) = frame.file() {
-                        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                            ui.monospace(filename);
-                        } else {
-                            ui.monospace("---");
-                        }
-                    } else {
-                        ui.monospace("No file");
+            let mut sections: Vec<Section> = vec![
+                Section::new(170.0, |ui| {
+                    ui.monospace(&file_text);
+                }),
+                Section::new(90.0, |ui| {
+                    ui.monospace(&res_text);
+                }),
+                Section::new(80.0, |ui| {
+                    ui.monospace(fmt_text);
+                }),
+                Section::new(70.0, |ui| {
+                    ui.monospace(&zoom_text);
+                }),
+                Section::new(70.0, |ui| {
+                    ui.monospace(&time_text);
+                }),
+                Section::new(150.0, |ui| {
+                    if let Some(t) = &mem_text {
+                        ui.monospace(t);
                     }
-                } else {
-                    ui.monospace("No file");
-                }
-
-                ui.separator();
-
-                // Resolution
-                if let Some(img) = frame {
-                    ui.monospace(format!("{:>4}x{:<4}", img.width(), img.height()));
-                } else {
-                    ui.monospace("   0x0   ");
-                }
-
-                ui.separator();
-
-                // Pixel format
-                if let Some(img) = frame {
-                    ui.monospace(Self::format_pixel_format(img.pixel_format()));
-                } else {
-                    ui.monospace("---");
-                }
-
-                ui.separator();
-
-                // Zoom
-                ui.monospace(format!("{:>6.1}%", viewport_state.zoom * 100.0));
-
-                ui.separator();
-
-                // Render time
-                ui.monospace(format!("{:.1}ms", render_time_ms));
-
-                ui.separator();
-
-                // Memory usage
-                if let Some(manager) = cache_manager {
-                    let (usage, limit) = manager.mem();
-                    let usage_mb = usage / 1024 / 1024;
-                    let limit_mb = limit / 1024 / 1024;
-                    let percent = if limit > 0 {
-                        (usage as f64 / limit as f64 * 100.0) as u32
-                    } else {
-                        0
-                    };
-                    // Spammy per-frame log, use trace level
-                    log::trace!(
-                        "StatusBar: cache_manager present, usage={}MB, limit={}MB",
-                        usage_mb,
-                        limit_mb
-                    );
-                    ui.monospace(format!("Mem: {}/{}MB ({}%)", usage_mb, limit_mb, percent));
-                    ui.separator();
-                } else {
-                    log::warn!("StatusBar: cache_manager is None!");
-                }
-
-                // Loop toggle
-                let mut loop_enabled = player.loop_enabled();
-                if ui.checkbox(&mut loop_enabled, "Loop").changed() {
-                    dispatch(Box::new(playa_engine::core::player_events::SetLoopEvent(
-                        loop_enabled,
-                    )));
-                }
-
-                ui.separator();
-
-                // FPS info: base/play
-                let base_fps = player.fps_base();
-                let play_fps = player.fps_play();
-                ui.monospace(format!("{:.0}/{:.0} fps", base_fps, play_fps));
-
-                // Comp/Clip range info: <start | play_start <current_frame> play_end | end>
-                if let Some(comp_uuid) = player.active_comp() {
-                    let media = project.media.read().unwrap_or_else(|e| e.into_inner());
-                    if let Some(comp) = media.get(&comp_uuid) {
-                        ui.separator();
-                        let start = comp._in();
-                        let end = comp._out();
-                        let (play_start, play_end) = comp.play_range(true);
-                        let current = comp.frame();
-                        ui.monospace(format!(
-                            "<{} | {} <{}> {} | {}>",
-                            start, play_start, current, play_end, end
+                }),
+                // Flexing tail: loop toggle + fps + range + status message.
+                Section::new(0.0, |ui| {
+                    if ui.checkbox(&mut loop_enabled, "Loop").changed() {
+                        dispatch(Box::new(
+                            playa_engine::core::player_events::SetLoopEvent(loop_enabled),
                         ));
                     }
-                }
-
-                // Status message (if any)
-                if !self.current_message.is_empty() {
                     ui.separator();
-                    ui.monospace(&self.current_message);
-                }
-            });
+                    ui.monospace(&fps_text);
+                    if let Some(r) = &range_text {
+                        ui.separator();
+                        ui.monospace(r);
+                    }
+                    if !msg.is_empty() {
+                        ui.separator();
+                        ui.monospace(&msg);
+                    }
+                }),
+            ];
+            Bar::new().show(ui, &mut self.layout, &mut sections);
         });
     }
 

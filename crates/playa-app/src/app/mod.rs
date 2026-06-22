@@ -280,13 +280,13 @@ pub struct PlayaApp {
     ///
     /// Generic over `AppSettings` from playa-ui for slice extraction.
     #[serde(skip)]
-    pub prefs_registry: playa_prefs::PrefsRegistry<AppSettings>,
+    pub prefs_registry: egui_prefs::PrefsRegistry<AppSettings>,
 
     /// Modal preferences window state machine. `Ctrl+,` opens it with a
     /// clone of `self.settings` as the working copy; Apply commits the
     /// working copy back, Cancel discards.
     #[serde(skip)]
-    pub prefs_window: playa_prefs::PrefsWindow<AppSettings>,
+    pub prefs_window: egui_prefs::PrefsWindow<AppSettings>,
 }
 
 impl Default for PlayaApp {
@@ -398,7 +398,7 @@ impl Default for PlayaApp {
             #[cfg(feature = "jobs")]
             ainode_completion_subscribed: false,
             prefs_registry: {
-                let mut registry = playa_prefs::PrefsRegistry::<AppSettings>::new();
+                let mut registry = egui_prefs::PrefsRegistry::<AppSettings>::new();
                 #[cfg(feature = "jobs")]
                 playa_jobs::register_default_prefs::<AppSettings>(
                     &mut registry,
@@ -406,7 +406,7 @@ impl Default for PlayaApp {
                 );
                 registry
             },
-            prefs_window: playa_prefs::PrefsWindow::<AppSettings>::new(),
+            prefs_window: egui_prefs::PrefsWindow::<AppSettings>::new(),
         }
     }
 }

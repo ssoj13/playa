@@ -20,7 +20,12 @@ jobs = ["dep:playa-jobs"]
 playa-engine = { path = "../playa-engine" }
 playa-events = { path = "../playa-events" }
 playa-jobs = { path = "../playa-jobs", optional = true }
-playa-prefs = { path = "../playa-prefs" }
+# Preferences registry + window: the reusable egui-prefs crate (the former local
+# playa-prefs, now consolidated into egui-widgets-rs) via git-ref.
+egui-prefs = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main" }
+# Phosphor icon font used by egui-widgets-rs widgets (prefs search bar, etc.);
+# registered once at startup so glyphs render instead of tofu.
+egui-phosphor = "0.12"
 playa-ui = { path = "../playa-ui" }
 anyhow = { workspace = true }
 clap = { workspace = true }

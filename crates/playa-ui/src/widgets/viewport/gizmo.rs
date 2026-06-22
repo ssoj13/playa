@@ -1,6 +1,7 @@
 //! Viewport gizmo for layer transforms.
 //!
-//! Provides Move/Rotate/Scale manipulation gizmos using transform-gizmo-egui.
+//! Provides Move/Rotate/Scale manipulation gizmos using the in-house
+//! `egui-gizmo` crate (a glam-f32 facade over a vendored transform-gizmo core).
 //!
 //! ## Coordinate System
 //!
@@ -12,11 +13,21 @@
 //! Renderer and gizmo both use the same view matrix (zoom + pan), so layer
 //! positions in frame space map directly to gizmo world coordinates.
 //! See `ViewportState::get_view_matrix()` and `build_gizmo_matrices()`.
+//!
+//! ## Migration note (transform-gizmo-egui 0.9 -> egui-gizmo)
+//!
+//! Only the gizmo-library surface changed; playa's coordinate math is untouched:
+//! - matrices are still built by `build_gizmo_matrices` / `get_camera_matrices`,
+//!   now handed to the facade as **glam f32 column-major** `Mat4` (the facade
+//!   widens to f64 internally without transposing — no row/`mint` shuffle).
+//! - the per-tool handle set comes from `GizmoTool` (Move/Rotate/Scale) plus the
+//!   `GizmoSpace` curation: 3D-camera comps stay full 3D, flat 2D comps use the
+//!   2D handle set (Z translate/scale and X/Y rotation rings auto-hidden).
+//! - the CW+deg <-> CCW+rad rotation conversion and ZYX euler order are identical.
 
 use eframe::egui;
-use transform_gizmo_egui::{
-    EnumSet, Gizmo, GizmoConfig, GizmoExt, GizmoMode, GizmoOrientation, GizmoVisuals,
-    math::Transform, mint,
+use egui_gizmo::{
+    Gizmo, GizmoConfig, GizmoOrientation, GizmoSpace, GizmoTool, GizmoVisuals, Transform,
 };
 use uuid::Uuid;
 
@@ -31,6 +42,10 @@ use playa_engine::entities::node::Node; // for dim()
 use playa_engine::entities::space;
 
 /// Gizmo state - lives in PlayaApp, not saved.
+///
+/// The `Gizmo` is **persistent across frames**: it owns the active-drag state
+/// (which handle is grabbed, the drag-start basis), so it must NOT be recreated
+/// each frame. We reconfigure it via `update_config` and then `interact`.
 pub struct GizmoState {
     gizmo: Gizmo,
 }
@@ -45,7 +60,8 @@ impl Default for GizmoState {
 
 impl GizmoState {
     /// Render gizmo and handle interaction.
-    /// Returns true if gizmo consumed the input.
+    /// Returns `(consumed, events)` where `consumed` is true while a handle is
+    /// being actively dragged this frame.
     pub fn render(
         &mut self,
         ui: &egui::Ui,
@@ -55,9 +71,9 @@ impl GizmoState {
     ) -> (bool, Vec<BoxedEvent>) {
         let tool = ToolMode::from_str(&project.tool());
 
-        // No gizmo in Select mode
-        let gizmo_modes = match tool_to_gizmo_modes(tool) {
-            Some(modes) => modes,
+        // No gizmo in Select mode; map the transform tools to the gizmo tool.
+        let gizmo_tool = match tool_to_gizmo_tool(tool) {
+            Some(t) => t,
             None => return (false, Vec::new()),
         };
 
@@ -87,25 +103,35 @@ impl GizmoState {
         let frame_idx = player.current_frame(project);
         let camera_matrices = get_camera_matrices(project, comp_uuid, frame_idx, ui.clip_rect());
 
+        // Preserve the pre-migration behavior: always expose the full 3D handle
+        // set. The retired transform-gizmo-egui gizmo did NOT curate handles by
+        // projection type, so a flat ortho comp still showed Z translate/scale +
+        // X/Y rotation rings. egui-gizmo CAN curate to `GizmoSpace::TwoD` (hiding
+        // those for ortho comps) — switch here if 2D-curated handles are desired;
+        // left at `ThreeD` to avoid a (runtime-only, unverifiable) UX regression.
+        let space = GizmoSpace::ThreeD;
+
         // Build matrices (uses camera for 3D, ortho for 2D)
         let (view, proj) = build_gizmo_matrices(viewport_state, ui.clip_rect(), camera_matrices);
 
         // Configure gizmo
         let gizmo_prefs = project.gizmo_prefs();
 
-        // Shift enables snapping
+        // Shift enables snapping; the increments below restore playa's classic
+        // 5deg / 10px / 0.1 ladder (now settable via the egui-gizmo facade).
         let snapping = ui.input(|i| i.modifiers.shift);
 
         self.gizmo.update_config(GizmoConfig {
-            view_matrix: view,
-            projection_matrix: proj,
+            view,
+            projection: proj,
             viewport: ui.clip_rect(),
-            modes: gizmo_modes,
+            space,
+            tool: gizmo_tool,
             orientation: GizmoOrientation::Local,
             snapping,
-            snap_angle: 5.0_f32.to_radians(), // 5 degrees
-            snap_distance: 10.0,              // 10 units
-            snap_scale: 0.1,                  // 0.1 step
+            snap_angle: 5.0_f32.to_radians(),
+            snap_distance: 10.0,
+            snap_scale: 0.1,
             visuals: GizmoVisuals {
                 gizmo_size: gizmo_prefs.pref_manip_size,
                 stroke_width: gizmo_prefs.pref_manip_stroke_width,
@@ -193,30 +219,21 @@ impl GizmoState {
 }
 
 // ============================================================================
-// Tool → gizmo mode set (crate-local helper; `ToolMode` lives in `playa-events`.)
+// Tool -> gizmo tool (crate-local helper; `ToolMode` lives in `playa-events`.)
 // ============================================================================
 
-fn tool_to_gizmo_modes(tool: ToolMode) -> Option<EnumSet<GizmoMode>> {
+/// Map playa's `ToolMode` to the gizmo's exclusive `GizmoTool`.
+///
+/// Only the transform tools manipulate layers; `Select` shows no gizmo (returns
+/// `None`, so `render` bails before drawing anything). The narrowing of the
+/// handle set *within* a tool (which axes/planes/rings) is left to the gizmo's
+/// `GizmoSpace` curation (see `render`) and the default `GizmoFeatures::all()`.
+fn tool_to_gizmo_tool(tool: ToolMode) -> Option<GizmoTool> {
     match tool {
         ToolMode::Select => None,
-        ToolMode::Move => Some(
-            EnumSet::from(GizmoMode::TranslateX)
-                | GizmoMode::TranslateY
-                | GizmoMode::TranslateZ
-                | GizmoMode::TranslateXY
-                | GizmoMode::TranslateXZ
-                | GizmoMode::TranslateYZ
-                | GizmoMode::TranslateView,
-        ),
-        ToolMode::Rotate => {
-            Some(EnumSet::from(GizmoMode::RotateX) | GizmoMode::RotateY | GizmoMode::RotateZ)
-        }
-        ToolMode::Scale => Some(
-            EnumSet::from(GizmoMode::ScaleX)
-                | GizmoMode::ScaleY
-                | GizmoMode::ScaleZ
-                | GizmoMode::ScaleUniform,
-        ),
+        ToolMode::Move => Some(GizmoTool::Move),
+        ToolMode::Rotate => Some(GizmoTool::Rotate),
+        ToolMode::Scale => Some(GizmoTool::Scale),
     }
 }
 
@@ -319,11 +336,18 @@ fn get_camera_matrices(
 /// - Gizmo must match compositor, not viewport stretch
 ///
 /// See `get_camera_matrices()` where aspect is computed from `comp.dim()`.
+///
+/// # Precision / matrix convention
+///
+/// The chain is computed in `DMat4` (f64) for precision, then narrowed to
+/// `glam::Mat4` (f32, column-major) at the boundary — `egui-gizmo` takes
+/// column-major f32 and widens it back to f64 internally **without** a
+/// transpose, so no row-major / `mint` conversion is needed.
 fn build_gizmo_matrices(
     viewport_state: &ViewportState,
     clip_rect: egui::Rect,
     camera_matrices: Option<(glam::Mat4, glam::Mat4)>,
-) -> (mint::RowMatrix4<f64>, mint::RowMatrix4<f64>) {
+) -> (glam::Mat4, glam::Mat4) {
     use glam::{DMat4, DVec3};
 
     if let Some((cam_view, cam_proj)) = camera_matrices {
@@ -360,7 +384,7 @@ fn build_gizmo_matrices(
         // Final projection = viewport_transform * camera_proj
         let final_proj = viewport_transform * proj_f64;
 
-        (to_row_matrix(view_f64), to_row_matrix(final_proj))
+        (view_f64.as_mat4(), final_proj.as_mat4())
     } else {
         // 2D mode: simple ortho with zoom/pan
         let view = DMat4::from_scale_rotation_translation(
@@ -378,37 +402,7 @@ fn build_gizmo_matrices(
         let h = clip_rect.height() as f64;
         let proj = DMat4::orthographic_rh(-w / 2.0, w / 2.0, -h / 2.0, h / 2.0, -1000.0, 1000.0);
 
-        (to_row_matrix(view), to_row_matrix(proj))
-    }
-}
-
-fn to_row_matrix(m: glam::DMat4) -> mint::RowMatrix4<f64> {
-    let cols = m.to_cols_array_2d();
-    mint::RowMatrix4 {
-        x: mint::Vector4 {
-            x: cols[0][0],
-            y: cols[1][0],
-            z: cols[2][0],
-            w: cols[3][0],
-        },
-        y: mint::Vector4 {
-            x: cols[0][1],
-            y: cols[1][1],
-            z: cols[2][1],
-            w: cols[3][1],
-        },
-        z: mint::Vector4 {
-            x: cols[0][2],
-            y: cols[1][2],
-            z: cols[2][2],
-            w: cols[3][2],
-        },
-        w: mint::Vector4 {
-            x: cols[0][3],
-            y: cols[1][3],
-            z: cols[2][3],
-            w: cols[3][3],
-        },
+        (view.as_mat4(), proj.as_mat4())
     }
 }
 
@@ -425,19 +419,22 @@ fn layer_to_gizmo_transform(
     use glam::{DQuat, DVec3};
 
     // Layer transform attributes use Y-up, clockwise-positive rotation (CW+).
-    // transform-gizmo expects Y-up with counter-clockwise-positive rotation (CCW+).
+    // The gizmo expects Y-up with counter-clockwise-positive rotation (CCW+).
     //
     // # 3D Support
     //
-    // We now pass full 3D transform to gizmo:
+    // We pass a full 3D transform to the gizmo:
     // - Position: all three components (X, Y, Z)
     // - Rotation: all three axes (X, Y, Z) converted from CW+ degrees to CCW+ radians
-    // - Scale: X/Y for Scale tool, uniform 1.0 for others (prevents oval handles)
+    // - Scale: X/Y/Z for Scale tool, uniform 1.0 for others (prevents oval handles)
     //
-    // The gizmo will display correct 3D orientation. Editing is still limited
-    // by enabled GizmoModes (see tool_to_gizmo_modes).
+    // The gizmo displays the correct orientation; the visible handle set is
+    // curated by GizmoSpace + GizmoTool (see `render`).
     //
-    // Rotation order: ZYX (AE-style), same as in transform.rs
+    // Rotation order: ZYX (AE-style), same as in transform.rs.
+    //
+    // The math runs in f64 for precision, then narrows to the gizmo's public
+    // glam-f32 `Transform` at the boundary.
     let translation = DVec3::new(position[0] as f64, position[1] as f64, position[2] as f64);
 
     // Convert rotation: CW+ degrees → CCW+ radians
@@ -455,21 +452,23 @@ fn layer_to_gizmo_transform(
     };
 
     Transform::from_scale_rotation_translation(
-        mint::Vector3::from(scale_vec.to_array()),
-        mint::Quaternion {
-            v: mint::Vector3::from([rotation_quat.x, rotation_quat.y, rotation_quat.z]),
-            s: rotation_quat.w,
-        },
-        mint::Vector3::from(translation.to_array()),
+        scale_vec.as_vec3(),
+        rotation_quat.as_quat(),
+        translation.as_vec3(),
     )
 }
 
 fn gizmo_to_layer_transform(t: &Transform) -> ([f32; 3], [f32; 3], [f32; 3]) {
-    use glam::{DQuat, DVec3};
+    use glam::DQuat;
 
-    let translation = DVec3::new(t.translation.x, t.translation.y, t.translation.z);
-    let rotation = DQuat::from_xyzw(t.rotation.v.x, t.rotation.v.y, t.rotation.v.z, t.rotation.s);
-    let scale = DVec3::new(t.scale.x, t.scale.y, t.scale.z);
+    // Widen the gizmo's f32 quaternion to f64 for the euler decomposition, to
+    // match the precision of `layer_to_gizmo_transform`'s forward path.
+    let rotation = DQuat::from_xyzw(
+        t.rotation.x as f64,
+        t.rotation.y as f64,
+        t.rotation.z as f64,
+        t.rotation.w as f64,
+    );
 
     // ZYX order to match layer_to_gizmo_transform
     // Returns (z, y, x) for ZYX order
@@ -477,17 +476,13 @@ fn gizmo_to_layer_transform(t: &Transform) -> ([f32; 3], [f32; 3], [f32; 3]) {
 
     // Convert CCW+ radians back to CW+ degrees using from_math_rot
     (
-        [
-            translation.x as f32,
-            translation.y as f32,
-            translation.z as f32,
-        ],
+        [t.translation.x, t.translation.y, t.translation.z],
         [
             space::from_math_rot(rot_x as f32),
             space::from_math_rot(rot_y as f32),
             space::from_math_rot(rot_z as f32),
         ],
-        [scale.x as f32, scale.y as f32, scale.z as f32],
+        [t.scale.x, t.scale.y, t.scale.z],
     )
 }
 

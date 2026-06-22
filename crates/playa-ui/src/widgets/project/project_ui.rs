@@ -1,7 +1,30 @@
+//! Project panel / media pool — now a thin playa glue layer over the reusable
+//! `egui-asset-browser` widget.
+//!
+//! The widget owns the grouped row list rendering, selection/hover painting,
+//! the per-item delete control, the right-click "Create" menu and drag-out
+//! start reporting. It is engine-agnostic: it speaks plain `u64` ids and
+//! returns a `Vec<AssetAction>` describing user intent.
+//!
+//! This module keeps only the playa-specific glue the widget intentionally does
+//! NOT do:
+//! - Save / Load project buttons + their `rfd` file dialogs.
+//! - The "Add media" file dialog (wired to [`AssetAction::AddMedia`]).
+//! - The +Folder / +AI / Clear top controls (folder dialog, AI provider
+//!   default, clear-all — none expressible through the generic widget).
+//! - Translating each [`AssetAction`] back into the existing playa events.
+//! - The `Uuid <-> u64` id bridge (the widget is `Uuid`-free).
+
 use eframe::egui;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use uuid::Uuid;
 
+use egui_asset_browser::{
+    AssetAction, AssetBrowserConfig, AssetBrowserModel, AssetItem, KindStyle,
+    show as asset_browser_show,
+};
+
+use crate::widgets::dnd::{GlobalDragState, global_drag_state_id};
 use crate::widgets::file_dialogs::create_media_dialog;
 use crate::widgets::project::project::ProjectActions;
 use crate::widgets::project::project_events::*;
@@ -9,19 +32,74 @@ use playa_engine::core::player::Player;
 use playa_engine::entities::Project;
 use playa_engine::entities::node::Node;
 
-/// Render project window (dock tab): Unified list of Clips & Compositions
+/// Per-frame metadata carried alongside the stable `u64` id so widget actions
+/// (which only know `u64`) can be translated back into playa's `Uuid` world
+/// without re-locking the media pool.
+struct ItemMeta {
+    /// Original node UUID.
+    uuid: Uuid,
+    /// Frame count, used as the drag-out duration hint.
+    frame_count: i32,
+}
+
+/// Derive a stable `u64` id from a `Uuid` (first 8 bytes, little-endian).
+///
+/// Random v4 UUIDs make a head collision astronomically unlikely; the
+/// per-frame `id_map` remains the single source of truth for the reverse
+/// lookup, and unknown ids are simply ignored when translating actions.
+fn uuid_to_u64(uuid: &Uuid) -> u64 {
+    let bytes = uuid.as_bytes();
+    let mut head = [0u8; 8];
+    head.copy_from_slice(&bytes[0..8]);
+    u64::from_le_bytes(head)
+}
+
+/// Build the asset-browser config: create-menu entries + the per-kind
+/// icon/colour table mirroring the old hard-coded styling. Grouping is off to
+/// preserve playa's flat, user-ordered media list; rename is off because there
+/// is no project rename event.
+fn build_config() -> AssetBrowserConfig {
+    AssetBrowserConfig::default()
+        .with_create_kinds(["Comp", "Camera", "Text"])
+        .with_add_media(true)
+        .with_rename(false)
+        .with_grouping(false)
+        .with_kind_style(
+            "Clip",
+            KindStyle::new("[F]", egui::Color32::from_rgb(100, 180, 100)),
+        )
+        .with_kind_style(
+            "Comp",
+            KindStyle::new("[C]", egui::Color32::from_rgb(100, 150, 255)),
+        )
+        .with_kind_style(
+            "Camera",
+            KindStyle::new("[K]", egui::Color32::from_rgb(255, 200, 100)),
+        )
+        .with_kind_style(
+            "Text",
+            KindStyle::new("[T]", egui::Color32::from_rgb(200, 150, 255)),
+        )
+        .with_kind_style(
+            "AI",
+            KindStyle::new("[AI]", egui::Color32::from_rgb(255, 150, 150)),
+        )
+        .with_kind_style(
+            "Ref",
+            KindStyle::new("[R]", egui::Color32::from_rgb(180, 180, 180)),
+        )
+}
+
+/// Render project window (dock tab): unified list of Clips & Compositions,
+/// driven by the `egui-asset-browser` widget.
 pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> ProjectActions {
     let mut actions = ProjectActions::new();
 
-    // Full-rect hover and click tracking
+    // Capture the full panel rect up-front for hover detection (input routing).
+    // A hover-only sense never competes with the widget's click/drag handling.
     let panel_rect = ui.available_rect_before_wrap();
-    let panel_response = ui.interact(
-        panel_rect,
-        ui.id().with("project_panel"),
-        egui::Sense::click(),
-    );
 
-    // Action buttons - two rows for better fit
+    // --- playa-specific top controls (glue: file dialogs + AI + Clear) -------
     ui.horizontal(|ui| {
         if ui.button("Save").clicked()
             && let Some(path) = rfd::FileDialog::new()
@@ -40,35 +118,12 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
             actions.send(LoadProjectEvent(path));
         }
         ui.separator();
-        if ui.button("+Clip").clicked()
-            && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
-            && !paths.is_empty()
-        {
-            actions.send(AddClipsEvent(paths));
-        }
         if ui.button("+Folder").clicked()
             && let Some(folder) = rfd::FileDialog::new()
                 .set_title("Add Media Folder")
                 .pick_folder()
         {
             actions.send(AddFolderEvent(folder));
-        }
-        if ui.button("+Comp").clicked() {
-            actions.send(AddCompEvent {
-                name: "New Comp".to_string(),
-                fps: 30.0,
-            });
-        }
-        if ui.button("+Text").clicked() {
-            actions.send(AddTextEvent {
-                name: "New Text".to_string(),
-                text: "Hello World".to_string(),
-            });
-        }
-        if ui.button("+Cam").clicked() {
-            actions.send(AddCameraEvent {
-                name: "Camera 1".to_string(),
-            });
         }
         if ui
             .button("+AI")
@@ -89,329 +144,241 @@ pub fn render(ui: &mut egui::Ui, _player: &mut Player, project: &Project) -> Pro
             actions.send(ClearAllMediaEvent);
         }
     });
-
     ui.separator();
 
-    // Media list fills remaining space
-    let scroll_height = ui.available_height();
-    egui::ScrollArea::vertical()
-        .auto_shrink([false; 2])
-        .show(ui, |ui| {
-            ui.set_min_height(scroll_height);
+    // --- Build the asset-browser model from the project (this frame) ---------
+    let config = build_config();
+    let mut model = AssetBrowserModel::new();
+    let mut id_map: HashMap<u64, ItemMeta> = HashMap::new();
 
-            // Collect all comps to render (unified order)
-            let order = project.order();
-            let mut order_index = HashMap::with_capacity(order.len());
-            for (i, uuid) in order.iter().enumerate() {
-                order_index.insert(*uuid, i);
-            }
-            let selection = project.selection();
-            let selection_set: HashSet<Uuid> = selection.iter().copied().collect();
-
-            if order.is_empty() {
-                ui.add_space(20.0);
-                ui.vertical_centered(|ui| {
-                    ui.colored_label(ui.visuals().weak_text_color(), "No media loaded");
-                    ui.colored_label(
-                        ui.visuals().weak_text_color(),
-                        "Click 'Add Clip' to load files",
-                    );
-                });
-                return;
-            }
-
-            let media = project.media.read().unwrap_or_else(|e| e.into_inner());
-            for comp_uuid in &order {
-                let comp = match media.get(comp_uuid) {
-                    Some(c) => c,
-                    None => continue,
-                };
-                // Skip unlisted items (preview comp)
-                if !comp.is_listed() {
-                    continue;
-                }
-                let Some(clicked_idx) = order_index.get(comp_uuid).copied() else {
-                    continue;
-                };
-
-                let is_active = project.active().as_ref() == Some(comp_uuid);
-                let is_selected = selection_set.contains(comp_uuid);
-                let bg_color = if is_selected {
-                    ui.style().visuals.selection.bg_fill
-                } else {
-                    ui.style().visuals.faint_bg_color
-                };
-
-                let fps = comp.fps() as u32;
-                let frame_count = comp.frame_count();
-
-                // Determine node type for icon and display
-                let (icon, icon_color, display_text) = if comp.is_file() {
-                    let text = if let Some(mask) = comp.file_mask() {
-                        let filename = std::path::Path::new(&mask)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or(&mask);
-                        format!("{} • {}", comp.name(), filename)
-                    } else {
-                        comp.name().to_string()
-                    };
-                    ("[F]", egui::Color32::from_rgb(100, 180, 100), text) // Green for files
-                } else if comp.is_camera() {
-                    (
-                        "[K]",
-                        egui::Color32::from_rgb(255, 200, 100),
-                        comp.name().to_string(),
-                    ) // Orange for camera
-                } else if comp.is_text() {
-                    (
-                        "[T]",
-                        egui::Color32::from_rgb(200, 150, 255),
-                        comp.name().to_string(),
-                    ) // Purple for text
-                } else if comp.is_ai() {
-                    (
-                        "[AI]",
-                        egui::Color32::from_rgb(255, 150, 150),
-                        comp.name().to_string(),
-                    ) // Pink for AINode
-                } else if comp.is_ref() {
-                    (
-                        "[R]",
-                        egui::Color32::from_rgb(180, 180, 180),
-                        comp.name().to_string(),
-                    ) // Grey for ref (utility)
-                } else {
-                    // Comp
-                    (
-                        "[C]",
-                        egui::Color32::from_rgb(100, 150, 255),
-                        format!("{} (Layer)", comp.name()),
-                    ) // Blue for comp
-                };
-
-                let available_width = ui.available_width();
-                let row_height = ui.spacing().interact_size.y * 1.2;
-
-                let (row_rect, response) = ui.allocate_exact_size(
-                    egui::vec2(available_width, row_height),
-                    egui::Sense::click_and_drag(),
-                );
-
-                // Background and stroke
-                ui.painter().rect_filled(row_rect, 2.0, bg_color);
-                ui.painter().rect_stroke(
-                    row_rect,
-                    2.0,
-                    egui::Stroke::new(1.0, ui.style().visuals.window_stroke.color),
-                    egui::StrokeKind::Inside,
-                );
-
-                // Active stripe
-                if is_active {
-                    let stripe_rect =
-                        egui::Rect::from_min_size(row_rect.min, egui::vec2(4.0, row_height));
-                    ui.painter()
-                        .rect_filled(stripe_rect, 0.0, egui::Color32::from_rgb(0, 200, 0));
-                }
-
-                let mut cursor_x = row_rect.min.x + 8.0;
-                let center_y = row_rect.center().y;
-
-                // Icon
-                let icon_galley = ui.painter().layout_no_wrap(
-                    icon.to_string(),
-                    egui::FontId::proportional(12.0),
-                    icon_color,
-                );
-                let icon_pos = egui::pos2(cursor_x, center_y - icon_galley.size().y * 0.5);
-                ui.painter().galley(icon_pos, icon_galley, icon_color);
-                cursor_x += 22.0;
-
-                // Right text (frame/fps) and delete button positions
-                let right_text = format!("{}f  {}fps", frame_count, fps);
-                let right_galley = ui.painter().layout_no_wrap(
-                    right_text,
-                    egui::FontId::proportional(12.0),
-                    ui.visuals().weak_text_color(),
-                );
-                let delete_size = egui::vec2(16.0, 16.0);
-                let delete_pos = egui::pos2(
-                    row_rect.max.x - delete_size.x - 6.0,
-                    center_y - delete_size.y * 0.5,
-                );
-                let right_pos = egui::pos2(
-                    delete_pos.x - 8.0 - right_galley.size().x,
-                    center_y - right_galley.size().y * 0.5,
-                );
-
-                // Text area width (clip)
-                let text_max_width = (right_pos.x - 8.0) - cursor_x;
-                if text_max_width > 0.0 {
-                    let text_galley = ui.painter().layout_no_wrap(
-                        display_text,
-                        egui::FontId::proportional(12.0),
-                        ui.visuals().text_color(),
-                    );
-                    let text_pos = egui::pos2(cursor_x, center_y - text_galley.size().y * 0.5);
-                    let clip_rect =
-                        egui::Rect::from_min_size(text_pos, egui::vec2(text_max_width, row_height));
-                    ui.painter().with_clip_rect(clip_rect).galley(
-                        text_pos,
-                        text_galley,
-                        ui.visuals().text_color(),
-                    );
-                }
-
-                // Right info
-                ui.painter()
-                    .galley(right_pos, right_galley, ui.visuals().weak_text_color());
-
-                // Delete button
-                let delete_rect = egui::Rect::from_min_size(delete_pos, delete_size);
-                let delete_resp = ui.interact(
-                    delete_rect,
-                    ui.id().with(format!("del_{comp_uuid}")),
-                    egui::Sense::click(),
-                );
-                if ui.is_rect_visible(delete_rect) {
-                    ui.painter()
-                        .rect_filled(delete_rect, 2.0, ui.visuals().extreme_bg_color);
-                    ui.painter().rect_stroke(
-                        delete_rect,
-                        2.0,
-                        egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
-                        egui::StrokeKind::Inside,
-                    );
-                    ui.painter().text(
-                        delete_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "X",
-                        egui::FontId::proportional(10.0),
-                        ui.visuals().weak_text_color(),
-                    );
-                }
-                if delete_resp.clicked() {
-                    actions.send(RemoveMediaEvent(*comp_uuid));
-                }
-
-                // Selection logic (click) and activation (double click) via events
-                let modifiers = ui.input(|i| i.modifiers);
-                let current_selection = selection.clone();
-                if response.clicked() {
-                    let (sel, anchor) = compute_selection(
-                        &order,
-                        &current_selection,
-                        project.selection_anchor,
-                        clicked_idx,
-                        modifiers,
-                    );
-                    actions.events.push(Box::new(ProjectSelectionChangedEvent {
-                        selection: sel.clone(),
-                        anchor,
-                    }));
-                    actions.events.push(Box::new(SelectionFocusEvent(sel)));
-                }
-                // Double-click: activate node (show in timeline/viewport)
-                // Emits ProjectActiveChangedEvent → main_events.rs handles:
-                // - Comp nodes: activate directly
-                // - Non-Comp (File/Text/Camera): wrap in preview comp singleton
-                if response.double_clicked() {
-                    let (sel, anchor) = compute_selection(
-                        &order,
-                        &current_selection,
-                        project.selection_anchor,
-                        clicked_idx,
-                        modifiers,
-                    );
-                    actions.events.push(Box::new(ProjectSelectionChangedEvent {
-                        selection: sel.clone(),
-                        anchor,
-                    }));
-                    actions.events.push(Box::new(SelectionFocusEvent(sel)));
-                    actions
-                        .events
-                        .push(Box::new(ProjectActiveChangedEvent::new(*comp_uuid)));
-                }
-
-                // Drag handling
-                if response.drag_started()
-                    && let Some(_pos) = response.interact_pointer_pos()
-                {
-                    ui.ctx().data_mut(|data| {
-                        data.insert_temp(
-                            crate::widgets::dnd::global_drag_state_id(),
-                            crate::widgets::dnd::GlobalDragState::ProjectItem {
-                                source_uuid: *comp_uuid,
-                                duration: Some(frame_count),
-                            },
-                        );
-                    });
-                }
-
-                if response.dragged() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-                } else if response.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                }
-
-                // Right-click context menu — item actions on top,
-                // Create submenu below in the same popup. AINode gets
-                // an extra Generate entry (action surface duplicate of
-                // the AttrEditor footer's button, useful when the
-                // user is in the project tree and doesn't want to
-                // switch focus).
-                let is_ai = comp.is_ai();
-                let comp_uuid_clone = *comp_uuid;
-                response.context_menu(|ui| {
-                    if is_ai && ui.button("⚡ Generate").clicked() {
-                        actions.events.push(Box::new(GenerateAINodeEvent(comp_uuid_clone)));
-                        ui.close();
-                    }
-                    if ui.button("Delete").clicked() {
-                        actions.send(RemoveMediaEvent(comp_uuid_clone));
-                        ui.close();
-                    }
-                    ui.separator();
-                    render_create_submenu(ui, &mut actions);
-                });
-
-                ui.add_space(1.0);
-            }
-        });
-
-    // Empty-area right-click → Create-only submenu. Per-item context
-    // menus take precedence (egui's response.context_menu binds to the
-    // smaller widget first).
-    panel_response.context_menu(|ui| {
-        render_create_submenu(ui, &mut actions);
-    });
-
-    // Double-click on empty area opens file dialog (same as Add Clip button)
-    if panel_response.double_clicked()
-        && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
-        && !paths.is_empty()
+    let order = project.order();
+    let active = project.active();
     {
-        actions.send(AddClipsEvent(paths));
+        let media = project.media.read().unwrap_or_else(|e| e.into_inner());
+        for uuid in &order {
+            let Some(node) = media.get(uuid) else {
+                continue;
+            };
+            // Skip unlisted items (the preview comp singleton).
+            if !node.is_listed() {
+                continue;
+            }
+
+            let id = uuid_to_u64(uuid);
+            let frame_count = node.frame_count();
+            let fps = node.fps() as u32;
+
+            // Per-kind label + display name, mirroring the old icon/label table.
+            let (kind, name) = if node.is_file() {
+                let name = if let Some(mask) = node.file_mask() {
+                    let filename = std::path::Path::new(&mask)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or(&mask)
+                        .to_string();
+                    format!("{} • {}", node.name(), filename)
+                } else {
+                    node.name().to_string()
+                };
+                ("Clip", name)
+            } else if node.is_camera() {
+                ("Camera", node.name().to_string())
+            } else if node.is_text() {
+                ("Text", node.name().to_string())
+            } else if node.is_ai() {
+                ("AI", node.name().to_string())
+            } else if node.is_ref() {
+                ("Ref", node.name().to_string())
+            } else {
+                ("Comp", format!("{} (Layer)", node.name()))
+            };
+
+            // Active-node indicator. The widget exposes no per-item "active"
+            // channel (`KindStyle` is icon+colour only), so the old green
+            // stripe is substituted by a caller-side name marker. This is a
+            // model-side choice, not a widget hack. See module/report caveat.
+            let name = if active.as_ref() == Some(uuid) {
+                format!("▶ {name}")
+            } else {
+                name
+            };
+
+            model.items.push(
+                AssetItem::new(id, name, kind).with_subtitle(format!("{frame_count}f  {fps}fps")),
+            );
+            id_map.insert(
+                id,
+                ItemMeta {
+                    uuid: *uuid,
+                    frame_count,
+                },
+            );
+        }
     }
 
-    // Set hover state for input routing
-    actions.hovered = panel_response.hovered();
+    // Map the current Uuid selection to the widget's u64 id space.
+    model.selection = project.selection().iter().map(uuid_to_u64).collect();
+
+    // --- Render the widget and translate its actions back to playa events ----
+    let raw_actions = asset_browser_show(ui, &model, &config);
+    let ctx = ui.ctx().clone();
+    for action in raw_actions {
+        translate_action(action, project, &order, &id_map, &ctx, &mut actions);
+    }
+
+    // Hover state for input routing (hover-only sense; no click contention).
+    actions.hovered = ui
+        .interact(
+            panel_rect,
+            ui.id().with("project_panel_hover"),
+            egui::Sense::hover(),
+        )
+        .hovered();
 
     actions
 }
 
+/// Translate one [`AssetAction`] from the widget into the corresponding playa
+/// event(s). Actions whose id is not in `id_map` (stale frame) are ignored.
+fn translate_action(
+    action: AssetAction,
+    project: &Project,
+    order: &[Uuid],
+    id_map: &HashMap<u64, ItemMeta>,
+    ctx: &egui::Context,
+    actions: &mut ProjectActions,
+) {
+    match action {
+        // Single click: replicate the old plain/ctrl/shift selection model.
+        AssetAction::Select {
+            id,
+            additive,
+            range,
+        } => {
+            let Some(meta) = id_map.get(&id) else {
+                return;
+            };
+            emit_selection(project, order, meta.uuid, additive, range, actions);
+        }
+        // Double click: activate (show in timeline/viewport). The widget emits
+        // a preceding `Select`, so selection events are already covered.
+        AssetAction::Open { id } => {
+            let Some(meta) = id_map.get(&id) else {
+                return;
+            };
+            actions
+                .events
+                .push(Box::new(ProjectActiveChangedEvent::new(meta.uuid)));
+        }
+        // Click on empty space → clear selection (new, widget-provided UX).
+        AssetAction::ClearSelection => {
+            actions.events.push(Box::new(ProjectSelectionChangedEvent {
+                selection: Vec::new(),
+                anchor: None,
+            }));
+            actions
+                .events
+                .push(Box::new(SelectionFocusEvent(Vec::new())));
+        }
+        // Create-menu entries → the matching create event. Clip/Folder/AI are
+        // handled by the glue top row, not the generic Create menu.
+        AssetAction::Create { kind } => match kind.as_str() {
+            "Comp" => actions.send(AddCompEvent {
+                name: "New Comp".to_string(),
+                fps: 30.0,
+            }),
+            "Camera" => actions.send(AddCameraEvent {
+                name: "Camera 1".to_string(),
+            }),
+            "Text" => actions.send(AddTextEvent {
+                name: "New Text".to_string(),
+                text: "Hello World".to_string(),
+            }),
+            other => log::warn!("project panel: unhandled create kind '{other}'"),
+        },
+        AssetAction::Delete { id } => {
+            let Some(meta) = id_map.get(&id) else {
+                return;
+            };
+            actions.send(RemoveMediaEvent(meta.uuid));
+        }
+        // "Add media" button → playa's file dialog (the old +Clip behaviour).
+        AssetAction::AddMedia => {
+            if let Some(paths) = create_media_dialog("Add Media Files").pick_files()
+                && !paths.is_empty()
+            {
+                actions.send(AddClipsEvent(paths));
+            }
+        }
+        // Drag-out start → seed the global drag state for the timeline ghost.
+        AssetAction::BeginDrag { id } => {
+            let Some(meta) = id_map.get(&id) else {
+                return;
+            };
+            let source_uuid = meta.uuid;
+            let duration = Some(meta.frame_count);
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    global_drag_state_id(),
+                    GlobalDragState::ProjectItem {
+                        source_uuid,
+                        duration,
+                    },
+                );
+            });
+        }
+        // Rename is disabled in config (no project rename event); ignore.
+        AssetAction::Rename { .. } => {}
+    }
+}
+
+/// Emit the selection-change + focus events for a clicked node, computing the
+/// new selection with the same plain/ctrl/shift semantics as the old panel.
+fn emit_selection(
+    project: &Project,
+    order: &[Uuid],
+    clicked_uuid: Uuid,
+    additive: bool,
+    range: bool,
+    actions: &mut ProjectActions,
+) {
+    let Some(clicked_idx) = order.iter().position(|u| *u == clicked_uuid) else {
+        return;
+    };
+    let current = project.selection();
+    let (sel, anchor) = compute_selection(
+        order,
+        &current,
+        project.selection_anchor,
+        clicked_idx,
+        additive,
+        range,
+    );
+    actions.events.push(Box::new(ProjectSelectionChangedEvent {
+        selection: sel.clone(),
+        anchor,
+    }));
+    actions.events.push(Box::new(SelectionFocusEvent(sel)));
+}
+
+/// Compute a new selection from a click.
+///
+/// `range` (shift) extends from the anchor; `additive` (ctrl/cmd) toggles the
+/// clicked item; otherwise the click replaces the selection. Behaviour is
+/// identical to the pre-widget panel — only the modifier source changed (the
+/// widget already decoded `egui::Modifiers` into `additive` / `range`).
 fn compute_selection(
     order: &[Uuid],
     current_selection: &[Uuid],
     anchor: Option<usize>,
     clicked_idx: usize,
-    modifiers: egui::Modifiers,
+    additive: bool,
+    range: bool,
 ) -> (Vec<Uuid>, Option<usize>) {
     let mut selection: Vec<Uuid> = current_selection.to_vec();
     let mut new_anchor = anchor;
 
-    if modifiers.shift {
+    if range {
         let anchor_idx = new_anchor
             .or_else(|| {
                 selection
@@ -430,7 +397,7 @@ fn compute_selection(
             }
         }
         new_anchor = Some(clicked_idx);
-    } else if modifiers.command || modifiers.ctrl {
+    } else if additive {
         if let Some(pos) = selection.iter().position(|u| *u == order[clicked_idx]) {
             selection.remove(pos);
         } else {
@@ -444,54 +411,4 @@ fn compute_selection(
     }
 
     (selection, new_anchor)
-}
-
-/// Render the "Create" submenu used by both the per-item and the
-/// empty-area context menus. Same entries as the top-bar +Buttons,
-/// but in a menu-friendly layout. Each click closes the popup.
-fn render_create_submenu(ui: &mut egui::Ui, actions: &mut ProjectActions) {
-    ui.menu_button("Create", |ui| {
-        if ui.button("+ Clip…").clicked()
-            && let Some(paths) = create_media_dialog("Add Media Files").pick_files()
-            && !paths.is_empty()
-        {
-            actions.send(AddClipsEvent(paths));
-            ui.close();
-        }
-        if ui.button("+ Folder…").clicked()
-            && let Some(folder) = rfd::FileDialog::new()
-                .set_title("Add Media Folder")
-                .pick_folder()
-        {
-            actions.send(AddFolderEvent(folder));
-            ui.close();
-        }
-        if ui.button("+ Comp").clicked() {
-            actions.send(AddCompEvent {
-                name: "New Comp".to_string(),
-                fps: 30.0,
-            });
-            ui.close();
-        }
-        if ui.button("+ Text").clicked() {
-            actions.send(AddTextEvent {
-                name: "New Text".to_string(),
-                text: "Hello World".to_string(),
-            });
-            ui.close();
-        }
-        if ui.button("+ Camera").clicked() {
-            actions.send(AddCameraEvent {
-                name: "Camera 1".to_string(),
-            });
-            ui.close();
-        }
-        if ui.button("+ AI Node").clicked() {
-            actions.send(AddAINodeEvent {
-                name: "AI Generation".to_string(),
-                provider: "seedance.text_to_video".to_string(),
-            });
-            ui.close();
-        }
-    });
 }

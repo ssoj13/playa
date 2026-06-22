@@ -58,8 +58,11 @@ impl SourceImage {
             .collect()
     }
 
-    pub fn display_layer(&self) -> &ImageLayer {
-        &self.layered.layers[self.display_layer_idx]
+    /// The display layer, or `None` if the image carries no layers. Avoids an
+    /// indexing panic when `display_layer_idx` (defaulted to 0 by
+    /// `pick_display_layer`) points past an empty layer list.
+    pub fn display_layer(&self) -> Option<&ImageLayer> {
+        self.layered.layers.get(self.display_layer_idx)
     }
 }
 

@@ -66,7 +66,7 @@ impl PlayaApp {
 
         if shader_changed {
             let mut renderer = self.viewport_renderer.lock().unwrap();
-            renderer.update_shader(&self.shader_manager);
+            playa_ui::widgets::viewport::update_tonemap(&mut renderer, &self.shader_manager);
             log::info!("Shader changed to: {}", self.shader_manager.current_shader);
         }
     }
