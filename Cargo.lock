@@ -1599,7 +1599,7 @@ version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
 dependencies = [
  "egui",
- "egui-phosphor",
+ "egui-widgets-config",
  "serde",
 ]
 
@@ -1639,7 +1639,6 @@ version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
 dependencies = [
  "egui",
- "egui-phosphor",
  "egui-widgets-config",
  "egui_extras",
 ]
@@ -1659,7 +1658,7 @@ version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
 dependencies = [
  "egui",
- "egui-phosphor",
+ "egui-widgets-config",
 ]
 
 [[package]]
@@ -1736,6 +1735,7 @@ version = "0.1.0"
 source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#7ec0603b0f730d0c7691b4eab36f5949c5080621"
 dependencies = [
  "egui",
+ "egui-phosphor",
 ]
 
 [[package]]
@@ -4690,7 +4690,7 @@ dependencies = [
 [[package]]
 name = "puffin_egui"
 version = "0.30.0"
-source = "git+ssh://git@github.com/ssoj13/puffin-egui-rs.git?branch=main#91011763edab784665d0a0533271f43b416f4145"
+source = "git+ssh://git@github.com/ssoj13/egui-widgets-rs.git?branch=main#bba06f714c03b04770774737c9cb57c1692f4e87"
 dependencies = [
  "egui",
  "egui_extras",

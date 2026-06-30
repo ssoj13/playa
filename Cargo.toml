@@ -72,9 +72,10 @@ log = { workspace = true }
 
 puffin = { version = "0.20", optional = true }
 # Patched puffin_egui (egui 0.34) — crates.io 0.30 still pins egui ^0.33, so we
-# consume our extracted copy via git-ref. Keeps the `profiler` feature working
-# on egui 0.34 and avoids a duplicate egui 0.33 in the lock.
-puffin_egui = { git = "ssh://git@github.com/ssoj13/puffin-egui-rs.git", branch = "main", optional = true }
+# consume our patched copy via git-ref. It was consolidated into egui-widgets-rs
+# (alongside the other egui widgets this app already pulls from there), so it now
+# ships from that repo instead of the retired standalone puffin-egui-rs.
+puffin_egui = { git = "ssh://git@github.com/ssoj13/egui-widgets-rs.git", branch = "main", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 playa-io = { path = "crates/playa-io", features = ["exr", "ffmpeg"] }
