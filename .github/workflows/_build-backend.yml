@@ -40,7 +40,7 @@ jobs:
     runs-on: ${{ inputs.runner }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -138,7 +138,7 @@ jobs:
 
       - name: Cache vcpkg FFmpeg (Windows)
         if: inputs.platform == 'windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-vcpkg-ffmpeg-windows
         with:
           path: |
@@ -151,7 +151,7 @@ jobs:
 
       - name: Cache vcpkg FFmpeg (Unix)
         if: inputs.platform != 'windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-vcpkg-ffmpeg-unix
         with:
           path: |
@@ -216,7 +216,7 @@ jobs:
 
       - name: Cache cargo and build artifacts
         id: cache-restore
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/
@@ -227,7 +227,7 @@ jobs:
       - name: Cache cargo-packager (Unix)
         if: inputs.platform != 'windows'
         id: tools-cache-restore-unix
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/cargo-packager
@@ -236,7 +236,7 @@ jobs:
       - name: Cache cargo-packager (Windows)
         if: inputs.platform == 'windows'
         id: tools-cache-restore-win
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/bin/cargo-packager.exe
@@ -416,7 +416,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: inputs.platform == 'windows' && inputs.cache_only != true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows
           path: |
@@ -428,7 +428,7 @@ jobs:
 
       - name: Upload Linux artifacts
         if: inputs.platform == 'linux' && inputs.cache_only != true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux
           path: |
@@ -440,7 +440,7 @@ jobs:
 
       - name: Upload macOS artifacts
         if: inputs.platform == 'macos' && inputs.cache_only != true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos
           path: |
@@ -461,7 +461,7 @@ jobs:
 
       - name: Upload Release Assets (Windows)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'windows' && inputs.cache_only != true
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: ${{ steps.changelog.outputs.path }}
           files: |
@@ -472,7 +472,7 @@ jobs:
 
       - name: Upload Release Assets (Linux)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'linux' && inputs.cache_only != true
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: ${{ steps.changelog.outputs.path }}
           files: |
@@ -483,7 +483,7 @@ jobs:
 
       - name: Upload Release Assets (macOS)
         if: inputs.should_release && startsWith(github.ref, 'refs/tags/') && inputs.platform == 'macos' && inputs.cache_only != true
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: ${{ steps.changelog.outputs.path }}
           files: |
